@@ -47,3 +47,9 @@ Issues = "https://github.com/whitecarp/publishops-crosscast/issues"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.data-files]
+"share/publishops-crosscast" = ["NOTICE.md", "README.md", "README_EN.md", "README_ZH_TW.md"]
+"share/publishops-crosscast/assets" = ["assets/hero.svg"]
+"share/publishops-crosscast/docs" = ["docs/.nojekyll", "docs/*.md", "docs/index.html", "docs/site.css", "docs/site.js"]
+"share/publishops-crosscast/skills/publishops-crosscast" = ["skills/publishops-crosscast/SKILL.md"]
+
