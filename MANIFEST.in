@@ -1,0 +1,11 @@
+include LICENSE
+include README.md
+include README_EN.md
+include README_ZH_TW.md
+include NOTICE.md
+include CONTRIBUTING.md
+include assets/hero.svg
+recursive-include docs *.md
+recursive-include src/video_publisher *.py
+recursive-include tests *.py
+recursive-include skills *.md

@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PublishOps CrossCast · 一份视频，五个平台的发布准备</title>
+  <meta name="description" content="PublishOps CrossCast（vpub）帮你用已有的 Codex / Claude 等 AI 助手，为 B站、YouTube、抖音、Instagram、X 准备标题、简介、封面和发布计划，并追踪回执。">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%237c6cff'/%3E%3Cpath d='M12 9v14l11-7z' fill='white'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="site.css">
+</head>
+<body>
+<a class="skip" href="#main" data-i18n="skip">跳到正文</a>
+<header class="nav" id="top">
+  <div class="wrap nav-in">
+    <a class="brand" href="#top" aria-label="PublishOps CrossCast">
+      <span class="logo" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></span>
+      <span>CrossCast</span>
+    </a>
+    <nav aria-label="页面导航" data-i18n-aria="navLabel">
+      <ul class="nav-links">
+        <li><a href="#scenes" data-i18n="navScenes">场景</a></li>
+        <li><a href="#platforms" data-i18n="navPlatforms">平台</a></li>
+        <li><a href="#start" data-i18n="navStart">上手</a></li>
+        <li><a href="#faq">FAQ</a></li>
+      </ul>
+    </nav>
+    <div class="nav-act">
+      <div class="langs" role="group" aria-label="语言 / 語言 / Language" id="langGroup">
+        <button class="lang" type="button" data-lang="zh-CN" lang="zh-CN" aria-label="简体中文" aria-pressed="true">简</button>
+        <button class="lang" type="button" data-lang="zh-TW" lang="zh-TW" aria-label="繁體中文" aria-pressed="false">繁</button>
+        <button class="lang" type="button" data-lang="en" lang="en" aria-label="English" aria-pressed="false">EN</button>
+      </div>
+      <a class="btn-gh" href="https://github.com/whitecarp/publishops-crosscast" rel="noopener">
+        <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38v-1.34c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+        <span>GitHub</span>
+      </a>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero">
+    <div class="wrap hero-in">
+      <div class="hero-copy">
+        <p class="pill"><span class="dot" aria-hidden="true"></span>v0.3.0 alpha · MIT · Python 3.10–3.12</p>
+        <h1><span data-i18n="h1a">一份视频，</span><br><span class="grad" data-i18n="h1b">五个平台的发布准备</span></h1>
+        <p class="lead" data-i18n="lead">让你已经在用的 Codex、Claude 等 AI 助手，为 B站、YouTube、抖音、Instagram 和 X 准备标题、简介、封面和发布计划，并追踪每一次发布回执。不内置模型，也不需要另配模型 API Key。</p>
+        <div class="copy-box">
+          <div class="copy-head">
+            <span data-i18n="installLabel">对你的 AI 助手说：</span>
+            <button type="button" class="copy" data-copy="installPrompt" data-i18n="copy" aria-label="复制安装指令" data-i18n-aria="copyPromptA">复制</button>
+          </div>
+          <p class="prompt" id="installPrompt" data-i18n="installPrompt">帮我从 https://github.com/whitecarp/publishops-crosscast 安装 PublishOps CrossCast，阅读 skills/publishops-crosscast/SKILL.md，先运行 vpub doctor；先帮我准备发布草稿，发布平台、账号和公开范围由我确认。</p>
+        </div>
+        <div class="hero-cta">
+          <a class="btn primary" href="#start" data-i18n="ctaStart">三步上手</a>
+          <a class="btn ghost" href="https://github.com/whitecarp/publishops-crosscast#readme" rel="noopener" data-doc data-i18n="ctaDocs">阅读文档</a>
+        </div>
+      </div>
+      <div class="hero-art" aria-hidden="true">
+        <div class="src-card">
+          <div class="thumb"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
+          <div class="bar w70"></div><div class="bar w90 dim"></div><div class="bar w50 dim"></div>
+        </div>
+        <ul class="chips">
+          <li class="c-bili">Bilibili</li>
+          <li class="c-yt">YouTube</li>
+          <li class="c-dy">抖音</li>
+          <li class="c-ig">Instagram</li>
+          <li class="c-x">X</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+  <section class="sec" id="scenes" aria-labelledby="scenesT">
+    <div class="wrap">
+      <p class="eyebrow" data-i18n="scenesEy">怎么用</p>
+      <h2 id="scenesT" data-i18n="scenesT">你说一句，AI 帮你准备好</h2>
+      <p class="sub" data-i18n="scenesSub">文字由你已有的宿主模型来写；vpub 负责整理草稿、封面、计划和回执。</p>
+      <div class="scenes">
+        <article class="scene">
+          <p class="say"><span class="who" data-i18n="you">你说</span><span data-i18n="s1q">“把这条视频发 B站和 YouTube，标题口语一点。”</span></p>
+          <p class="do"><span class="who ai" data-i18n="ai">AI 处理</span><span data-i18n="s1a">按平台分别写标题和简介，生成发布草稿，再请你确认平台、账号和公开范围。</span></p>
+        </article>
+        <article class="scene">
+          <p class="say"><span class="who" data-i18n="you">你说</span><span data-i18n="s2q">“封面字太小，Instagram 那版也调一下。”</span></p>
+          <p class="do"><span class="who ai" data-i18n="ai">AI 处理</span><span data-i18n="s2a">另存一份调整后的封面，原图保留不动；Instagram 使用原视频，不转码。</span></p>
+        </article>
+        <article class="scene">
+          <p class="say"><span class="who" data-i18n="you">你说</span><span data-i18n="s3q">“今晚 8 点发抖音，先排进计划。”</span></p>
+          <p class="do"><span class="who ai" data-i18n="ai">AI 处理</span><span data-i18n="s3a">写入发布计划，并交给能操作浏览器的助手打开官方网页；扫码或验证码由你完成。排队不等于发布成功。</span></p>
+        </article>
+        <article class="scene">
+          <p class="say"><span class="who" data-i18n="you">你说</span><span data-i18n="s4q">“上次那条到底发出去没有？”</span></p>
+          <p class="do"><span class="who ai" data-i18n="ai">AI 处理</span><span data-i18n="s4a">查看回执记录，告诉你哪些平台已有回执、哪些还在等待或需要你处理。</span></p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec alt" id="platforms" aria-labelledby="platT">
+    <div class="wrap">
+      <p class="eyebrow" data-i18n="platEy">平台支持</p>
+      <h2 id="platT" data-i18n="platT">五个平台，各走各的路</h2>
+      <p class="sub" data-i18n="platSub">登录默认走官方网页，由你完成扫码或验证码。下表写的是当前真实状态。</p>
+      <div class="table-wrap" tabindex="0" role="region" aria-labelledby="platT">
+        <table>
+          <thead><tr><th scope="col" data-i18n="thP">平台</th><th scope="col" data-i18n="thHow">发布方式</th><th scope="col" data-i18n="thNote">说明</th></tr></thead>
+          <tbody>
+            <tr><th scope="row"><span class="pdot bili" aria-hidden="true"></span>Bilibili</th><td><span class="tag ok" data-i18n="tBili">复用 bili-cli</span></td><td data-i18n="nBili">沿用 bili-cli 的登录与投稿能力。</td></tr>
+            <tr><th scope="row"><span class="pdot yt" aria-hidden="true"></span>YouTube</th><td><span class="tag ok" data-i18n="tYt">宿主浏览器 / 官方 API</span></td><td data-i18n="nYt">默认宿主浏览器接力；也可选配 YouTube 官方 API。</td></tr>
+            <tr><th scope="row"><span class="pdot dy" aria-hidden="true"></span><span data-i18n="pDy">抖音</span></th><td><span class="tag relay" data-i18n="tRelay">宿主浏览器接力</span></td><td data-i18n="nDy">另有可选的独立后端，目前为实验性。</td></tr>
+            <tr><th scope="row"><span class="pdot ig" aria-hidden="true"></span>Instagram</th><td><span class="tag relay" data-i18n="tRelay">宿主浏览器接力</span></td><td data-i18n="nIg">保留原视频，不做转码。</td></tr>
+            <tr><th scope="row"><span class="pdot x" aria-hidden="true"></span>X</th><td><span class="tag relay" data-i18n="tRelay">宿主浏览器接力</span></td><td data-i18n="nX">由支持浏览器工具的助手在官方网页上操作。</td></tr>
+            <tr class="no"><th scope="row"><span class="pdot tt" aria-hidden="true"></span>TikTok</th><td><span class="tag off" data-i18n="tNo">暂不支持</span></td><td data-i18n="nTt">当前版本未接入。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <ul class="notes">
+        <li data-i18n="note1">五个平台的全自动发布尚未完成验收，现阶段请把它当作 alpha 工具。</li>
+        <li data-i18n="note2">没有通用的评论管理或数据分析功能。</li>
+        <li data-i18n="note3">单独运行的 CLI 只准备交接材料；真正的浏览器操作由支持浏览器工具的 Agent 执行。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="sec" id="start" aria-labelledby="startT">
+    <div class="wrap">
+      <p class="eyebrow" data-i18n="startEy">三步上手</p>
+      <h2 id="startT" data-i18n="startT">从安装到第一份草稿</h2>
+      <ol class="steps">
+        <li class="step">
+          <span class="num" aria-hidden="true">1</span>
+          <h3 data-i18n="st1">安装</h3>
+          <p data-i18n="st1d">需要 Python 3.10–3.12。可以把上面的安装指令交给 AI 助手，或者自己运行：</p>
+          <div class="cmd"><code id="cmdInstall">python -m pip install "git+https://github.com/whitecarp/publishops-crosscast.git"</code><button type="button" class="copy sm" data-copy="cmdInstall" data-i18n="copy" aria-label="复制安装命令" data-i18n-aria="copyInstallA">复制</button></div>
+        </li>
+        <li class="step">
+          <span class="num" aria-hidden="true">2</span>
+          <h3 data-i18n="st2">检查环境</h3>
+          <p data-i18n="st2d">先体检一遍，看看哪些平台能力已经就绪。</p>
+          <div class="cmd"><code id="cmdDoctor">vpub doctor</code><button type="button" class="copy sm" data-copy="cmdDoctor" data-i18n="copy" aria-label="复制 vpub doctor 命令" data-i18n-aria="copyDoctorA">复制</button></div>
+        </li>
+        <li class="step">
+          <span class="num" aria-hidden="true">3</span>
+          <h3 data-i18n="st3">准备草稿，由你拍板</h3>
+          <p data-i18n="st3d">让 AI 先出草稿。发布前由你选定平台、账号、公开范围和审核偏好，之后它只在你授权的范围内行动。</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="sec alt" id="faq" aria-labelledby="faqT">
+    <div class="wrap narrow">
+      <p class="eyebrow">FAQ</p>
+      <h2 id="faqT" data-i18n="faqT">常见问题</h2>
+      <details><summary data-i18n="q1">需要单独的模型 API Key 吗？</summary><p data-i18n="a1">不需要。vpub 不内置模型，标题和简介由你已经在用的 Codex、Claude 等宿主模型来写。</p></details>
+      <details><summary data-i18n="q2">它会帮我登录账号吗？</summary><p data-i18n="a2">登录默认在宿主能操作的官方网页上进行，扫码或验证码由你本人完成。这个页面不会、也不需要收集任何密钥。</p></details>
+      <details><summary data-i18n="q3">只在终端里运行 vpub，能直接发出去吗？</summary><p data-i18n="a3">不能。独立的 CLI 无法操作 Codex 等应用的内置浏览器，它负责准备交接材料；浏览器上的操作需要支持浏览器工具的 Agent 来完成。</p></details>
+      <details><summary data-i18n="q4">进入发布队列就算发布成功了吗？</summary><p data-i18n="a4">不算。排队只代表计划已记录，只有拿到平台回执才算发布完成，vpub 会帮你追踪这些回执。</p></details>
+      <details><summary data-i18n="q5">会改动我的原视频和封面吗？</summary><p data-i18n="a5">不会。调整封面时原图会保留；发 Instagram 时直接使用原视频，不做转码。</p></details>
+      <details><summary data-i18n="q6">AI 会不会自作主张发到别的地方？</summary><p data-i18n="a6">发布前由你选择平台、账号、公开范围和审核偏好，后续操作只在你授权的范围内进行。</p></details>
+      <details><summary data-i18n="q7">支持 TikTok、评论管理或数据分析吗？</summary><p data-i18n="a7">暂不支持 TikTok，也没有通用的评论或数据功能。</p></details>
+      <details><summary data-i18n="q8">现在可以放心用于正式发布吗？</summary><p data-i18n="a8">当前是 0.3.0 alpha，五个平台的全自动发布尚未完成验收。建议先从草稿和计划开始，每一步都亲自确认。</p></details>
+    </div>
+  </section>
+
+  <section class="sec cta-end">
+    <div class="wrap narrow center">
+      <h2 data-i18n="endT">开源、免费，欢迎一起完善</h2>
+      <p class="sub" data-i18n="endSub">MIT 许可。遇到问题或想支持新平台，欢迎到 GitHub 提 Issue。</p>
+      <div class="hero-cta center">
+        <a class="btn primary" href="https://github.com/whitecarp/publishops-crosscast" rel="noopener" data-i18n="ctaGh">在 GitHub 查看</a>
+        <a class="btn ghost" href="https://github.com/whitecarp/publishops-crosscast#readme" rel="noopener" data-doc data-i18n="ctaDocs">阅读文档</a>
+      </div>
+    </div>
+  </section>
+</main>
+<footer class="foot">
+  <div class="wrap foot-in">
+    <p>PublishOps CrossCast · <span data-i18n="footLic">MIT 许可</span> · v0.3.0 alpha</p>
+    <p><a href="https://github.com/whitecarp/publishops-crosscast" rel="noopener">GitHub</a> · <a href="https://github.com/whitecarp/publishops-crosscast#readme" rel="noopener" data-doc data-i18n="footDocs">文档</a> · <a href="#top" data-i18n="footTop">回到顶部</a></p>
+  </div>
+</footer>
+<p class="toast" id="toast" role="status" aria-live="polite"></p>
+<script src="site.js" defer></script>
+</body>
+</html>
