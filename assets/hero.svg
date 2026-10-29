@@ -1,52 +1,82 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="520" viewBox="0 0 1280 520" role="img" aria-labelledby="t d">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="560" viewBox="0 0 1200 560" role="img" aria-labelledby="t d">
   <title id="t">PublishOps CrossCast</title>
-  <desc id="d">一份视频，准备五个平台的发布草稿：标题、简介、封面、发布计划与回执追踪。</desc>
+  <desc id="d">协作关系示意：你选择平台、账号和公开范围；AI 宿主撰写文案并按授权操作浏览器；vpub CLI 生成并检查方案、保存本地记录，不代你登录；提交前由你在官方平台页面核对。</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#0d1020"/>
-      <stop offset="1" stop-color="#1a1238"/>
+      <stop offset="0" stop-color="#0e1424"/>
+      <stop offset="1" stop-color="#14203a"/>
     </linearGradient>
-    <linearGradient id="acc" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#ff5c8a"/>
-      <stop offset="1" stop-color="#7c6cff"/>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#5eead4"/>
+      <stop offset="1" stop-color="#fbbf24"/>
     </linearGradient>
-    <radialGradient id="glow" cx="0.78" cy="0.45" r="0.5">
-      <stop offset="0" stop-color="#7c6cff" stop-opacity="0.35"/>
-      <stop offset="1" stop-color="#7c6cff" stop-opacity="0"/>
-    </radialGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#94a3b8"/>
+    </marker>
+    <marker id="arrow-ok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#5eead4"/>
+    </marker>
   </defs>
-  <rect width="1280" height="520" rx="28" fill="url(#bg)"/>
-  <rect width="1280" height="520" rx="28" fill="url(#glow)"/>
-  <g font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Noto Sans CJK SC',Arial,sans-serif">
-    <rect x="72" y="72" width="196" height="34" rx="17" fill="#ffffff" fill-opacity="0.08" stroke="#ffffff" stroke-opacity="0.18"/>
-    <text x="170" y="95" text-anchor="middle" font-size="15" fill="#c9c6ff" font-weight="600">v0.3.0 alpha · MIT</text>
-    <text x="72" y="190" font-size="64" font-weight="800" fill="#ffffff">PublishOps</text>
-    <text x="72" y="262" font-size="64" font-weight="800" fill="url(#acc)">CrossCast</text>
-    <text x="72" y="320" font-size="26" fill="#e7e6f5">一份视频，五个平台的发布准备</text>
-    <text x="72" y="356" font-size="18" fill="#a9a7c4">标题 · 简介 · 封面 · 发布计划 · 回执追踪</text>
-    <rect x="72" y="400" width="430" height="52" rx="12" fill="#000000" fill-opacity="0.35" stroke="#ffffff" stroke-opacity="0.14"/>
-    <text x="96" y="433" font-family="Consolas,'SFMono-Regular',Menlo,monospace" font-size="20" fill="#9ef0c0">$ vpub doctor</text>
+  <rect width="1200" height="560" rx="28" fill="url(#bg)"/>
+  <g fill="none" stroke="#5eead4" stroke-opacity="0.13" stroke-width="3">
+    <path d="M1080 60 a70 70 0 0 1 70 70"/>
+    <path d="M1080 20 a110 110 0 0 1 110 110"/>
+    <path d="M1080 100 a30 30 0 0 1 30 30"/>
   </g>
-  <g transform="translate(700 150)">
-    <rect width="190" height="220" rx="20" fill="#ffffff" fill-opacity="0.07" stroke="#ffffff" stroke-opacity="0.2"/>
-    <rect x="20" y="20" width="150" height="110" rx="12" fill="url(#acc)" opacity="0.9"/>
-    <path d="M83 55 L83 95 L115 75 Z" fill="#ffffff"/>
-    <rect x="20" y="148" width="120" height="12" rx="6" fill="#ffffff" fill-opacity="0.55"/>
-    <rect x="20" y="170" width="150" height="10" rx="5" fill="#ffffff" fill-opacity="0.22"/>
-    <rect x="20" y="188" width="96" height="10" rx="5" fill="#ffffff" fill-opacity="0.22"/>
-  </g>
-  <g fill="none" stroke="#ffffff" stroke-opacity="0.28" stroke-width="2" stroke-dasharray="5 6">
-    <path d="M890 260 C 960 260, 960 108, 1030 108"/>
-    <path d="M890 260 C 960 260, 960 184, 1030 184"/>
-    <path d="M890 260 L 1030 260"/>
-    <path d="M890 260 C 960 260, 960 336, 1030 336"/>
-    <path d="M890 260 C 960 260, 960 412, 1030 412"/>
-  </g>
-  <g font-family="'Segoe UI','PingFang SC','Microsoft YaHei',Arial,sans-serif" font-size="17" font-weight="600" fill="#ffffff">
-    <g transform="translate(1030 86)"><rect width="176" height="44" rx="22" fill="#00a1d6" fill-opacity="0.22" stroke="#00a1d6"/><circle cx="22" cy="22" r="6" fill="#00a1d6"/><text x="38" y="28">Bilibili</text></g>
-    <g transform="translate(1030 162)"><rect width="176" height="44" rx="22" fill="#ff3b3b" fill-opacity="0.2" stroke="#ff4d4d"/><circle cx="22" cy="22" r="6" fill="#ff4d4d"/><text x="38" y="28">YouTube</text></g>
-    <g transform="translate(1030 238)"><rect width="176" height="44" rx="22" fill="#25f4ee" fill-opacity="0.14" stroke="#25f4ee"/><circle cx="22" cy="22" r="6" fill="#25f4ee"/><text x="38" y="28">抖音 Douyin</text></g>
-    <g transform="translate(1030 314)"><rect width="176" height="44" rx="22" fill="#e1306c" fill-opacity="0.2" stroke="#f06292"/><circle cx="22" cy="22" r="6" fill="#f06292"/><text x="38" y="28">Instagram</text></g>
-    <g transform="translate(1030 390)"><rect width="176" height="44" rx="22" fill="#ffffff" fill-opacity="0.1" stroke="#d6d6e0"/><circle cx="22" cy="22" r="6" fill="#ffffff"/><text x="38" y="28">X</text></g>
+  <circle cx="1080" cy="130" r="7" fill="#5eead4" fill-opacity="0.4"/>
+  <g font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Noto Sans CJK SC','Noto Sans SC',Arial,sans-serif">
+    <text x="40" y="104" font-size="56" font-weight="800" fill="#f8fafc">PublishOps <tspan fill="url(#accent)">CrossCast</tspan></text>
+    <text x="42" y="158" font-size="26" fill="#cbd5e1">把一支视频整理成多平台发布方案，由你确认后再交给官方页面</text>
+
+    <g transform="translate(30 210)">
+      <rect width="246" height="230" rx="22" fill="#ffffff" fill-opacity="0.05" stroke="#5eead4" stroke-opacity="0.6"/>
+      <circle cx="40" cy="44" r="18" fill="#5eead4"/><text x="40" y="51" text-anchor="middle" font-size="20" font-weight="800" fill="#0e1424">1</text>
+      <text x="70" y="54" font-size="28" font-weight="700" fill="#f8fafc">你</text>
+      <text x="24" y="114" font-size="21" fill="#e2e8f0">选择平台与账号</text>
+      <text x="24" y="146" font-size="21" fill="#e2e8f0">决定公开范围</text>
+      <rect x="24" y="178" width="164" height="32" rx="16" fill="#5eead4" fill-opacity="0.14"/>
+      <text x="106" y="200" text-anchor="middle" font-size="17" fill="#99f6e4">选择 · 核对 · 授权</text>
+    </g>
+    <g transform="translate(328 210)">
+      <rect width="246" height="230" rx="22" fill="#ffffff" fill-opacity="0.05" stroke="#a78bfa" stroke-opacity="0.6"/>
+      <circle cx="40" cy="44" r="18" fill="#a78bfa"/><text x="40" y="51" text-anchor="middle" font-size="20" font-weight="800" fill="#0e1424">2</text>
+      <text x="70" y="54" font-size="28" font-weight="700" fill="#f8fafc">AI 宿主</text>
+      <text x="24" y="114" font-size="21" fill="#e2e8f0">撰写各平台文案</text>
+      <text x="24" y="146" font-size="21" fill="#e2e8f0">按授权操作浏览器</text>
+      <rect x="24" y="178" width="164" height="32" rx="16" fill="#a78bfa" fill-opacity="0.16"/>
+      <text x="106" y="200" text-anchor="middle" font-size="17" fill="#ddd6fe">读取 SKILL.md</text>
+    </g>
+    <g transform="translate(626 210)">
+      <rect width="246" height="230" rx="22" fill="#ffffff" fill-opacity="0.05" stroke="#fbbf24" stroke-opacity="0.6"/>
+      <circle cx="40" cy="44" r="18" fill="#fbbf24"/><text x="40" y="51" text-anchor="middle" font-size="20" font-weight="800" fill="#0e1424">3</text>
+      <text x="70" y="54" font-size="27" font-weight="700" fill="#f8fafc" font-family="Consolas,'SFMono-Regular',Menlo,monospace">vpub CLI</text>
+      <text x="24" y="114" font-size="21" fill="#e2e8f0">生成并检查方案</text>
+      <text x="24" y="146" font-size="21" fill="#e2e8f0">保存本地状态与回执</text>
+      <rect x="24" y="178" width="164" height="32" rx="16" fill="#fbbf24" fill-opacity="0.14"/>
+      <text x="106" y="200" text-anchor="middle" font-size="17" fill="#fde68a">不代你登录</text>
+    </g>
+    <g transform="translate(924 210)">
+      <rect width="246" height="230" rx="22" fill="#ffffff" fill-opacity="0.05" stroke="#f472b6" stroke-opacity="0.6"/>
+      <circle cx="40" cy="44" r="18" fill="#f472b6"/><text x="40" y="51" text-anchor="middle" font-size="20" font-weight="800" fill="#0e1424">4</text>
+      <text x="70" y="54" font-size="28" font-weight="700" fill="#f8fafc">官方平台</text>
+      <g font-size="16" font-weight="600" fill="#f1f5f9">
+        <rect x="20" y="86" width="100" height="32" rx="16" fill="#ffffff" fill-opacity="0.08"/><text x="70" y="108" text-anchor="middle">Bilibili</text>
+        <rect x="128" y="86" width="100" height="32" rx="16" fill="#ffffff" fill-opacity="0.08"/><text x="178" y="108" text-anchor="middle">YouTube</text>
+        <rect x="20" y="128" width="100" height="32" rx="16" fill="#ffffff" fill-opacity="0.08"/><text x="70" y="150" text-anchor="middle">Douyin</text>
+        <rect x="128" y="128" width="100" height="32" rx="16" fill="#ffffff" fill-opacity="0.08"/><text x="178" y="150" text-anchor="middle">Instagram</text>
+        <rect x="20" y="170" width="100" height="32" rx="16" fill="#ffffff" fill-opacity="0.08"/><text x="70" y="192" text-anchor="middle">X</text>
+      </g>
+    </g>
+
+    <g stroke="#94a3b8" stroke-width="2.5" fill="none" marker-end="url(#arrow)">
+      <path d="M282 325 L320 325"/>
+      <path d="M580 325 L618 325"/>
+    </g>
+    <path d="M878 325 L916 325" stroke="#5eead4" stroke-width="2.5" fill="none" marker-end="url(#arrow-ok)"/>
+    <circle cx="898" cy="284" r="15" fill="#0e1424" stroke="#5eead4" stroke-width="2"/>
+    <path d="M891 284 L896 289 L906 279" stroke="#5eead4" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <path d="M40 482 L1160 482" stroke="#ffffff" stroke-opacity="0.1"/>
+    <text x="40" y="522" font-size="19" fill="#94a3b8"><tspan fill="#5eead4" font-weight="700">✓</tspan> 提交前在官方页面核对账号、文案与公开范围　·　可选后端：Bilibili CLI / YouTube API　·　TikTok 暂停支持</text>
   </g>
 </svg>

@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="560" viewBox="0 0 1200 560" role="img" aria-labelledby="t d">
+  <title id="t">PublishOps CrossCast</title>
+  <desc id="d">How the handoff works: you choose platforms, accounts, and visibility; the AI host writes copy and operates the browser with your authorization; the vpub CLI builds and checks the plan and keeps local records but does not log in for you; you review on the official platform page before submission.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0e1424"/>
+      <stop offset="1" stop-color="#14203a"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#5eead4"/>
+      <stop offset="1" stop-color="#fbbf24"/>
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#94a3b8"/>
+    </marker>
+    <marker id="arrow-ok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#5eead4"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="560" rx="28" fill="url(#bg)"/>
+  <g fill="none" stroke="#5eead4" stroke-opacity="0.13" stroke-width="3">
+    <path d="M1080 60 a70 70 0 0 1 70 70"/>
+    <path d="M1080 20 a110 110 0 0 1 110 110"/>
+    <path d="M1080 100 a30 30 0 0 1 30 30"/>
+  </g>
+  <circle cx="1080" cy="130" r="7" fill="#5eead4" fill-opacity="0.4"/>
+  <g font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Noto Sans CJK SC','Noto Sans SC',Arial,sans-serif">
+    <text x="40" y="104" font-size="56" font-weight="800" fill="#f8fafc">PublishOps <tspan fill="url(#accent)">CrossCast</tspan></text>
+    <text x="42" y="158" font-size="25" fill="#cbd5e1">One video, per-platform release plans, handed to official pages after you approve</text>
+
+    <g transform="translate(30 210)">
+      <rect width="246" height="230" rx="22" fill="#ffffff" fill-opacity="0.05" stroke="#5eead4" stroke-opacity="0.6"/>
+      <circle cx="40" cy="44" r="18" fill="#5eead4"/><text x="40" y="51" text-anchor="middle" font-size="20" font-weight="800" fill="#0e1424">1</text>
+      <text x="70" y="54" font-size="28" font-weight="700" fill="#f8fafc">You</text>
+      <text x="24" y="114" font-size="20" fill="#e2e8f0">Pick platforms,</text>
+      <text x="24" y="146" font-size="20" fill="#e2e8f0">account, visibility</text>
+      <rect x="24" y="178" width="164" height="32" rx="16" fill="#5eead4" fill-opacity="0.14"/>
+      <text x="106" y="200" text-anchor="middle" font-size="17" fill="#99f6e4">review · approve</text>
+    </g>
+    <g transform="translate(328 210)">
+      <rect width="246" height="230" rx="22" fill="#ffffff" fill-opacity="0.05" stroke="#a78bfa" stroke-opacity="0.6"/>
+      <circle cx="40" cy="44" r="18" fill="#a78bfa"/><text x="40" y="51" text-anchor="middle" font-size="20" font-weight="800" fill="#0e1424">2</text>
+      <text x="70" y="54" font-size="28" font-weight="700" fill="#f8fafc">AI host</text>
+      <text x="24" y="114" font-size="20" fill="#e2e8f0">Writes the copy,</text>
+      <text x="24" y="146" font-size="20" fill="#e2e8f0">drives the browser</text>
+      <rect x="24" y="178" width="164" height="32" rx="16" fill="#a78bfa" fill-opacity="0.16"/>
+      <text x="106" y="200" text-anchor="middle" font-size="17" fill="#ddd6fe">reads SKILL.md</text>
+    </g>
+    <g transform="translate(626 210)">
+      <rect width="246" height="230" rx="22" fill="#ffffff" fill-opacity="0.05" stroke="#fbbf24" stroke-opacity="0.6"/>
+      <circle cx="40" cy="44" r="18" fill="#fbbf24"/><text x="40" y="51" text-anchor="middle" font-size="20" font-weight="800" fill="#0e1424">3</text>
+      <text x="70" y="54" font-size="27" font-weight="700" fill="#f8fafc" font-family="Consolas,'SFMono-Regular',Menlo,monospace">vpub CLI</text>
+      <text x="24" y="114" font-size="20" fill="#e2e8f0">Builds, checks plans,</text>
+      <text x="24" y="146" font-size="20" fill="#e2e8f0">keeps local receipts</text>
+      <rect x="24" y="178" width="164" height="32" rx="16" fill="#fbbf24" fill-opacity="0.14"/>
+      <text x="106" y="200" text-anchor="middle" font-size="17" fill="#fde68a">does not log in</text>
+    </g>
+    <g transform="translate(924 210)">
+      <rect width="246" height="230" rx="22" fill="#ffffff" fill-opacity="0.05" stroke="#f472b6" stroke-opacity="0.6"/>
+      <circle cx="40" cy="44" r="18" fill="#f472b6"/><text x="40" y="51" text-anchor="middle" font-size="20" font-weight="800" fill="#0e1424">4</text>
+      <text x="70" y="54" font-size="24" font-weight="700" fill="#f8fafc">Official sites</text>
+      <g font-size="16" font-weight="600" fill="#f1f5f9">
+        <rect x="20" y="86" width="100" height="32" rx="16" fill="#ffffff" fill-opacity="0.08"/><text x="70" y="108" text-anchor="middle">Bilibili</text>
+        <rect x="128" y="86" width="100" height="32" rx="16" fill="#ffffff" fill-opacity="0.08"/><text x="178" y="108" text-anchor="middle">YouTube</text>
+        <rect x="20" y="128" width="100" height="32" rx="16" fill="#ffffff" fill-opacity="0.08"/><text x="70" y="150" text-anchor="middle">Douyin</text>
+        <rect x="128" y="128" width="100" height="32" rx="16" fill="#ffffff" fill-opacity="0.08"/><text x="178" y="150" text-anchor="middle">Instagram</text>
+        <rect x="20" y="170" width="100" height="32" rx="16" fill="#ffffff" fill-opacity="0.08"/><text x="70" y="192" text-anchor="middle">X</text>
+      </g>
+    </g>
+
+    <g stroke="#94a3b8" stroke-width="2.5" fill="none" marker-end="url(#arrow)">
+      <path d="M282 325 L320 325"/>
+      <path d="M580 325 L618 325"/>
+    </g>
+    <path d="M878 325 L916 325" stroke="#5eead4" stroke-width="2.5" fill="none" marker-end="url(#arrow-ok)"/>
+    <circle cx="898" cy="284" r="15" fill="#0e1424" stroke="#5eead4" stroke-width="2"/>
+    <path d="M891 284 L896 289 L906 279" stroke="#5eead4" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <path d="M40 482 L1160 482" stroke="#ffffff" stroke-opacity="0.1"/>
+    <text x="40" y="522" font-size="19" fill="#94a3b8"><tspan fill="#5eead4" font-weight="700">✓</tspan> Review account, copy, and visibility before submitting   ·   Optional: Bilibili CLI / YouTube API   ·   TikTok suspended</text>
+  </g>
+</svg>

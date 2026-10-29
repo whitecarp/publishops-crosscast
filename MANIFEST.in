@@ -4,7 +4,7 @@ include README_EN.md
 include README_ZH_TW.md
 include NOTICE.md
 include CONTRIBUTING.md
-include assets/hero.svg
+recursive-include assets *.svg
 include docs/.nojekyll
 recursive-include docs *.md *.html *.css *.js
 recursive-include src/video_publisher *.py
