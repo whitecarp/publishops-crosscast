@@ -6,7 +6,7 @@ CrossCast adapts one local video plan for selected platforms. Actual capability 
 
 ## Platforms
 
-- **Bilibili:** publishing uses the upstream `bili` CLI. CrossCast provides planning, copy, and handoff support; it does not claim to implement or verify every `bili` feature.
+- **Bilibili:** the default is host-operated official web publishing; the upstream `bili` CLI is an optional backend. CrossCast does not reimplement or verify every `bili` feature.
 - **YouTube:** publish through the official web handoff or optionally use the YouTube Data API. API use requires your own OAuth client and consent. Additional scopes, such as playlist management, must be explicitly selected. Google determines quotas, test limits, and review requirements.
 - **Douyin:** a host can assist with the official web workflow. The standalone backend remains experimental and may not work for every account or environment.
 - **Instagram:** the host operates the official website. Cross-platform preparation and draft support are not an independent Instagram API. Covers and profile grids may crop differently; a user may need to select a cover on a phone.

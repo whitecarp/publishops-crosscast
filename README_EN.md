@@ -23,7 +23,7 @@ This is an **illustrative workflow**, not a real publication record. CrossCast p
 
 ## Platform scope
 
-- **Bilibili:** uses the upstream `bili` tool; CrossCast does not reimplement all of its features.
+- **Bilibili:** default is host-operated official web handoff; the upstream `bili` CLI is optional.
 - **YouTube:** official web workflow, with an optional YouTube API for explicitly configured capabilities.
 - **Douyin:** official web workflow; its standalone backend remains experimental.
 - **Instagram and X:** official web workflows operated by the host. Drafts can be prepared; publishing or editing requires the appropriate authorization.
