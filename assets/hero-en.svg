@@ -20,7 +20,7 @@
     <rect x="56" y="402" width="504" height="84" rx="16" fill="#ffffff" fill-opacity="0.06" stroke="#ffffff" stroke-opacity="0.16"/>
     <text x="76" y="432" font-size="14" font-weight="600" fill="#8e9ab3">You tell your AI assistant</text>
     <text x="76" y="464" font-size="20" font-weight="700" fill="#eef2f8">“Publish final.mp4 publicly to all five.”</text>
-    <text x="56" y="514" font-size="15" fill="#8e9ab3">0.3.0 alpha: web posting needs a browser-capable AI assistant</text>
+    <text x="56" y="514" font-size="15" fill="#8e9ab3">0.15.1 alpha: after the first sign-in, the CLI submits in the background</text>
     <g clip-path="url(#card)">
       <rect x="620" y="56" width="524" height="448" fill="#ffffff"/>
       <rect x="620" y="444" width="524" height="60" fill="#eef1f6"/>
@@ -81,8 +81,8 @@
     <path d="M644 392 H1120" stroke="#e8ecf2"/>
     <circle cx="649" cy="418" r="4.5" fill="#17213a"/>
     <text x="662" y="423.5" font-size="16" font-weight="700" fill="#17213a">X</text>
-    <rect x="772" y="411.0" width="25" height="14" rx="2" fill="none" stroke="#5f6a83" stroke-width="1.5" stroke-dasharray="3 2"/>
-    <text x="805.0" y="423" font-size="15" fill="#4b566e">Video</text>
+    <rect x="772" y="411.0" width="24.9" height="14" rx="2" fill="none" stroke="#5f6a83" stroke-width="1.5"/>
+    <text x="804.9" y="423" font-size="15" fill="#4b566e">16:9</text>
     <text x="862" y="423" font-size="15" fill="#4b566e">English</text>
     <rect x="1043.8" y="406.0" width="76.2" height="24" rx="6" fill="#eef1f6" stroke="#8e99ae" stroke-width="1.5" stroke-dasharray="4 3"/>
       <circle cx="1056.3" cy="418" r="4.5" fill="none" stroke="#3f4a5f" stroke-width="1.5" stroke-dasharray="1.6 1.6"/>
