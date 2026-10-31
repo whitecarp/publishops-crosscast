@@ -46,9 +46,9 @@
 **开始前准备好这几样：**
 
 - **B站**：用 B站 App 扫码登录一次（通过 bili-cli）。
-- **YouTube**：只能走官方 API。在 Google Cloud 启用 YouTube Data API v3，建一个“桌面应用”OAuth 客户端，把下载的 JSON 交给 AI 助手。
+- **YouTube**：CLI 走官方 API；没配置时，能操作浏览器的 AI 助手可以在 YouTube Studio 上发布。YouTube 没有 CLI 后台浏览器路径。在 Google Cloud 启用 YouTube Data API v3，建一个“桌面应用”OAuth 客户端，把下载的 JSON 交给 AI 助手。
 - **抖音、Instagram、X**：第一次会打开 CrossCast 专用的官方 Chrome 窗口，你自己扫码或输入密码、验证码；之后 CLI 在后台复用这个登录。
-- **X**：只能用 Media Studio 发布，账号必须已订阅并能进入 Media Studio。
+- **X 浏览器路线**：只能用 Media Studio 发布，账号必须已订阅并能进入 Media Studio。
 - **电脑上要有 Google Chrome**：没有的话，运行 `vpub setup --install-browser` 安装。
 
 <details>
@@ -127,7 +127,7 @@ B站、抖音用简体中文，YouTube、Instagram、X 用英文。视频本身�
 | 平台 | 登录 | 发布方式 | 实测记录 |
 | --- | --- | --- | --- |
 | **Bilibili** | B站 App 扫码（bili-cli） | bili-cli，可定时发布 | ✅ bili-cli |
-| **YouTube** | Google 桌面 OAuth 客户端 | 只能走官方 API，可定时发布 | ✅ API |
+| **YouTube** | Google 桌面 OAuth 客户端 | 默认走官方 API，可定时发布；也可由 AI 助手操作 YouTube Studio | ✅ API |
 | **抖音** | 专用官方 Chrome | CLI 后台浏览器 | ✅ 已发布 |
 | **Instagram** | 专用官方 Chrome | CLI 后台浏览器，封面在手机上改 | ✅ 已发布 |
 | **X** | 专用官方 Chrome | 只能用 Media Studio（需订阅） | ✅ 已发布 |
@@ -137,11 +137,30 @@ B站、抖音用简体中文，YouTube、Instagram、X 用英文。视频本身�
 
 **发之前需要知道**
 
-- **YouTube**：只能走官方 API。项目还在测试模式时，要先把登录用的账号加进“测试用户”；按 Google 的规定，2020 年 7 月 28 日之后创建、又没通过审核的 API 项目，上传的视频会被锁成私享。
-- **X**：只能用 Media Studio。账号必须已订阅并能进入 Media Studio；未订阅账号的视频上限是 140 秒、512 MB，本工具不支持。
+- **YouTube**：CLI 走官方 API；没配置时，能操作浏览器的 AI 助手可以在 YouTube Studio 上发布。YouTube 没有 CLI 后台浏览器路径。项目还在测试模式时，要先把登录用的账号加进“测试用户”；按 Google 的规定，2020 年 7 月 28 日之后创建、又没通过审核的 API 项目，上传的视频会被锁成私享。
+- **X 浏览器路线**：只能用 Media Studio。账号必须已订阅并能进入 Media Studio；未订阅账号的视频上限是 140 秒、512 MB，本工具不支持。
 - **Instagram**：视频保留原比例；封面必须在手机上改：打开作品的“编辑封面 → 从相册添加”，选和抖音共用的那张竖版图，再看一眼主页网格的裁切。
 - **抖音**：长时间保持登录的稳定性还在验收；网页上传中断后不能续传，要先检查已有草稿。
-- **还没有的**：TikTok（暂停）、YouTube 卡片和可点击片尾、X 和 Instagram 的官方 API、自动或批量私信与点赞、完整历史导出。
+- **还没有的**：TikTok（暂停）、YouTube 卡片和可点击片尾、自动或批量私信与点赞、完整历史导出。
+
+## 可选 X／Instagram API 路线（实验性）
+
+API 代码维持 MIT 开源，包括 `api_backends.py` 和测试。CrossCast 不设置许可证密钥或付费解锁；平台开发者权限、审核与费用另计。
+
+X／Instagram 默认仍使用已登录的后台浏览器。新增 API 上传路线**目前只通过离线故障注入测试，尚未完成真实账号授权和上传验收**；既有发布实测指的是浏览器路线。API 目前涵盖授权、上传、发布和读回，评论、收藏及私信命令保留原有后端。
+
+- **X API：**创建支持 OAuth 2.0 用户授权的开发者应用，启用所需媒体及帖子权限。把 `client_id`、适用时的 `client_secret` 保存到私人 JSON。开发者 API 权限与计费不同于普通订阅及 Media Studio 权限。
+- **Instagram API：**此实现使用 Facebook Login for Business，需要关联 Facebook 公共主页的 Instagram 专业账号。把 `app_id`、`app_secret` 及可选的 `ig_user_id` 保存到私人 JSON；权限及审核取决于 Meta 应用设置。
+- 在应用登记 `http://127.0.0.1:8765/callback`，执行对应命令并自行完成官方授权，再在方案对应平台指定 `"method": "api"`。凭证与令牌只保存在私人目录。
+
+```sh
+vpub auth login x --method api --client-json /private/x-client.json
+vpub auth login instagram --method api --client-json /private/instagram-client.json
+```
+
+这两条 API 路线尚不应用自定义封面、定时发布或草稿。X 处理等待有上限，恢复时检查原媒体。Instagram 已完成的容器不重传；中断后如果服务端未返回确认的偏移量就停止，实际偏移量行为仍待账号实测。发布结果不明确时，多次恢复也不重发；取得作品 ID 后先落盘再读回。账号改变会停止原任务。
+
+协议参考：[X 分段上传](https://docs.x.com/x-api/media/quickstart/media-upload-chunked)、[Meta 内容发布](https://developers.facebook.com/docs/instagram-platform/content-publishing/)。
 
 ## 🔒 安全护栏
 
@@ -232,14 +251,14 @@ vpub verify RECEIPT_KEY
 <details>
 <summary><b>为什么 YouTube 一定要配 OAuth 客户端？</b></summary>
 
-YouTube 只能走官方 API 发布，而 API Key 本身不能授权上传，必须用“桌面应用”OAuth 客户端在 Google 页面授权一次。授权在你自己的电脑上完成，令牌只留在本机。
+CLI 通过官方 API 发布到 YouTube，而 API Key 本身不能授权上传，必须用“桌面应用”OAuth 客户端在 Google 页面授权一次。授权在你自己的电脑上完成，令牌只留在本机。
 
 </details>
 
 <details>
 <summary><b>X 没订阅能发吗？</b></summary>
 
-不能。CrossCast 只通过 Media Studio 发布 X，账号必须已订阅并能进入 Media Studio。付了费或登录了，不代表 Media Studio 已经开通，上传前会先核对。
+不能。默认浏览器路线只通过 Media Studio 发布 X，账号必须已订阅并能进入 Media Studio。付了费或登录了，不代表 Media Studio 已经开通，上传前会先核对。
 
 </details>
 

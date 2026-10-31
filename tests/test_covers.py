@@ -21,6 +21,8 @@ class CoverTests(unittest.TestCase):
         image.paste('blue', (200, 0, 400, 200))
         image.save(self.source)
         self.manifest = self.root/'publish.json'
+        self.portrait=self.root/'portrait.png'
+        Image.new('RGB',(300,400),'green').save(self.portrait)
         self.value = cli.template(video, 'zh-Hans')
         self.value['platforms']['youtube']['category_id'] = '1'
         self.value['platforms']['x'] = {'method':'native','visibility':'account','ai_generated':True}
@@ -31,7 +33,7 @@ class CoverTests(unittest.TestCase):
         self.temp.cleanup()
 
     def prepare(self):
-        return covers.prepare(self.manifest,self.source,self.root/'assets',self.root/'ready.json')
+        return covers.prepare(self.manifest,self.source,self.root/'assets',self.root/'ready.json',self.portrait)
 
     def test_fit_preserves_edges_routes_platforms_and_is_idempotent(self):
         original = self.source.read_bytes()
@@ -42,10 +44,8 @@ class CoverTests(unittest.TestCase):
         self.assertEqual('zh-Hans',ready['content_language'])
         self.assertEqual(self.value['platforms'],ready['platforms'])
         with Image.open(ready['covers']['douyin']['portrait']) as image:
-            self.assertEqual((1080,1440), image.size)
-            self.assertGreater(image.getpixel((5,720))[0],240)
-            self.assertGreater(image.getpixel((1075,720))[2],240)
-            self.assertLess(image.getpixel((540,5))[0],50)
+            self.assertEqual((300,400), image.size)
+        self.assertEqual(file_sha(self.portrait),file_sha(ready['covers']['douyin']['portrait']))
         self.assertEqual(original,self.source.read_bytes())
         self.assertEqual('REUSED',self.prepare()['state'])
         self.source.write_bytes(b'changed')
@@ -66,6 +66,15 @@ class CoverTests(unittest.TestCase):
             covers.prepare(self.manifest,broken,self.root/'bad-assets',self.root/'bad.json')
         self.assertFalse((self.root/'bad.json').exists())
         self.assertFalse((self.root/'bad-assets').exists())
+
+    def test_shared_portrait_is_identical_and_landscape_fallback_rejected(self):
+        self.value['platforms']['instagram']={'method':'native','visibility':'account','ai_generated':True}
+        atomic_json(self.manifest,self.value)
+        with self.assertRaises(VpubError):
+            covers.prepare(self.manifest,self.source,self.root/'missing',self.root/'missing.json')
+        result=self.prepare()
+        value=read_json(result['manifest'])
+        self.assertEqual(value['covers']['douyin']['portrait'],value['covers']['instagram']['portrait'])
 
     def test_dual_cover_snapshot_and_evidence_required(self):
         result=self.prepare()

@@ -9,7 +9,7 @@ from video_publisher.core import atomic_json, file_sha, load_plan, read_json, Vp
 class InstagramPreparationTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
         self.video = self.root / 'source.mp4'
         self.video.write_bytes(b'original synthetic video bytes')
         self.cover = self.root / 'landscape.jpg'
@@ -32,10 +32,10 @@ class InstagramPreparationTests(unittest.TestCase):
         result=instagram_media.prepare(self.manifest,self.root/'ready.json')
         self.assertEqual('ORIGINAL_VIDEO',result['mode'])
         self.assertFalse(result['video_modified'])
-        self.assertEqual(str(self.video.resolve()),result['video'])
+        self.assertEqual(str(self.video),result['video'])
         self.assertEqual(before,self.video.read_bytes())
         self.assertEqual(file_sha(self.video),result['video_sha256'])
-        self.assertEqual(str(self.portrait.resolve()),result['mobile_cover']['path'])
+        self.assertEqual(str(self.portrait),result['mobile_cover']['path'])
         self.assertEqual(file_sha(self.portrait),result['mobile_cover']['sha256'])
         plan=load_plan(result['manifest'])
         self.assertEqual(['instagram'],list(plan['platforms']))
@@ -53,7 +53,7 @@ class InstagramPreparationTests(unittest.TestCase):
     def test_mobile_override_and_no_source_overwrite(self):
         other=self.root/'other.jpg'; Image.new('RGB',(180,240),'green').save(other)
         result=instagram_media.prepare(self.manifest,self.root/'ready.json',other)
-        self.assertEqual(str(other.resolve()),result['mobile_cover']['path'])
+        self.assertEqual(str(other),result['mobile_cover']['path'])
         for out in (self.manifest,self.video,self.cover,self.portrait):
             with self.assertRaises(VpubError):
                 instagram_media.prepare(self.manifest,out)
