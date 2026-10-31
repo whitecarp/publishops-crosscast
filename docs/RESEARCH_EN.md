@@ -28,7 +28,7 @@ Some Meta developer pages returned 429/unavailable; third-party tutorials were n
 
 ## Bilibili and Douyin
 
-Bilibili reuses bili-cli. Douyin's open platform has app-capability/authorization requirements, while its official website offers an account workflow. Optional pinned SAU helpers fill forms; this tool controls single submission and receipts.
+Bilibili reuses bili-cli. Douyin's open platform has app-capability/authorization requirements, while its official website offers an account workflow. Early versions used pinned SAU helpers to fill forms. They have been removed; this tool's own browser route now fills the form, submits once and keeps the receipt.
 
 Sources: [bili-cli](https://github.com/kukemc/bili-cli), [Douyin video-create documentation](https://open.douyin.com/platform/resource/docs/openapi/video-management/douyin/create/create-video), [social-auto-upload pinned source](https://github.com/dreammis/social-auto-upload/tree/3847fff01f5434a8a32829833163cd6723cabc59).
 

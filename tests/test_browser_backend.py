@@ -126,5 +126,17 @@ class BrowserSafetyTests(unittest.TestCase):
         self.assertEqual('source_changed',result['error']['code'])
         publish.assert_not_awaited()
 
+    def test_resume_without_a_saved_receipt_starts_because_no_upload_ever_began(self):
+        tx=Transaction('x','tester',self.plan,resume=True)
+        self.assertFalse(tx.receipt['media_selected'])
+        self.assertFalse(tx.receipt['final_submit_attempted'])
+
+    def test_interrupted_named_copy_is_replaced_and_needs_no_second_copy_of_the_video(self):
+        tx=Transaction('douyin','tester',self.plan)
+        source=Path(self.plan['video'])
+        named=source.with_name('crosscast-'+self.plan['video_sha256'][:16]+source.suffix)
+        named.write_bytes(b'fixture')
+        self.assertEqual(source.read_bytes(),tx.media().read_bytes())
+
 
 if __name__=='__main__': unittest.main()

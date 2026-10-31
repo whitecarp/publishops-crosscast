@@ -28,21 +28,6 @@ def bili(args, timeout=180):
     return result.get("data", {})
 
 
-def dy_worker(action, account, plan=None, timeout=180):
-    payload = {"action": action, "account": account, "plan": plan}
-    cp = subprocess.run([sys.executable, "-m", "video_publisher.douyin_worker"],
-                        input=json.dumps(payload), capture_output=True, encoding="utf-8", timeout=timeout,
-                        env=dict(os.environ, PYTHONIOENCODING="utf-8"))
-    try:
-        result = json.loads(cp.stdout)
-    except ValueError:
-        raise VpubError("backend_error", "Douyin adapter did not return a receipt.", "Inspect creator center before any retry.")
-    if not result.get("ok"):
-        e = result["error"]
-        raise VpubError(e["code"], e["message"], e.get("hint", ""))
-    return result["data"]
-
-
 def paid_api():
     """Official API routes for X, Instagram and YouTube need the separate paid package."""
     try:
@@ -75,9 +60,13 @@ def finish_youtube(*args, **kwargs):
     return youtube_api().finish(*args, **kwargs)
 
 
+def addon_installed():
+    return importlib.util.find_spec("crosscast_api") is not None
+
+
 def default_method(platform):
     if platform == "youtube":
-        return "api" if importlib.util.find_spec("crosscast_api") else "native"
+        return "api" if addon_installed() else "native"
     return {"bilibili": "cli"}.get(platform, "browser")
 
 
@@ -87,10 +76,6 @@ def browser_timeout(action):
 
 def browser_call(platform, action, account, **kwargs):
     payload = {"platform": platform, "action": action, "account": account, **kwargs}
-    from .browser_session import current
-    session = current()
-    if session is not None:
-        return session.call(payload)
     from . import browser_broker
     if browser_broker.enabled():
         if action in browser_broker.REUSABLE:

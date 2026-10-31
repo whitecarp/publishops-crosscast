@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import re
 
-from .core import VpubError
+from .core import VpubError, douyin_caption
 from .browser_runtime import risk_check, unique_visible, visible
 from .browser_backends import normalize, upload_file, wait_until, works, links, verify
 
@@ -180,7 +180,7 @@ async def publish_instagram(page, tx):
 
 async def publish_douyin(page, tx):
     before = await works(page, 'douyin', tx.identity)
-    caption = '\n\n'.join(p for p in (tx.options['description'], ' '.join('#'+t.lstrip('#') for t in tx.options['tags'])) if p)
+    caption = douyin_caption(tx.options['description'], tx.options['tags'])
     if len(caption.encode('utf-16-le')) // 2 > 1000:
         raise VpubError('description_too_long', 'Douyin description plus hashtags exceeds 1000 UTF-16 units. No video uploaded.')
     tx.save(before_ids=list(before), expected_text=tx.options['title'])
@@ -201,7 +201,7 @@ async def publish_douyin(page, tx):
 
 async def finish_douyin_form(page, tx, before):
     """Complete this already-uploaded form; never select the video again."""
-    caption = '\n\n'.join(p for p in (tx.options['description'], ' '.join('#'+t.lstrip('#') for t in tx.options['tags'])) if p)
+    caption = douyin_caption(tx.options['description'], tx.options['tags'])
     title = page.locator('input[placeholder*="填写作品标题"]')
     editor = await unique_visible(page.locator('[contenteditable=true]'), 'Douyin description')
     for role, label in [('landscape', '横封面4:3'), ('portrait', '竖封面3:4')]:

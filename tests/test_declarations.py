@@ -2,12 +2,59 @@
 import argparse
 import os
 from pathlib import Path
+import asyncio
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from video_publisher import adapters, cli, douyin_worker, native_browser
+from video_publisher import adapters, browser_forms, cli, native_browser
 from video_publisher.core import VpubError, atomic_json, load_plan, read_json
+
+
+class FakeControl:
+    """Just enough of a page or locator for the Douyin form: everything succeeds and clicks are logged."""
+
+    def __init__(self, clicks, values, label=""):
+        self.clicks, self.values, self.label = clicks, values, label
+
+    def locator(self, selector):
+        return FakeControl(self.clicks, self.values, selector)
+
+    def filter(self, **options):
+        return self
+
+    def get_by_text(self, text, **options):
+        return FakeControl(self.clicks, self.values, text)
+
+    def get_by_role(self, role, name=None, **options):
+        return FakeControl(self.clicks, self.values, name or role)
+
+    async def all(self):
+        return [self]
+
+    async def is_visible(self):
+        return True
+
+    async def is_checked(self):
+        return True
+
+    async def click(self, **options):
+        self.clicks.append(self.label)
+
+    async def wait_for(self, **options):
+        pass
+
+    async def wait_for_url(self, *args, **options):
+        pass
+
+    async def check(self):
+        pass
+
+    async def input_value(self):
+        return self.values["title"]
+
+    async def inner_text(self):
+        return self.values["caption"]
 
 
 class DeclarationTests(unittest.TestCase):
@@ -105,9 +152,18 @@ class DeclarationTests(unittest.TestCase):
         self.assertEqual("SUBMISSION_VERIFIED", result["state"])
         self.assertNotIn("declaration_mismatch", result)
 
-    def test_douyin_backend_declares_only_ai_videos(self):
-        self.assertEqual("内容由AI生成", douyin_worker.ai_declaration({"ai_generated": True}))
-        self.assertIsNone(douyin_worker.ai_declaration({"ai_generated": False}))
+    def test_douyin_form_declares_only_ai_videos(self):
+        for ai_generated in (True, False):
+            with self.subTest(ai_generated=ai_generated):
+                clicks = []
+                page = FakeControl(clicks, {"title": "Title", "caption": "Text\n\n#vlog"})
+                tx = MagicMock(options={"title": "Title", "description": "Text", "tags": ["vlog"], "visibility": "public", "ai_generated": ai_generated},
+                               receipt={}, submit=AsyncMock())
+                tx.cover.return_value = None
+                with patch.object(browser_forms, "finish", new=AsyncMock(return_value={"state": "SUBMISSION_VERIFIED"})):
+                    asyncio.run(browser_forms.finish_douyin_form(page, tx, []))
+                self.assertEqual(ai_generated, "自主声明" in clicks)
+                tx.submit.assert_awaited_once()
 
     def test_browser_evidence_must_match_ordinary_declaration(self):
         self.write(False)

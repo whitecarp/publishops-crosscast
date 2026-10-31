@@ -28,7 +28,7 @@ Meta 官方 API 文件描述 Professional 帳號的內容發布，Facebook Login
 
 ## Bilibili／抖音
 
-B站復用 bili-cli；抖音官方開放平台有應用能力和授權要求，另保留個人帳號網頁路線。可選 SAU 輔助固定版本，只用表單填寫，發布由本工具的單次提交與回執邏輯管理。
+B站復用 bili-cli；抖音官方開放平台有應用能力和授權要求，另保留個人帳號網頁路線。早期版本曾用固定版本的 SAU 輔助填寫表單，現已移除；目前由本工具自己的瀏覽器路線填表、提交一次並保留回執。
 
 來源： [bili-cli](https://github.com/kukemc/bili-cli), [抖音影片發布文件](https://open.douyin.com/platform/resource/docs/openapi/video-management/douyin/create/create-video), [social-auto-upload 固定版本](https://github.com/dreammis/social-auto-upload/tree/3847fff01f5434a8a32829833163cd6723cabc59).
 

@@ -18,7 +18,10 @@ def save(run):
 
 
 def status(run_id):
-    return read_json(path(run_id))
+    target = path(run_id)
+    if not target.exists():
+        raise VpubError('run_missing', 'No saved read-all run has this ID.')
+    return read_json(target)
 
 
 def start(platform, resource, work=None, page_size=50, max_pages=100, collection=None):

@@ -93,49 +93,9 @@ async def run(payload):
                     await context.close()
 
 
-async def session_main():
-    """One authenticated context per CLI transaction; every read still navigates fresh."""
-    from patchright.async_api import async_playwright
-    from .collections_browser import execute
-    first = await asyncio.to_thread(sys.stdin.readline)
-    if not first:
-        return
-    payload = json.loads(first)
-    platform, account = payload['platform'], payload['account']
-    with runtime.profile_lock(platform, account):
-        async with async_playwright() as pw:
-            context = await runtime.open_context(pw, platform, account)
-            try:
-                page, owner = await runtime.signed_in_page(context, platform, payload.get('expected_identity'))
-                while True:
-                    try:
-                        stop_check(platform)
-                        if (payload['platform'], payload['account'], payload['action']) != (platform, account, 'collections'):
-                            raise VpubError('session_scope', 'Session action/account changed.')
-                        runtime.check_identity(owner, payload.get('expected_identity'))
-                        result = await asyncio.wait_for(execute(page, platform, owner, payload), timeout=570)
-                        out = {'ok': True, 'data': result}
-                    except Exception as exc:
-                        out = {'ok': False, 'error': {'code': exc.code if isinstance(exc, VpubError) else 'browser_error',
-                            'message': exc.message if isinstance(exc, VpubError) else 'Browser command failed; verify the original receipt.'}}
-                    print(json.dumps(out, ensure_ascii=False), flush=True)
-                    line = await asyncio.to_thread(sys.stdin.readline)
-                    if not line:
-                        break
-                    payload = json.loads(line)
-            finally:
-                try:
-                    await runtime.save_session(context, platform, account)
-                finally:
-                    await context.close()
-
-
 def main():
     payload = {}
     try:
-        if sys.argv[1:] == ['--session']:
-            asyncio.run(session_main())
-            return
         payload = read_json(sys.argv[2]) if len(sys.argv) == 3 and sys.argv[1] == "--job" else json.loads(sys.stdin.read())
         with contextlib.redirect_stdout(sys.stderr):
             result = asyncio.run(asyncio.wait_for(run(payload), timeout=1800))

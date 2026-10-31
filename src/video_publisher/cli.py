@@ -5,15 +5,30 @@ from copy import deepcopy
 import importlib.util
 import json
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 
 from . import __version__, adapters
 from .core import (Ledger, PLATFORMS, VpubError, account_name, atomic_json,
-                   config, file_sha, home, load_plan, now, publication_lock, read_json, stop_check, platform_check)
+                   config, file_sha, home, load_plan, now, publication_lock, read_json, snapshot_file, stop_check, platform_check)
 
 RISK_CODES = {"risk_control", "captcha_required", "rate_limited"}
+
+
+def snapshot_plan(plan, platform):
+    """Copy what this platform will upload. Anything unverifiable stops here, before a claim exists."""
+    snap = home() / "jobs" / plan["confirmation"]
+
+    def copy(source, name, sha):
+        return str(snapshot_file(source, snap / (name + Path(source).suffix.lower()), sha))
+
+    safe = {**plan, "video": copy(plan["video"], "video", plan["video_sha256"]),
+            "cover": copy(plan["cover"], "cover", plan["cover_sha256"]) if plan.get("cover") else None}
+    if plan.get("covers"):
+        safe["covers"] = deepcopy(plan["covers"])
+        for role, asset in safe["covers"].get(platform, {}).items():
+            asset["path"] = copy(asset["path"], platform + "-" + role, asset["sha256"])
+    return safe
 
 
 def publish_plan(plan, confirm):
@@ -57,22 +72,15 @@ def publish_plan(plan, confirm):
                     continue
                 # Copy the approved bytes so a rendering process cannot mutate
                 # the source while a backend is streaming it.
-                snap = home() / "jobs" / plan["confirmation"]
-                snap.mkdir(parents=True, exist_ok=True)
-                vp = snap / ("video" + Path(plan["video"]).suffix.lower())
-                if not vp.exists():
-                    shutil.copyfile(plan["video"], vp)
-                if file_sha(vp) != plan["video_sha256"]:
-                    raise VpubError("source_changed", "Snapshot differs from the approved video; create a fresh plan.")
-                cp = None
-                if plan.get("cover"):
-                    cp = snap / ("cover" + Path(plan["cover"]).suffix.lower())
-                    if not cp.exists():
-                        shutil.copyfile(plan["cover"], cp)
-                    if file_sha(cp) != plan["cover_sha256"]:
-                        raise VpubError("source_changed", "Cover differs from the approved plan.")
+                try:
+                    safe_plan = snapshot_plan(plan, platform)
+                except (VpubError, OSError) as e:
+                    results[platform] = {"state": "NOT_STARTED", "code": e.code if isinstance(e, VpubError) else "snapshot_failed",
+                                         "message": e.message if isinstance(e, VpubError) else type(e).__name__,
+                                         "hint": "Nothing was uploaded to this platform. Check the files and free disk space, then create a fresh plan."}
+                    continue
                 record = {"plan_hash": plan["confirmation"], "title": opts["title"], "identity": identity,
-                          "options": opts, "approved_plan": plan, "started_at": now()}
+                          "options": opts, "approved_plan": plan, "upload_plan": safe_plan, "started_at": now()}
                 claimed = ledger.claim(platform, account, plan["video_sha256"], record)
                 if not claimed:
                     results[platform] = {"state": "SKIPPED_EXISTING", "key": key}
@@ -83,19 +91,6 @@ def publish_plan(plan, confirm):
                     ledger.save(key, receipt["state"], record)
 
                 try:
-                    safe_plan = {**plan, "video": str(vp), "cover": str(cp) if cp else None}
-                    if plan.get("covers"):
-                        safe_plan["covers"] = deepcopy(plan["covers"])
-                        for role, asset in safe_plan["covers"].get(platform, {}).items():
-                            source = Path(asset["path"])
-                            destination = snap / (platform + "-" + role + source.suffix.lower())
-                            if not destination.exists():
-                                shutil.copyfile(source, destination)
-                            if file_sha(destination) != asset["sha256"]:
-                                raise VpubError("source_changed", "Platform cover snapshot changed.")
-                            asset["path"] = str(destination)
-                    record['upload_plan'] = safe_plan
-                    ledger.save(key, 'IN_PROGRESS', record)
                     receipt = adapters.publish(platform, safe_plan, opts, checkpoint)
                     checkpoint(receipt)
                     if receipt["state"] == "WAITING_FOR_USER":
@@ -104,6 +99,11 @@ def publish_plan(plan, confirm):
                     results[platform] = {"key": key, **receipt}
                 except Exception as e:
                     code = e.code if isinstance(e, VpubError) else "backend_error"
+                    if code == "browser_busy" and not record.get("receipt"):
+                        # The worker was refused the profile lock before it opened a page.
+                        ledger.forget(key)
+                        results[platform] = {"state": "NOT_STARTED", "code": code, "message": e.message, "hint": e.hint}
+                        continue
                     # A durable platform ID always survives a failed read-back.
                     receipt = record.get("receipt", {})
                     durable = home() / "browser-receipts" / (plan["confirmation"] + "-" + platform + ".json")
@@ -305,7 +305,7 @@ def parser():
         q = a.add_parser(action)
         q.add_argument("platform", choices=[*PLATFORMS, "all"])
         q.add_argument("--account", default="default", choices=["default"])
-        q.add_argument("--method", choices=["native", "cli", "browser", "api"], help="Default: bili-cli, YouTube API, or a dedicated persistent browser for Douyin/Instagram/X.")
+        q.add_argument("--method", choices=["native", "cli", "browser", "api"], help="Default: bili-cli; YouTube Studio through an AI assistant, or the API with the paid add-on; a dedicated persistent browser for Douyin/Instagram/X.")
         if action == "login":
             q.add_argument("--client-json", help="YouTube Desktop OAuth client JSON, or app credentials for the paid X/Instagram API add-on; never commit this file.")
             q.add_argument("--manage-playlists", action="store_true", help="Compatibility flag: first YouTube API login now requests upload, read and video/playlist management together.")
@@ -790,9 +790,21 @@ def login_selected(platforms, method=None):
     return results
 
 
+def platform_routes(platform):
+    """What this machine can do now, so an assistant never promises a route that is not installed."""
+    addon = adapters.addon_installed()
+    return {"default_method": adapters.default_method(platform), "native_login": True,
+            "publish_backend": {"bilibili": "bili-cli", "youtube": "official API through the paid add-on" if addon else "AI assistant on YouTube Studio"}.get(platform, "dedicated persistent background browser"),
+            "optional_api_route": ("Installed (method: api)." if addon else "Needs the paid CrossCast API add-on (method: api).") if platform in {"youtube", "x", "instagram"} else None,
+            "standalone_cli_publish": platform != "youtube" or addon,
+            "live_upload_verified": platform in {"youtube", "x", "instagram", "douyin"}}
+
+
 def capabilities():
     from .operations import capabilities as operations_capabilities
     return {"product": "PublishOps CrossCast", "version": __version__,
+            "paid_api_addon": {"installed": adapters.addon_installed(),
+                               "covers": "Every official API feature listed below for YouTube, X and Instagram, including YouTube comments, stats, playlists, edits and resumable uploads in the CLI."},
             "operations":operations_capabilities(),
             "engagement": {"commands":"engage status/collections/like/save/verify; --remove undoes the selected action, --dry-run is optional.",
                 "bilibili":"bili-cli likes and explicit favorite-folder membership; read membership through the pinned upstream helper.",
@@ -820,12 +832,7 @@ def capabilities():
             "playlists": "YouTube playlist list/items/create/update/add/remove/move/delete/verify: ordinary owned playlists, durable request IDs, no write retries; default private creation.",
             "collections": "collection list/items/create/rename/add/remove/delete/verify: Instagram and Douyin support exact-ID membership and collection management; X supports folder CRUD but not named membership. Writes require complete member baselines; pagination is bounded and incomplete pages never prove absence.",
             "draft_only": "Instagram/X: init --draft-only stops CLI before Share/Post. PREVIEW_READY is not a guaranteed persistent draft after closing the browser.",
-            "platforms": {p: {"native_login": True,
-             "publish_backend": {"bilibili": "bili-cli", "youtube": "AI assistant on YouTube Studio; official API with the paid add-on"}.get(p, "dedicated persistent background browser"),
-             "optional_api_route": {"x": "Paid CrossCast API add-on (method: api).",
-                                    "instagram": "Paid CrossCast API add-on (method: api)."}.get(p),
-             "standalone_cli_publish": True,
-            "live_upload_verified": p in {"youtube", "x", "instagram", "douyin"}} for p in PLATFORMS},
+            "platforms": {p: platform_routes(p) for p in PLATFORMS},
             "live_verification_scope": "2026-10-30: source-plus-English YouTube/Instagram corrections and user-accepted v3 shared portrait retained. All five hello reply tests read back; Douyin was repaired through Creator Center and verified with a fresh nested-parent read. Browser evidence differs from API parent-ID verification. Not clean-machine unattended or full-playback acceptance.",
             "native_execution": "The host agent performs real UI actions. A CLI handoff alone is not an executed action or confirmed login.",
             "bili_cli": "Use installed bili directly for its existing search, video, inbox, comment and creator-data commands.",
@@ -834,11 +841,10 @@ def capabilities():
             "resumable_sync": "ops/messages sync use bounded per-platform concurrency, session reuse, durable checkpoints and freshness caches. --workers 1-4; --progress emits body-free JSON to stderr. ops/messages resume skips completed reads; unfinished browser sources restart their page.",
             "upload_recovery": "New YouTube API uploads persist private resumable sessions and acknowledged offsets. resume queries the server and continues the same account/media/metadata; expired or uncertain sessions are not replaced automatically. Never-started YouTube cover/playlist steps resume against the same owned video; uncertain writes are not repeated. Dead-owner lock markers can be reclaimed without clearing receipts. X retains saved Studio asset recovery. Douyin/Instagram pre-submit interruptions still need draft inspection.",
             "full_reads": "read-all start/resume/status: YouTube works, playlists/members and comments including reply pages; Bilibili works/comments via upstream. API checkpoints advance rows and cursor atomically. Browser Douyin/Instagram collections and members, X folder lists follow official controls; explicit server end required. Browser resume replays the page and retains prior rows while incomplete; a complete pass replaces them with current observations. Other DOM feeds and X folder members remain incomplete/unverified.",
-            "collection_speed": "Collection transactions reuse one command-scoped authenticated browser over private process pipes, while fresh navigation/readback remains mandatory. No browser cookie export.",
-            "session_reuse": "Non-publishing browser commands share one background browser per account over a private authenticated local pipe. It exits after 5 idle minutes (browser_idle_seconds; 0 disables), 1 hour, any error or a stop file. Publishing, resume, edit and login close it and run alone. A sent command is never replayed.",
+            "session_reuse": "Non-publishing browser commands share one background browser per account over a private authenticated local pipe. It exits after 5 idle minutes (browser_idle_seconds; 0 disables), 1 hour, any error or a stop file. A second command waits for the first. Publishing, resume, edit and login close it and run alone. A sent command is never replayed.",
             "release_scope": "Frozen closeout of existing functionality; no new feature commitments.",
             "suspended_platforms": {"tiktok": "Login test with a Hong Kong number was unsuccessful; see docs/TIKTOK_STATUS.md."},
-            "not_implemented": "Full historical analytics/inbox, X/Instagram official API clients, and YouTube cards/clickable end screens. Instagram mobile-cover replacement remains user-assisted. Douyin replies to nested replies are not supported.",
+            "not_implemented": "Full historical analytics/inbox, a free background-browser route for YouTube, and YouTube cards/clickable end screens. Instagram mobile-cover replacement remains user-assisted. Douyin replies to nested replies are not supported.",
             "interaction_rule": "Login/setup does not authorize comments, messages, likes or publication."}
 
 
@@ -855,6 +861,15 @@ def main():
         raise SystemExit(0 if ok else 4)
     except VpubError as e:
         print(json.dumps({"ok": False, "error": {"code": e.code, "message": e.message, "hint": e.hint}}, ensure_ascii=False))
+        raise SystemExit(2)
+    except FileNotFoundError as e:
+        print(json.dumps({"ok": False, "error": {"code": "file_not_found", "message": f"File not found: {e.filename}",
+                                                 "hint": "Check the path and run the command again."}}, ensure_ascii=False))
+        raise SystemExit(2)
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        where = f" at line {e.lineno}, column {e.colno}" if isinstance(e, json.JSONDecodeError) else ""
+        print(json.dumps({"ok": False, "error": {"code": "invalid_file", "message": f"A file could not be read as UTF-8 JSON or text{where}.",
+                                                 "hint": "Fix the file and run the command again."}}))
         raise SystemExit(2)
     except (KeyboardInterrupt, Exception) as e:
         # OAuth exceptions may embed tokens/URLs: never serialize their bodies.

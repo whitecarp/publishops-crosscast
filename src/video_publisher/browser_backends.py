@@ -3,12 +3,11 @@ from __future__ import annotations
 
 import asyncio
 import re
-import shutil
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from .core import VpubError, atomic_json, file_sha, home, now, read_json, stop_check
+from .core import VpubError, atomic_json, file_sha, home, now, read_json, snapshot_file, stop_check
 from .browser_runtime import risk_check, unique_visible, visible
 
 MANAGE = "https://creator.douyin.com/creator-micro/content/manage"
@@ -75,7 +74,8 @@ class Transaction:
                         "identity": identity, "title": self.options["title"], "phase": "initial",
                         "video_sha256": plan["video_sha256"], "final_submit_attempted": False,
                         "media_selected": False, "started_at": now()}
-        if resume:
+        # No receipt means this attempt never reached the page, so it can start from the beginning.
+        if resume and self.path.exists():
             saved = read_json(self.path)
             if saved.get('video_sha256') != plan['video_sha256'] or saved.get('identity') != identity:
                 raise VpubError('receipt_conflict', 'Resume must use the same account and media.')
@@ -93,11 +93,7 @@ class Transaction:
     def media(self):
         self.validate_assets()
         src = Path(self.plan["video"])
-        dst = src.with_name("crosscast-" + self.plan["video_sha256"][:16] + src.suffix)
-        if not dst.exists():
-            shutil.copyfile(src, dst)
-        if file_sha(dst) != self.plan["video_sha256"]:
-            raise VpubError("source_changed", "Named upload snapshot differs from the planned video.")
+        dst = snapshot_file(src, src.with_name("crosscast-" + self.plan["video_sha256"][:16] + src.suffix), self.plan["video_sha256"])
         self.save(phase="selecting_media", media_selected=True, upload_filename=dst.name)
         return dst
 

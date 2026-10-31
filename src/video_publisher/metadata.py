@@ -7,7 +7,7 @@ from copy import deepcopy
 from pathlib import Path
 import re
 
-from .core import PLATFORMS, VpubError, atomic_json, digest, load_plan, read_json
+from .core import PLATFORMS, VpubError, atomic_json, digest, load_plan, read_json, title_limit
 
 from .language_policy import TARGETS, route
 
@@ -30,7 +30,7 @@ def request(manifest, source=None, bilingual=(), allow_links=False):
                "source": {"title": value.get("title", ""), "description": value.get("description", ""),
                           "tags": value.get("tags", []), "script_or_transcript": context},
                "targets": {p: {**routes[p],
-                               "title_limit": {"bilibili": 80, "douyin": 30}.get(p, 100),
+                               "title_limit": title_limit(p, platforms[p].get("method")),
                                "description_limit": 1000 if p == "douyin" else 5000 if p == "youtube" else 2000,
                                "chapters": platforms[p].get("chapters", []),
                                **({"category_selection": {"required": True, "current_id": platforms[p].get("category_id")}} if p == "youtube" else {})}

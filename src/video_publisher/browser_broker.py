@@ -31,7 +31,9 @@ IDENTITY_SECONDS = 300
 IDLE_SECONDS = 300
 MAX_LIFETIME_SECONDS = 3600
 CONNECT_SECONDS = 15
-START_SECONDS = 90
+BUSY_SECONDS = 180  # How long a command waits for the one the session is running now.
+START_SECONDS = 150  # Longer than the slowest sign-in check, so a slow start is not mistaken for a failure.
+CLOSING_SECONDS = 10  # A session that just exited may still be closing Chrome and holding the profile lock.
 RELEASE_SECONDS = 30
 
 
@@ -51,6 +53,10 @@ def state_path(platform, account):
     return home() / "browser-brokers" / f"{platform}-{account_name(account)}.json"
 
 
+def failure_path(platform, account):
+    return state_path(platform, account).with_suffix(".failure")
+
+
 def new_address():
     token = secrets.token_hex(16)
     if sys.platform == "win32":
@@ -58,8 +64,27 @@ def new_address():
     return str(home() / "browser-brokers" / f"{token}.sock")
 
 
-def connect(platform, account):
-    """Return a connection, or None when no usable session answers in time."""
+def busy_error():
+    return VpubError("browser_busy", "This platform's login or browser command is already running.",
+                     "Wait for the active command; do not clear its lock.")
+
+
+def wait_for_lock(platform, account, seconds):
+    """Return True once nothing holds the profile lock, or False if something still does after the wait."""
+    from .browser_runtime import profile_lock
+    deadline = time.monotonic() + seconds
+    while True:
+        try:
+            with profile_lock(platform, account):
+                return True
+        except VpubError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.2)
+
+
+def connect(platform, account, wait=None):
+    """Return a connection, or None when no session is there. A session that stays busy raises browser_busy."""
     path = state_path(platform, account)
     if not path.exists():
         return None
@@ -79,31 +104,42 @@ def connect(platform, account):
     # The thread is a daemon because a blocked handshake must not stop the CLI from exiting.
     Thread(target=attempt, daemon=True).start()
     try:
-        return results.get(timeout=CONNECT_SECONDS)
+        return results.get(timeout=CONNECT_SECONDS if wait is None else wait)
     except Empty:
-        return None
+        raise busy_error() from None
 
 
 def start(platform, account):
     flags = {"start_new_session": True}
     if sys.platform == "win32":
         flags = {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP}
-    subprocess.Popen([sys.executable, "-m", "video_publisher.browser_broker", platform, account],
-                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     env=dict(os.environ, PYTHONIOENCODING="utf-8"), **flags)
+    return subprocess.Popen([sys.executable, "-m", "video_publisher.browser_broker", platform, account],
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            env=dict(os.environ, PYTHONIOENCODING="utf-8"), **flags)
 
 
 def call(payload, timeout):
     """Run one command in the shared session. None means nothing was sent: use a one-shot worker."""
     platform, account = payload["platform"], payload["account"]
-    conn = connect(platform, account)
+    # A busy session still owns the profile, so wait for it; a second session could never start.
+    conn = connect(platform, account, BUSY_SECONDS)
     if conn is None:
         state_path(platform, account).unlink(missing_ok=True)
-        start(platform, account)
+        failure = failure_path(platform, account)
+        failure.unlink(missing_ok=True)
+        if not wait_for_lock(platform, account, CLOSING_SECONDS):
+            raise busy_error()
+        process = start(platform, account)
         deadline = time.monotonic() + START_SECONDS
         while conn is None and time.monotonic() < deadline:
+            if process.poll() is not None:
+                # Its startup error is the answer; a one-shot worker would only repeat the sign-in check.
+                if failure.exists():
+                    error = read_json(failure)
+                    raise VpubError(error["code"], error["message"], error.get("hint", ""))
+                return None
             time.sleep(0.2)
-            conn = connect(platform, account)
+            conn = connect(platform, account, BUSY_SECONDS)
     if conn is None:
         return None
     # From here on the command may have reached the platform, so failures never fall back or retry.
@@ -127,7 +163,10 @@ def release(platform, account):
     path = state_path(platform, account)
     if not path.exists():
         return
-    conn = connect(platform, account)
+    try:
+        conn = connect(platform, account, BUSY_SECONDS)
+    except VpubError:
+        conn = None  # Still busy: the lock wait below decides, and the next worker reports browser_busy.
     if conn is not None:
         try:
             conn.send_bytes(b'{"control": "shutdown"}')
@@ -136,14 +175,7 @@ def release(platform, account):
             pass
         finally:
             conn.close()
-    from .browser_runtime import profile_lock
-    deadline = time.monotonic() + RELEASE_SECONDS
-    while time.monotonic() < deadline:
-        try:
-            with profile_lock(platform, account):
-                return
-        except VpubError:
-            time.sleep(0.2)
+    wait_for_lock(platform, account, RELEASE_SECONDS)
 
 
 def accept_later(listener):
@@ -215,6 +247,8 @@ async def serve(listener, handle, platform, *, idle=None, lifetime=MAX_LIFETIME_
         finally:
             conn.close()
         last = time.monotonic()
+        if last - started >= lifetime:
+            return "idle"
 
 
 async def run(platform, account):
@@ -270,11 +304,14 @@ async def run(platform, account):
 
 
 def main():
+    platform, account = sys.argv[1], sys.argv[2]
     try:
-        asyncio.run(run(sys.argv[1], sys.argv[2]))
+        asyncio.run(run(platform, account))
+    except VpubError as exc:
+        # run() removes only its own state file; a session that won the lock keeps running.
+        atomic_json(failure_path(platform, account), {"code": exc.code, "message": exc.message, "hint": exc.hint})
     except Exception:
-        # The client falls back to a one-shot worker, which reports the real error.
-        state_path(sys.argv[1], sys.argv[2]).unlink(missing_ok=True)
+        pass  # The client falls back to a one-shot worker, which reports the real error.
 
 
 if __name__ == "__main__":

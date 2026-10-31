@@ -4,7 +4,6 @@ from pathlib import Path
 from . import adapters
 from .core import VpubError, atomic_json, digest, home, now, publication_lock, read_json, stop_check
 from .direct_messages import identity
-from .browser_session import reuse
 
 PLATFORMS = ('instagram', 'x', 'douyin')
 
@@ -92,7 +91,7 @@ def change(platform, action, collection=None, title=None, request_id=None, cover
         intent.update(cover_sha256=file_sha(path),description=description or '')
     elif cover is not None or description is not None:
         raise VpubError('invalid_options','Cover and description are only accepted when creating a Douyin collection.')
-    with publication_lock(), reuse(platform):
+    with publication_lock():
         owner=identity(platform);key=digest([platform,owner,request_id]);path=receipt_path(key)
         if path.exists():
             r=read_json(path)
@@ -150,7 +149,7 @@ def membership(platform, action, collection, work, request_id):
     if platform not in {'douyin','instagram'}:raise VpubError('unverified_feature','Named-folder membership is not yet accepted on this platform.')
     if not request_id or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',request_id):raise VpubError('request_id_required','Use a stable --request-id.')
     intent={'action':action,'collection':collection,'work':work}
-    with publication_lock(), reuse(platform):
+    with publication_lock():
         owner=identity(platform);key=digest([platform,owner,request_id]);path=receipt_path(key)
         if path.exists():
             r=read_json(path)

@@ -3,13 +3,15 @@ import asyncio
 from multiprocessing.connection import Client, Listener
 import os
 from pathlib import Path
+import sys
 import tempfile
-from threading import Thread
+from threading import Event, Thread
 import time
 import unittest
 from unittest.mock import patch
 
 from video_publisher import adapters, browser_broker as broker
+from video_publisher.browser_runtime import profile_lock
 from video_publisher.core import VpubError, atomic_json, home
 
 
@@ -31,12 +33,15 @@ class Server:
                 self.exit = asyncio.run(self.guard(handler, platform, options))
             except Exception as exc:
                 self.error = exc
+            finally:  # What the real process does by exiting.
+                self.path.unlink(missing_ok=True)
+                self.listener.close()
 
         self.thread = Thread(target=main, daemon=True)
         self.thread.start()
 
     async def guard(self, handler, platform, options):
-        return await broker.serve(self.listener, handler, platform, poll_seconds=0.05, **{"idle": 30, **options})
+        return await broker.serve(self.listener, handler, platform, **{"idle": 30, "poll_seconds": 0.05, **options})
 
     def wait(self):
         self.thread.join(10)
@@ -158,6 +163,96 @@ class BrokerTests(unittest.TestCase):
     def test_writes_do_not_trust_a_cached_identity(self):
         for action in ("engagement", "comment_management", "direct_messages", "verify", "status", "adopt_work", "collections", "operations"):
             self.assertNotIn(action, broker.CACHED_IDENTITY)
+
+    def test_busy_session_keeps_its_state_and_a_later_command_can_still_reach_it(self):
+        free = Event()
+
+        async def slow(payload):
+            self.seen.append(payload)
+            await asyncio.to_thread(free.wait, 10)
+            return {"n": len(self.seen)}
+
+        server = Server(slow)
+        first = Thread(target=broker.call, args=(self.payload(), 15), daemon=True)
+        first.start()
+        while not self.seen:
+            time.sleep(0.01)
+        with patch.object(broker, "CONNECT_SECONDS", 0.2), patch.object(broker, "BUSY_SECONDS", 0.2, create=True), \
+                patch.object(broker, "START_SECONDS", 0.3), patch.object(broker, "start") as start:
+            with self.assertRaises(VpubError) as e:
+                broker.call(self.payload(), 5)
+        self.assertEqual("browser_busy", e.exception.code)
+        start.assert_not_called()
+        self.assertTrue(server.path.exists())
+        free.set()
+        first.join(10)
+        self.assertEqual(2, broker.call(self.payload(), 15)["n"])
+        broker.release("x", "default")
+        server.wait()
+
+    def test_losing_the_lock_race_leaves_the_winners_state_file_alone(self):
+        path = broker.state_path("x", "default")
+        atomic_json(path, {"address": broker.new_address(), "key": "00", "pid": os.getpid()})
+
+        async def lost(platform, account):
+            raise VpubError("browser_busy", "Another command owns this profile.")
+
+        with patch.object(broker, "run", lost), patch.object(sys, "argv", ["broker", "x", "default"]):
+            broker.main()
+        self.assertTrue(path.exists())
+
+    def test_startup_failure_is_reported_at_once_without_a_second_sign_in(self):
+        def fail_to_start(platform, account):
+            atomic_json(broker.failure_path(platform, account), {"code": "auth_expired", "message": "Sign in again.", "hint": "Run login."})
+            return type("Done", (), {"poll": lambda self: 1})()
+
+        started = time.monotonic()
+        with patch.object(broker, "start", fail_to_start), patch.object(adapters.subprocess, "run") as one_shot:
+            with self.assertRaises(VpubError) as e:
+                adapters.browser_call("x", "operations", "default")
+        self.assertEqual("auth_expired", e.exception.code)
+        self.assertEqual("Run login.", e.exception.hint)
+        self.assertLess(time.monotonic() - started, 5)
+        one_shot.assert_not_called()
+
+    def test_new_session_waits_for_one_that_is_still_closing(self):
+        lock = Event()
+
+        def hold():
+            with profile_lock("x", "default"):
+                lock.set()
+                time.sleep(0.5)
+
+        holder = Thread(target=hold, daemon=True)
+        holder.start()
+        lock.wait(5)
+        with patch.object(broker, "start", return_value=type("Done", (), {"poll": lambda self: 1})()) as start:
+            self.assertIsNone(broker.call(self.payload(), 5))
+        start.assert_called_once()
+        holder.join(5)
+
+    def test_profile_held_by_another_command_reports_busy_without_starting_a_session(self):
+        with profile_lock("x", "default"), patch.object(broker, "CLOSING_SECONDS", 0.2), patch.object(broker, "start") as start:
+            with self.assertRaises(VpubError) as e:
+                broker.call(self.payload(), 5)
+        self.assertEqual("browser_busy", e.exception.code)
+        start.assert_not_called()
+
+    def test_broker_crash_falls_back_at_once(self):
+        started = time.monotonic()
+        with patch.object(broker, "start", return_value=type("Done", (), {"poll": lambda self: 1})()):
+            self.assertIsNone(broker.call(self.payload(), 5))
+        self.assertLess(time.monotonic() - started, 5)
+
+    def test_lifetime_limit_also_applies_while_commands_keep_arriving(self):
+        async def outlast(payload):
+            await asyncio.sleep(0.4)
+            return {}
+
+        server = Server(outlast, lifetime=0.3, poll_seconds=30)
+        self.assertEqual({}, broker.call(self.payload(), 5))
+        server.wait()
+        self.assertEqual("idle", server.exit)
 
 
 if __name__ == "__main__":

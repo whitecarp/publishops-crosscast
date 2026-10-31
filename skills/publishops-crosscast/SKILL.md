@@ -23,7 +23,7 @@ Use the installed `vpub` CLI. Read `vpub --help`, `vpub capabilities`, and the r
 
 ## Recovery and complete reads
 
-With the paid add-on, use `resume KEY` for new YouTube API upload sessions; never recreate an uncertain upload. Use `read-all start/resume/status` for supported API lists and official collection pagination. Preserve partial checkpoints, distinguish explicit end proof from a stalled page, and retain bounded-history limits on other browser feeds. Browser collection transactions reuse a command-scoped context; do not start a second process on the same profile.
+With the paid add-on, use `resume KEY` for new YouTube API upload sessions; never recreate an uncertain upload. Use `read-all start/resume/status` for supported API lists and official collection pagination. Preserve partial checkpoints, distinguish explicit end proof from a stalled page, and retain bounded-history limits on other browser feeds. Browser commands share one background session per account, and a second command waits for the first; do not start a second process on the same profile.
 
 `resume` may complete never-started YouTube cover/playlist steps for the original video; uncertain writes remain verification-only. Partial browser replays retain prior rows until a complete fresh pass. Kernel locks release on exit, but marker cleanup requires a confirmed dead owner; do not remove active/unknown locks or browser data. Keep this closeout within existing functionality and documented platform limits, without adding a new feature backlog.
 

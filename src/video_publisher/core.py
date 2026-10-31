@@ -7,12 +7,12 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import sqlite3
 import tempfile
 from datetime import datetime, timezone
 
 PLATFORMS = ("bilibili", "youtube", "douyin", "instagram", "x")
-SAU_COMMIT = "3847fff01f5434a8a32829833163cd6723cabc59"
 
 
 class VpubError(Exception):
@@ -66,6 +66,25 @@ def file_sha(path):
     return h.hexdigest()
 
 
+def snapshot_file(source, target, sha):
+    """Give target exactly the approved bytes; a cut-off copy never looks like a changed source."""
+    target = Path(target)
+    if target.exists() and file_sha(target) == sha:
+        return target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=".vpub-", dir=target.parent)
+    os.close(fd)
+    try:
+        shutil.copyfile(source, name)
+        if file_sha(name) != sha:
+            raise VpubError("source_changed", "A file differs from the approved plan; create a fresh plan.")
+        os.replace(name, target)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+    return target
+
+
 def account_name(value):
     if not isinstance(value, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,40}", value):
         raise VpubError("invalid_account", "Account alias must be 1–40 letters, digits, _ or -.")
@@ -97,6 +116,17 @@ def x_post_text(title, description, tags, ai_generated, content_language="und"):
     if ai_generated:
         parts.append({"zh-hans": "AI 生成内容 / AI-generated", "zh-hant": "AI 生成內容 / AI-generated"}.get(content_language.lower(), "AI-generated"))
     return "\n\n".join(p for p in parts if p)
+
+
+def title_limit(platform, method=None):
+    # X browser publishing goes through Media Studio, whose own title field stops at 70.
+    if platform == "x" and (method or "browser") == "browser":
+        return 70
+    return {"bilibili": 80, "youtube": 100, "douyin": 30, "x": 100, "instagram": 100}[platform]
+
+
+def douyin_caption(description, tags):
+    return "\n\n".join(p for p in (description, " ".join("#" + t.lstrip("#") for t in tags)) if p)
 
 
 def stop_check(platform=None):
@@ -189,7 +219,7 @@ def load_plan(path, selected=None):
         title = v.get("title", m.get("title", ""))
         desc = v.get("description", m.get("description", ""))
         tags = v.get("tags", m.get("tags", []))
-        limit = {"bilibili": 80, "youtube": 100, "douyin": 30, "x": 100, "instagram": 100}[platform]
+        limit = title_limit(platform, v.get("method"))
         if not isinstance(title, str) or not title.strip() or len(title) > limit or any(c in title for c in "\r\n\x00"):
             raise VpubError("invalid_title", f"{platform} title must contain 1–{limit} characters, one line.")
         if not isinstance(desc, str) or "\x00" in desc or len(desc) > (2000 if platform != "youtube" else 5000):
@@ -202,6 +232,8 @@ def load_plan(path, selected=None):
             raise VpubError("invalid_tags", "Bilibili requires 1–10 tags.")
         if platform == "youtube" and sum(len(t) + 1 for t in tags) > 500:
             raise VpubError("invalid_tags", "YouTube tags exceed the 500-character budget.")
+        if platform == "douyin" and len(douyin_caption(desc, tags).encode("utf-16-le")) // 2 > 1000:
+            raise VpubError("invalid_description", "Douyin description plus hashtags exceeds 1000 UTF-16 units.")
         visibility = v.get("visibility")
         supported = {"bilibili": {"public", "private"}, "youtube": {"public", "private", "unlisted"}, "douyin": {"public", "private"},
                      "x": {"account"}, "instagram": {"account"}}
@@ -250,8 +282,8 @@ def load_plan(path, selected=None):
             if any(not re.fullmatch(r"#?\w+", t) for t in tags):
                 raise VpubError("invalid_tags", "Caption hashtags must contain only letters, digits or underscores, without spaces.")
             plans[platform]["post_text"] = x_post_text(title, desc, tags, v["ai_generated"], plans[platform].get("metadata_language", plans[platform]["content_language"]))
-            if platform == "instagram" and v.get("method") == "api" and len(plans[platform]["post_text"]) > 2200:
-                raise VpubError("invalid_description", "Instagram API captions are limited to 2200 characters.")
+            if platform == "instagram" and len(plans[platform]["post_text"]) > 2200:
+                raise VpubError("invalid_description", "Instagram captions are limited to 2200 characters.")
             # The actual website counter (URL/emoji/CJK weights, account plan)
             # is authoritative. Never silently truncate or assume Premium.
         if platform == "bilibili":
@@ -322,6 +354,11 @@ class Ledger:
     def save(self, key, state, data):
         self.db.execute("UPDATE publications SET state=?,data=?,updated_at=? WHERE key=?",
                         (state, json.dumps(data, ensure_ascii=False), now(), key))
+        self.db.commit()
+
+    def forget(self, key):
+        """Release a claim only when nothing can have reached the platform."""
+        self.db.execute("DELETE FROM publications WHERE key=? AND state='IN_PROGRESS'", (key,))
         self.db.commit()
 
     def close(self):

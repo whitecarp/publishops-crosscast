@@ -3,7 +3,7 @@ import sys
 import unittest
 from unittest.mock import patch
 
-from video_publisher import adapters
+from video_publisher import adapters, cli
 from video_publisher.core import VpubError
 
 
@@ -33,6 +33,20 @@ class PaidHookTests(unittest.TestCase):
                 self.assertEqual("paid_route_required", e.exception.code)
         with patch.object(adapters.importlib.util, "find_spec", return_value=object()):
             self.assertEqual("api", adapters.default_method("youtube"))
+
+    def test_capabilities_follow_what_is_installed(self):
+        with patch.object(adapters.importlib.util, "find_spec", return_value=None):
+            free = cli.capabilities()
+        self.assertFalse(free["paid_api_addon"]["installed"])
+        self.assertFalse(free["platforms"]["youtube"]["standalone_cli_publish"])
+        self.assertEqual("native", free["platforms"]["youtube"]["default_method"])
+        self.assertTrue(free["platforms"]["x"]["standalone_cli_publish"])
+        self.assertNotIn("X/Instagram official API", free["not_implemented"])
+        with patch.object(adapters.importlib.util, "find_spec", return_value=object()):
+            paid = cli.capabilities()
+        self.assertTrue(paid["paid_api_addon"]["installed"])
+        self.assertTrue(paid["platforms"]["youtube"]["standalone_cli_publish"])
+        self.assertEqual("api", paid["platforms"]["youtube"]["default_method"])
 
 
 if __name__ == "__main__":
