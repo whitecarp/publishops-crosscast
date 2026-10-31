@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.15.1%20alpha-f59e0b" alt="版本 0.15.1 alpha">
+  <img src="https://img.shields.io/badge/version-0.16.0%20alpha-f59e0b" alt="版本 0.16.0 alpha">
   <img src="https://img.shields.io/badge/python-3.10%E2%80%933.12-3776ab" alt="Python 3.10–3.12">
   <img src="https://img.shields.io/badge/Windows-%E5%B7%B2%E5%AF%A6%E6%B8%AC-555" alt="Windows 已實測">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-17213a" alt="MIT 授權"></a>
@@ -31,7 +31,7 @@
 </p>
 
 > [!IMPORTANT]
-> **0.15.1 alpha。** YouTube、抖音、Instagram、X 都已真實發布並讀回過，B站也用 bili-cli 上傳並核驗過，詳見[驗證記錄](docs/VALIDATION.md)。它仍是 alpha：登入會過期，平台也可能臨時要求驗證，長時間無人值守還沒驗收。
+> **0.16.0 alpha。** YouTube、抖音、Instagram、X 都已真實發布並讀回過，B站也用 bili-cli 上傳並核驗過，詳見[驗證記錄](docs/VALIDATION.md)。它仍是 alpha：登入會過期，平台也可能臨時要求驗證，長時間無人值守還沒驗收。
 
 ## 🚀 一句話開始
 
@@ -46,7 +46,7 @@
 **開始前準備好這幾樣：**
 
 - **B站**：用 B站 App 掃碼登入一次（透過 bili-cli）。
-- **YouTube**：只能走官方 API。在 Google Cloud 啟用 YouTube Data API v3，建立一個「桌面應用程式」OAuth 用戶端，把下載的 JSON 交給 AI 助手。
+- **YouTube**：免費發布透過專用 Chrome 在背景操作 YouTube Studio，只有登入或 Google 要求驗證時才會看到瀏覽器。用 CLI 走官方 API 需要付費的 API 附加元件，以及你自己的 Google 桌面 OAuth 用戶端。
 - **抖音、Instagram、X**：第一次會開啟 CrossCast 專用的官方 Chrome 視窗，由你自己掃碼或輸入密碼、驗證碼；之後 CLI 在背景沿用這個登入。
 - **X**：只能用 Media Studio 發布，帳號必須已訂閱並能進入 Media Studio。
 - **電腦上要有 Google Chrome**：沒有的話，執行 `vpub setup --install-browser` 安裝。
@@ -96,11 +96,11 @@ B站、抖音用簡體中文，YouTube、Instagram、X 用英文。影片本身�
 
 ### 📮 登入一次，之後背景發布
 
-首次登入之後，CLI 自己完成上傳：B站走 bili-cli，YouTube 走官方 API，抖音、Instagram、X 由 CLI 在背景操作專用的 Chrome。B站和 YouTube 也支援排程發布。
+首次登入之後，CLI 自己完成上傳：B站走 bili-cli，YouTube、抖音、Instagram、X 由 CLI 在背景操作專用的 Chrome。YouTube、X 和 Instagram 的官方 API 路徑需要付費附加元件。B站支援排程發布，YouTube 用付費附加元件也可以。
 
 ### 🔁 中斷了也能接著做
 
-上傳途中斷線，`vpub resume` 接著原本的任務繼續：YouTube 從同一個上傳工作階段續傳，X 接著已經存好的 Studio 素材。結果不明的提交不會自動再按一次。
+上傳途中斷線，`vpub resume` 接著原本的任務繼續：X 接著已經存好的 Studio 素材，YouTube 用付費附加元件時從同一個上傳工作階段續傳。YouTube 免費路徑不會重新上傳，已上傳的內容留在 Studio 裡作為草稿。結果不明的提交不會自動再按一次。`vpub status` 只讀本機記錄，列出沒做完的事和下一步的確切指令；`vpub cleanup` 可釋放已發布影片副本佔用的磁碟空間。
 
 ### 🔍 每一步都有回執
 
@@ -127,7 +127,7 @@ B站、抖音用簡體中文，YouTube、Instagram、X 用英文。影片本身�
 | 平台 | 登入 | 發布方式 | 實測記錄 |
 | --- | --- | --- | --- |
 | **Bilibili** | B站 App 掃碼（bili-cli） | bili-cli，可排程發布 | ✅ bili-cli |
-| **YouTube** | Google 桌面 OAuth 用戶端 | 只能走官方 API，可排程發布 | ✅ API |
+| **YouTube** | 免費：在專用 Chrome 裡登入一次。付費附加元件：Google 桌面 OAuth 用戶端 | 免費：背景 Chrome 操作 YouTube Studio。付費附加元件：官方 API，可排程發布 | ✅ API 和免費路徑 |
 | **抖音** | 專用官方 Chrome | CLI 背景瀏覽器 | ✅ 已發布 |
 | **Instagram** | 專用官方 Chrome | CLI 背景瀏覽器，封面在手機上改 | ✅ 已發布 |
 | **X** | 專用官方 Chrome | 只能用 Media Studio（需訂閱） | ✅ 已發布 |
@@ -137,11 +137,11 @@ B站、抖音用簡體中文，YouTube、Instagram、X 用英文。影片本身�
 
 **發布前需要知道**
 
-- **YouTube**：只能走官方 API。專案還在測試模式時，要先把登入用的帳號加進「測試使用者」；依 Google 的規定，2020 年 7 月 28 日之後建立、又沒通過審查的 API 專案，上傳的影片會被鎖定為私人。
+- **YouTube**：官方 API 路徑，包括 CLI 上的 YouTube 留言、數據、播放清單和編輯，都需要付費的 API 附加元件。免費的背景路徑立即發布，暫不支援播放清單和排程發布。專案還在測試模式時，要先把登入用的帳號加進「測試使用者」；依 Google 的規定，2020 年 7 月 28 日之後建立、又沒通過審查的 API 專案，上傳的影片會被鎖定為私人。
 - **X**：只能用 Media Studio。帳號必須已訂閱並能進入 Media Studio；未訂閱帳號的影片上限是 140 秒、512 MB，本工具不支援。
 - **Instagram**：影片保留原比例；封面必須在手機上改：開啟作品的「編輯封面 → 從相機膠卷新增」，選和抖音共用的那張直式圖，再看一下個人檔案格狀版面的裁切。
 - **抖音**：長時間維持登入的穩定性還在驗收；網頁上傳中斷後不能續傳，要先檢查既有的草稿。
-- **還沒有的**：TikTok（暫停）、YouTube 資訊卡和可點擊片尾、X 和 Instagram 的官方 API、自動或大量私訊與按讚、完整歷史匯出。
+- **還沒有的**：TikTok（暫停）、YouTube 資訊卡和可點擊片尾、自動或大量私訊與按讚、完整歷史匯出。
 
 ## 🔒 安全護欄
 
@@ -186,7 +186,8 @@ vpub onboard --platforms bilibili,douyin,youtube
 **登入各平台**
 
 ```sh
-vpub auth login youtube --method api --client-json /path/to/client.json
+vpub auth login youtube --method browser
+vpub auth login youtube --method api --client-json /path/to/client.json  # 付費 API 附加元件，用它代替上一行
 vpub auth login douyin
 vpub auth login instagram
 vpub auth login x
@@ -230,9 +231,9 @@ vpub verify RECEIPT_KEY
 </details>
 
 <details>
-<summary><b>為什麼 YouTube 一定要設定 OAuth 用戶端？</b></summary>
+<summary><b>YouTube 一定要設定 OAuth 用戶端嗎？</b></summary>
 
-YouTube 只能走官方 API 發布，而 API 金鑰本身不能授權上傳，必須用「桌面應用程式」OAuth 用戶端在 Google 頁面授權一次。授權在你自己的電腦上完成，權杖只留在本機。
+只有付費的 API 路徑需要：API 金鑰本身不能授權上傳，必須用「桌面應用程式」OAuth 用戶端在 Google 頁面授權一次。免費路徑由背景 Chrome 在 YouTube Studio 上發布，不需要 OAuth 用戶端。授權在你自己的電腦上完成，權杖只留在本機。
 
 </details>
 
@@ -281,4 +282,4 @@ YouTube 只能走官方 API 發布，而 API 金鑰本身不能授權上傳，�
 | 🌐 [線上介紹](https://whitecarp.github.io/publishops-crosscast/?lang=zh-TW) | 專案概覽頁 |
 | 🐞 [回報問題](https://github.com/whitecarp/publishops-crosscast/issues) | 問題回饋（請先移除帳號與私密資訊） |
 
-來源鳴謝：[agentic-work-lab](https://github.com/whitecarp/agentic-work-lab)（開發來源）· [bili-cli](https://github.com/kukemc/bili-cli)（Bilibili 上游工具）。第三方授權詳見 [NOTICE](NOTICE.md)。CrossCast 以 [MIT 授權](LICENSE) 發布，是獨立整合工具，並非任何影音平台的官方產品。
+來源鳴謝：[agentic-work-lab](https://github.com/whitecarp/agentic-work-lab)（開發來源）· [bili-cli](https://github.com/kukemc/bili-cli)（Bilibili 功能，其程式碼已包含在內）。第三方授權詳見 [NOTICE](NOTICE.md)。CrossCast 以 [MIT 授權](LICENSE) 發布，是獨立整合工具，並非任何影音平台的官方產品。

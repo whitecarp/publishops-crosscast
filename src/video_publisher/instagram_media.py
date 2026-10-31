@@ -1,7 +1,7 @@
 """Prepare Instagram handoff without editing video; reuse Douyin portrait artwork."""
 from copy import deepcopy
 from pathlib import Path
-from .core import VpubError, atomic_json, digest, file_sha, load_plan, read_json
+from .core import VpubError, atomic_json, digest, file_sha, load_plan, read_json, shared_portrait
 
 
 def prepare(manifest, output, mobile_cover=None):
@@ -12,7 +12,7 @@ def prepare(manifest, output, mobile_cover=None):
     plan = load_plan(manifest, ["instagram"])
     video = Path(plan["video"])
     variants = source.get("covers", {})
-    portrait = mobile_cover or variants.get("douyin", {}).get("portrait") or variants.get("instagram", {}).get("portrait")
+    portrait = mobile_cover or shared_portrait(variants)
     if portrait:
         portrait = Path(portrait) if mobile_cover else manifest.parent / portrait
         portrait = portrait.resolve()

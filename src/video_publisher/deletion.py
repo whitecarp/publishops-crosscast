@@ -2,10 +2,8 @@
 from copy import deepcopy
 from pathlib import Path
 import re
-import shutil
 
-from .core import (Ledger, VpubError, atomic_json, file_sha, home, load_plan,
-                   now, publication_lock, read_json, stop_check)
+from .core import Ledger, VpubError, home, load_plan, now, publication_lock, read_json, snapshot_file, stop_check
 from . import native_browser
 
 
@@ -90,15 +88,9 @@ def repost(key, manifest, confirmation, identity, deleted_id):
                 raise VpubError('repost_scope_changed', 'This cover-replacement operation preserves video bytes, account, metadata, audience and declarations.')
             generation = len(data.get('deleted_generations', [])) + 1
             snap = home() / 'jobs' / f"{plan['confirmation']}-repost-{generation}"
-            snap.mkdir(parents=True, exist_ok=True)
             safe = deepcopy(plan)
             def copy_asset(source, sha, name):
-                target = snap / (name + Path(source).suffix.lower())
-                if not target.exists():
-                    shutil.copyfile(source, target)
-                if file_sha(target) != sha:
-                    raise VpubError('source_changed', 'Replacement snapshot differs from the confirmed plan.')
-                return str(target)
+                return str(snapshot_file(source, snap / (name + Path(source).suffix.lower()), sha))
             safe['video'] = copy_asset(plan['video'], plan['video_sha256'], 'video')
             if plan.get('cover'):
                 safe['cover'] = copy_asset(plan['cover'], plan['cover_sha256'], 'cover')

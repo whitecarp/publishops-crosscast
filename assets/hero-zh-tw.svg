@@ -19,7 +19,7 @@
     <rect x="56" y="372" width="504" height="84" rx="16" fill="#ffffff" fill-opacity="0.06" stroke="#ffffff" stroke-opacity="0.16"/>
     <text x="76" y="402" font-size="14" font-weight="600" fill="#8e9ab3">你對 AI 助手說</text>
     <text x="76" y="434" font-size="20" font-weight="700" fill="#eef2f8">「把 final.mp4 公開發到這五個平台。」</text>
-    <text x="56" y="504" font-size="15" fill="#8e9ab3">0.15.1 alpha：首次登入後，CLI 在背景逐一到各平台提交</text>
+    <text x="56" y="504" font-size="15" fill="#8e9ab3">0.16.0 alpha：首次登入後，CLI 在背景逐一到各平台提交</text>
     <g clip-path="url(#card)">
       <rect x="620" y="56" width="524" height="448" fill="#ffffff"/>
       <rect x="620" y="444" width="524" height="60" fill="#eef1f6"/>

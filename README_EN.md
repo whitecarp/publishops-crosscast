@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.15.1%20alpha-f59e0b" alt="Version 0.15.1 alpha">
+  <img src="https://img.shields.io/badge/version-0.16.0%20alpha-f59e0b" alt="Version 0.16.0 alpha">
   <img src="https://img.shields.io/badge/python-3.10%E2%80%933.12-3776ab" alt="Python 3.10–3.12">
   <img src="https://img.shields.io/badge/Windows-tested-555" alt="Windows tested">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-17213a" alt="MIT License"></a>
@@ -31,7 +31,7 @@
 </p>
 
 > [!IMPORTANT]
-> **0.15.1 alpha.** YouTube, Douyin, Instagram and X have all been published for real and read back, and Bilibili has been uploaded and verified with bili-cli; see the [validation record](docs/VALIDATION_EN.md). It is still alpha: sign-ins expire, platforms may ask for verification at any time, and long unattended runs have not been validated.
+> **0.16.0 alpha.** YouTube, Douyin, Instagram and X have all been published for real and read back, and Bilibili has been uploaded and verified with bili-cli; see the [validation record](docs/VALIDATION_EN.md). It is still alpha: sign-ins expire, platforms may ask for verification at any time, and long unattended runs have not been validated.
 
 ## 🚀 Start with one message
 
@@ -46,7 +46,7 @@ Publish final.mp4 publicly to Bilibili, YouTube, Douyin, Instagram, and X, with 
 **Have these ready before you start:**
 
 - **Bilibili**: scan a QR code once with the Bilibili app (through bili-cli).
-- **YouTube**: the official API is the only route. Enable YouTube Data API v3 in Google Cloud, create a "Desktop app" OAuth client, and give the downloaded JSON to your AI assistant.
+- **YouTube**: free publishing uses YouTube Studio in a dedicated Chrome that runs in the background; you only see it to sign in or pass a Google check. CLI publishing through the official API needs the paid API add-on and your own Google desktop OAuth client.
 - **Douyin, Instagram and X**: the first sign-in opens CrossCast's own official Chrome window, where you scan a QR code or enter your password and verification code yourself; after that, the CLI reuses the sign-in in the background.
 - **X**: publishing works only through Media Studio, so the account must be subscribed and able to open Media Studio.
 - **Google Chrome on your computer**: if it's missing, run `vpub setup --install-browser`.
@@ -96,11 +96,11 @@ Every release starts with a plan that spells out platforms, accounts, visibility
 
 ### 📮 Sign in once, then publish in the background
 
-After the first sign-in, the CLI does the uploading itself: Bilibili through bili-cli, YouTube through the official API, and Douyin, Instagram and X through a dedicated Chrome the CLI runs in the background. Bilibili and YouTube can also schedule.
+After the first sign-in, the CLI does the uploading itself: Bilibili through bili-cli, and YouTube, Douyin, Instagram and X through a dedicated Chrome the CLI runs in the background. The official API routes for YouTube, X and Instagram need the paid add-on. Bilibili can schedule, and YouTube can with the paid add-on.
 
 ### 🔁 Pick up where it stopped
 
-If an upload is interrupted, `vpub resume` continues the original task: YouTube resumes the same upload session, and X continues from the Studio media it already saved. A submission with an unclear result is never clicked again automatically.
+If an upload is interrupted, `vpub resume` continues the original task: X continues from the Studio media it already saved, and YouTube resumes the same upload session with the paid add-on. YouTube's free route never uploads again; what was uploaded stays in Studio as a draft. A submission with an unclear result is never clicked again automatically. `vpub status` lists what is unfinished with the exact next command, using local records only, and `vpub cleanup` frees the disk space taken by copies of finished videos.
 
 ### 🔍 A receipt for every step
 
@@ -127,7 +127,7 @@ When a platform needs you to scan a QR code or verify, CrossCast can email you a
 | Platform | Sign-in | Publishing route | Tested |
 | --- | --- | --- | --- |
 | **Bilibili** | Bilibili app QR code (bili-cli) | bili-cli, can schedule | ✅&nbsp;bili-cli |
-| **YouTube** | Google desktop OAuth client | Official API only, can schedule | ✅&nbsp;API |
+| **YouTube** | Free: sign in once in the dedicated Chrome. Paid add-on: Google desktop OAuth client | Free: background Chrome on YouTube Studio. Paid add-on: official API, can schedule | ✅&nbsp;API and free route |
 | **Douyin** | Dedicated official Chrome | CLI background browser | ✅&nbsp;Published |
 | **Instagram** | Dedicated official Chrome | CLI background browser; cover changed on your phone | ✅&nbsp;Published |
 | **X** | Dedicated official Chrome | Media Studio only (subscription required) | ✅&nbsp;Published |
@@ -137,11 +137,11 @@ See the [validation record](docs/VALIDATION_EN.md) for details. Bilibili uploads
 
 **Know before you post**
 
-- **YouTube**: the official API is the only route. While the project is in testing mode, add the signing-in account under "Test users" first. Under Google's rules, videos uploaded by an API project created after July 28, 2020 that has not passed Google's audit are locked to private.
+- **YouTube**: the official API routes, including CLI comments, stats, playlists and edits on YouTube, need the paid API add-on. The free background route publishes immediately, with no playlists or scheduling yet. While the project is in testing mode, add the signing-in account under "Test users" first. Under Google's rules, videos uploaded by an API project created after July 28, 2020 that has not passed Google's audit are locked to private.
 - **X**: Media Studio only. The account must be subscribed and able to open Media Studio; accounts without it are limited to 140-second, 512 MB videos, which this tool does not support.
 - **Instagram**: the video keeps its original ratio, and the cover must be changed on your phone: open the work's "Edit cover → Add from camera roll", pick the portrait image shared with Douyin, then check how the profile grid crops it.
 - **Douyin**: long-term sign-in stability is still being validated, and an interrupted web upload cannot resume, so check existing drafts first.
-- **Not available yet**: TikTok (suspended), YouTube cards and clickable end screens, official X and Instagram APIs, automatic or bulk messages and likes, and full history export.
+- **Not available yet**: TikTok (suspended), YouTube cards and clickable end screens, automatic or bulk messages and likes, and full history export.
 
 ## 🔒 Safety rails
 
@@ -186,7 +186,8 @@ vpub onboard --platforms bilibili,douyin,youtube
 **Sign in to each platform**
 
 ```sh
-vpub auth login youtube --method api --client-json /path/to/client.json
+vpub auth login youtube --method browser
+vpub auth login youtube --method api --client-json /path/to/client.json  # paid API add-on, instead of the line above
 vpub auth login douyin
 vpub auth login instagram
 vpub auth login x
@@ -230,9 +231,9 @@ No. Asking it to publish is the authorization: it submits with the platforms, ac
 </details>
 
 <details>
-<summary><b>Why does YouTube need an OAuth client?</b></summary>
+<summary><b>Does YouTube need an OAuth client?</b></summary>
 
-YouTube can only be published through the official API, and an API key on its own cannot authorize uploads. You authorize once on Google's page with a "Desktop app" OAuth client; it happens on your own computer, and the token stays there.
+Only on the paid API route, where an API key on its own cannot authorize uploads. The free route publishes through YouTube Studio in a background Chrome, with no OAuth client. You authorize once on Google's page with a "Desktop app" OAuth client; it happens on your own computer, and the token stays there.
 
 </details>
 
@@ -281,4 +282,4 @@ Use `vpub verify` to read it back, or `vpub resume` to continue the original tas
 | 🌐 [Website](https://whitecarp.github.io/publishops-crosscast/?lang=en) | Project overview page |
 | 🐞 [Report an issue](https://github.com/whitecarp/publishops-crosscast/issues) | Feedback (remove account and private details first) |
 
-Credits: [agentic-work-lab](https://github.com/whitecarp/agentic-work-lab) (development origin) · [bili-cli](https://github.com/kukemc/bili-cli) (upstream Bilibili tool). Third-party licenses are listed in [NOTICE](NOTICE.md). CrossCast is released under the [MIT License](LICENSE) as an independent integration tool, not an official product of any video platform.
+Credits: [agentic-work-lab](https://github.com/whitecarp/agentic-work-lab) (development origin) · [bili-cli](https://github.com/kukemc/bili-cli) (Bilibili features; its code is included). Third-party licenses are listed in [NOTICE](NOTICE.md). CrossCast is released under the [MIT License](LICENSE) as an independent integration tool, not an official product of any video platform.

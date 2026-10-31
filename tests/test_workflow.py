@@ -1,8 +1,9 @@
 """Offline contract tests. These do not establish live platform compatibility."""
-import copy
+import io
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -76,7 +77,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual("BROWSER_IN_PROGRESS", native_browser.begin(key, "123456789")["state"])
         self.value["platforms"]["douyin"]["method"] = "browser"
         self.save()
-        self.code("unsupported_identity_check", self.plan, ["douyin"])
+        self.assertEqual('123456789', self.plan(['douyin'])['platforms']['douyin']['expected_identity'])
 
     def test_instagram_caption_readback_includes_ai_disclosure(self):
         self.value["platforms"] = {"instagram": {"method": "native", "visibility": "account", "ai_generated": True,
@@ -161,7 +162,7 @@ class WorkflowTests(unittest.TestCase):
         plan = load_plan(output)
         self.assertTrue(all(o["submission_mode"] == "draft_only" for o in plan["platforms"].values()))
         args.out = str(self.root / "invalid-init.json")
-        args.platforms = "youtube,x"
+        args.platforms = "douyin,x"
         self.code("invalid_submission_mode", cli.execute, args)
         self.assertFalse(Path(args.out).exists())
 
@@ -311,7 +312,7 @@ class WorkflowTests(unittest.TestCase):
     def test_native_login_does_not_launch_or_claim_logged_in(self):
         with patch("subprocess.Popen") as launch:
             for platform in cli.PLATFORMS:
-                r = adapters.auth_login(platform, "default")
+                r = adapters.auth_login(platform, "default", method="native")
                 self.assertIsNone(r["logged_in"])
                 self.assertEqual("NATIVE_BROWSER_REQUIRED", r["state"])
             launch.assert_not_called()
@@ -385,7 +386,8 @@ class WorkflowTests(unittest.TestCase):
         p = load_plan(out)
         self.assertEqual(5, len(p["platforms"]))
         self.assertEqual("account", p["platforms"]["instagram"]["visibility"])
-        self.assertTrue(all(v["method"] == "native" for v in p["platforms"].values()))
+        self.assertEqual({'bilibili':'cli','youtube':'browser','douyin':'browser','instagram':'browser','x':'browser'},
+                         {k:v['method'] for k,v in p['platforms'].items()})
 
     def test_cli_plan_never_calls_platform(self):
         with patch.object(adapters, "publish") as publish, patch.object(adapters, "auth_status") as status:
@@ -420,7 +422,7 @@ class WorkflowTests(unittest.TestCase):
     def x_manifest(self):
         self.value.update(title="原創短片", description="Original short", tags=["AI"], content_language="zh-Hant")
         self.value["platforms"] = {"x": {"method": "native", "visibility": "account",
-                                             "ai_generated": True, "expected_identity": "tester"}}
+                                             "ai_generated": True, "expected_identity": "tester", "metadata_mode":"bilingual"}}
         self.save()
 
     def test_x_caption_visibility_and_methods(self):
@@ -435,7 +437,7 @@ class WorkflowTests(unittest.TestCase):
         self.save()
         self.code("invalid_tags", self.plan)
         self.value["tags"] = ["AI"]
-        self.value["platforms"]["x"]["method"] = "api"
+        self.value["platforms"]["x"]["method"] = "cli"
         self.save()
         self.code("invalid_method", self.plan)
 
@@ -511,6 +513,101 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual("AGENT_REPORTED_VERIFIED", r["state"])
         p = self.plan()
         self.assertEqual("SKIPPED_EXISTING", cli.publish_plan(p, p["confirmation"])["results"]["x"]["state"])
+
+    def test_interrupted_snapshot_copy_does_not_block_the_next_publish(self):
+        plan = self.plan(["youtube"])
+        partial = home() / "jobs" / plan["confirmation"] / "video.mp4"
+        partial.parent.mkdir(parents=True)
+        partial.write_bytes(b"synthetic")  # What a copy cut off by Ctrl-C or a full disk leaves behind.
+        result = cli.publish_plan(plan, plan["confirmation"])["results"]["youtube"]
+        self.assertEqual("WAITING_FOR_BROWSER", result["state"])
+        self.assertEqual(self.video.read_bytes(), partial.read_bytes())
+
+    def test_snapshot_failure_keeps_earlier_results_and_leaves_no_claim(self):
+        plan = self.plan(["bilibili", "youtube"])
+
+        def publish(platform, safe_plan, opts, checkpoint):
+            Path(safe_plan["video"]).unlink()
+            self.video.write_bytes(b"re-rendered while publishing")
+            return {"state": "SUBMISSION_VERIFIED", "id": "BV1234567890"}
+
+        with patch.object(adapters, "preflight", return_value={"identity": "owner"}), \
+                patch.object(adapters, "publish", side_effect=publish):
+            results = cli.publish_plan(plan, plan["confirmation"])["results"]
+        self.assertEqual("SUBMISSION_VERIFIED", results["bilibili"]["state"])
+        self.assertEqual("NOT_STARTED", results["youtube"]["state"])
+        self.assertEqual("source_changed", results["youtube"]["code"])
+        ledger = Ledger()
+        self.assertEqual(["bilibili"], [row["platform"] for row in ledger.rows()])
+        ledger.close()
+
+    def test_missing_cover_snapshot_never_uses_up_the_attempt(self):
+        cover = self.root / "portrait.jpg"
+        cover.write_bytes(b"cover")
+        self.value["covers"] = {"douyin": {"portrait": "portrait.jpg"}}
+        self.save()
+        plan = self.plan(["douyin"])
+        cover.write_bytes(b"changed after approval")
+        with patch.object(adapters, "publish") as upload:
+            first = cli.publish_plan(plan, plan["confirmation"])["results"]["douyin"]
+            upload.assert_not_called()
+        self.assertEqual("NOT_STARTED", first["state"])
+        self.assertEqual("source_changed", first["code"])
+        ledger = Ledger()
+        self.assertEqual([], ledger.rows())
+        ledger.close()
+
+    def test_refused_browser_lock_releases_the_claim_so_publish_can_run_again(self):
+        self.value["platforms"]["douyin"]["method"] = "browser"
+        self.save()
+        plan = self.plan(["douyin"])
+        with patch.object(adapters, "preflight", return_value={"identity": "owner"}), \
+                patch.object(adapters, "publish", side_effect=VpubError("browser_busy", "Busy", "Wait.")):
+            first = cli.publish_plan(plan, plan["confirmation"])["results"]["douyin"]
+        self.assertEqual("NOT_STARTED", first["state"])
+        self.assertEqual("browser_busy", first["code"])
+        with patch.object(adapters, "preflight", return_value={"identity": "owner"}), \
+                patch.object(adapters, "publish", return_value={"state": "SUBMISSION_VERIFIED", "id": "123456789"}) as upload:
+            second = cli.publish_plan(plan, plan["confirmation"])["results"]["douyin"]
+        self.assertEqual("SUBMISSION_VERIFIED", second["state"])
+        upload.assert_called_once()
+
+    def run_cli(self, *arguments):
+        output = io.StringIO()
+        with patch.object(sys, "argv", ["vpub", *arguments]), patch.object(sys, "stdout", output), self.assertRaises(SystemExit) as stopped:
+            cli.main()
+        return stopped.exception.code, json.loads(output.getvalue())
+
+    def test_ordinary_file_mistakes_name_the_problem(self):
+        code, result = self.run_cli("plan", str(self.root / "missing.json"))
+        self.assertEqual(2, code)
+        self.assertEqual("file_not_found", result["error"]["code"])
+        self.assertIn("missing.json", result["error"]["message"])
+        broken = self.root / "broken.json"
+        broken.write_text('{"schema_version": 1,\n oops}')
+        code, result = self.run_cli("plan", str(broken))
+        self.assertEqual(2, code)
+        self.assertEqual("invalid_file", result["error"]["code"])
+        self.assertIn("line 2", result["error"]["message"])
+        code, result = self.run_cli("read-all", "status", "a" * 32)
+        self.assertEqual(2, code)
+        self.assertEqual("run_missing", result["error"]["code"])
+
+    def test_limits_the_browser_routes_enforce_fail_at_plan_time(self):
+        self.value["platforms"] = {"x": {"method": "browser", "visibility": "account", "ai_generated": False, "title": "x" * 71}}
+        self.save()
+        self.code("invalid_title", self.plan)
+        self.value["platforms"]["x"].update(method="native")
+        self.save()
+        self.assertEqual("native", self.plan()["platforms"]["x"]["method"])
+        self.value["platforms"] = {"instagram": {"method": "browser", "visibility": "account", "ai_generated": False,
+                                                 "description": "a" * 1999, "title": "t" * 100, "tags": [f"tag{i}" for i in range(30)]}}
+        self.save()
+        self.code("invalid_description", self.plan)
+        self.value["platforms"] = {"douyin": {"method": "browser", "visibility": "private", "ai_generated": False,
+                                              "description": "好" * 999, "tags": ["两字"]}}
+        self.save()
+        self.code("invalid_description", self.plan)
 
 
 if __name__ == "__main__":
