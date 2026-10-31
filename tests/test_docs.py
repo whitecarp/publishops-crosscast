@@ -113,6 +113,14 @@ class DocsTests(unittest.TestCase):
         declared = re.search(r'^version = "([^"]+)"', (ROOT / "pyproject.toml").read_text(encoding="utf-8"), re.M)[1]
         self.assertEqual(declared, __version__)
 
+    def test_readers_are_only_told_the_current_version(self):
+        for name in ("README.md", "README_EN.md", "README_ZH_TW.md", "assets/hero.svg", "assets/hero-en.svg", "assets/hero-zh-tw.svg",
+                     "docs/index.html", "docs/site.js", "docs/FEATURES.md", "docs/FEATURES_EN.md"):
+            with self.subTest(name=name):
+                stated = re.findall(r"(\d+\.\d+\.\d+)(?:%20| )alpha", (ROOT / name).read_text(encoding="utf-8"))
+                self.assertTrue(stated)
+                self.assertEqual({__version__}, set(stated))
+
 
 if __name__ == "__main__":
     unittest.main()

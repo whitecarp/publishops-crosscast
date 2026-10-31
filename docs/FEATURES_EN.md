@@ -6,7 +6,7 @@
 
 This requirement exists because non-subscribers are limited to **140-second, 512 MB** video uploads and cannot use the Media Studio media-management and custom-thumbnail workflow on which this tool depends. CrossCast uploads videos and sets production thumbnails through Media Studio, so its X backend currently supports subscription accounts with that access. Login or payment alone does not establish access; the CLI checks the library entry and managed account before selecting media. [Official upload limits](https://help.x.com/en/using-x/x-videos) · [Media Studio access](https://help.x.com/en/using-x/media-studio).
 
-**0.15.1 alpha.** New manifests use CLI execution after first login; `method: native` is an explicit host-browser fallback. Bilibili uses the copy of [bili-cli](https://github.com/kukemc/bili-cli) included in this package, which also gives you the `bili` command.
+**0.16.0 alpha.** New manifests use CLI execution after first login; `method: native` is an explicit host-browser fallback. Bilibili uses the copy of [bili-cli](https://github.com/kukemc/bili-cli) included in this package, which also gives you the `bili` command.
 
 | Capability | Bilibili | YouTube | Douyin | X | Instagram |
 |---|---|---|---|---|---|
@@ -21,7 +21,7 @@ This requirement exists because non-subscribers are limited to **140-second, 512
 | Like / unlike | Upstream CLI | Rating API | Video controls | Post controls | Post toolbar |
 | Private text messages | Upstream (not live-tested this round) | No adapter | CLI official UI | CLI X Chat | CLI official UI |
 | Save / remove | Selected favorite folder | Selected ordinary playlist | Default saved items | Private bookmarks | Default Saved |
-| Mentions | Upstream | Not integrated | Visible previews | Mentions | Tags/mentions; nonempty fixture pending |
+| Mentions | bili-cli; `vpub messages sync` not yet live-tested | Not integrated | Visible previews | Mentions | Tags/mentions; nonempty fixture pending |
 | Moderation / hiding | Upstream | Viewer hold/approve | Not integrated | Hide/unhide other-author replies | Not integrated |
 
 Every other API entry in the YouTube column also needs the paid add-on; `vpub capabilities` shows what this machine has.
@@ -32,7 +32,11 @@ Real episode-two uploads and their development limitations are recorded in [vali
 
 When the source language differs, retain source plus translation; Chinese scripts become Simplified Chinese only on Bilibili/Douyin. Douyin custom chapters are integrated into CLI publication/verification. `vpub edit` handles YouTube metadata, Instagram captions, an available X Edit action and Douyin covers/chapters; native handoffs remain. The user confirmed the shared v3 portrait and visible footer in both supplied phone views; this is not all-device acceptance. Email supports Gmail only, remains off by default and offers plugin setup assistance only after an explicit enable request. Outlook, QQ, NetEase and SMTP are unsupported. Single-language replies and user-language reports are described in the [README](OPERATIONS_EN.md#comments-work-metrics-and-operations-reports). TikTok, automatic/bulk messages and likes, full-history exports and YouTube cards/clickable end screens are not implemented.
 
-This release closes reliability issues without adding platform capabilities. The current table and [latest validation](VALIDATION_EN.md) define scope; version notes below are not a new backlog.
+The current table and [latest validation](VALIDATION_EN.md) define scope; version notes below are not a new backlog.
+
+## 0.16.0 — paid API add-on, included bili-cli, status and cleanup
+
+Official API routes for X, Instagram and YouTube move to a separate paid add-on; every other route stays free and MIT licensed. bili-cli 1.2.1 ships inside this package with the `bili` command. New: `vpub status`, `vpub cleanup`, and Bilibili @ mentions and conversation previews in `vpub messages sync` (not yet run on a real account). Removed: `inbox` (use `messages`), `--manage-playlists` and `--bilingual`. [Upgrade notes](OPERATIONS_EN.md#0160-what-changes-when-you-upgrade).
 
 ## 0.15.0 — recovery and complete reads
 

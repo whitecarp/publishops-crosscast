@@ -20,7 +20,7 @@
     <rect x="56" y="402" width="504" height="84" rx="16" fill="#ffffff" fill-opacity="0.06" stroke="#ffffff" stroke-opacity="0.16"/>
     <text x="76" y="432" font-size="14" font-weight="600" fill="#8e9ab3">You tell your AI assistant</text>
     <text x="76" y="464" font-size="20" font-weight="700" fill="#eef2f8">“Publish final.mp4 publicly to all five.”</text>
-    <text x="56" y="514" font-size="15" fill="#8e9ab3">0.15.1 alpha: after the first sign-in, the CLI submits in the background</text>
+    <text x="56" y="514" font-size="15" fill="#8e9ab3">0.16.0 alpha: after the first sign-in, the CLI submits in the background</text>
     <g clip-path="url(#card)">
       <rect x="620" y="56" width="524" height="448" fill="#ffffff"/>
       <rect x="620" y="444" width="524" height="60" fill="#eef1f6"/>

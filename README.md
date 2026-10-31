@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.15.1%20alpha-f59e0b" alt="版本 0.15.1 alpha">
+  <img src="https://img.shields.io/badge/version-0.16.0%20alpha-f59e0b" alt="版本 0.16.0 alpha">
   <img src="https://img.shields.io/badge/python-3.10%E2%80%933.12-3776ab" alt="Python 3.10–3.12">
   <img src="https://img.shields.io/badge/Windows-%E5%B7%B2%E5%AE%9E%E6%B5%8B-555" alt="Windows 已实测">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-17213a" alt="MIT 许可证"></a>
@@ -31,7 +31,7 @@
 </p>
 
 > [!IMPORTANT]
-> **0.15.1 alpha。** YouTube、抖音、Instagram、X 都已真实发布并读回过，B站也用 bili-cli 上传并核验过，详见[验证记录](docs/VALIDATION.md)。它仍是 alpha：登录会过期，平台也可能临时要求验证，长时间无人值守还没验收。
+> **0.16.0 alpha。** YouTube、抖音、Instagram、X 都已真实发布并读回过，B站也用 bili-cli 上传并核验过，详见[验证记录](docs/VALIDATION.md)。它仍是 alpha：登录会过期，平台也可能临时要求验证，长时间无人值守还没验收。
 
 ## 🚀 一句话开始
 

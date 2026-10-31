@@ -2,9 +2,25 @@
 
 [繁體中文](VALIDATION.md) · **English**
 
-Date: **2026-10-30**, PublishOps CrossCast **0.15.1 alpha**.
+Date: **2026-11-01**, PublishOps CrossCast **0.16.0 alpha**.
+
+## 0.16.0: paid API split, included bili-cli, status and cleanup
+
+**No real account was used for this version.** The live results further down belong to the versions they are listed under. bili-cli 1.2.1 and the new Bilibili message sources have not yet run on a real account.
+
+**423 offline tests pass on Python 3.12**, and CI runs the same suite on Windows with Python 3.10, 3.11 and 3.12. The paid add-on's own 130 tests pass against this core.
+
+| Offline check | Result |
+|---|---|
+| Included bili-cli | All 47 files match the 1.2.1 release. Its own suite passes on the included copy (172 passed, 3 skipped). Every `bili` command CrossCast builds is parsed against the real command tree. |
+| Clean install | A built wheel installs into an empty environment. `vpub doctor` reports ready and `bili --version` reports 1.2.1. Upgrading over a separate bili-agent 0.7.0 works after following `vpub doctor`. |
+| Background browser | Real Chrome on a blank page, with sign-in and commands stubbed. It started in 1.6 s and a reused session answered in 0.2 s. A busy command waited its turn, a lost startup race kept the winner, and no Chrome was left running after idle exit. |
+| Malformed input | Wrong values in the JSON files assistants write now return a clear error. An audit that found 32 crash paths now finds none. |
+| Docs and site | Every documented command parses and every link resolves. The site was checked in three languages at desktop and phone widths, with no overflow, console errors or broken images. |
 
 ## 0.15.1: existing-work closeout
+
+Date: 2026-10-30.
 
 **417 offline tests pass, including 15 new tests.** Added coverage includes cross-process exclusion, hard-exit recovery, active/damaged legacy markers, preserved receipts, partial replay retention, pending thumbnail/playlist steps, uncertain thumbnail outcomes without resending and a delayed Instagram edit menu.
 

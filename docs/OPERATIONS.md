@@ -1,4 +1,4 @@
-> 0.15.1 完整指令參考。使用官方 API 的 YouTube 指令需要付費的 API 附加元件。入門請先看 [README](../README.md)。
+> 0.16.0 完整指令參考。使用官方 API 的 YouTube 指令需要付費的 API 附加元件。入門請先看 [README](../README.md)。
 
 # PublishOps CrossCast
 
@@ -10,13 +10,21 @@
 
 ### 跨平台影片發布營運台
 
-**v0.15.1 alpha · CLI `vpub` · AI 協助開發**
+**v0.16.0 alpha · CLI `vpub` · AI 協助開發**
 
 讓同一支原創影片擁有各平台適用的文案、封面與發布回執。選擇 Bilibili、抖音、YouTube、Instagram、X 的任意組合，首次登入後，CLI 復用本機專用會話完成後續上傳。
 
 預設路徑：B站沿用 bili-cli，YouTube 由 AI 助手操作 YouTube Studio（安裝付費附加元件後使用官方 API），抖音／Instagram／X 由 CLI 在背景控制專用 Chrome。首次登入與官方驗證需要使用者協助；明確設定 `method: native` 仍可使用宿主瀏覽器交接。這是 alpha 版本，開發期實測與無人值守驗收分開記錄。已新增評論、作品數據及匯報命令；各站實測範圍見下方。TikTok、YouTube 卡片／可點擊片尾尚未實作。
 
 [功能範圍](FEATURES.md) · [驗證記錄](VALIDATION.md) · [草稿測試](DRAFT_TESTING.md)
+
+## 0.16.0：升級時的變化
+
+- **官方 API 路徑改為獨立的付費附加元件。** 涵蓋 X、Instagram 與 YouTube。未安裝時，YouTube 由 AI 助手在 YouTube Studio 發布，抖音、Instagram 與 X 繼續使用背景瀏覽器。
+- **內含 bili-cli。** 安裝 CrossCast 時會一併提供 `bili` 指令，版本為 1.2.1。如果仍裝有舊版獨立的 `bili-agent`，`vpub doctor` 會說明如何移除。
+- **新增指令。** `vpub status` 列出未完成事項及每項的下一步指令。`vpub cleanup` 預覽可安全移除的已完成影片副本，加上 `--apply` 才會刪除。
+- **B站加入訊息收件匣。** `vpub messages sync` 現在可讀取 B站 @ 提及與私信會話預覽，尚未在真實帳號上執行過。
+- **已移除。** `inbox` 由 `messages` 取代；登入用的 `--manage-playlists` 與文案用的 `--bilingual` 已移除。
 
 ## 0.15.1 收尾：固定範圍與修復
 

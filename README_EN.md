@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.15.1%20alpha-f59e0b" alt="Version 0.15.1 alpha">
+  <img src="https://img.shields.io/badge/version-0.16.0%20alpha-f59e0b" alt="Version 0.16.0 alpha">
   <img src="https://img.shields.io/badge/python-3.10%E2%80%933.12-3776ab" alt="Python 3.10–3.12">
   <img src="https://img.shields.io/badge/Windows-tested-555" alt="Windows tested">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-17213a" alt="MIT License"></a>
@@ -31,7 +31,7 @@
 </p>
 
 > [!IMPORTANT]
-> **0.15.1 alpha.** YouTube, Douyin, Instagram and X have all been published for real and read back, and Bilibili has been uploaded and verified with bili-cli; see the [validation record](docs/VALIDATION_EN.md). It is still alpha: sign-ins expire, platforms may ask for verification at any time, and long unattended runs have not been validated.
+> **0.16.0 alpha.** YouTube, Douyin, Instagram and X have all been published for real and read back, and Bilibili has been uploaded and verified with bili-cli; see the [validation record](docs/VALIDATION_EN.md). It is still alpha: sign-ins expire, platforms may ask for verification at any time, and long unattended runs have not been validated.
 
 ## 🚀 Start with one message
 
