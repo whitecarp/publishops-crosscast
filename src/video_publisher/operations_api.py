@@ -32,6 +32,26 @@ def _bili_comment(c, owner):
             'thread_id':str(c.get('root') or c['rpid']),'reply_count':c.get('reply_count')}
 
 
+def bilibili_source(kind, identity, limit):
+    """Bilibili @ mentions or conversation previews for the local message inbox. Read-only."""
+    if kind == 'mentions':
+        data=adapters.bili(['feed','mentions','--limit',str(limit)])
+        items=[{'id':str(r['id']),'text':r.get('content') or '','url':(r.get('on') or {}).get('url'),
+                'author':(r.get('user') or {}).get('name'),'is_owner':str((r.get('user') or {}).get('mid'))==identity}
+               for r in data.get('items',[]) if r.get('id') is not None]
+        return {'identity':identity,'items':items,'complete':not data.get('next_cursor'),'source':'bili_cli_feed_mentions',
+                'scope':'Latest @ mentions; not the full notification history.'}
+    items=[]
+    for r in adapters.bili(['dm','list','--limit',str(limit)]).get('items',[]):
+        last=r.get('last_message') or {}
+        # A Bilibili auto-reply is not an answer: the other person is still waiting for one.
+        items.append({'conversation_id':str(r['uid']),'name':r.get('name'),
+                      'preview':'\n'.join(str(part) for part in (r.get('name'),last.get('text')) if part),
+                      'is_owner':last.get('from')=='me' and not last.get('auto_reply')})
+    return {'identity':identity,'items':items,'complete':False,'source':'bili_cli_dm_list',
+            'scope':'Most recent conversations; previews, not incoming-message counts.'}
+
+
 def execute(platform, action, work, **kw):
     if platform=='bilibili': return bilibili(action,work,**kw)
     return adapters.youtube_api().operations(action,work,**kw)

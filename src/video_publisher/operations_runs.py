@@ -97,7 +97,7 @@ def make_run(platforms,limit,pages,language,reply_pages,reply_threads,min_interv
             jobs.append(job)
     for p in selected:
         for kind in dict.fromkeys(k for k in kinds if k in {'mentions','dm_preview'}):
-            if p not in {'douyin','instagram','x'}:
+            if p not in {'bilibili','douyin','instagram','x'}:
                 source_status.append({'platform':p,'kind':kind,'state':'UNSUPPORTED'})
                 continue
             from .direct_messages import identity
@@ -248,6 +248,15 @@ def browser_group(run,group):
     recover_batches(run)
 
 
+def read_direct(run,job):
+    """A read through the platform's own CLI or API rather than a shared browser."""
+    if job['operation']=='comments':return api_comments(run,job)
+    if job['operation'] in {'mentions','dm_preview'}:
+        from .operations_api import bilibili_source
+        return bilibili_source(job['operation'],job['identity'],run['options']['limit'])
+    return ops.backend(job['platform'],'stats',job['work_id'])
+
+
 def execute_serial(run):
     run['state']='RUNNING';save(run)
     recover_batches(run)
@@ -265,7 +274,7 @@ def execute_serial(run):
                 if any(j['state']!='DONE' for j in group):blocked.add(p)
             else:
                 job['state']='RUNNING';save(run)
-                value=job.get('raw_result') or (api_comments(run,job) if job['operation']=='comments' else ops.backend(p,'stats',job['work_id']))
+                value=job.get('raw_result') or read_direct(run,job)
                 finish(run,job,value)
         except Exception as exc:
             # Do not try another route on a challenged account. Other platforms can continue.

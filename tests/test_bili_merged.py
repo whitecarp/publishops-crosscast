@@ -53,7 +53,8 @@ CALLS = [
     ["comment", "like", BV, "1", "--undo"],
     ["comment", "pin", BV, "1"],
     ["comment", "pin", BV, "1", "--undo"],
-    ["dm", "list", "--limit", "20"],
+    ["dm", "list", "--limit", "50"],
+    ["feed", "mentions", "--limit", "50"],
     ["dm", "read", "123", "--limit", "20"],
     ["dm", "send", "123", "--file", "message.txt"],
 ]
