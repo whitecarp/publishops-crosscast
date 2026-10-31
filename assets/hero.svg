@@ -19,7 +19,7 @@
     <rect x="56" y="372" width="504" height="84" rx="16" fill="#ffffff" fill-opacity="0.06" stroke="#ffffff" stroke-opacity="0.16"/>
     <text x="76" y="402" font-size="14" font-weight="600" fill="#8e9ab3">你对 AI 助手说</text>
     <text x="76" y="434" font-size="20" font-weight="700" fill="#eef2f8">“把 final.mp4 公开发到这五个平台。”</text>
-    <text x="56" y="504" font-size="15" fill="#8e9ab3">0.3.0 alpha：网页提交需要能操作浏览器的 AI 助手</text>
+    <text x="56" y="504" font-size="15" fill="#8e9ab3">0.15.1 alpha：首次登录后，CLI 在后台逐个平台提交</text>
     <g clip-path="url(#card)">
       <rect x="620" y="56" width="524" height="448" fill="#ffffff"/>
       <rect x="620" y="444" width="524" height="60" fill="#eef1f6"/>
@@ -80,8 +80,8 @@
     <path d="M644 392 H1120" stroke="#e8ecf2"/>
     <circle cx="649" cy="418" r="4.5" fill="#17213a"/>
     <text x="662" y="423.5" font-size="16" font-weight="700" fill="#17213a">X</text>
-    <rect x="808" y="411.0" width="25" height="14" rx="2" fill="none" stroke="#5f6a83" stroke-width="1.5" stroke-dasharray="3 2"/>
-    <text x="841.0" y="423" font-size="15" fill="#4b566e">沿用视频</text>
+    <rect x="808" y="411.0" width="24.9" height="14" rx="2" fill="none" stroke="#5f6a83" stroke-width="1.5"/>
+    <text x="840.9" y="423" font-size="15" fill="#4b566e">16:9</text>
     <text x="920" y="423" font-size="15" fill="#4b566e">英文</text>
     <rect x="1048.0" y="405.5" width="72.0" height="25" rx="6" fill="#eef1f6" stroke="#8e99ae" stroke-width="1.5" stroke-dasharray="4 3"/>
       <circle cx="1060.5" cy="418" r="4.5" fill="none" stroke="#3f4a5f" stroke-width="1.5" stroke-dasharray="1.6 1.6"/>
