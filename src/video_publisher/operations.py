@@ -237,7 +237,7 @@ def report(since=None, language='auto', notes=None, _events=None):
         if start.tzinfo is None: raise ValueError()
     except ValueError: raise VpubError('invalid_since','Use an ISO timestamp with a timezone.')
     events=_events if _events is not None else [read_json(p) for p in (home()/'operations/events').glob('*.json')]
-    events=sorted((e for e in events if datetime.fromisoformat(e['at'])>=start),key=lambda e:e['at'])
+    events=sorted((e for e in events if datetime.fromisoformat(e['at'].replace('Z','+00:00'))>=start),key=lambda e:e['at'])
     parts=[];details={}
     for platform in NAMES:
         selected=[e for e in events if e['platform']==platform and not e['result'].get('test')]

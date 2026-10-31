@@ -265,7 +265,7 @@ async def execute(page,platform,identity,payload):
         if not saved.get('submitted_text') and platform=='instagram':
             texts.add(normalize('@'+target['author']+' '+request['text']))
         before=set(saved.get('before_reply_ids',[target['id']]))
-        cutoff=datetime.fromisoformat(saved['at'])-timedelta(seconds=2) if saved.get('at') else None
+        cutoff=datetime.fromisoformat(saved['at'].replace('Z','+00:00'))-timedelta(seconds=2) if saved.get('at') else None
         matches=[]
         for c in actual['items']:
             if not c['is_owner'] or normalize(c['text']) not in texts or c['id'] in before: continue
