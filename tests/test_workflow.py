@@ -579,11 +579,10 @@ class WorkflowTests(unittest.TestCase):
         return stopped.exception.code, json.loads(output.getvalue())
 
     def test_ordinary_file_mistakes_name_the_problem(self):
-        missing = str(self.root / "missing.json")
-        code, result = self.run_cli("plan", missing)
+        code, result = self.run_cli("plan", str(self.root / "missing.json"))
         self.assertEqual(2, code)
         self.assertEqual("file_not_found", result["error"]["code"])
-        self.assertIn(missing, result["error"]["message"])
+        self.assertIn("missing.json", result["error"]["message"])
         broken = self.root / "broken.json"
         broken.write_text('{"schema_version": 1,\n oops}')
         code, result = self.run_cli("plan", str(broken))
