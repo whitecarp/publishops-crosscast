@@ -86,6 +86,52 @@ class EmailTests(unittest.TestCase):
             self.assertFalse(receipt["delivery_verified"])
             self.assertFalse(receipt["automatic_retry"])
 
+    def claimed(self, provider, tool, episode):
+        ledger = Ledger()
+        ledger.save(self.key, "WAITING_FOR_USER", {"user_action_episode": episode})
+        ledger.close()
+        mail.configure(provider, "creator@example.com")
+        event = mail.enqueue(self.key, "youtube", episode)
+        return event, mail.claim(event["id"], tool)
+
+    def test_any_host_send_tool_can_claim(self):
+        event, claim = self.claimed("gmail", "mcp__claude_ai_Gmail__send_email", 2)
+        self.assertEqual("mcp__claude_ai_Gmail__send_email", claim["tool_name"])
+        self.assertIsNone(claim["arguments"])
+        self.assertEqual({"to", "subject", "text", "html"}, set(claim["message"]))
+        self.assertEqual("creator@example.com", claim["message"]["to"])
+        self.assertNotIn("https://", json.dumps(claim["message"]))
+        _, codex = self.claimed("outlook", mail.SEND_TOOLS["outlook"], 3)
+        self.assertIsNotNone(codex["arguments"])
+
+    def test_read_draft_and_other_provider_tools_cannot_claim(self):
+        mail.configure("gmail", "creator@example.com")
+        event = mail.enqueue(self.key, "youtube", 1)
+        for tool, code in (("gmail_read_email", "send_tool_unavailable"), ("gmail_create_draft", "send_tool_unavailable"),
+                           ("gmail send email", "send_tool_unavailable"), ("outlook_send_mail", "wrong_email_tool")):
+            with self.assertRaises(VpubError) as e:
+                mail.claim(event["id"], tool)
+            self.assertEqual(code, e.exception.code)
+        self.assertEqual("PENDING", mail.pending()[0]["state"])
+
+    def test_record_needs_the_claimed_tool_and_reads_common_responses(self):
+        cases = [({"messageId": "fixture-message"}, "SENT"),
+                 ({"content": [{"type": "text", "text": '{"success": true}'}]}, "ACCEPTED"),
+                 ({"status": "queued"}, "UNKNOWN"),
+                 ({"isError": True, "content": [{"type": "text", "text": "quota"}]}, "UNKNOWN")]
+        for episode, (response, expected) in enumerate(cases, 4):
+            event, claim = self.claimed("gmail", "gmail_send_message", episode)
+            path = self.root / "response.json"
+            atomic_json(path, {"tool_name": "mcp__codex_apps__gmail_send_email", "response": response})
+            with self.assertRaises(VpubError) as e:
+                mail.record(event["id"], claim["claim_token"], path)
+            self.assertEqual("wrong_email_tool", e.exception.code)
+            atomic_json(path, {"tool_name": "gmail_send_message", "response": response})
+            receipt = mail.record(event["id"], claim["claim_token"], path)
+            self.assertEqual(expected, receipt["state"])
+            self.assertEqual("gmail_send_message", receipt["tool_name"])
+            self.assertFalse(receipt["delivery_verified"])
+
     def test_native_wait_preserves_work_and_never_reuploads(self):
         video = self.root / "test.mp4"
         video.write_bytes(b"synthetic, not playable")

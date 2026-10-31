@@ -160,10 +160,10 @@ def setup(external_stop=None):
     return doctor()
 
 
-def template(video, content_language="und"):
-    base = {"account": "default", "method": "native", "visibility": "public", "ai_generated": True}
+def template(video, content_language="und", ai_generated=True):
+    base = {"account": "default", "method": "native", "visibility": "public", "ai_generated": ai_generated}
     return {"schema_version": 1, "video": str(Path(video).resolve()), "content_language": content_language,
-            "title": Path(video).stem, "description": "", "tags": ["AI"],
+            "title": Path(video).stem, "description": "", "tags": ["AI"] if ai_generated else [],
             "platforms": {"bilibili": {**base}, "youtube": {**base, "visibility": "private", "made_for_kids": False},
                           "douyin": {**base, "title": "我的原创视频"}}}
 
@@ -196,6 +196,8 @@ def parser():
     q.add_argument("--language", default="und", help="Content language (e.g. zh-Hans, zh-Hant, en). Preserves supplied text; does not translate video or metadata.")
     q.add_argument("--platforms", default="bilibili,youtube,douyin", help="Explicit selected platforms; adding an account does not enable publication.")
     q.add_argument("--draft-only", action="store_true", help="Instagram/X only: upload to preview or save an unsent draft; never Share/Post or schedule.")
+    q.add_argument("--ai-generated", choices=["yes", "no"], default="yes",
+                   help="Whether the video contains AI-generated content. Sets every platform's AI-content declaration; use no for ordinary videos.")
     c = sub.add_parser("covers", help="Fit production artwork to platform canvases without cropping.").add_subparsers(dest="action", required=True)
     q = c.add_parser("prepare")
     q.add_argument("manifest")
@@ -386,10 +388,11 @@ def execute(args):
         if args.draft_only and set(chosen) - {"instagram", "x"}:
             raise VpubError("invalid_submission_mode", "--draft-only currently supports only Instagram and X. Use an explicit private setting for other supported routes.")
         from .core import language_tag
-        value = template(args.video, language_tag(args.language))
+        ai_generated = args.ai_generated == "yes"
+        value = template(args.video, language_tag(args.language), ai_generated)
         options = value["platforms"]
-        options.update(x={"account": "default", "method": "native", "visibility": "account", "ai_generated": True},
-                       instagram={"account": "default", "method": "native", "visibility": "account", "ai_generated": True})
+        options.update(x={"account": "default", "method": "native", "visibility": "account", "ai_generated": ai_generated},
+                       instagram={"account": "default", "method": "native", "visibility": "account", "ai_generated": ai_generated})
         value["platforms"] = {p: options[p] for p in chosen}
         if args.draft_only:
             for options in value["platforms"].values():
@@ -476,7 +479,8 @@ def capabilities():
             "cover_fitting": "Local contain-and-pad artwork; actual platform UI may crop. X thumbnail changes use X Studio through the host UI; a dedicated CLI Studio cover command is not implemented.",
             "instagram_media": "Instagram preparation preserves original video bytes and ratio. Use a separate upload cover and shared Douyin portrait through the mobile camera-roll picker; no inserted lead-in or transcoding.",
             "instagram_deletion": "Explicit native deletion request, UI result/absence evidence, retained history, and separately authorized same-video cover replacement. No standalone deletion API.",
-            "email": "Optional, off by default; host Gmail/Outlook send tool required at execution; no SMS.",
+            "email": "Optional, off by default. At send time the host passes the exact name of its own connected Gmail/Outlook send tool (Codex, Claude or another agent) to notify claim; no SMS.",
+            "ai_declaration": "Every route supports AI-generated and ordinary videos. init --ai-generated yes|no sets each platform's declaration; browser evidence and the Bilibili CLI status read-back must match it.",
             "chapters": "Native Bilibili/Douyin/YouTube handoff with timestamp and title validation; Douyin titles are limited to 12 UTF-16 units. The host captures UI evidence; status must be checked in the user's account.",
             "youtube_category": "Explicit per-video category required; host-model selection, in-place revision and read-back. API validates assignability before upload; no People & Blogs fallback.",
             "playlists": "YouTube native selections or optional API membership with explicit write scope.",

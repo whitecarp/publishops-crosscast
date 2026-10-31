@@ -36,7 +36,7 @@ vpub plan localized.json
 vpub publish localized.json --dry-run
 ```
 
-The default plan selects Bilibili, YouTube, and Douyin. Being signed in does not add a platform as a target. `metadata request` creates structured writing instructions; the host model should write `response.json` from the template in that request. For YouTube, explicitly set `category_id` based on the video and official category choices. After `apply`, review the account alias, copy, audience, and media path before planning and dry-run. For native web publishing, choose public or private explicitly rather than relying on a default. Existing authorization continues within its approved scope; ask again only if content, account, platform, audience, or task scope changes.
+The default plan selects Bilibili, YouTube, and Douyin. Being signed in does not add a platform as a target. `metadata request` creates structured writing instructions; the host model should write `response.json` from the template in that request. For YouTube, explicitly set `category_id` based on the video and official category choices. If the video has no AI-generated content, add `--ai-generated no` to `init`: every platform then publishes it as an ordinary video without an AI label. The default `yes` ticks each platform's AI-content declaration. After `apply`, review the account alias, copy, audience, and media path before planning and dry-run. For native web publishing, choose public or private explicitly rather than relying on a default. Existing authorization continues within its approved scope; ask again only if content, account, platform, audience, or task scope changes.
 
 ## 3. Copy and covers
 

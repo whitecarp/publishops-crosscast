@@ -36,7 +36,7 @@ vpub plan localized.json
 vpub publish localized.json --dry-run
 ```
 
-預設方案選 Bilibili、YouTube、Douyin。不要因為已登入某平台就預設加入目標。`metadata request` 會產生結構化寫作要求；宿主模型應依 request 內範本撰寫 `response.json`。選擇 YouTube 時，還需依影片內容及官方類別選項明確填寫 `category_id`。`apply` 後檢視帳號別名、文案、受眾範圍和媒體路徑，再執行 plan 與 dry-run。使用 native 網頁流程發布時，請明確選擇 public 或 private，不依賴預設值。既有授權在原範圍內沿用；僅當內容、帳號、平台、受眾或任務範圍變更時才重新確認。
+預設方案選 Bilibili、YouTube、Douyin。不要因為已登入某平台就預設加入目標。`metadata request` 會產生結構化寫作要求；宿主模型應依 request 內範本撰寫 `response.json`。選擇 YouTube 時，還需依影片內容及官方類別選項明確填寫 `category_id`。影片不含 AI 生成內容時，`init` 加上 `--ai-generated no`：各平台都以一般影片發布，不加 AI 標註；預設 `yes` 會為每個平台勾選 AI 生成內容聲明。`apply` 後檢視帳號別名、文案、受眾範圍和媒體路徑，再執行 plan 與 dry-run。使用 native 網頁流程發布時，請明確選擇 public 或 private，不依賴預設值。既有授權在原範圍內沿用；僅當內容、帳號、平台、受眾或任務範圍變更時才重新確認。
 
 ## 3. 文案與封面
 

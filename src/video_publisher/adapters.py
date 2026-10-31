@@ -147,8 +147,10 @@ def preflight(platform, options):
 
 
 def publish_bilibili(plan, options, checkpoint):
+    # bili-cli ticks "含AI生成内容" by default, so ordinary videos must opt out explicitly.
     args = ["upload", "video", plan["video"], "--title", options["title"],
-            "--desc", options["description"], "--ai-declare"]
+            "--desc", options["description"],
+            "--ai-declare" if options["ai_generated"] else "--no-ai-declare"]
     for tag in options["tags"]:
         args += ["--tag", tag]
     if plan.get("cover"):
@@ -163,7 +165,8 @@ def publish_bilibili(plan, options, checkpoint):
     bvid = v.get("bvid")
     if not bvid:
         return {"state": "SUBMITTED_UNVERIFIED", "reason": "Backend returned no BV identifier."}
-    receipt = {"state": "SUBMITTED", "id": bvid, "url": f"https://www.bilibili.com/video/{bvid}"}
+    receipt = {"state": "SUBMITTED", "id": bvid, "url": f"https://www.bilibili.com/video/{bvid}",
+               "expected_ai_declare": options["ai_generated"]}
     checkpoint(receipt)
     return verify("bilibili", options["account"], receipt)
 
@@ -265,8 +268,16 @@ def verify(platform, account, receipt):
         raise VpubError("receipt_missing", "No platform video ID; inspect the original submission before retrying.")
     if platform == "bilibili":
         info = bili(["upload", "status", video_id])
-        return {**receipt, "state": "SUBMISSION_VERIFIED", "platform_status": info,
-                "note": "Creator record read back; review/public visibility may still be pending."}
+        result = {**receipt, "state": "SUBMISSION_VERIFIED", "platform_status": info,
+                  "note": "Creator record read back; review/public visibility may still be pending."}
+        # bili-cli's status reports the recorded AI-content declaration; it must match the plan.
+        expected = receipt.get("expected_ai_declare")
+        actual = info.get("ai_declare") if isinstance(info, dict) else None
+        if isinstance(expected, bool) and isinstance(actual, bool) and actual != expected:
+            result.update(state="SUBMITTED_UNVERIFIED", declaration_mismatch=True,
+                          note="Bilibili recorded a different AI-content declaration. Correct it on this existing work "
+                               "(bili upload edit with --ai-declare or --no-ai-declare); do not upload again.")
+        return result
     items = yt_service(account).videos().list(part="status,snippet,processingDetails", id=video_id).execute().get("items", [])
     if not items:
         raise VpubError("not_found", "Uploaded video is not yet visible to the authorized account.")

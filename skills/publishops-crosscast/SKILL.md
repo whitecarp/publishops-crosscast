@@ -21,12 +21,14 @@ vpub capabilities
 
 ## Prepare a video
 
-Use the user's finished video, source script and artwork. Resolve the intended platforms, account, visibility, and whether the user wants drafts or publication. Honor authorization already given; installation or login alone does not authorize publishing. Do not add platforms merely because they are logged in.
+Use the user's finished video, source script and artwork. Resolve the intended platforms, account, visibility, whether the video contains AI-generated content, and whether the user wants drafts or publication. Honor authorization already given; installation or login alone does not authorize publishing. Do not add platforms merely because they are logged in.
 
 ```sh
-vpub init --video final.mp4 --language zh-Hans --out publish.json --platforms bilibili,youtube
+vpub init --video final.mp4 --language zh-Hans --out publish.json --platforms bilibili,youtube --ai-generated no
 vpub metadata request publish.json --source script.txt --out request.json
 ```
+
+`--ai-generated yes|no` (default `yes`) sets every platform's AI-content declaration. Ordinary videos are supported on every route: use `no` and they are published without an AI label. Ask the user when it is unclear; do not guess.
 
 Read `request.json` and its response template. Write platform copy with the host model, then validate it:
 
@@ -66,6 +68,6 @@ Distinguish prepared, queued, saved draft, submitted, under review, and verified
 
 On captcha, rate limiting, risk control or uncertain submission, stop the relevant writes and report what is needed. Do not bypass verification or retry an uncertain upload. Keep AI-content disclosure appropriate to the video and platform. Do not delete or repost existing works without explicit authorization for that action.
 
-Runtime state can contain login material and private receipts. Keep it local, outside source control; `VPUB_HOME` selects an isolated test/runtime directory. Never place keys, cookies, tokens or private screenshots in issues, examples or public documentation. Optional email notifications are off by default and require an authorized, available mail tool; a queued notification is not a sent email.
+Runtime state can contain login material and private receipts. Keep it local, outside source control; `VPUB_HOME` selects an isolated test/runtime directory. Never place keys, cookies, tokens or private screenshots in issues, examples or public documentation. Optional email notifications are off by default and require an authorized, available mail tool; a queued notification is not a sent email. To send one, find your own connected Gmail/Outlook SEND tool (not a draft or read tool), run `vpub notify claim ID --available-tool EXACT_TOOL_NAME`, call that tool once with the returned `arguments` or `message`, save its response with the same `tool_name`, then run `vpub notify record`.
 
 For current platform boundaries, read `docs/PLATFORMS.md`. TikTok is suspended; there are no general comment, inbox, analytics, or standalone Instagram/X API commands. Consult `vpub --help` and the relevant subcommand's `--help` rather than inventing commands.

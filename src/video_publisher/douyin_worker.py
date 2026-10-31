@@ -67,6 +67,11 @@ async def work_links(page, title=None):
     return found
 
 
+def ai_declaration(options):
+    """Douyin self-declaration for AI content; ordinary videos are published without one."""
+    return "内容由AI生成" if options["ai_generated"] else None
+
+
 async def declare_ai(page):
     await page.get_by_text("自主声明", exact=True).click(timeout=10000)
     dialog = page.locator(".semi-modal-content").filter(has_text="请选择声明类型").first
@@ -147,9 +152,11 @@ async def run(payload):
             # There is one bounded wait, not upstream's unbounded re-upload loop.
             await page.wait_for_url(re.compile(r"/content/(publish|post/video)"), timeout=120000)
             opts = plan["options"]
+            declaration = ai_declaration(opts)
+            # The pinned helper accepts declaration=None; only its title/description filler is used here.
             helper = helper_class(opts["title"], plan["video"], opts["tags"], 0, str(state_path),
                                   thumbnail_landscape_path=plan.get("cover"), desc=opts["description"],
-                                  debug=False, headless=False, declaration="内容由AI生成")
+                                  debug=False, headless=False, declaration=declaration)
             await helper.fill_title_and_description(page, opts["title"], opts["description"], opts["tags"])
             ready = page.locator('[class^="long-card"] div:has-text("重新上传")').first
             await ready.wait_for(state="visible", timeout=900000)
@@ -158,7 +165,8 @@ async def run(payload):
                 # Cover UI varies; v0.1 intentionally rejects custom covers until
                 # that account's crop/confirm flow has been integration-tested.
                 raise VpubError("unsupported_cover", "Douyin v0.1 does not accept a custom cover.")
-            await declare_ai(page)
+            if declaration:
+                await declare_ai(page)
             title = await page.locator('input[placeholder*="填写作品标题"]').first.input_value()
             if title != opts["title"]:
                 raise VpubError("metadata_mismatch", "Douyin title differs from the approved manifest.")

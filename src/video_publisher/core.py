@@ -209,11 +209,10 @@ def load_plan(path, selected=None):
                      "x": {"account"}, "instagram": {"account"}}
         if visibility not in supported[platform]:
             raise VpubError("invalid_visibility", f"Explicit {platform} visibility required: {sorted(supported[platform])}")
+        # Every route supports both values: AI-generated videos get each platform's
+        # AI-content declaration, ordinary videos get none. The value must be explicit.
         if type(v.get("ai_generated")) is not bool:
             raise VpubError("invalid_declaration", "Explicit ai_generated true/false required per platform.")
-        # v0.1 implements Douyin's AI declaration, not arbitrary declaration variants.
-        if platform in {"bilibili", "douyin"} and not v["ai_generated"]:
-            raise VpubError("unsupported_declaration", "v0.1 Bilibili/Douyin route supports AI-declared videos only.")
         if platform == "youtube" and type(v.get("made_for_kids")) is not bool:
             raise VpubError("invalid_audience", "YouTube made_for_kids must be explicitly true/false.")
         schedule = v.get("schedule")
