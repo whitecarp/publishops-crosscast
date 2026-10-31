@@ -113,7 +113,7 @@ def make_run(platforms,limit,pages,language,reply_pages,reply_threads,min_interv
         cp=cache_path(job,options)
         if not full and min_interval and cp.exists():
             cached=read_json(cp)
-            age=(datetime.now(timezone.utc)-datetime.fromisoformat(cached['checked_at'])).total_seconds()
+            age=(datetime.now(timezone.utc)-datetime.fromisoformat(cached['checked_at'].replace('Z','+00:00'))).total_seconds()
             if 0<=age<min_interval:
                 job.update(state='CACHED',result=cached['result'],checked_at=cached['checked_at'],cache_age_seconds=round(age,2))
     run={'schema_version':1,'run_id':uuid.uuid4().hex,'state':'RUNNING','started_at':now(),'options':options,

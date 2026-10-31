@@ -9,7 +9,7 @@ from video_publisher.core import atomic_json, file_sha, load_plan, read_json, Vp
 class InstagramPreparationTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
         self.video = self.root / 'source.mp4'
         self.video.write_bytes(b'original synthetic video bytes')
         self.cover = self.root / 'landscape.jpg'
