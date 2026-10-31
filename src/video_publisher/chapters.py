@@ -1,4 +1,4 @@
-"""Validate native chapter handoffs; this does not create platform chapters."""
+"""Validate chapter plans for supported browser routes."""
 import math
 from .core import VpubError
 
@@ -6,8 +6,8 @@ from .core import VpubError
 def validate(values, platform, method, duration):
     if not isinstance(values, list) or not values or len(values) > 100:
         raise VpubError("invalid_chapters", "Use a nonempty chapter list (local limit: 100).")
-    if platform not in {"bilibili", "douyin", "youtube"} or method != "native":
-        raise VpubError("unsupported_chapters", "Native chapters support Bilibili/Douyin/YouTube only; other routes are unimplemented.")
+    if platform not in {"bilibili", "douyin", "youtube"} or not (method == 'native' or (platform=='douyin' and method=='browser')):
+        raise VpubError("unsupported_chapters", "Use Douyin browser execution or Bilibili/Douyin/YouTube native handoff; other routes are unimplemented.")
     if type(duration) not in {int, float} or not math.isfinite(duration) or duration <= 0:
         raise VpubError("invalid_chapters", "Provide duration_seconds measured from the final video.")
     previous = -1

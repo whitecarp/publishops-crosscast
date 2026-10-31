@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PublishOps CrossCast｜一句话，发往你选的所有平台</title>
-  <meta name="description" content="PublishOps CrossCast（vpub）让你正在用的 AI 助手，为 B站、YouTube、抖音、Instagram 和 X 写好标题、简介并适配封面，再逐个平台直接提交、记录回执。0.3.0 alpha。">
+  <meta name="description" content="PublishOps CrossCast（vpub）让你正在用的 AI 助手，为 B站、YouTube、抖音、Instagram 和 X 写好标题、简介并适配封面，首次登录后在后台逐个平台提交、记录回执。0.15.1 alpha。">
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#f4f6f9" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0f1524" media="(prefers-color-scheme: dark)">
@@ -15,7 +15,7 @@
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="PublishOps CrossCast">
   <meta property="og:title" content="PublishOps CrossCast｜一句话，发往你选的所有平台">
-  <meta property="og:description" content="说一句话，AI 助手为五个平台写好文案、适配封面，再逐个平台直接提交并记录回执。0.3.0 alpha。">
+  <meta property="og:description" content="说一句话，AI 助手为五个平台写好文案、适配封面，首次登录后在后台逐个平台提交并记录回执。0.15.1 alpha。">
   <meta property="og:url" content="https://whitecarp.github.io/publishops-crosscast/">
   <meta property="og:image" content="https://whitecarp.github.io/publishops-crosscast/og.png">
   <meta property="og:image:width" content="1200">
@@ -81,7 +81,7 @@
     <div class="wrap hero-grid">
       <div class="hero-copy">
         <h1 id="heroTitle"><span data-i18n="h1a">一句话，</span><span data-i18n="h1b">发往你选的所有平台。</span></h1>
-        <p class="lead" data-i18n="lead">你正在用的 AI 助手（如 Codex、Claude）为 B站、YouTube、抖音、Instagram 和 X 各写一版标题、简介和标签，vpub 生成并检查发布方案、按平台适配封面，然后逐个平台直接提交，每一步都记录回执。不内置模型，也不需要另配模型 API Key。</p>
+        <p class="lead" data-i18n="lead">你正在用的 AI 助手（如 Codex、Claude）为 B站、YouTube、抖音、Instagram 和 X 各写一版标题、简介和标签，vpub 生成并检查发布方案、按平台适配封面，首次登录之后在后台逐个平台提交，每一步都记录回执。不内置模型，也不需要另配模型 API Key。</p>
         <div class="prompt-box">
           <div class="prompt-head">
             <span data-i18n="promptLabel">对你的 AI 助手说</span>
@@ -94,7 +94,7 @@
           <a class="btn btn-primary" href="#start" data-i18n="ctaStart">三步上手</a>
           <a class="btn btn-quiet" href="https://github.com/whitecarp/publishops-crosscast#readme" rel="noopener" data-doc data-i18n="ctaDocs">阅读文档</a>
         </div>
-        <p class="alpha-note" data-i18n="alphaNote">0.3.0 alpha：网页提交需要能操作浏览器的 AI 助手，扫码和验证码由你完成；五个平台的全自动发布尚未验收。</p>
+        <p class="alpha-note" data-i18n="alphaNote">0.15.1 alpha：五个平台都有过真实发布或上传记录，但登录会过期，平台也可能临时要求验证，长时间无人值守还没验收。</p>
       </div>
 
       <figure class="manifest" aria-labelledby="mfTitle">
@@ -138,7 +138,7 @@
           </li>
           <li class="mf-row" style="--i:4">
             <span class="mf-platform"><i class="dot dot-x" aria-hidden="true"></i>X</span>
-            <span class="mf-cover"><span class="sr" data-i18n="srCover">封面：</span><i class="canvas canvas-video" aria-hidden="true"></i><span data-i18n="coverVideo">沿用视频</span></span>
+            <span class="mf-cover"><span class="sr" data-i18n="srCover">封面：</span><i class="canvas" style="--ar:16/9" aria-hidden="true"></i>16:9</span>
             <span class="mf-copy"><span class="sr" data-i18n="srCopy">文案语言：</span><span data-i18n="langEn">英文</span></span>
             <span class="mf-state"><span class="sr" data-i18n="srState">状态：</span><span class="stamp stamp-queue" data-i18n="stQueue">排队中</span></span>
           </li>
@@ -193,7 +193,7 @@
       </div>
       <ol class="states">
         <li class="state state-queue"><span class="stamp stamp-queue" data-i18n="stQueue">排队中</span><p data-i18n="stQueueD">任务已记录，还没开始上传。</p></li>
-        <li class="state state-run"><span class="stamp stamp-run" data-i18n="stRun">发布中</span><p data-i18n="stRunD">AI 助手正在官方页面上传和填写，或 CLI 正在通过已配置的后端提交。</p></li>
+        <li class="state state-run"><span class="stamp stamp-run" data-i18n="stRun">发布中</span><p data-i18n="stRunD">CLI 正在后台上传和提交。</p></li>
         <li class="state state-sent"><span class="stamp stamp-sent" data-i18n="stSent">已提交，待核验</span><p data-i18n="stSentD">平台已接收提交，可能还在审核或处理中，还没有读回到作品。</p></li>
         <li class="state state-ok"><span class="stamp stamp-ok" data-i18n="stOk">已核验</span><p data-i18n="stOkD">已从平台页面或 API 读回到这条作品。审核和公开状态以平台显示为准。</p></li>
       </ol>
@@ -208,61 +208,62 @@
     <div class="wrap">
       <div class="section-head">
         <h2 id="platTitle" data-i18n="platTitle">五个平台，各走各的路</h2>
-        <p class="section-sub" data-i18n-html="platSub">安装成功不等于已登录或已有发布权限。本机实际能走哪条路径，以 <code>vpub capabilities</code> 的结果为准。</p>
+        <p class="section-sub" data-i18n-html="platSub">实测记录是过去的真实发布，不代表在你的账号、地区和平台状态下一定成功。本机实际能走哪条路径，以 <code>vpub capabilities</code> 的结果为准；B站是作者直接用 bili-cli 上传的，在那里仍标为未实测。</p>
       </div>
       <div class="scope-wrap">
         <table class="scope" role="table" aria-labelledby="platTitle">
           <thead role="rowgroup">
             <tr role="row">
               <th role="columnheader" scope="col" data-i18n="thPlatform">平台</th>
-              <th role="columnheader" scope="col" data-i18n="thDefault">默认方式</th>
-              <th role="columnheader" scope="col" data-i18n="thOptional">可选方式</th>
-              <th role="columnheader" scope="col" data-i18n="thStatus">现状</th>
+              <th role="columnheader" scope="col" data-i18n="thLogin">登录</th>
+              <th role="columnheader" scope="col" data-i18n="thRoute">发布方式</th>
+              <th role="columnheader" scope="col" data-i18n="thTested">实测记录</th>
             </tr>
           </thead>
           <tbody role="rowgroup">
             <tr role="row">
               <th role="rowheader" scope="row"><i class="dot dot-bili" aria-hidden="true"></i>Bilibili</th>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thDefault">默认方式</span><span data-i18n="pBiliDef">AI 助手操作官方网页</span></td>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thOptional">可选方式</span><span data-i18n="pBiliOpt">上游 bili CLI</span></td>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thStatus">现状</span><span class="badge badge-ok" data-i18n="avail">可用</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thLogin">登录</span><span data-i18n="pBiliLogin">B站 App 扫码（bili-cli）</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thRoute">发布方式</span><span data-i18n="pBiliRoute">bili-cli，可定时发布</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thTested">实测记录</span><span class="badge badge-ok">bili-cli</span></td>
             </tr>
             <tr role="row">
               <th role="rowheader" scope="row"><i class="dot dot-yt" aria-hidden="true"></i>YouTube</th>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thDefault">默认方式</span><span data-i18n="pYtDef">官方网页交接</span></td>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thOptional">可选方式</span><span data-i18n="pYtOpt">YouTube Data API（需自行配置 OAuth）</span></td>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thStatus">现状</span><span class="badge badge-ok" data-i18n="avail">可用</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thLogin">登录</span><span data-i18n="pYtLogin">Google 桌面 OAuth 客户端</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thRoute">发布方式</span><span data-i18n="pYtRoute">默认走官方 API，可定时发布；也可由 AI 助手操作 YouTube Studio</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thTested">实测记录</span><span class="badge badge-ok">API</span></td>
             </tr>
             <tr role="row">
               <th role="rowheader" scope="row"><i class="dot dot-dy" aria-hidden="true"></i><span data-i18n="pDy">抖音</span></th>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thDefault">默认方式</span><span data-i18n="pDyDef">AI 助手协助官方网页</span></td>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thOptional">可选方式</span><span data-i18n="pDyOpt">独立后端（实验功能）</span></td>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thStatus">现状</span><span class="badge badge-ok" data-i18n="availWeb">网页可用</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thLogin">登录</span><span data-i18n="pChrome">专用官方 Chrome</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thRoute">发布方式</span><span data-i18n="pBgBrowser">CLI 后台浏览器</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thTested">实测记录</span><span class="badge badge-ok" data-i18n="testedPub">已发布</span></td>
             </tr>
             <tr role="row">
               <th role="rowheader" scope="row"><i class="dot dot-ig" aria-hidden="true"></i>Instagram</th>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thDefault">默认方式</span><span data-i18n="pWebDraft">AI 助手操作官方网页，可只存草稿</span></td>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thOptional">可选方式</span><span data-i18n="pNoApi">无独立 API</span></td>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thStatus">现状</span><span class="badge badge-ok" data-i18n="avail">可用</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thLogin">登录</span><span data-i18n="pChrome">专用官方 Chrome</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thRoute">发布方式</span><span data-i18n="pIgRoute">CLI 后台浏览器，封面在手机上改</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thTested">实测记录</span><span class="badge badge-ok" data-i18n="testedPub">已发布</span></td>
             </tr>
             <tr role="row">
               <th role="rowheader" scope="row"><i class="dot dot-x" aria-hidden="true"></i>X</th>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thDefault">默认方式</span><span data-i18n="pWebDraft">AI 助手操作官方网页，可只存草稿</span></td>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thOptional">可选方式</span><span data-i18n="pNoApi">无独立 API</span></td>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thStatus">现状</span><span class="badge badge-ok" data-i18n="avail">可用</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thLogin">登录</span><span data-i18n="pChrome">专用官方 Chrome</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thRoute">发布方式</span><span data-i18n="pXRoute">只能用 Media Studio（需订阅）</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thTested">实测记录</span><span class="badge badge-ok" data-i18n="testedPub">已发布</span></td>
             </tr>
             <tr role="row" class="is-paused">
               <th role="rowheader" scope="row"><i class="dot dot-tt" aria-hidden="true"></i>TikTok</th>
               <td role="cell" colspan="2"><span class="cell-label" aria-hidden="true" data-i18n="thNote">说明</span><span data-i18n="pTtNote">CLI 会拒绝 TikTok 的登录和发布请求。</span></td>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thStatus">现状</span><span class="badge badge-stop" data-i18n="paused">暂停支持</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thTested">实测记录</span><span class="badge badge-stop" data-i18n="paused">暂停</span></td>
             </tr>
           </tbody>
         </table>
       </div>
       <ul class="notes">
-        <li data-i18n="platNote1">网页方式需要能操作浏览器的 AI 助手；没有这类助手时，只能准备素材和交接说明。</li>
-        <li data-i18n="platNote2">定时发布只在 Bilibili CLI（2 小时到 15 天内）和 YouTube API（需设为私密）两条路径上可用；网页方式只支持立即发布。</li>
-        <li data-i18n="platNote3">目前没有通用的评论、回复、私信、收件箱或创作者数据命令。</li>
+        <li data-i18n="platNote1">YouTube：API 路径下，按 Google 的规定，2020 年 7 月 28 日之后创建、又没通过审核的 API 项目，上传的视频会被锁成私享。</li>
+        <li data-i18n="platNote2">X：账号必须已订阅并能进入 Media Studio；未订阅账号的视频上限是 140 秒、512 MB，本工具不支持。</li>
+        <li data-i18n="platNote3">抖音：长时间保持登录的稳定性还在验收；网页上传中断后不能续传，要先检查已有草稿。</li>
+        <li data-i18n="platNote4">暂不支持：TikTok、YouTube 卡片和可点击片尾、X 和 Instagram 官方 API、自动或批量的私信和点赞、完整历史导出。</li>
       </ul>
     </div>
   </section>
@@ -275,7 +276,7 @@
       <ol class="steps">
         <li class="step">
           <h3 data-i18n="st1">安装</h3>
-          <p data-i18n="st1d">需要 Python 3.10–3.12。把上面那段话交给 AI 助手，或者自己运行：</p>
+          <p data-i18n="st1d">需要 Python 3.10–3.12 和 Google Chrome。把上面那段话交给 AI 助手，或者自己运行：</p>
           <div class="cmd"><code id="cmdInstall">python -m pip install "git+https://github.com/whitecarp/publishops-crosscast.git"</code><button type="button" class="copy copy-sm" data-copy="cmdInstall" data-i18n="copy" aria-label="复制安装命令" data-i18n-aria="copyInstallA">复制</button></div>
           <p class="step-note" data-i18n-html="st1n">Windows 也可以用仓库里的 <code>install.ps1</code>；macOS 和 Linux 尚未验收。</p>
         </li>
@@ -287,16 +288,19 @@
         </li>
         <li class="step">
           <h3 data-i18n="st3">说一句，直接发布</h3>
-          <p data-i18n="st3d">告诉 AI 助手视频文件、要发的平台和公开范围，它就逐个平台提交并记录回执。第一次登录各平台时，扫码和验证码由你完成。</p>
+          <p data-i18n="st3d">告诉 AI 助手视频文件、要发的平台和公开范围，它就逐个平台提交并记录回执。第一次登录各平台时，扫码和验证码由你完成；之后 CLI 在后台复用登录。</p>
         </li>
       </ol>
       <details class="manual">
         <summary data-i18n="manualSum">想自己动手？看手动流程</summary>
-        <pre><code>vpub init --video final.mp4 --language zh-Hans --out publish.json --platforms youtube
+        <pre><code>vpub init --video final.mp4 --language zh-Hans --out publish.json --platforms bilibili,douyin,youtube
 vpub metadata request publish.json --source script.txt --out request.json
 vpub metadata apply publish.json --request request.json --response response.json --out localized.json
-vpub plan localized.json
-vpub publish localized.json --dry-run</code></pre>
+vpub covers prepare localized.json --source cover.jpg --portrait portrait.jpg --out-dir covers --out ready.json
+vpub plan ready.json
+vpub publish ready.json --dry-run
+vpub publish ready.json --confirm &lt;confirmation-code&gt;
+vpub verify RECEIPT_KEY</code></pre>
         <p data-i18n-html="manualNote"><code>--dry-run</code> 不会上传。<code>response.json</code> 由 AI 助手按 <code>request.json</code> 里的模板撰写。</p>
       </details>
     </div>
@@ -310,15 +314,15 @@ vpub publish localized.json --dry-run</code></pre>
       </div>
       <div class="faq-list">
         <details><summary data-i18n="q0">发布前还要我再确认吗？</summary><p data-i18n-html="a0">不用。你说要发布，就是授权：它按你说的平台、账号和公开范围直接提交。只有内容、账号、平台、受众或任务范围变了，它才会再问你。想先看一眼，就说“先别发”，或者用 <code>--dry-run</code> 预演。</p></details>
-        <details><summary data-i18n="q1">需要单独的模型 API Key 吗？</summary><p data-i18n="a1">不需要。CrossCast 不内置模型，标题和简介由你正在用的 AI 助手来写。只有选用 YouTube API 路径时，才需要自行配置 Google OAuth。</p></details>
+        <details><summary data-i18n="q1">需要单独的模型 API Key 吗？</summary><p data-i18n="a1">不需要。CrossCast 不内置模型，标题和简介由你正在用的 AI 助手来写。只有用 CLI 发 YouTube 时，才需要自行配置 Google OAuth 桌面客户端；也可以让能操作浏览器的 AI 助手在 YouTube Studio 上发布。</p></details>
         <details><summary data-i18n="q2">它会帮我登录账号吗？</summary><p data-i18n="a2">登录在官方页面完成，扫码、密码和验证码都由你本人操作。不要在对话、日志或仓库里提供 Cookie、密码、验证码或令牌。这个页面也不收集任何信息。</p></details>
-        <details><summary data-i18n="q3">只在终端里运行 vpub，能直接发出去吗？</summary><p data-i18n="a3">默认的网页方式不能：独立运行的 CLI 无法操作浏览器，只能准备方案和交接说明，网页上的步骤要由能操作浏览器的 AI 助手完成。如果你自行配置了 Bilibili CLI 或 YouTube API 并明确授权，这两条路径可以由 CLI 直接提交。</p></details>
+        <details><summary data-i18n="q3">只在终端里运行 vpub，能直接发出去吗？</summary><p data-i18n="a3">能。首次登录之后，CLI 自己在后台完成上传，不需要 AI 助手一步步操作浏览器。登录过期或平台要求验证时，需要你回到官方页面处理。</p></details>
         <details><summary data-i18n="q4">进了队列或有了回执，就算发出去了吗？</summary><p data-i18n="a4">不算。排队只说明任务已记录；本地回执记录每一步的证据，但它本身不代替平台证据。是否发布成功，以平台页面读回或平台 API 为准。</p></details>
         <details><summary data-i18n="q5">会改动我的原视频和封面吗？</summary><p data-i18n="a5">不会。适配后的封面另存为新文件，原图保持不变；发 Instagram 时直接使用原视频，不转码。</p></details>
         <details><summary data-i18n="q6">会不会发到我没选的平台？</summary><p data-i18n="a6">不会因为某个平台已登录就把它加进来。平台、账号和公开范围由你选定；内容、账号、平台、受众或任务范围有变化时，会重新请你确认。</p></details>
-        <details><summary data-i18n="q7">要花钱吗？</summary><p data-i18n="a7">CrossCast 本身开源免费（MIT）。你的 AI 助手订阅、平台功能，以及可选的 YouTube API 可能另有费用或限制，本项目不承诺免费或无限使用。</p></details>
-        <details><summary data-i18n="q8">支持 TikTok、评论管理或数据分析吗？</summary><p data-i18n="a8">TikTok 目前暂停支持。这个版本也没有通用的评论、回复、私信、收件箱或创作者数据功能。</p></details>
-        <details><summary data-i18n="q9">现在能放心用于正式发布吗？</summary><p data-i18n-html="a9">当前是 0.3.0 alpha，五个平台的全自动发布尚未完成验收。第一次用时，可以先用预演（<code>--dry-run</code>）看一遍方案，再正式发布。</p></details>
+        <details><summary data-i18n="q7">要花钱吗？</summary><p data-i18n="a7">CrossCast 本身开源免费（MIT）。你的 AI 助手订阅、X 的订阅（发布要用 Media Studio），以及 YouTube API 的配额可能另有费用或限制，本项目不承诺免费或无限使用。</p></details>
+        <details><summary data-i18n="q8">支持评论、私信和数据吗？TikTok 呢？</summary><p data-i18n="a8">支持读评论并回复、点赞和收藏，在抖音、Instagram、X 上读发私信，查看作品数据和生成运营报告；各平台能做的不一样，每次只处理你授权的那一条，不会批量发送。TikTok 目前暂停支持。</p></details>
+        <details><summary data-i18n="q9">现在能放心用于正式发布吗？</summary><p data-i18n-html="a9">当前是 0.15.1 alpha。五个平台都有过真实发布或上传记录，但登录会过期，平台也可能临时要求验证，长时间无人值守还没验收。第一次用时，可以先用预演（<code>--dry-run</code>）看一遍方案，再正式发布。</p></details>
       </div>
     </div>
   </section>
@@ -341,7 +345,7 @@ vpub publish localized.json --dry-run</code></pre>
   <div class="wrap footer-in">
     <div>
       <p data-i18n="footIndie">PublishOps CrossCast 是独立整合工具，并非任何视频平台的官方产品。</p>
-      <p data-i18n="footMeta">MIT 许可，当前版本 0.3.0 alpha。</p>
+      <p data-i18n="footMeta">MIT 许可，当前版本 0.15.1 alpha。</p>
     </div>
     <nav class="footer-nav" aria-label="页脚链接" data-i18n-aria="footNav">
       <a href="https://github.com/whitecarp/publishops-crosscast" rel="noopener">GitHub</a>

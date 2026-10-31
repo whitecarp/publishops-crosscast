@@ -9,4 +9,4 @@ include docs/.nojekyll
 recursive-include docs *.md *.html *.css *.js
 recursive-include src/video_publisher *.py
 recursive-include tests *.py
-recursive-include skills *.md
+recursive-include skills *.md *.yaml

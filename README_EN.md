@@ -46,9 +46,9 @@ Publish final.mp4 publicly to Bilibili, YouTube, Douyin, Instagram, and X, with 
 **Have these ready before you start:**
 
 - **Bilibili**: scan a QR code once with the Bilibili app (through bili-cli).
-- **YouTube**: the official API is the only route. Enable YouTube Data API v3 in Google Cloud, create a "Desktop app" OAuth client, and give the downloaded JSON to your AI assistant.
+- **YouTube**: the CLI route uses the official API. Without it, an AI assistant with browser tools can publish through YouTube Studio; there is no CLI background browser for YouTube. Enable YouTube Data API v3 in Google Cloud, create a "Desktop app" OAuth client, and give the downloaded JSON to your AI assistant.
 - **Douyin, Instagram and X**: the first sign-in opens CrossCast's own official Chrome window, where you scan a QR code or enter your password and verification code yourself; after that, the CLI reuses the sign-in in the background.
-- **X**: publishing works only through Media Studio, so the account must be subscribed and able to open Media Studio.
+- **X browser route**: publishing works only through Media Studio, so the account must be subscribed and able to open Media Studio.
 - **Google Chrome on your computer**: if it's missing, run `vpub setup --install-browser`.
 
 <details>
@@ -127,7 +127,7 @@ When a platform needs you to scan a QR code or verify, CrossCast can email you a
 | Platform | Sign-in | Publishing route | Tested |
 | --- | --- | --- | --- |
 | **Bilibili** | Bilibili app QR code (bili-cli) | bili-cli, can schedule | ✅&nbsp;bili-cli |
-| **YouTube** | Google desktop OAuth client | Official API only, can schedule | ✅&nbsp;API |
+| **YouTube** | Google desktop OAuth client | Official API by default, can schedule; or an AI assistant on YouTube Studio | ✅&nbsp;API |
 | **Douyin** | Dedicated official Chrome | CLI background browser | ✅&nbsp;Published |
 | **Instagram** | Dedicated official Chrome | CLI background browser; cover changed on your phone | ✅&nbsp;Published |
 | **X** | Dedicated official Chrome | Media Studio only (subscription required) | ✅&nbsp;Published |
@@ -137,11 +137,30 @@ See the [validation record](docs/VALIDATION_EN.md) for details. Bilibili uploads
 
 **Know before you post**
 
-- **YouTube**: the official API is the only route. While the project is in testing mode, add the signing-in account under "Test users" first. Under Google's rules, videos uploaded by an API project created after July 28, 2020 that has not passed Google's audit are locked to private.
-- **X**: Media Studio only. The account must be subscribed and able to open Media Studio; accounts without it are limited to 140-second, 512 MB videos, which this tool does not support.
+- **YouTube**: the CLI route uses the official API. Without it, an AI assistant with browser tools can publish through YouTube Studio; there is no CLI background browser for YouTube. While the project is in testing mode, add the signing-in account under "Test users" first. Under Google's rules, videos uploaded by an API project created after July 28, 2020 that has not passed Google's audit are locked to private.
+- **X browser route**: Media Studio only. The account must be subscribed and able to open Media Studio; accounts without it are limited to 140-second, 512 MB videos, which this tool does not support.
 - **Instagram**: the video keeps its original ratio, and the cover must be changed on your phone: open the work's "Edit cover → Add from camera roll", pick the portrait image shared with Douyin, then check how the profile grid crops it.
 - **Douyin**: long-term sign-in stability is still being validated, and an interrupted web upload cannot resume, so check existing drafts first.
-- **Not available yet**: TikTok (suspended), YouTube cards and clickable end screens, official X and Instagram APIs, automatic or bulk messages and likes, and full history export.
+- **Not available yet**: TikTok (suspended), YouTube cards and clickable end screens, automatic or bulk messages and likes, and full history export.
+
+## Optional X and Instagram API routes (experimental)
+
+The API code is public under MIT, including `api_backends.py` and its tests. CrossCast has no license key or paid unlock for these routes; platform developer access, permissions and charges are separate.
+
+The default X/Instagram route remains the signed-in background browser. The new API upload routes have **offline fault-injection tests only**, not a successful real-account authorization/upload acceptance run. Earlier live-publication results refer to the browser routes. API routes currently support authorization, upload, publication and read-back; existing comment, collection and message commands retain their previous backends.
+
+- **X API:** create a developer application with OAuth 2.0 user authorization and the required media/post scopes. Store `client_id` and, if applicable, `client_secret` in a private JSON file. Developer API access/billing is separate from a consumer subscription and Media Studio access.
+- **Instagram API:** this implementation uses Facebook Login for Business and a professional Instagram account linked to a Facebook Page. Store `app_id`, `app_secret`, and optionally `ig_user_id` in a private JSON file. App permissions and review depend on your Meta configuration.
+- Register `http://127.0.0.1:8765/callback` for the app. Run the matching command below, complete official consent yourself, then use `"method": "api"` for that platform in the manifest. Personal credentials and tokens stay outside the repository.
+
+```sh
+vpub auth login x --method api --client-json /private/x-client.json
+vpub auth login instagram --method api --client-json /private/instagram-client.json
+```
+
+These API routes do not apply custom covers, schedule posts or create drafts. X processing is bounded; resume checks the same media. Instagram skips byte uploads for a finished container and stops if an interrupted transfer has no acknowledged offset; server-side offset behavior still needs live validation. Uncertain public submissions never repeat automatically, even after multiple resumes. A returned work ID is saved before read-back. Account changes stop the attempt.
+
+Protocol references: [X chunked upload](https://docs.x.com/x-api/media/quickstart/media-upload-chunked), [Meta content publishing](https://developers.facebook.com/docs/instagram-platform/content-publishing/).
 
 ## 🔒 Safety rails
 
@@ -232,7 +251,7 @@ No. Asking it to publish is the authorization: it submits with the platforms, ac
 <details>
 <summary><b>Why does YouTube need an OAuth client?</b></summary>
 
-YouTube can only be published through the official API, and an API key on its own cannot authorize uploads. You authorize once on Google's page with a "Desktop app" OAuth client; it happens on your own computer, and the token stays there.
+The CLI publishes to YouTube through the official API, and an API key on its own cannot authorize uploads. Without an OAuth client, an AI assistant with browser tools can publish through YouTube Studio instead. You authorize once on Google's page with a "Desktop app" OAuth client; it happens on your own computer, and the token stays there.
 
 </details>
 
