@@ -316,8 +316,8 @@ def record(key, evidence_path):
             notification = None
             if state == "WAITING_FOR_USER":
                 try:
-                    from .notifications import enqueue
-                    notification = enqueue(key, old["platform"], old["data"].get("user_action_episode", 1))
+                    from .adapters import email_reminder
+                    notification = email_reminder(key, old["platform"], old["data"].get("user_action_episode", 1))
                 except (OSError, ValueError, VpubError, sqlite3.Error):
                     notification = {"state": "QUEUE_ERROR", "email_sent": False, "inline_notice_required": True}
             return {"key": key, **receipt, "user_action_required": state == "WAITING_FOR_USER",

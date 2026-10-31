@@ -309,7 +309,7 @@ def finalize(run):
                items=list(items.values()),inbox=inbox,
                reads_completed=sum(j['state']=='DONE' for j in run['jobs']),cached_reads=sum(j['state']=='CACHED' for j in run['jobs']),
                changes=[{'platform':j['platform'],'work_id':j['work_id'],**c} for j in run['jobs'] if j['state']=='DONE' for c in j.get('changes',[])],
-               report=ops.report(since=run['started_at'],language=run['options']['language'],_events=run['events']))
+               report=patrol_summary(run))
     run['sources']=list(run.get('source_status',[]))
     for j in run['jobs']:
         if j['operation'] not in {'mentions','dm_preview','comments'}:continue
@@ -330,6 +330,17 @@ def finalize(run):
         run['report']=(f'本轮读取 {good} 个消息来源，复用 {cached} 项缓存；新观察到 {added} 条提及或会话预览。首次读取仅建立基线，受限来源见明细。未发送回复、私信或邮件。' if ops.reporting_language(run['options']['language'])=='zh' else
                        f'Read {good} message sources; reused {cached} cached reads; {added} newly observed mentions or conversation previews. First reads establish a baseline; see coverage limits. No replies, DMs or email sent.')
     save(run);return run
+
+
+def patrol_summary(run):
+    """What this one patrol read. The report across time is in the paid add-on."""
+    done=sum(j['state']=='DONE' for j in run['jobs']);cached=sum(j['state']=='CACHED' for j in run['jobs'])
+    failed=sum(j['state'] not in {'DONE','CACHED'} for j in run['jobs'])
+    new=sum(len(j['result'].get('newly_observed_ids',[])) for j in run['jobs'] if j['state']=='DONE' and j['operation']=='comments')
+    language=ops.reporting_language(run['options']['language'])
+    summary=(f'本轮完成 {done} 次读取，复用 {cached} 项缓存，新观察到 {new} 条评论，{failed} 次读取未完成。未发送回复、私信或邮件。' if language=='zh' else
+             f'Completed {done} reads, reused {cached} cached reads, observed {new} new comments; {failed} reads did not complete. No replies, DMs or email sent.')
+    return {'language':language,'summary':summary,'reads_completed':done,'cached_reads':cached,'newly_observed_comments':new,'failed_reads':failed}
 
 
 def execute(run,progress=False):

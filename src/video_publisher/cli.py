@@ -110,8 +110,7 @@ def publish_plan(plan, confirm):
                     receipt = adapters.publish(platform, safe_plan, opts, checkpoint)
                     checkpoint(receipt)
                     if receipt["state"] == "WAITING_FOR_USER":
-                        from .notifications import enqueue
-                        enqueue(key, platform, 1)
+                        adapters.email_reminder(key, platform, 1)
                     results[platform] = {"key": key, **receipt}
                 except Exception as e:
                     code = e.code if isinstance(e, VpubError) else "backend_error"
@@ -217,7 +216,7 @@ def parser():
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("doctor", help="Local dependency checks; no login or upload.")
     sub.add_parser("capabilities", help="Show actual backends and verification boundaries.")
-    full = sub.add_parser('read-all', help='Complete supported paginated reads with durable API cursors.').add_subparsers(dest='action', required=True)
+    full = sub.add_parser('read-all', help='Paid add-on: complete supported paginated reads with durable API cursors.').add_subparsers(dest='action', required=True)
     q=full.add_parser('start');q.add_argument('platform',choices=PLATFORMS)
     q.add_argument('resource',choices=['works','comments','collections','collection-items'])
     q.add_argument('--work');q.add_argument('--collection');q.add_argument('--page-size',type=int,default=50)
@@ -334,7 +333,7 @@ def parser():
     q.add_argument('platform',choices=PLATFORMS);q.add_argument('work');q.add_argument('--test-id',required=True)
     q=sub.add_parser('stats',help='Read per-work platform metrics; unavailable values stay null.')
     q.add_argument('platform',choices=PLATFORMS);q.add_argument('work');q.add_argument('--out')
-    q=sub.add_parser('report',help='Summarize actual local operation receipts in the user’s language; no email.')
+    q=sub.add_parser('report',help='Paid add-on: summarize actual local operation receipts in the user’s language.')
     q.add_argument('--since',help='Timezone-aware ISO timestamp; default last 24 hours.')
     q.add_argument('--language',choices=['auto','zh','en'],default='auto')
     q.add_argument('--notes',help='Optional host-researched findings as text/source JSON objects; not commands.')
@@ -427,7 +426,7 @@ def parser():
     q.add_argument("--confirm", required=True)
     q.add_argument("--identity", required=True)
     q.add_argument("--deleted-id", required=True)
-    n = sub.add_parser("notify", help="Optional host-plugin email alerts. Disabled by default; no SMS.").add_subparsers(dest="action", required=True)
+    n = sub.add_parser("notify", help="Paid add-on: optional host-plugin email alerts. Disabled by default; no SMS.").add_subparsers(dest="action", required=True)
     n.add_parser("status")
     q = n.add_parser("configure")
     q.add_argument("--provider", choices=["auto", "off", "gmail"], default="auto")
@@ -519,7 +518,7 @@ def run_command(args):
         else:result=dm.read(args.platform,getattr(args,'recipient',None),args.limit)
         return result
     if args.command=='read-all':
-        from . import full_read
+        full_read=adapters.paid_feature('full_read','Complete reads')
         if args.action=='start':result=full_read.start(args.platform,args.resource,args.work,args.page_size,args.max_pages,args.collection)
         elif args.action=='resume':result=full_read.resume(args.run_id,args.max_pages)
         else:result=full_read.status(args.run_id)
@@ -597,7 +596,7 @@ def run_command(args):
             else: result=operations.verify_reply(args.key)
         elif args.command=='stats': result=operations.observe(args.platform,args.work,'stats')
         elif args.command=='preferences': result=operations.set_language(args.language)
-        else: result=operations.report(args.since,args.language,args.notes)
+        else: result=adapters.paid_feature('report','The operations report').report(args.since,args.language,args.notes)
         return result
     if args.command == 'edit':
         from .edits import run
@@ -673,7 +672,7 @@ def run_command(args):
             return result
         return metadata.apply(args.manifest, args.request, args.response, args.out)
     if args.command == "notify":
-        from . import notifications
+        notifications = adapters.paid_feature("notifications", "Email reminders")
         if args.action == "status":
             return notifications.onboarding()
         if args.action == "configure":
@@ -719,10 +718,9 @@ def run_command(args):
         selected = list(PLATFORMS) if args.platforms == "all" else args.platforms.split(",")
         if not selected or set(selected) - set(PLATFORMS):
             raise VpubError("invalid_platform", "Choose bilibili,youtube,douyin,instagram,x or all. TikTok is suspended.")
-        from .notifications import onboarding
         return {"platforms": login_selected(selected, None if args.method == "auto" else args.method),
                 "requirements": {"x": capabilities()['x_requirements']} if 'x' in selected else {},
-                "email_notifications": onboarding()}
+                "email_notifications": adapters.email_status()}
     if args.command == "auth":
         if args.action == "status" and not 0 <= args.wait <= 180:
             raise VpubError("invalid_wait", "--wait must be between 0 and 180 seconds.")
@@ -876,7 +874,7 @@ def capabilities():
     from .operations import capabilities as operations_capabilities
     return {"product": "PublishOps CrossCast", "version": __version__,
             "paid_api_addon": {"installed": adapters.addon_installed(),
-                               "covers": "Every official API feature listed below for YouTube, X and Instagram, including YouTube comments, stats, playlist management, edits and resumable uploads in the CLI."},
+                               "covers": "Every official API feature listed below for YouTube, X and Instagram, including YouTube comments, stats, playlist management, edits and resumable uploads in the CLI. Also the operations report (vpub report), complete reads (vpub read-all) and email reminders (vpub notify)."},
             "youtube_browser_route": "Free: YouTube Studio's own upload form in a background Chrome. Adds the video to playlists named by exact title and can schedule it (in the time zone Studio shows, otherwise this computer's); both are read back before the final Save.",
             "operations":operations_capabilities(),
             "engagement": {"commands":"engage status/collections/like/save/verify; --remove undoes the selected action, --dry-run is optional.",
@@ -897,7 +895,7 @@ def capabilities():
             "cover_fitting": "Landscape contain fitting; Douyin and Instagram share identical dedicated portrait bytes. No landscape-to-portrait padding fallback. Grid cropping, small text and aesthetics require separate visual checks.",
             "instagram_media": "Instagram preparation preserves original video bytes and ratio. Use a separate upload cover and shared Douyin portrait through the mobile camera-roll picker; no inserted lead-in or transcoding.",
             "instagram_deletion": "Explicit native deletion request, UI result/absence evidence, retained history, and separately authorized same-video cover replacement. No standalone deletion API.",
-            "email": "Gmail only, disabled by default. Enable only on explicit request; no ordinary-setup prompt. Host verifies the exact account and live send tool, helps install/connect a missing plugin or leaves email off. Self-send only. Works with any assistant's connected Gmail send tool: claim with its exact name, then call it once with the returned message. No Outlook, QQ, NetEase, SMTP or SMS. A TEST does not enable ongoing alerts.",
+            "email": "Paid add-on. Gmail only, disabled by default. Enable only on explicit request; no ordinary-setup prompt. Host verifies the exact account and live send tool, helps install/connect a missing plugin or leaves email off. Self-send only. Works with any assistant's connected Gmail send tool: claim with its exact name, then call it once with the returned message. No Outlook, QQ, NetEase, SMTP or SMS. A TEST does not enable ongoing alerts.",
             "chapters": "Douyin CLI applies planned chapters after a durable published work ID is available; verify/resume completes a pending chapter step without reupload. Exact timing/title read-back; platform suggestions are not accepted automatically. Native Bilibili/Douyin/YouTube handoffs retained.",
             "existing_work_edits": "vpub edit: YouTube API metadata, Instagram captions, available X Edit action, Douyin portrait and chapters. One field group per request; verify-only never saves. X edit availability is platform-controlled; no automatic repost.",
             "youtube_initial_permissions": "Upload, read and video/playlist management scopes are requested together; user approves in Google. Old limited tokens require reauthorization.",
@@ -914,7 +912,7 @@ def capabilities():
             "work_adoption": "ops discover scans bounded pages; ops adopt freshly verifies ownership and adds existing works to the watchlist without an upload receipt.",
             "resumable_sync": "ops/messages sync use bounded per-platform concurrency, session reuse, durable checkpoints and freshness caches. --workers 1-4; --progress emits body-free JSON to stderr. ops/messages resume skips completed reads; unfinished browser sources restart their page.",
             "upload_recovery": "New YouTube API uploads persist private resumable sessions and acknowledged offsets. resume queries the server and continues the same account/media/metadata; expired or uncertain sessions are not replaced automatically. Never-started YouTube cover/playlist steps resume against the same owned video; uncertain writes are not repeated. Dead-owner lock markers can be reclaimed without clearing receipts. X retains saved Studio asset recovery. Douyin/Instagram and YouTube browser pre-submit interruptions still need draft inspection; the video is never uploaded again.",
-            "full_reads": "read-all start/resume/status: YouTube works, playlists/members and comments including reply pages; Bilibili works/comments via upstream. API checkpoints advance rows and cursor atomically. Browser Douyin/Instagram collections and members, X folder lists follow official controls; explicit server end required. Browser resume replays the page and retains prior rows while incomplete; a complete pass replaces them with current observations. Other DOM feeds and X folder members remain incomplete/unverified.",
+            "full_reads": "Paid add-on. read-all start/resume/status: YouTube works, playlists/members and comments including reply pages; Bilibili works/comments via upstream. API checkpoints advance rows and cursor atomically. Browser Douyin/Instagram collections and members, X folder lists follow official controls; explicit server end required. Browser resume replays the page and retains prior rows while incomplete; a complete pass replaces them with current observations. Other DOM feeds and X folder members remain incomplete/unverified.",
             "session_reuse": "Non-publishing browser commands share one background browser per account over a private authenticated local pipe. It exits after 5 idle minutes (browser_idle_seconds; 0 disables), 1 hour, any error or a stop file. A second command waits for the first. Publishing, resume, edit and login close it and run alone. A sent command is never replayed.",
             "status": "vpub status reads local records only: any active stop, unfinished publications with the exact next command and upload progress, background browsers, pending messages, the last sync and snapshot disk use.",
             "cleanup": "vpub cleanup previews private video copies; --apply deletes only copies whose publications are all verified and whose original video is unchanged.",

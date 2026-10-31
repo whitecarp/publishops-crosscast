@@ -81,28 +81,6 @@ class EngagementTests(unittest.TestCase):
         for kind in ('like','save'):
             a=cli.parser().parse_args(['engage',kind,'x','123456789','--remove'])
             self.assertTrue(a.remove);self.assertFalse(a.dry_run)
-    def event(self,key,state='ACTION_VERIFIED',kind='like',desired=True,test=False):
-        return {'event_id':key,'at':'2026-10-30T00:00:00+00:00','platform':'x','work_id':'123456789','action':'engagement',
-                'result':{'key':key,'state':state,'kind':kind,'desired':desired,'test':test}}
-    def test_report_deduplicates_verified_actions_and_labels_pending(self):
-        events=[self.event('a'),self.event('a'),self.event('b',kind='save',desired=False),self.event('c','ACTION_UNVERIFIED')]
-        r=operations.report('2026-01-01T00:00:00Z','en',_events=events)
-        self.assertEqual(1,r['platforms']['x']['engagement_verified']['like_on'])
-        self.assertEqual(1,r['platforms']['x']['engagement_verified']['save_off'])
-        self.assertIn('remain unverified',r['summary'])
-    def test_report_excludes_test_traffic_in_both_languages(self):
-        for lang in ('zh','en'):
-            r=operations.report('2026-01-01T00:00:00Z',lang,_events=[self.event('a',test=True)])
-            self.assertEqual({},r['platforms']);self.assertNotIn('X',r['summary'])
-    def test_report_does_not_count_failed_action_as_verified(self):
-        r=operations.report('2026-01-01T00:00:00Z','zh',_events=[self.event('a','ACTION_FAILED')])
-        self.assertEqual(0,r['platforms']['x']['engagement_verified']['like_on'])
-        self.assertEqual(1,r['platforms']['x']['engagement_failed'])
-        self.assertIn('提交前停止',r['summary'])
-
-
-
-
 class DouyinDetailTests(unittest.TestCase):
     def test_exact_work_account_state_not_tooltip_or_count(self):
         from video_publisher.engagement_browser import douyin_detail_state

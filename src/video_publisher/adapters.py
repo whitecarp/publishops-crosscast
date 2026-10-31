@@ -1,6 +1,7 @@
 """Real platform adapters; no platform write occurs during plan/doctor."""
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import json
 import os
@@ -45,6 +46,29 @@ def paid_api():
         raise VpubError("paid_route_required", "Official API routes for X, Instagram and YouTube need the paid CrossCast API add-on.",
                         "Use the free default route, or install the add-on.") from None
     return crosscast_api
+
+
+def paid_feature(module, label):
+    """A feature outside the free core, loaded from the paid add-on."""
+    try:
+        return importlib.import_module("crosscast_api." + module)
+    except ModuleNotFoundError as error:
+        if not (error.name or "").startswith("crosscast_api"):
+            raise
+    raise VpubError("paid_feature_required", f"{label} is part of the paid CrossCast add-on.", "Everything else keeps working without it.")
+
+
+def email_reminder(key, platform, episode):
+    """Queue a reminder when the add-on is installed. Without it the person sees the notice inline."""
+    if not addon_installed():
+        return {"state": "NOT_INSTALLED", "email_sent": False, "inline_notice_required": True}
+    return paid_feature("notifications", "Email reminders").enqueue(key, platform, episode)
+
+
+def email_status():
+    if not addon_installed():
+        return {"enabled": False, "available": False, "note": "Email reminders are part of the paid CrossCast add-on."}
+    return paid_feature("notifications", "Email reminders").onboarding()
 
 
 def youtube_api():

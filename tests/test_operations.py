@@ -81,28 +81,6 @@ class OperationsTests(unittest.TestCase):
         with self.assertRaises(VpubError):ops.work_id('bilibili','--help')
         with self.assertRaises(VpubError):ops.work_id('x','https://x.com/owner/status/123')
 
-    def test_report_counts_unique_comments_and_latest_reply_state(self):
-        for _ in range(2):ops.record('comments','youtube','abcdefghijk',deepcopy(self.snapshot))
-        ops.record('reply','youtube','abcdefghijk',{'reply_key':'k','state':'REPLY_UNVERIFIED'})
-        ops.record('reply_verify','youtube','abcdefghijk',{'reply_key':'k','state':'REPLY_VERIFIED'})
-        zh=ops.report(language='zh');en=ops.report(language='en')
-        self.assertEqual(1,zh['platforms']['youtube']['comments_read'])
-        self.assertEqual(1,zh['platforms']['youtube']['replies_verified'])
-        self.assertEqual(0,zh['platforms']['youtube']['replies_pending'])
-        self.assertIn('回复1条并确认可见',zh['summary']);self.assertIn('verified visibility',en['summary'])
-        self.assertNotIn('点赞',zh['summary']);self.assertNotIn('liked',en['summary'])
-
-    def test_report_defaults_to_saved_user_language(self):
-        ops.set_language('en');self.assertEqual('en',ops.report()['language'])
-        ops.set_language('zh');self.assertEqual('zh',ops.report()['language'])
-        with self.assertRaises(VpubError):ops.report(since='2026-10-30T12:00:00')
-
-    def test_failed_read_is_not_reported_as_empty_success(self):
-        with patch.object(ops,'backend',side_effect=VpubError('comments_unavailable','Denied')):
-            with self.assertRaises(VpubError):ops.observe('youtube','abcdefghijk','comments')
-        result=ops.report(language='zh')
-        self.assertIn('读取未完成',result['summary']);self.assertNotIn('读取0条评论',result['summary'])
-
     def test_parser_keeps_direct_reply_and_optional_preview(self):
         args=cli.parser().parse_args(['comments','reply','youtube','abcdefghijk','comment123','--text','Thanks','--language','en'])
         self.assertFalse(args.dry_run);self.assertEqual('en',args.language)
@@ -124,14 +102,6 @@ class OperationsTests(unittest.TestCase):
             result=ops.self_test('youtube','abcdefghijk','test-one')
         self.assertEqual('TEST_SEED_UNVERIFIED',result['state'])
         self.assertEqual('test_seed_verify',backend.call_args.args[1]);backend.assert_called_once()
-
-    def test_reports_exclude_self_test_replies_and_owner_comments(self):
-        snapshot=deepcopy(self.snapshot);snapshot['items'][0]['is_owner']=True
-        ops.record('comments','youtube','abcdefghijk',snapshot)
-        ops.record('reply','youtube','abcdefghijk',{'test':True,'state':'REPLY_VERIFIED','reply_key':'test'})
-        result=ops.report(language='en')['platforms']['youtube']
-        self.assertEqual(0,result['comments_read']);self.assertEqual(0,result['replies_verified'])
-
 
 class MetricsTests(unittest.TestCase):
     def test_missing_is_not_zero_and_units_remain_distinct(self):

@@ -19,8 +19,8 @@ async def dispatch(page, platform, actual, payload):
     from .browser_backends import execute
     try:
         if payload['action'] == 'read_all':
-            from .full_read_browser import execute as full_read
-            return await full_read(page, platform, actual, payload)
+            from .adapters import paid_feature
+            return await paid_feature('full_read_browser', 'Complete reads').execute(page, platform, actual, payload)
         if payload['action'] in {'discover_works','adopt_work'}:
             from .work_discovery_browser import execute as discover
             return await discover(page,platform,actual,payload)

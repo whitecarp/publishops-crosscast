@@ -80,17 +80,6 @@ class MessageTests(unittest.TestCase):
             with self.assertRaises(VpubError):actions.mutate('douyin','123456789','1','hide')
         network.assert_not_called()
 
-    def test_reports_dedupe_and_exclude_message_tests(self):
-        events=[{'action':'direct_message','platform':'instagram','work_id':None,'at':'2026-10-30T00:00:00Z','event_id':str(i),
-                 'result':{'key':key,'state':state,'test':test}} for i,(key,state,test) in enumerate([
-                    ('one','DM_UNVERIFIED',False),('one','DM_VISIBLE',False),('test','DM_VISIBLE',True),('failed','DM_FAILED',False)])]
-        for language in ('zh','en'):
-            result=operations.report('2026-10-29T00:00:00Z',language,_events=events)
-            self.assertEqual(1,result['platforms']['instagram']['direct_messages_visible'])
-            self.assertEqual(0,result['platforms']['instagram']['direct_messages_pending'])
-            self.assertEqual(1,result['platforms']['instagram']['direct_messages_failed'])
-
-
 class DouyinStateTests(unittest.TestCase):
     def setUp(self):
         self.r={'work_id':'123456789','comment':{'id':'42','text':'Hello'},'kind':'delete','verification':True}

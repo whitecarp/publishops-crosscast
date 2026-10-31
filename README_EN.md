@@ -120,6 +120,8 @@ See plays and engagement for a single work, scan several platforms for new comme
 
 ### 📧 Email when it needs you (optional)
 
+*Part of the paid add-on.*
+
 When a platform needs you to scan a QR code or verify, CrossCast can email you a reminder. Gmail only; off by default and turned on only when you ask.
 
 ## 🧭 Platform support

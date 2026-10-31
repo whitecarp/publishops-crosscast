@@ -122,14 +122,6 @@ class LocalTests(unittest.TestCase):
         self.assertEqual(1,p.parse_args(['ops','sync']).reply_pages)
         self.assertEqual('delete',p.parse_args(['comments','delete','youtube','abcdefghijk','id']).action)
 
-    def test_report_deduplicates_management_and_excludes_test_writes(self):
-        events=[{'action':'comment_management','platform':'youtube','work_id':'abcdefghijk','at':'2026-10-30T00:00:00Z','event_id':str(i),
-                 'result':{'key':key,'state':state,'test':test}} for i,(key,state,test) in enumerate([
-                     ('a','COMMENT_UNVERIFIED',False),('a','COMMENT_VERIFIED',False),('b','COMMENT_VERIFIED',True),('c','COMMENT_UNVERIFIED',False)])]
-        for language in ('zh','en'):
-            r=ops.report('2026-10-29T00:00:00Z',language,_events=events)['platforms']['youtube']
-            self.assertEqual(1,r['comment_management_verified']);self.assertEqual(1,r['comment_management_pending'])
-
     def test_sync_does_not_resurface_local_handled_comment(self):
         self.observe();key=messages.listing()['items'][0]['key'];inbox.mark(key,'handled')
         atomic_json(home()/'operations/watchlist.json',{'items':[{'platform':'youtube','work_id':'abcdefghijk','identity':'owner'}]})

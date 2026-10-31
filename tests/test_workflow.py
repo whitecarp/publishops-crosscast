@@ -591,7 +591,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("line 2", result["error"]["message"])
         code, result = self.run_cli("read-all", "status", "a" * 32)
         self.assertEqual(2, code)
-        self.assertEqual("run_missing", result["error"]["code"])
+        self.assertEqual("paid_feature_required", result["error"]["code"])
 
     def test_limits_the_browser_routes_enforce_fail_at_plan_time(self):
         self.value["platforms"] = {"x": {"method": "browser", "visibility": "account", "ai_generated": False, "title": "x" * 71}}

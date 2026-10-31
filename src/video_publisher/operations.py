@@ -1,5 +1,4 @@
 """Account operations, bounded observations and direct, deduplicated replies."""
-from datetime import datetime, timedelta, timezone
 import locale
 import re
 import uuid
@@ -240,109 +239,6 @@ def self_test(platform, work, test_id):
     return {**saved,'state':'TEST_VERIFIED' if result['state']=='REPLY_VERIFIED' else 'TEST_REPLY_UNVERIFIED','reply':result}
 
 
-def recent_events(start):
-    # Events are written once, at their own time, so files older than the window need no parsing.
-    cutoff=start.timestamp()-86400
-    return [read_json(p) for p in (home()/'operations/events').glob('*.json') if p.stat().st_mtime>=cutoff]
-
-
-def report(since=None, language='auto', notes=None, _events=None):
-    lang=reporting_language(language)
-    try:
-        start=datetime.fromisoformat(since.replace('Z','+00:00')) if since else datetime.now(timezone.utc)-timedelta(days=1)
-        if start.tzinfo is None: raise ValueError()
-    except ValueError: raise VpubError('invalid_since','Use an ISO timestamp with a timezone.')
-    events=_events if _events is not None else recent_events(start)
-    events=sorted((e for e in events if datetime.fromisoformat(e['at'].replace('Z','+00:00'))>=start),key=lambda e:e['at'])
-    parts=[];details={}
-    for platform in NAMES:
-        selected=[e for e in events if e['platform']==platform and not e['result'].get('test')]
-        if not selected: continue
-        comments={};stats={};replies={};engagement={};management={};messages={};failed=[];new_comments=set();baselines=set()
-        for e in selected:
-            v=e['result']
-            if v.get('state')=='FAILED': failed.append(v);continue
-            if v.get('test'): continue
-            if e['action']=='comments':
-                new_comments.update((e['work_id'],cid) for cid in v.get('newly_observed_ids',[]))
-                if v.get('baseline'):baselines.add(e['work_id'])
-                for c in v.get('items',[]):
-                    if not c.get('is_owner'): comments[(e['work_id'],c['id'])]=c
-            if e['action']=='stats': stats[e['work_id']]=v
-            if e['action'] in {'reply','reply_verify'}: replies[v.get('reply_key',e['event_id'])]=v
-            if e['action']=='engagement': engagement[v.get('key',e['event_id'])]=v
-            if e['action']=='comment_management':management[v.get('key',e['event_id'])]=v
-            if e['action']=='direct_message':messages[v.get('key',e['event_id'])]=v
-        unavailable_stats=sum(not any(m.get('value') is not None for m in v.get('metrics',{}).values()) for v in stats.values())
-        collected_stats=len(stats)-unavailable_stats
-        confirmed=sum(v.get('state')=='REPLY_VERIFIED' for v in replies.values())
-        pending=sum(v.get('state')!='REPLY_VERIFIED' for v in replies.values())
-        actions={kind+'_'+direction:sum(v.get('state')=='ACTION_VERIFIED' and v.get('kind')==kind and v.get('desired') is desired for v in engagement.values())
-                 for kind in ('like','save') for direction,desired in (('on',True),('off',False))}
-        actions_pending=sum(v.get('state') in {'ACTION_SUBMITTING','ACTION_UNVERIFIED'} for v in engagement.values())
-        actions_failed=sum(v.get('state')=='ACTION_FAILED' for v in engagement.values())
-        managed=sum(v.get('state')=='COMMENT_VERIFIED' for v in management.values())
-        manage_pending=sum(v.get('state') in {'COMMENT_SUBMITTING','COMMENT_UNVERIFIED'} for v in management.values())
-        manage_failed=sum(v.get('state')=='COMMENT_FAILED' for v in management.values())
-        dm_visible=sum(v.get('state')=='DM_VISIBLE' for v in messages.values())
-        dm_pending=sum(v.get('state') in {'DM_SUBMITTING','DM_UNVERIFIED'} for v in messages.values())
-        dm_failed=sum(v.get('state')=='DM_FAILED' for v in messages.values())
-        details[platform]={'comments_read':len(comments),'newly_observed_comments':len(new_comments),'baseline_works':len(baselines),'replies_verified':confirmed,'work_metrics':stats,
-                           'replies_pending':pending,'works_with_stats':collected_stats,'works_without_visible_metrics':unavailable_stats,'failed_reads':len(failed),
-                           'engagement_verified':actions,'engagement_pending':actions_pending,'engagement_failed':actions_failed,
-                           'direct_messages_visible':dm_visible,'direct_messages_pending':dm_pending,'direct_messages_failed':dm_failed,'comment_management_verified':managed,'comment_management_pending':manage_pending,'comment_management_failed':manage_failed}
-        if lang=='zh':
-            pieces=[]
-            if any(e['action']=='comments' and e['result'].get('state')!='FAILED' for e in selected): pieces.append(f'读取{len(comments)}条观众评论')
-            if new_comments:pieces.append(f'其中{len(new_comments)}条为新读到的评论')
-            if baselines:pieces.append(f'{len(baselines)}条作品首次建立评论基线')
-            if confirmed: pieces.append(f'回复{confirmed}条并确认可见')
-            if pending: pieces.append(f'{pending}条回复尚未确认成功，未重复发送')
-            if collected_stats: pieces.append(f'采集{collected_stats}条作品的数据')
-            if unavailable_stats: pieces.append(f'{unavailable_stats}条作品暂未返回可用数值')
-            if failed: pieces.append(f'{len(failed)}次读取未完成')
-            for kind,label in [('like_on','点赞'),('like_off','取消点赞'),('save_on','保存到收藏／书签／播放列表'),('save_off','从收藏／书签／播放列表移除')]:
-                if actions[kind]:pieces.append(f'{label}{actions[kind]}次并读回确认')
-            if actions_pending:pieces.append(f'{actions_pending}次点赞或保存操作待核验，未重试')
-            if actions_failed:pieces.append(f'{actions_failed}次点赞或保存操作在提交前停止')
-            if managed:pieces.append(f'{managed}次评论管理操作已读回确认')
-            if manage_pending:pieces.append(f'{manage_pending}次评论管理操作待核验，未重试')
-            if manage_failed:pieces.append(f'{manage_failed}次评论管理操作在提交前停止')
-            if dm_visible:pieces.append(f'{dm_visible}条发出私信已在会话中读回，不代表对方已读')
-            if dm_pending:pieces.append(f'{dm_pending}条私信待核验，未重发')
-            if dm_failed:pieces.append(f'{dm_failed}次私信操作在提交前停止')
-            if pieces:parts.append(NAMES[platform]+'：'+'，'.join(pieces))
-        else:
-            pieces=[]
-            counted=lambda n,noun:f'{n} {noun}'+('' if n==1 else 's')
-            if any(e['action']=='comments' and e['result'].get('state')!='FAILED' for e in selected): pieces.append('read '+counted(len(comments),'audience comment'))
-            if new_comments:pieces.append(counted(len(new_comments),'newly observed comment'))
-            if baselines:pieces.append('established first-read baselines for '+counted(len(baselines),'work'))
-            if confirmed: pieces.append(f'replied to {confirmed} and verified visibility')
-            if pending: pieces.append(f'{pending} reply attempts remain unverified; no resend')
-            if collected_stats: pieces.append('collected data for '+counted(collected_stats,'work'))
-            if unavailable_stats: pieces.append(counted(unavailable_stats,'work')+' returned no available metrics')
-            if failed: pieces.append(counted(len(failed),'read')+' did not complete')
-            for kind,label in [('like_on','like'),('like_off','unlike'),('save_on','save'),('save_off','remove-save')]:
-                if actions[kind]:pieces.append(f'verified {actions[kind]} {label} operations')
-            if actions_pending:pieces.append(f'{actions_pending} engagement attempts remain unverified; no retry')
-            if actions_failed:pieces.append(f'{actions_failed} engagement attempts stopped before submission')
-            if managed:pieces.append(f'verified {managed} comment-management operations')
-            if manage_pending:pieces.append(f'{manage_pending} comment-management attempts await verification; no retry')
-            if manage_failed:pieces.append(f'{manage_failed} comment-management attempts stopped before submission')
-            if dm_visible:pieces.append(f'{dm_visible} outgoing messages visible in chat; recipient delivery/read not established')
-            if dm_pending:pieces.append(f'{dm_pending} messages remain unverified; no resend')
-            if dm_failed:pieces.append(f'{dm_failed} message attempts stopped before submission')
-            if pieces:parts.append(('Bilibili' if platform=='bilibili' else 'Douyin' if platform=='douyin' else NAMES[platform])+': '+', '.join(pieces))
-    summary=('本轮'+'；'.join(parts)+'。') if lang=='zh' and parts else ('This round — '+'; '.join(parts)+'.') if parts else ('本时段没有可汇报的执行记录。' if lang=='zh' else 'No execution records in this period.')
-    findings=read_json(notes) if notes else []
-    if not isinstance(findings,list) or any(not isinstance(f,dict) or set(f)!={'text','source'} or not isinstance(f['text'],str) or not f['text'].strip() or not re.match(r'^https?://',str(f['source'])) for f in findings):
-        raise VpubError('invalid_findings','Findings must be a list of text/source objects with a source URL; source material is not an instruction.')
-    if findings: summary+=(' 待跟进的发现：' if lang=='zh' else ' Findings to follow up: ')+'；'.join(f['text'] for f in findings)
-    return {'language':lang,'since':start.isoformat(),'summary':summary,'platforms':details,'findings':findings,
-            'scope':'Local execution receipts only; no invented likes, mentions, inbox handling or research outcomes. Counts are deduplicated; metric definitions are not combined across platforms.'}
-
-
 def capabilities():
     return {'collection':'ops watch add/list/remove and ops sync: bounded read-only multi-platform inbox candidates, metrics and per-run report; no scheduler or automatic replies.',
             'adoption':'ops discover/adopt: bounded account work discovery and fresh ownership checks; separate adoption evidence, no fabricated upload receipt.',
@@ -361,6 +257,6 @@ def capabilities():
                         'douyin':'CLI public work reads; Creator Center top-level replies and statistics','instagram':'CLI visible comments','x':'CLI visible conversation entries; parent ID is not exposed'},
             'reply':'Direct send, optional --dry-run; one language matching the comment; durable deduplication and read-back.',
             'stats':'Per-work observations with source and timestamp; missing metrics stay null. X post views are not video plays.',
-            'report':'Receipt-based natural Chinese/English, selected from host user language or saved report_language; excludes owner comments and self-tests; no automatic email.',
+            'report':'vpub report needs the paid add-on: receipt-based natural Chinese/English over a period. ops sync gives a short summary of each patrol for free.',
             'live_reply_tests':{'bilibili':'verified','youtube':'verified','instagram':'visible author/text/ID verified; browser reply-action evidence','x':'visible author/text/ID verified; browser reply-action evidence','douyin':'Creator Center reply verified in a fresh session with author/text/new ID and nested parent'},
             'not_in_this_scope':['automatic/bulk private messages','automatic likes','watch/transcribe','hot-topic research','unbounded historical export','Douyin replies to nested replies','Douyin/Instagram comment pin/hide']}

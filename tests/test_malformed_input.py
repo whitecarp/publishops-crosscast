@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from video_publisher import chapters, cli, covers, deletion, edits, instagram_media, metadata, native_browser, notifications, operations
+from video_publisher import chapters, cli, covers, deletion, edits, instagram_media, metadata, native_browser, operations
 from video_publisher.core import VpubError, atomic_json, load_plan
 
 BAD = [None, 5, True, [], {}, "", "\x00", ["a"], [None], [{}], {"a": None}]
@@ -140,18 +140,6 @@ class MalformedInputTests(unittest.TestCase):
                 for field in ("outcome", "id", "page_url", "identity", "observation", "post_text", "media_preview", "draft_saved"):
                     atomic_json(self.input, {**good, "outcome": outcome, field: value})
                     self.attempt(f"{outcome}.{field}={value!r}", lambda: native_browser.record(key, self.input))
-
-    def test_report_notes_and_email_inventory(self):
-        for value in BAD:
-            for notes in (value, [value], [{"text": value, "source": "https://example.com"}], [{"text": "a", "source": value}]):
-                atomic_json(self.input, notes)
-                self.attempt(f"notes={notes!r}", lambda: operations.report(None, "en", str(self.input)))
-            for inventory in (value, {"tools": value}, {"plugins": value}, {"profiles": value}, {"plugins": {"gmail": value}},
-                              {"profiles": {"gmail": value}}, {"profiles": {"gmail": {"content": value}}}):
-                atomic_json(self.input, inventory)
-                self.attempt(f"inventory={inventory!r}", lambda: notifications.inspect_mailbox("a@gmail.com", self.input))
-            self.attempt(f"email={value!r}", lambda: notifications.email_address(value))
-
 
 class ResumeAfterCleanupTests(unittest.TestCase):
     def test_a_removed_copy_is_explained_and_nothing_is_uploaded(self):

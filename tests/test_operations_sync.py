@@ -52,7 +52,8 @@ class SyncTests(unittest.TestCase):
         ops.record('reply','youtube','abcdefghijk',{'reply_key':'old','state':'REPLY_VERIFIED'})
         with patch.object(ops,'backend',side_effect=[deepcopy(self.comments),deepcopy(self.stats)]):
             result=runs.sync()
-        self.assertEqual(0,result['report']['platforms']['youtube']['replies_verified'])
+        self.assertNotIn('replies_verified',result['report'])
+        self.assertIn('No replies',runs.patrol_summary({**result,'options':{'language':'en'}})['summary'])
 
     def test_repeated_cursor_stops_without_advancing_snapshot(self):
         a={**self.comments,'next_cursor':'same'}
