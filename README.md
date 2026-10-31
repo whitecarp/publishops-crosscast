@@ -3,20 +3,20 @@
 </p>
 
 <p align="center">
-  <img src="assets/hero.svg" alt="协作关系：你选择并核对，AI 宿主撰写文案并按授权操作浏览器，vpub CLI 生成与检查方案，最后在官方平台页面提交" width="860">
+  <img src="assets/hero.svg" alt="一句话，发往你选的所有平台：你对 AI 助手说一句，它写好各平台文案、适配封面，再逐个平台提交；示意发布单显示 Bilibili 和 YouTube 已核验，抖音已提交待核验，Instagram 发布中，X 排队中" width="860">
 </p>
 
 <h1 align="center">PublishOps CrossCast</h1>
 
 <p align="center">
-  让 AI 助手把一支视频整理成适配多个平台的发布方案，<br>
-  由你选择平台、账号与公开范围，核对后再交给官方页面完成。
+  一句话，发往你选的所有平台。<br>
+  AI 助手写好各平台的标题、简介与封面，再逐个平台直接提交，每一步都有回执。
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/version-0.3.0%20alpha-f59e0b" alt="版本 0.3.0 alpha">
   <img src="https://img.shields.io/badge/python-3.10%E2%80%933.12-3776ab" alt="Python 3.10–3.12">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-14b8a6" alt="MIT 许可证"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-17213a" alt="MIT 许可证"></a>
 </p>
 
 <p align="center">
@@ -30,26 +30,26 @@
 </p>
 
 > [!IMPORTANT]
-> **0.3.0 alpha。** CrossCast 负责准备方案和交接，不会替你确认内容，也不承诺五个平台全自动发布。默认的网页流程需要一个能操作浏览器的 AI 宿主；没有这类宿主时，助手只能准备素材和交接说明。
+> **0.3.0 alpha。** 你说要发布，就是授权：CrossCast 按你说的平台、账号和公开范围逐个提交，但不承诺五个平台全自动发布。默认的网页流程需要一个能操作浏览器的 AI 宿主；没有这类宿主时，助手只能准备素材和交接说明。
 
 ## 交给 AI 助手
 
-最简单的开始方式：把下面这段原样发给你的 AI 编程助手。
+最简单的开始方式：把下面这段发给你的 AI 编程助手，并把 final.mp4 换成你的视频文件。
 
 ```text
 请安装 https://github.com/whitecarp/publishops-crosscast
 读取 skills/publishops-crosscast/SKILL.md，然后运行 vpub doctor。
-先帮我准备草稿：由我选择平台、账号和公开范围，确认后再继续。
+把 final.mp4 公开发布到 B站、YouTube、抖音、Instagram 和 X，标题和简介按平台来写。
 ```
 
 <details>
 <summary><b>接下来大概会怎样？</b>（流程示意，不是实际发布记录）</summary>
 
 ```text
-你：先准备这支视频的发布草稿，不要发布。平台由我选。
-AI：我会检查文件并生成方案。你确认平台、账号和公开范围后，我再打开对应官方页面交给你核对。
-你：选 YouTube，保持私密。先给我看标题和说明。
-AI：草稿已准备。请核对文案与账号；当前还没有提交。
+你：把 final.mp4 公开发到 B站和 YouTube，标题口语一点。
+AI：好的。我会按平台写标题和简介、适配封面，然后逐个平台提交。B站需要你扫码登录一次。
+你：扫好了。
+AI：B站已提交，读回到作品，已核验；YouTube 已提交，正在核验。
 ```
 
 CLI 不会把待办、登录链接或本地回执说成“已发布”。最终结果以平台页面读回或平台 API 为准。
@@ -62,7 +62,7 @@ CLI 不会把待办、登录链接或本地回执说成“已发布”。最终�
 
 | 角色 | 负责什么 | 边界 |
 | --- | --- | --- |
-| **你** | 选择平台、账号与公开范围；在官方页面核对后决定是否提交 | 提交前先看到并确认方案 |
+| **你** | 说一句要发的平台、账号与公开范围；需要时扫码或输入验证码 | 这句话就是授权；范围变了会再问你 |
 | **AI 宿主** | 读取 `SKILL.md`，按平台撰写标题、说明和标签；有浏览器能力时按你的授权操作官方网页 | 没有浏览器工具时，无法完成网页发布 |
 | **`vpub` CLI** | 生成并检查发布方案、适配封面画布、`--dry-run` 预演、保存本地状态与回执 | 不执行浏览器登录，也不替你确认内容 |
 | **官方平台** | 账号登录、最终提交与公开 | 平台功能、格式限制与收费以当日官方页面为准 |
@@ -133,7 +133,7 @@ vpub publish localized.json --dry-run
 <details>
 <summary><b>它会自动发布吗？</b></summary>
 
-默认 `native` 网页流程需要能操作浏览器的宿主，并由你核对后授权提交。配置并授权后，Bilibili CLI 或 YouTube API 路径可由 CLI 直接提交；具体后端以方案与 `vpub capabilities` 为准。
+默认 `native` 网页流程需要能操作浏览器的宿主；你说要发布，它就按授权逐个平台提交。配置并授权后，Bilibili CLI 或 YouTube API 路径可由 CLI 直接提交；具体后端以方案与 `vpub capabilities` 为准。
 
 </details>
 

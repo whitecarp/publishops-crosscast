@@ -3,20 +3,20 @@
 </p>
 
 <p align="center">
-  <img src="assets/hero-en.svg" alt="How the handoff works: you choose and review, the AI host writes copy and operates the browser with your authorization, the vpub CLI builds and checks the plan, and submission happens on the official platform page" width="860">
+  <img src="assets/hero-en.svg" alt="One message, every platform you choose: you tell your AI assistant once, it writes each platform's copy, fits covers and submits platform by platform; the example release plan shows Bilibili and YouTube verified, Douyin submitted and unverified, Instagram publishing and X queued" width="860">
 </p>
 
 <h1 align="center">PublishOps CrossCast</h1>
 
 <p align="center">
-  Let an AI assistant turn one video into release plans tailored to each platform.<br>
-  You choose the platforms, accounts, and visibility, review everything, and then finish on the official pages.
+  One message. Every platform you choose.<br>
+  Your AI assistant writes each platform's title, description, and cover, then submits platform by platform and keeps a receipt for every step.
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/version-0.3.0%20alpha-f59e0b" alt="Version 0.3.0 alpha">
   <img src="https://img.shields.io/badge/python-3.10%E2%80%933.12-3776ab" alt="Python 3.10–3.12">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-14b8a6" alt="MIT License"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-17213a" alt="MIT License"></a>
 </p>
 
 <p align="center">
@@ -30,26 +30,26 @@
 </p>
 
 > [!IMPORTANT]
-> **0.3.0 alpha.** CrossCast prepares plans and handoffs. It does not approve content for you and does not promise fully automatic posting to all five platforms. The default web workflow needs an AI host that can operate a browser; without one, the assistant can only prepare materials and handoff notes.
+> **0.3.0 alpha.** Asking it to publish is the authorization: CrossCast submits with the platforms, accounts, and visibility you named, one platform at a time, but it does not promise fully automatic posting to all five platforms. The default web workflow needs an AI host that can operate a browser; without one, the assistant can only prepare materials and handoff notes.
 
 ## Hand it to your AI assistant
 
-The easiest way to start: send this, as is, to your AI coding assistant.
+The easiest way to start: send this to your AI coding assistant, replacing final.mp4 with your video file.
 
 ```text
 Please install https://github.com/whitecarp/publishops-crosscast
 Read skills/publishops-crosscast/SKILL.md, then run vpub doctor.
-Prepare a draft first: I will choose the platforms, accounts, and visibility before anything proceeds.
+Publish final.mp4 publicly to Bilibili, YouTube, Douyin, Instagram, and X, with titles and descriptions written for each platform.
 ```
 
 <details>
 <summary><b>What happens next?</b> (illustrative workflow, not a real publication record)</summary>
 
 ```text
-You: Prepare a release draft for this video. Do not publish; I will choose the platforms.
-AI: I will inspect the file and prepare a plan. You can review the platforms, account, and visibility before I open the official pages.
-You: Choose YouTube and keep it private. Show me the title and description first.
-AI: The draft is ready. Please review the copy and account; nothing has been submitted.
+You: Publish final.mp4 publicly to Bilibili and YouTube, and keep the titles casual.
+AI: Got it. I will write titles and descriptions per platform, fit the covers, and submit to each platform in turn. Bilibili needs you to scan a QR code once.
+You: Done.
+AI: Bilibili is submitted and verified by readback; YouTube is submitted and being verified.
 ```
 
 The CLI never treats a queued task, login link, or local receipt as "published". Final results are confirmed by reading back the platform page or the platform API.
@@ -62,7 +62,7 @@ Every release involves four roles, each with a fixed boundary:
 
 | Role | Responsible for | Boundary |
 | --- | --- | --- |
-| **You** | Choosing platforms, accounts, and visibility; reviewing on the official page and deciding whether to submit | You see and approve the plan before anything is submitted |
+| **You** | Saying which platforms, accounts, and visibility to publish to; scanning QR codes or entering codes when asked | Your message is the authorization; you are asked again if the scope changes |
 | **AI host** | Reading `SKILL.md`; writing titles, descriptions, and tags per platform; operating official web pages with your authorization when it has browser tools | Cannot complete web publishing without browser tools |
 | **`vpub` CLI** | Building and checking release plans, fitting covers to platform canvases, `--dry-run` rehearsals, keeping local state and receipts | Does not perform browser login or approve content for you |
 | **Official platform** | Account login, final submission, and visibility | Features, format limits, and fees follow the official page on the day |
@@ -133,7 +133,7 @@ vpub publish localized.json --dry-run
 <details>
 <summary><b>Does it publish automatically?</b></summary>
 
-The default `native` web workflow requires a browser-capable host and your review and authorization before submission. Once configured and authorized, the Bilibili CLI or YouTube API route can submit directly from the CLI; check the selected backend and `vpub capabilities`.
+The default `native` web workflow requires a browser-capable host; when you ask it to publish, it submits to each platform in turn under that authorization. Once configured and authorized, the Bilibili CLI or YouTube API route can submit directly from the CLI; check the selected backend and `vpub capabilities`.
 
 </details>
 
