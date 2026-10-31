@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 
+from . import safety
 from .core import VpubError, stop_check, platform_check
 
 ROUTES = {"bilibili": {"cli"}, "douyin": {"browser"}, "youtube": {"browser", "api"}, "x": {"browser", "api"}, "instagram": {"browser", "api"}}
@@ -31,6 +32,7 @@ def bili(args, timeout=210):
         raise VpubError("backend_error", "bili-cli did not return valid JSON.", "Run bili schema to diagnose; do not repeat a submission.")
     if not result.get("ok"):
         e = result.get("error", {})
+        safety.pushed_back("bilibili", e.get("code"))
         raise VpubError(e.get("code", "backend_error"), e.get("message", "bili-cli failed"), e.get("hint", ""))
     return result.get("data", {})
 
@@ -116,6 +118,7 @@ def browser_call(platform, action, account, **kwargs):
     result = hidden_desktop_call(payload, browser_timeout(action)) if platform == "youtube" and os.name == "nt" else worker_call(payload, browser_timeout(action))
     if not result.get("ok"):
         e = result["error"]
+        safety.pushed_back(platform, e["code"])
         raise VpubError(e["code"], e["message"], e.get("hint", ""))
     return result["data"]
 

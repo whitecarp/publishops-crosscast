@@ -1,7 +1,7 @@
 """Explicit single-recipient messages with durable attempt IDs and no resends."""
 import re
 import uuid
-from . import adapters
+from . import adapters, safety
 from .core import VpubError, atomic_json, digest, home, now, publication_lock, read_json, stop_check
 
 PENDING = {'DM_SUBMITTING', 'DM_UNVERIFIED'}
@@ -47,8 +47,19 @@ def validate_text(text, language):
         raise VpubError('language_required', 'Specify the recipient language; the host writes one language only.')
 
 
-def send(platform, who, text, language, dry_run=False, test_id=None):
+def last_incoming(before):
+    """The newest message from the other person, when the page says who wrote what."""
+    for row in reversed(before.get('items') or []):
+        if isinstance(row, dict) and row.get('text') and row.get('from') != 'me' and not row.get('outgoing') and not row.get('is_owner'):
+            return row['text']
+    return None
+
+
+def send(platform, who, text, language, dry_run=False, test_id=None, written_by='ai', allow_contact=False, person_approved=False):
     who = recipient(platform, who); validate_text(text, language)
+    words = text
+    text = text if test_id else safety.labelled(text, language, written_by)
+    validate_text(text, language)
     if test_id and not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', test_id):
         raise VpubError('invalid_test_id', 'Use a short test label.')
     expected = identity(platform)
@@ -57,14 +68,19 @@ def send(platform, who, text, language, dry_run=False, test_id=None):
         target_path = home() / 'operations/dm-targets' / (digest([platform, expected, canonical]) + '.json')
         if target_path.exists():
             prior = read_json(home() / 'operations/dm-actions' / (read_json(target_path)['key'] + '.json'))
-            if prior['state'] in PENDING or (prior['request']['text'] == text and prior['state'] == 'DM_VISIBLE'):
+            if prior['state'] in PENDING or (safety.comparable(prior['request']['text']) == safety.comparable(text) and prior['state'] == 'DM_VISIBLE'):
                 return {**prior, 'reused': True, 'platform_writes': 0, 'hint': 'Use dm verify KEY; no automatic resend.'}
         request = {'platform': platform, 'identity': expected, 'recipient': who, 'text': text, 'language': language}
         before = dispatch(platform, 'read', expected, recipient=who, limit=20)
         if before.get('identity') != expected or before.get('recipient') != who:
             raise VpubError('wrong_recipient', 'The live account/conversation does not match the requested target.')
-        if dry_run: return {'state': 'DRY_RUN', 'request': request, 'observed': before, 'platform_writes': 0}
+        limits = {'kind': 'message', 'platform': platform, 'identity': expected, 'text': words, 'person': who,
+                  'incoming': last_incoming(before), 'allow_contact': allow_contact, 'person_approved': person_approved}
+        if dry_run:
+            if not test_id: safety.admit(**limits, reserve=False)
+            return {'state': 'DRY_RUN', 'request': request, 'observed': before, 'platform_writes': 0}
         if not before.get('can_send'): raise VpubError('dm_send_unavailable', 'This recipient or platform currently has no verified send control.')
+        ticket = None if test_id else safety.admit(**limits)
         key = uuid.uuid4().hex; path = home() / 'operations/dm-actions' / (key + '.json')
         saved = {'key': key, 'state': 'DM_READY', 'request': request, 'at': now(), 'test': bool(test_id),
                  'test_id': test_id, 'platform_writes': 0, 'before': before}
@@ -80,6 +96,7 @@ def send(platform, who, text, language, dry_run=False, test_id=None):
                          error_code=exc.code if isinstance(exc, VpubError) else type(exc).__name__)
             saved['platform_writes'] = None if saved['state'] == 'DM_UNVERIFIED' else 0
             atomic_json(path, saved)
+            if saved['state'] == 'DM_FAILED': safety.release(ticket)
             return record(saved)
 
 

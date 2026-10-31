@@ -145,6 +145,7 @@ See the [validation record](docs/VALIDATION_EN.md) for details. Bilibili uploads
 
 ## 🔒 Safety rails
 
+- **Replies, messages and likes have limits:** daily caps, no repeating the same words to one person, an AI label, and no secrets or unapproved links. Messages that try to trick the agent, or need a human touch, wait for you. Any platform warning stops the tool until you clear it with `vpub stop --clear`. Keyword checks catch common cases and are not a guarantee.
 It's your own account, so these rules are on by default:
 
 - **You decide**: asking it to publish is the authorization. Platforms, accounts and visibility follow what you said, and a platform is never added just because you are signed in to it. If the content, account, platform, audience or scope changes, you are asked again.

@@ -1,7 +1,7 @@
 """Explicit, idempotent likes/saves with durable single-attempt receipts."""
 import re
 import uuid
-from . import adapters, operations
+from . import adapters, operations, safety
 from .core import VpubError, atomic_json, digest, home, now, publication_lock, read_json, stop_check
 
 PENDING={'ACTION_SUBMITTING','ACTION_UNVERIFIED'}
@@ -74,7 +74,11 @@ def set_action(platform,work,kind,desired=True,collection=None,dry_run=False,tes
                     return {**final,'platform_writes':0,'reused':True}
                 return {**prior,'platform_writes':0,'reused':True,'hint':'Use engage verify KEY; unresolved attempts are never toggled or automatically resent.'}
         if current is desired:return {'state':'NO_CHANGE','platform_writes':0,'platform':platform,'work_id':work,'kind':kind,'desired':desired,'observed':before}
-        if dry_run:return {'state':'DRY_RUN','platform_writes':0,'platform':platform,'work_id':work,'kind':kind,'desired':desired,'observed':before}
+        counted=desired and not test_id
+        if dry_run:
+            if counted:safety.admit('like',platform,before['identity'],reserve=False)
+            return {'state':'DRY_RUN','platform_writes':0,'platform':platform,'work_id':work,'kind':kind,'desired':desired,'observed':before}
+        ticket=safety.admit('like',platform,before['identity']) if counted else None
         key=uuid.uuid4().hex;path=home()/'engagement/receipts'/(key+'.json')
         saved={'key':key,'state':'ACTION_READY','platform':platform,'work_id':work,'identity':before['identity'],
                'kind':kind,'desired':desired,'collection':selected,'before':before,'at':now(),'test':bool(test_id),'test_id':test_id}
@@ -94,6 +98,7 @@ def set_action(platform,work,kind,desired=True,collection=None,dry_run=False,tes
             saved['error_code']=exc.code if isinstance(exc,VpubError) else type(exc).__name__
             saved['platform_writes']=None if saved['state']=='ACTION_UNVERIFIED' else 0
             atomic_json(path,saved)
+            if saved['state']=='ACTION_FAILED':safety.release(ticket)
         operations.record('engagement',platform,work,saved)
         return saved
 

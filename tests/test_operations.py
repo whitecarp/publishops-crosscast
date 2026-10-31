@@ -31,7 +31,7 @@ class OperationsTests(unittest.TestCase):
             result=ops.reply('youtube','abcdefghijk','comment123','歌名是测试曲目。')
             duplicate=ops.reply('youtube','abcdefghijk','comment123','歌名是测试曲目。')
         self.assertEqual('REPLY_VERIFIED',result['state']);send.assert_called_once()
-        self.assertEqual('歌名是测试曲目。',send.call_args.kwargs['reply_request']['text'])
+        self.assertEqual('歌名是测试曲目。（AI 回复）',send.call_args.kwargs['reply_request']['text'])
         self.assertTrue(duplicate['reused']);self.assertEqual(0,duplicate['platform_writes'])
 
     def test_dry_run_never_dispatches_or_reserves_a_send(self):
@@ -60,7 +60,7 @@ class OperationsTests(unittest.TestCase):
     def test_reply_language_is_independent_of_report_setting(self):
         ops.set_language('en')
         result=ops.reply('youtube','abcdefghijk','comment123','谢谢。',dry_run=True)
-        self.assertEqual('zh',result['language']);self.assertEqual('谢谢。',result['text'])
+        self.assertEqual('zh',result['language']);self.assertEqual('谢谢。（AI 回复）',result['text'])
         with self.assertRaises(VpubError):ops.reply('youtube','abcdefghijk','comment123','Thanks',language='en',dry_run=True)
 
     def test_latin_text_requires_host_language_identification(self):

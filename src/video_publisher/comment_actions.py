@@ -1,7 +1,7 @@
 """Explicit comment management with exact targets and durable no-resend receipts."""
 import re
 import uuid
-from . import adapters, operations as ops
+from . import adapters, operations as ops, safety
 from .core import VpubError, atomic_json, digest, home, now, publication_lock, read_json, stop_check
 
 SUPPORTED = {'bilibili': {'like', 'pin'}, 'instagram': {'like'}, 'x': {'like','hide'}, 'youtube': {'edit', 'delete','moderate'}, 'douyin': {'like', 'delete'}}
@@ -81,7 +81,11 @@ def mutate(platform, work, comment_id, kind, desired=True, dry_run=False, test_i
             raise VpubError('state_unavailable','Exact moderation status is unavailable; no write attempted.')
         if before.get('text') != request['comment']['text']:
             raise VpubError('comment_changed', 'The comment text changed; read it again before changing it.')
-        if dry_run: return {'state': 'DRY_RUN', 'request': request, 'observed': before, 'platform_writes': 0}
+        counted = kind == 'like' and desired is True and not test_id
+        if dry_run:
+            if counted: safety.admit('like', platform, request['identity'], reserve=False)
+            return {'state': 'DRY_RUN', 'request': request, 'observed': before, 'platform_writes': 0}
+        ticket = safety.admit('like', platform, request['identity']) if counted else None
         key = uuid.uuid4().hex; path = home() / 'operations/comment-actions' / (key + '.json')
         saved = {'key': key, 'state': 'COMMENT_READY', 'request': request, 'before': before, 'at': now(),
                  'test': bool(test_id), 'test_id': test_id, 'platform_writes': 0}
@@ -98,6 +102,7 @@ def mutate(platform, work, comment_id, kind, desired=True, dry_run=False, test_i
             saved.update(state='COMMENT_UNVERIFIED' if saved['state'] in PENDING else 'COMMENT_FAILED',
                          error_code=exc.code if isinstance(exc, VpubError) else type(exc).__name__)
             saved['platform_writes'] = None if saved['state'] == 'COMMENT_UNVERIFIED' else 0
+            if saved['state'] == 'COMMENT_FAILED': safety.release(ticket)
         atomic_json(path, saved)
         return ops.record('comment_management', platform, work, saved)
 
