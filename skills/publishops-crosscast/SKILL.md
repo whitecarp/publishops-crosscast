@@ -19,7 +19,7 @@ Use the installed `vpub` CLI. Read `vpub --help`, `vpub capabilities`, and the r
 - Follow the video's source language, separately from the documentation language. Bilibili/Douyin: Chinese content gets Simplified Chinese; other languages get the original language plus Simplified Chinese. YouTube/Instagram/X: English content gets English; other languages get the original language plus English.
 - Replies use only the commenter's language. Reports use the user's language, normally Chinese or English. Generate metadata from actual source materials; do not invent events, claims, responses or attribution.
 - Use the production cover for the correct episode. Douyin and Instagram share the approved portrait cover; respect safe areas. Preserve Instagram's original video aspect ratio; do not insert a cover frame or force a portrait canvas. Explain any remaining mobile cover adjustment.
-- Gmail notifications are optional, off by default, and require an explicit user request and a connected Gmail tool. Do not substitute Outlook, SMTP or SMS.
+- Gmail notifications are optional, off by default, and require an explicit user request and a connected Gmail send tool. Claim with that tool's exact name, call it once with the returned `message` (or `arguments` when given), then record its response. Do not substitute Outlook, SMTP or SMS.
 
 ## Recovery and complete reads
 

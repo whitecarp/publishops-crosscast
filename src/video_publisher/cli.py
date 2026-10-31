@@ -22,6 +22,15 @@ UNFINISHED_STATES = {"INCOMPLETE", "INTERRUPTED", "UPLOAD_PAUSED", "UPLOAD_INITI
 SAVES_RESULT = {"dm", "read-all", "collection", "playlist", "messages", "engage", "ops", "comments", "stats", "report", "works", "status", "cleanup"}
 
 
+def check_upload_copy(plan):
+    """The private copy an attempt uploads. Cleanup only removes copies of finished publications."""
+    if not Path(plan['video']).is_file():
+        raise VpubError('snapshot_removed', "This attempt's private video copy is gone, so there is nothing to resume.",
+                        'Use vpub verify KEY to read the work back. Never upload it again.')
+    if file_sha(plan['video']) != plan['video_sha256']:
+        raise VpubError('source_changed', 'Source no longer matches this attempt.')
+
+
 def snapshot_plan(plan, platform):
     """Copy what this platform will upload. Anything unverifiable stops here, before a claim exists."""
     snap = home() / "jobs" / plan["confirmation"]
@@ -611,8 +620,7 @@ def run_command(args):
                     def checkpoint(value):
                         record['receipt'] = value
                         ledger.save(args.key, value['state'], record)
-                    if file_sha(plan['video']) != plan['video_sha256']:
-                        raise VpubError('source_changed', 'Source no longer matches this attempt.')
+                    check_upload_copy(plan)
                     if receipt.get('id'):
                         result = adapters.verify(row['platform'], row['account'], receipt)
                     else:
@@ -623,8 +631,7 @@ def run_command(args):
                 if record.get('options', {}).get('method') != 'browser':
                     raise VpubError('invalid_resume', 'This backend has no automatic resumable session.')
                 plan, opts = record.get('upload_plan', record['approved_plan']), record['options']
-                if file_sha(plan['video']) != plan['video_sha256']:
-                    raise VpubError('source_changed', 'Source no longer matches this attempt.')
+                check_upload_copy(plan)
                 result = adapters.browser_call(row['platform'], 'resume', row['account'],
                     expected_identity=record['identity']['identity'], plan={**plan, 'options':opts})
                 record['receipt'] = result
@@ -860,7 +867,7 @@ def capabilities():
             "cover_fitting": "Landscape contain fitting; Douyin and Instagram share identical dedicated portrait bytes. No landscape-to-portrait padding fallback. Grid cropping, small text and aesthetics require separate visual checks.",
             "instagram_media": "Instagram preparation preserves original video bytes and ratio. Use a separate upload cover and shared Douyin portrait through the mobile camera-roll picker; no inserted lead-in or transcoding.",
             "instagram_deletion": "Explicit native deletion request, UI result/absence evidence, retained history, and separately authorized same-video cover replacement. No standalone deletion API.",
-            "email": "Gmail only, disabled by default. Enable only on explicit request; no ordinary-setup prompt. Host verifies the exact account and live send tool, helps install/connect a missing plugin or leaves email off. Self-send only. No Outlook, QQ, NetEase, SMTP or SMS. A TEST does not enable ongoing alerts.",
+            "email": "Gmail only, disabled by default. Enable only on explicit request; no ordinary-setup prompt. Host verifies the exact account and live send tool, helps install/connect a missing plugin or leaves email off. Self-send only. Works with any assistant's connected Gmail send tool: claim with its exact name, then call it once with the returned message. No Outlook, QQ, NetEase, SMTP or SMS. A TEST does not enable ongoing alerts.",
             "chapters": "Douyin CLI applies planned chapters after a durable published work ID is available; verify/resume completes a pending chapter step without reupload. Exact timing/title read-back; platform suggestions are not accepted automatically. Native Bilibili/Douyin/YouTube handoffs retained.",
             "existing_work_edits": "vpub edit: YouTube API metadata, Instagram captions, available X Edit action, Douyin portrait and chapters. One field group per request; verify-only never saves. X edit availability is platform-controlled; no automatic repost.",
             "youtube_initial_permissions": "Upload, read and video/playlist management scopes are requested together; user approves in Google. Old limited tokens require reauthorization.",

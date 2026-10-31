@@ -95,6 +95,86 @@ class EmailTests(unittest.TestCase):
             self.assertFalse(receipt["delivery_verified"])
             self.assertFalse(receipt["automatic_retry"])
 
+    def claimed(self, tool, episode):
+        atomic_json(self.inventory, {"tools": [tool], "plugins": {"gmail": {"installed": True}},
+                                     "profiles": {"gmail": {"structuredContent": {"email": "creator@example.com"}}}})
+        ledger = Ledger()
+        ledger.save(self.key, "WAITING_FOR_USER", {"user_action_episode": episode})
+        ledger.close()
+        mail.configure("gmail", "creator@example.com")
+        event = mail.enqueue(self.key, "youtube", episode)
+        return event, mail.claim(event["id"], tool, self.inventory)
+
+    def test_any_assistants_gmail_send_tool_can_claim(self):
+        _, claim = self.claimed("mcp__claude_ai_Gmail__send_email", 2)
+        self.assertEqual("mcp__claude_ai_Gmail__send_email", claim["tool_name"])
+        self.assertIsNone(claim["arguments"])
+        self.assertEqual({"to", "subject", "text", "html"}, set(claim["message"]))
+        self.assertEqual("creator@example.com", claim["message"]["to"])
+        self.assertNotIn("https://", json.dumps(claim["message"]))
+        self.assertNotIn("Codex", claim["message"]["text"])
+        _, codex = self.claimed(mail.SEND_TOOLS["gmail"], 3)
+        self.assertEqual("creator@example.com", codex["arguments"]["to"])
+
+    def test_read_draft_and_other_provider_tools_cannot_claim(self):
+        mail.configure("gmail", "creator@example.com")
+        event = mail.enqueue(self.key, "youtube", 1)
+        for tool, code in (("gmail_read_email", "send_tool_unavailable"), ("gmail_create_draft_send", "send_tool_unavailable"),
+                           ("gmail send email", "send_tool_unavailable"), ("slack_send_message", "send_tool_unavailable"),
+                           ("outlook_send_mail", "wrong_email_tool"), (None, "send_tool_unavailable")):
+            with self.subTest(tool=tool), self.assertRaises(VpubError) as e:
+                mail.claim(event["id"], tool, self.inventory)
+            self.assertEqual(code, e.exception.code)
+        self.assertEqual("PENDING", mail.pending()[0]["state"])
+
+    def test_a_tool_the_host_does_not_have_cannot_claim(self):
+        mail.configure("gmail", "creator@example.com")
+        event = mail.enqueue(self.key, "youtube", 1)
+        with self.assertRaises(VpubError) as e:
+            mail.claim(event["id"], "another_gmail_send_tool", self.inventory)
+        self.assertEqual("send_tool_unavailable", e.exception.code)
+        self.assertEqual("PENDING", mail.pending()[0]["state"])
+
+    def test_inventory_with_only_a_read_tool_is_not_ready(self):
+        atomic_json(self.inventory, {"tools": ["gmail_read_email"], "plugins": {"gmail": {"installed": True}},
+                                     "profiles": {"gmail": {"structuredContent": {"email": "creator@gmail.com"}}}})
+        self.assertEqual("NEEDS_CONNECTION", mail.inspect_mailbox("creator@gmail.com", self.inventory)["state"])
+
+    def test_record_needs_the_claimed_tool_and_reads_common_responses(self):
+        cases = [({"messageId": "fixture-message"}, "SENT"),
+                 ({"content": [{"type": "text", "text": '{"id": "fixture-message"}'}]}, "SENT"),
+                 ({"content": [{"type": "text", "text": '{"success": true}'}]}, "ACCEPTED"),
+                 ({"sent": True}, "ACCEPTED"),
+                 ({"status": "queued"}, "UNKNOWN"),
+                 ({"structuredContent": {"result": None}}, "UNKNOWN"),
+                 ({"isError": True, "content": [{"type": "text", "text": "quota"}]}, "UNKNOWN"),
+                 ({"error": "timeout", "id": "untrusted"}, "UNKNOWN"),
+                 ("not an object", "UNKNOWN")]
+        for episode, (response, expected) in enumerate(cases, 4):
+            with self.subTest(response=response):
+                event, claim = self.claimed("gmail_send_message", episode)
+                path = self.root / "response.json"
+                atomic_json(path, {"tool_name": mail.SEND_TOOLS["gmail"], "response": response})
+                with self.assertRaises(VpubError) as e:
+                    mail.record(event["id"], claim["claim_token"], path)
+                self.assertEqual("wrong_email_tool", e.exception.code)
+                atomic_json(path, {"tool_name": "gmail_send_message", "response": response})
+                receipt = mail.record(event["id"], claim["claim_token"], path)
+                self.assertEqual(expected, receipt["state"])
+                self.assertEqual("gmail_send_message", receipt["tool_name"])
+                self.assertFalse(receipt["delivery_verified"])
+
+    def test_alert_claimed_before_this_change_still_records_against_the_codex_name(self):
+        _, claim = self.claimed(mail.SEND_TOOLS["gmail"], 2)
+        with mail.database() as db:
+            row = db.execute("SELECT * FROM alerts WHERE state='CLAIMED'").fetchone()
+            data = json.loads(row["data"])
+            data.pop("send_tool")
+            db.execute("UPDATE alerts SET data=? WHERE id=?", (json.dumps(data), row["id"]))
+        path = self.root / "response.json"
+        atomic_json(path, {"tool_name": mail.SEND_TOOLS["gmail"], "response": {"structuredContent": {"id": "old"}}})
+        self.assertEqual("SENT", mail.record(claim["id"], claim["claim_token"], path)["state"])
+
     def test_auto_detection_and_remembered_self_only_choice(self):
         for address, provider in [("Person@GMAIL.COM", "gmail"), ("a@googlemail.com", "gmail")]:
             result = mail.configure("auto", address)

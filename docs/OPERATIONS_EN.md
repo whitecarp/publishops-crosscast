@@ -538,8 +538,9 @@ The following is performed by the host agent; ordinary users do not edit JSON:
 vpub notify inspect --email you@gmail.com --inventory host-mail-inventory.json
 # A one-off test does not enable ongoing alerts; the same test-id never resends
 vpub notify test --email you@gmail.com --test-id setup-test-001 --inventory host-mail-inventory.json
-vpub notify claim RETURNED_ALERT_ID --available-tool mcp__codex_apps__gmail_send_email --inventory host-mail-inventory.json
-# The host calls the returned real send tool, saves its response, then records it
+# Use the exact name of your assistant's own Gmail send tool; any assistant works
+vpub notify claim RETURNED_ALERT_ID --available-tool YOUR_GMAIL_SEND_TOOL --inventory host-mail-inventory.json
+# The host calls that tool once with the returned message, saves its response, then records it
 vpub notify record RETURNED_ALERT_ID --claim-token RETURNED_TOKEN --response actual-send-response.json
 ```
 

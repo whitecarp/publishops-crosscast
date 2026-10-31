@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 import shutil
 from PIL import Image, ImageOps, UnidentifiedImageError
-from .core import VpubError, atomic_json, digest, file_sha, load_plan, read_json
+from .core import VpubError, atomic_json, digest, file_sha, load_plan, read_json, shared_portrait
 
 PRESETS = {
     "bilibili": {"landscape": (1600, 1000)},
@@ -24,7 +24,7 @@ def prepare(manifest, source, out_dir, output, portrait=None):
     load_plan(path)
     portrait = Path(portrait).resolve() if portrait else None
     variants = original.get('covers', {})
-    shared = variants.get('douyin', {}).get('portrait') or variants.get('instagram', {}).get('portrait')
+    shared = shared_portrait(variants)
     shared = portrait or ((path.parent / shared).resolve() if shared else None)
     jobs, skipped = [], {}
     for platform, opts in original["platforms"].items():

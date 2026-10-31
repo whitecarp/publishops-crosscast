@@ -1,7 +1,8 @@
 """Explicitly opt-in Gmail self-notifications; disabled by default.
 
-The CLI cannot invoke tools inside a running Codex conversation. The host claims
-one message, calls the actual connected send tool, then records its response.
+The CLI cannot invoke tools inside the host conversation, whichever assistant runs
+it. The host claims one message with the exact name of its own Gmail send tool,
+calls that tool once, then records its response.
 Uncertain sends are never retried automatically.
 """
 from __future__ import annotations
@@ -15,9 +16,12 @@ import uuid
 
 from .core import Ledger, VpubError, atomic_json, digest, home, now, read_json
 
+# Codex's connector, for which claim returns ready-made arguments. Any other assistant
+# passes its own Gmail send tool and maps the returned message onto that tool.
 SEND_TOOLS = {
     "gmail": "mcp__codex_apps__gmail_send_email",
 }
+OTHER_MAIL_TOOL = re.compile(r"outlook|microsoft|smtp|netease|yahoo|foxmail|qqmail", re.I)
 PROFILE_TOOLS = {p: name.removesuffix("send_email") + "get_profile" for p, name in SEND_TOOLS.items()}
 DOMAINS = {"gmail": {"gmail.com", "googlemail.com"}}
 UNSUPPORTED_DOMAINS = {"outlook.com", "hotmail.com", "live.com", "msn.com", "outlook.com.cn",
@@ -30,18 +34,41 @@ def email_address(value):
     return value.casefold()
 
 
+def send_tool(name):
+    """The host's own Gmail send tool. Read and draft tools or another provider's tools never qualify."""
+    if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.:/-]{1,200}", name)
+            or not re.search(r"send", name, re.I) or not re.search(r"mail", name, re.I) or re.search(r"draft", name, re.I)):
+        raise VpubError("send_tool_unavailable", "Pass the exact name of the host's connected Gmail SEND tool; read/draft capability is insufficient.")
+    if OTHER_MAIL_TOOL.search(name):
+        raise VpubError("wrong_email_tool", "Email supports Gmail only; that send tool belongs to another mail provider.")
+    return name
+
+
+def usable_send_tools(names):
+    usable = []
+    for name in names:
+        try:
+            usable.append(send_tool(name))
+        except VpubError:
+            continue
+    return usable
+
+
 def payload_of(response):
     if not isinstance(response, dict) or response.get("isError"):
         return {}
     payload = response.get("structuredContent")
     if payload is None:
-        for item in response.get("content", []):
-            if item.get("type") == "text":
+        content = response.get("content")
+        for item in content if isinstance(content, list) else []:
+            if isinstance(item, dict) and item.get("type") == "text":
                 try:
                     payload = json.loads(item["text"])
                     break
-                except (ValueError, KeyError):
+                except (ValueError, KeyError, TypeError):
                     continue
+    if payload is None and not {"content", "isError", "structuredContent"} & set(response):
+        payload = response  # A host that saves the tool's plain JSON result.
     return payload if isinstance(payload, dict) and not payload.get("error") else {}
 
 
@@ -75,11 +102,14 @@ def inspect_mailbox(recipient, inventory_path=None):
     if provider is None:
         return {**base, "state": "UNSUPPORTED_OR_UNRESOLVED", "provider": None,
                 "action": "Email supports Gmail only. Check an existing Gmail profile for this exact address, or leave email disabled. Do not guess another provider."}
-    installed = inventory.get("plugins", {}).get(provider, {}).get("installed")
-    tool_available = SEND_TOOLS[provider] in inventory.get("tools", [])
-    info = {**base, "provider": provider, "plugin_query": "Gmail",
-            "send_tool": SEND_TOOLS[provider], "profile_tool": PROFILE_TOOLS[provider]}
-    if not tool_available:
+    plugin = inventory.get("plugins", {}).get(provider)
+    installed = plugin.get("installed") if isinstance(plugin, dict) else None
+    tools = usable_send_tools(inventory.get("tools", []))
+    known = SEND_TOOLS[provider] in tools or not tools
+    info = {**base, "provider": provider, "plugin_query": "Gmail", "send_tools": tools,
+            "send_tool": SEND_TOOLS[provider] if known else tools[0],
+            "profile_tool": PROFILE_TOOLS[provider] if known else None}
+    if not tools:
         state = "NEEDS_INSTALL" if installed is False else "NEEDS_CONNECTION" if installed is True else "NEEDS_DISCOVERY"
         return {**info, "state": state,
                 "action": "Search the host plugin catalogue. If missing, help install it; if installed, help connect/activate it. Offer skip. User completes account consent. Recheck tools and profile afterwards."}
@@ -191,7 +221,7 @@ def enqueue(key, platform, episode):
     # and private account IDs. The user resumes in their existing host session.
     subject = f"[CrossCast] {platform}: 需要登入驗證 / Sign-in verification required"
     body = (f"{platform} 的發布流程需要你完成官方登入或身份驗證。\n"
-            "請回到原來的 Codex／Agent 對話，在對應的官方登入視窗完成操作。\n"
+            "請回到原來的 AI 助手對話，在對應的官方登入視窗完成操作。\n"
             "現有進度已保留；請勿重複上傳影片。\n\n"
             f"The {platform} workflow needs your help with official sign-in verification.\n"
             "Return to the original agent conversation and complete it in the matching official sign-in window.\n"
@@ -246,18 +276,22 @@ def claim(event_id, available_tool, inventory_path=None):
         connection = inspect_mailbox(data["recipient"], inventory_path)
         if connection["state"] != "READY" or connection["provider"] != data["provider"]:
             raise VpubError("email_connection_required", "Verify the live send tool and matching account with notify inspect; provide the inventory before claiming.")
-        tool = SEND_TOOLS[data["provider"]]
-        if available_tool != tool:
-            raise VpubError("send_tool_unavailable", "Discover the configured provider's actual SEND tool before claiming; read/draft capability is insufficient.")
+        tool = send_tool(available_tool)
+        if tool not in connection["send_tools"]:
+            raise VpubError("send_tool_unavailable", "That send tool is not in the live inventory; check what the host actually has connected.")
         token = uuid.uuid4().hex
-        data.update(claim_token=token, claimed_at=now())
+        data.update(claim_token=token, claimed_at=now(), send_tool=tool)
         db.execute("UPDATE alerts SET state='CLAIMED',data=?,updated_at=? WHERE id=?",
                    (json.dumps(data), now(), event_id))
-    args = {"to": data["recipient"], "subject": data["subject"],
-            "payload": {"mime_type": "text/html", "body": {"content": "<p>" + html.escape(data["body"]).replace("\n", "<br>") + "</p>"}}}
+    body_html = "<p>" + html.escape(data["body"]).replace("\n", "<br>") + "</p>"
+    args = None
+    if tool == SEND_TOOLS["gmail"]:
+        args = {"to": data["recipient"], "subject": data["subject"],
+                "payload": {"mime_type": "text/html", "body": {"content": body_html}}}
     return {"id": event_id, "claim_token": token, "state": "CLAIMED", "email_sent": False,
             "tool_name": tool, "arguments": args,
-            "instruction": "Call this connected host tool ONCE. Save its actual response, then run notify record. A tool timeout/crash is UNKNOWN, never an automatic retry. CLI output is not a sent email."}
+            "message": {"to": data["recipient"], "subject": data["subject"], "text": data["body"], "html": body_html},
+            "instruction": "Call this connected send tool ONCE. Use arguments when given; otherwise map message (to, subject, text or html) onto the tool's own parameters. Save its actual response, then run notify record with the same tool_name. A tool timeout/crash is UNKNOWN, never an automatic retry. CLI output is not a sent email."}
 
 
 def record(event_id, token, response_path):
@@ -270,25 +304,20 @@ def record(event_id, token, response_path):
         data = json.loads(row["data"])
         if token != data["claim_token"]:
             raise VpubError("claim_mismatch", "Use the token returned by this alert's claim.")
-        if data["provider"] not in SEND_TOOLS or not isinstance(evidence, dict) or evidence.get("tool_name") != SEND_TOOLS[data["provider"]]:
-            raise VpubError("wrong_email_tool", "Receipt must identify the selected send tool.")
-        response = evidence.get("response")
-        payload = response.get("structuredContent") if isinstance(response, dict) else None
-        if payload is None and isinstance(response, dict):
-            for item in response.get("content", []):
-                if item.get("type") == "text":
-                    try:
-                        payload = json.loads(item["text"])
-                    except (ValueError, KeyError):
-                        continue
-                    break
-        success = isinstance(response, dict) and not response.get("isError") and isinstance(payload, dict) and not payload.get("error")
-        message_id = payload.get("id") if success and data["provider"] == "gmail" else None
-        if message_id and isinstance(message_id, str):
+        # An alert claimed before hosts named their own tool still records against the Codex name.
+        tool = data.get("send_tool") or SEND_TOOLS.get(data["provider"])
+        if data["provider"] not in SEND_TOOLS or not isinstance(evidence, dict) or evidence.get("tool_name") != tool:
+            raise VpubError("wrong_email_tool", "Receipt must identify the send tool named in the claim.")
+        payload = payload_of(evidence.get("response"))
+        message_id = next((payload[field] for field in ("id", "messageId", "message_id")
+                           if isinstance(payload.get(field), str) and payload[field]), None)
+        if message_id:
             state = "SENT"
+        elif payload.get("success") is True or payload.get("sent") is True or str(payload.get("status", "")).lower() in {"sent", "accepted", "ok", "success"}:
+            state = "ACCEPTED"  # The tool says it worked but gave no ID, which does not prove delivery.
         else:
             state = "UNKNOWN"
-        data["receipt"] = {"state": state, "message_id": message_id, "recorded_at": now(),
+        data["receipt"] = {"state": state, "message_id": message_id, "tool_name": tool, "recorded_at": now(),
                            "source": "host_supplied_connector_response", "delivery_verified": False}
         db.execute("UPDATE alerts SET state=?,data=?,updated_at=? WHERE id=?",
                    (state, json.dumps(data), now(), event_id))

@@ -15,8 +15,8 @@ from .language_policy import route
 def request(manifest, source=None, allow_links=False):
     path = Path(manifest).resolve()
     value = read_json(path)
-    platforms = value.get("platforms", {})
-    if not platforms or set(platforms) - set(PLATFORMS):
+    platforms = value.get("platforms") if isinstance(value, dict) else None
+    if not isinstance(platforms, dict) or not platforms or set(platforms) - set(PLATFORMS) or not all(isinstance(o, dict) for o in platforms.values()):
         raise VpubError("invalid_platform", "Choose supported platforms already in the manifest.")
     context = Path(source).read_text(encoding="utf-8-sig") if source else ""
     if len(context) > 100000:
@@ -50,12 +50,15 @@ def apply(manifest, request_path, response_path, output):
     if out.exists():
         raise VpubError("already_exists", "Write generated metadata to a new manifest; never overwrite the source.")
     original, job, response = read_json(path), read_json(request_path), read_json(response_path)
+    if not all(isinstance(part, dict) for part in (original, job, response)):
+        raise VpubError("invalid_metadata", "The manifest, request and response must each be a JSON object.")
     if job.get("manifest_sha256") != digest(original) or response.get("request_id") != job.get("request_id"):
         raise VpubError("metadata_stale", "The source manifest changed or the response belongs to another request.")
     payload = {k: v for k, v in job.items() if k not in {"request_id", "generation_state"}}
     if digest(payload) != job["request_id"]:
         raise VpubError("metadata_stale", "The generation request changed.")
-    if set(response) != {"request_id", "platforms"} or set(response["platforms"]) != set(original["platforms"]):
+    if (set(response) != {"request_id", "platforms"} or not isinstance(response["platforms"], dict)
+            or set(response["platforms"]) != set(original["platforms"]) or not all(isinstance(text, dict) for text in response["platforms"].values())):
         raise VpubError("invalid_metadata", "Response must cover exactly the requested platforms.")
     value = deepcopy(original)
     for platform, text in response["platforms"].items():

@@ -160,18 +160,39 @@ def stop_check(platform=None):
                             "Inspect the stop reason. Only the operator may clear it.")
 
 
+def manifest_file(manifest, value, code, message):
+    """A path written in a manifest, relative to it. Anything else is the manifest's error, not a crash."""
+    if not isinstance(value, str) or not value or "\x00" in value:
+        raise VpubError(code, message)
+    return (Path(manifest).parent / value).resolve()
+
+
+def shared_portrait(covers):
+    """The portrait Douyin and Instagram share, if a manifest names one."""
+    for platform in ("douyin", "instagram"):
+        entry = covers.get(platform) if isinstance(covers, dict) else None
+        value = entry.get("portrait") if isinstance(entry, dict) else None
+        if value:
+            if not isinstance(value, str) or "\x00" in value:
+                raise VpubError("invalid_cover", "The shared portrait must be a local file path.")
+            return value
+    return None
+
+
 def load_plan(path, selected=None):
     path = Path(path).resolve()
     m = read_json(path)
+    if not isinstance(m, dict):
+        raise VpubError("invalid_manifest", "A manifest must be a JSON object.")
     if m.get("schema_version") != 1:
         raise VpubError("invalid_manifest", "schema_version must be 1.")
     allowed = {"schema_version", "video", "cover", "covers", "title", "description", "tags", "platforms", "content_language"}
     if set(m) - allowed:
         raise VpubError("invalid_manifest", "Unknown top-level fields: " + ", ".join(sorted(set(m) - allowed)))
-    vp = (path.parent / m.get("video", "")).resolve()
+    vp = manifest_file(path, m.get("video"), "invalid_video", "Select a complete, nonempty video file.")
     if not vp.is_file() or vp.suffix.lower() not in {".mp4", ".mov", ".webm", ".mkv"} or vp.stat().st_size == 0:
         raise VpubError("invalid_video", "Select a complete, nonempty video file.")
-    cover = (path.parent / m["cover"]).resolve() if m.get("cover") else None
+    cover = manifest_file(path, m["cover"], "invalid_cover", "Cover must be an existing JPG or PNG.") if m.get("cover") else None
     if cover and (not cover.is_file() or cover.suffix.lower() not in {".jpg", ".jpeg", ".png"}):
         raise VpubError("invalid_cover", "Cover must be an existing JPG or PNG.")
     entries = m.get("platforms")
@@ -194,6 +215,9 @@ def load_plan(path, selected=None):
         permitted |= {"method", "expected_identity", "submission_mode"} if platform in {"x", "instagram"} else set()
         if set(v) - permitted:
             raise VpubError("invalid_manifest", f"Unsupported {platform} options: {sorted(set(v) - permitted)}")
+        for field in ("method", "visibility", "metadata_mode", "submission_mode"):
+            if field in v and not isinstance(v[field], str):
+                raise VpubError("invalid_" + field, f"{platform} {field} must be text.")
         if v.get("account", "default") != "default":
             raise VpubError("unsupported_account", "v0.1 supports one account per platform: default.")
         if platform == "youtube" and v.get("method", "native") not in {"native", "api"}:
@@ -314,9 +338,7 @@ def load_plan(path, selected=None):
         if "portrait" in variants and platform in {"youtube", "bilibili", "x"}:
             raise VpubError("unsupported_cover", "This platform uses one landscape thumbnail in this workflow.")
         for role, filename in variants.items():
-            if not isinstance(filename, str):
-                raise VpubError("invalid_cover", "Each cover role needs a local file path.")
-            asset = (path.parent / filename).resolve()
+            asset = manifest_file(path, filename, "invalid_cover", "Each cover role needs a local file path.")
             if not asset.is_file() or asset.suffix.lower() not in {".jpg", ".jpeg", ".png"} or not asset.stat().st_size:
                 raise VpubError("invalid_cover", "Each cover must be a complete JPG or PNG.")
             covers.setdefault(platform, {})[role] = {"path": str(asset), "sha256": file_sha(asset)}

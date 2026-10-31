@@ -538,12 +538,13 @@ vpub notify configure --provider off
 vpub notify inspect --email you@gmail.com --inventory host-mail-inventory.json
 # 一次性測試不會開啟長期提醒，同一 test-id 不重寄
 vpub notify test --email you@gmail.com --test-id setup-test-001 --inventory host-mail-inventory.json
-vpub notify claim RETURNED_ALERT_ID --available-tool mcp__codex_apps__gmail_send_email --inventory host-mail-inventory.json
-# 宿主呼叫返回的真實寄信工具，再保存回傳並記錄
+# 填入 AI 助手自己的 Gmail 寄信工具的確切名稱；任何 AI 助手都可以
+vpub notify claim RETURNED_ALERT_ID --available-tool YOUR_GMAIL_SEND_TOOL --inventory host-mail-inventory.json
+# 宿主用返回的 message 呼叫該工具一次，再保存回傳並記錄
 vpub notify record RETURNED_ALERT_ID --claim-token RETURNED_TOKEN --response actual-send-response.json
 ```
 
-測試信明確標記 TEST，不偽造登入故障。官方驗證出現時保留原作品並立即在對話提示；只有已啟用郵件才入列。宿主必須當下能呼叫 Gmail 插件，CLI.與[實測狀態](VALIDATION.md)。
+測試信明確標記 TEST，不偽造登入故障。官方驗證出現時保留原作品並立即在對話提示；只有已啟用郵件才入列。宿主必須當下能呼叫 Gmail 插件；宿主未執行時，CLI 無法代為寄信。已入列、已寄出與已送達收件匣是不同狀態。逾時或結果不明都不會自動重試。詳見[實測狀態](VALIDATION.md)。
 
 ## 後端與參考
 

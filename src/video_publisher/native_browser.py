@@ -223,7 +223,7 @@ def record(key, evidence_path):
     if not isinstance(evidence, dict) or set(evidence) - allowed:
         raise VpubError("invalid_evidence", "Use only documented browser-evidence fields; never include cookies or raw page dumps.")
     outcome = evidence.get("outcome")
-    if outcome not in {"verified", "uncertain", "rejected", "action_required", "draft"}:
+    if not isinstance(outcome, str) or outcome not in {"verified", "uncertain", "rejected", "action_required", "draft"}:
         raise VpubError("invalid_evidence", "outcome must be verified, uncertain, rejected, action_required or draft.")
     if not isinstance(evidence.get("observation"), str) or not 1 <= len(evidence["observation"]) <= 1000:
         raise VpubError("invalid_evidence", "Supply a short factual UI observation, at most 1000 characters.")
