@@ -1,7 +1,6 @@
 """Account-scoped local inbox for comments, mentions and conversation previews."""
 import re
-import uuid
-from . import adapters, operations, operations_inbox, operations_sync, direct_messages
+from . import operations_inbox
 from .core import VpubError, atomic_json, digest, home, now, publication_lock, read_json, platform_check
 
 KINDS=('comments','mentions','dm_preview')
@@ -60,7 +59,7 @@ def listing(platform=None, kind=None, status='pending', limit=50, cursor=None, i
         raise VpubError('invalid_filter','Use a known local status and limit 1–200.')
     if cursor and not re.fullmatch('[a-f0-9]{64}',cursor):raise VpubError('invalid_cursor','Use a returned local cursor.')
     rows=[row for _,row in entries()]
-    rows.extend({**row,'kind':'comments','text':row['comment']['text'],'is_owner':row['comment'].get('is_owner'),
+    rows.extend({**row,'kind':'comments','text':row['comment'].get('text',''),'is_owner':row['comment'].get('is_owner'),
                  'owner_replied':row['comment'].get('owner_replied')} for _,row in operations_inbox.entries())
     rows=[r for r in rows if (not platform or r['platform']==platform) and (not identity or r['identity']==identity)
           and (not kind or r['kind']==kind) and (include_own or not r.get('is_owner'))

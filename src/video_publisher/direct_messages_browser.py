@@ -1,5 +1,4 @@
 """Official message UI through CrossCast-owned sessions; no private API calls."""
-import re
 from urllib.parse import urlsplit
 from .browser_runtime import risk_check, unique_visible
 from .core import VpubError, atomic_json, digest, read_json, stop_check

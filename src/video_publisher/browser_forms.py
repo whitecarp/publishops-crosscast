@@ -5,8 +5,8 @@ import asyncio
 import re
 
 from .core import VpubError, douyin_caption
-from .browser_runtime import risk_check, unique_visible, visible
-from .browser_backends import normalize, upload_file, wait_until, works, links, verify
+from .browser_runtime import unique_visible, visible
+from .browser_backends import normalize, upload_file, wait_until, works, verify
 
 
 async def enabled(locator):

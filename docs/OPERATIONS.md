@@ -291,11 +291,11 @@ X 僅對自己原帖下、其他作者的確切回覆提供隱藏／恢復；已
 
 ```sh
 vpub ops sync --reply-pages 1 --reply-threads 5 --out round.json
-vpub inbox list --status pending --limit 50
-vpub inbox list --platform youtube --status all --include-own
-vpub inbox mark COMMENT_KEY handled
-vpub inbox mark COMMENT_KEY deferred
-vpub inbox mark COMMENT_KEY unread
+vpub messages list --kind comments --status pending --limit 50
+vpub messages list --kind comments --platform youtube --status all --include-own
+vpub messages mark COMMENT_KEY handled
+vpub messages mark COMMENT_KEY deferred
+vpub messages mark COMMENT_KEY unread
 ```
 
 本機收件匣按平台、帳號、作品與評論 ID 保存已讀取內容。新增項目為 unread；read／handled／deferred 標記在下次巡檢後保留，正文變更會重新列為未讀。局部分頁沒有出現的評論不會從歷史刪除，使用舊內容前應檢查 `last_seen_at`。`pending` 排除自己的評論、已知回覆過的評論，以及已處理／稍後處理項目；`--cursor` 繼續本機分頁，`--identity` 選擇記錄中的帳號。標記只改本機狀態，不發送回覆或修改平台。
@@ -380,9 +380,9 @@ vpub auth login youtube --method api --client-json /path/to/client.json
 vpub auth status youtube --method api
 ```
 
-在執行 CLI 的同一台電腦開啟輸出的 Google 官方授權連結，選擇頻道並完成授權；回呼等待時間為五分鐘。JSON 與登入權杖留在本機，請勿提交 GitHub。方案的 YouTube `method` 設為 `api` 才會使用 API；登入不會自動改變既有方案。首次連接一次請求上傳、讀取及影片／播放列表管理權限，由使用者在 Google 頁面確認。舊版僅有上傳／讀取的權杖需重新授權一次；`--manage-playlists` 保留為相容旗標。授權不等於允許任意刪片。
+在執行 CLI 的同一台電腦開啟輸出的 Google 官方授權連結，選擇頻道並完成授權；回呼等待時間為五分鐘。JSON 與登入權杖留在本機，請勿提交 GitHub。方案的 YouTube `method` 設為 `api` 才會使用 API；登入不會自動改變既有方案。首次連接一次請求上傳、讀取及影片／播放列表管理權限，由使用者在 Google 頁面確認。舊版僅有上傳／讀取的權杖需重新授權一次。授權不等於允許任意刪片。
 
-若授權已完成卻在 API 查詢逾時，先執行 `vpub doctor`。安裝依賴包含 [PySocks](https://pypi.org/project/PySocks/)；Google API 客戶端的 `httplib2` 缺少它時可能忽略已設定的代理。舊環境可在同一個 Python 環境執行 `python -m pip install PySocks==1.7.1`，再執行狀態查詢，毋須重傳影片。
+若授權已完成卻在 API 查詢逾時，先執行 `vpub doctor`。付費附加元件的依賴包含 [PySocks](https://pypi.org/project/PySocks/)；Google API 客戶端的 `httplib2` 缺少它時可能忽略已設定的代理。舊環境可在同一個 Python 環境執行 `python -m pip install PySocks==1.7.1`，再執行狀態查詢，毋須重傳影片。
 
 ## 登入一次，後續用 CLI 發布
 
@@ -418,7 +418,7 @@ vpub metadata request publish.json --source script.txt --out request.json
 vpub metadata apply publish.json --request request.json --response response.json --out localized.json
 ```
 
-雙語回應須包含兩段 `description_parts`，`description` 等於兩段以空行連接；CLI 校驗順序、模式與字數。舊 `--bilingual` 只作相容性檢查，已不必額外指定。原語言不明時先由宿主核對腳本／字幕並設定 `content_language`；不以文件語言猜測。
+雙語回應須包含兩段 `description_parts`，`description` 等於兩段以空行連接；CLI 校驗順序、模式與字數。原語言不明時先由宿主核對腳本／字幕並設定 `content_language`；不以文件語言猜測。
 
 `bili-cli` 接收已寫好的簡介，寫作由宿主聊天模型完成。CrossCast 將此方式擴充成結構化請求、語言規則與校驗，不讀隱藏對話，也不內建獨立翻譯模型。預設不放外鏈，移除跨平台無用的 BV 參照，保留情節及第三方作者／授權的純文字資訊。結構校驗不等於翻譯品質驗證。
 
@@ -556,4 +556,23 @@ B站重用 [kukemc/bili-cli](https://github.com/kukemc/bili-cli)，YouTube 由 A
 
 ## 加快連續指令
 
-留言、數據、按讚、私訊等非發布的瀏覽器指令，現在每個帳號共用一個背景瀏覽器，後續指令不必重新啟動 Chrome。它只在你的電腦上運行，透過經過驗證的私有管道通訊；閒置 5 分鐘、滿 1 小時、發生任何錯誤或執行 `vpub stop` 後都會結束。發布、`resume`、`edit` 和登入會先關閉它再單獨執行。已送出的指令不會自動重送。若要關閉此功能，在設定檔把 `browser_idle_seconds` 設為 0，或設定環境變數 `VPUB_BROWSER_IDLE_SECONDS=0`。
+留言、數據、按讚、私訊等非發布的瀏覽器指令，現在每個帳號共用一個背景瀏覽器，後續指令不必重新啟動 Chrome。它只在你的電腦上運行，透過經過驗證的私有管道通訊；閒置 5 分鐘、滿 1 小時、發生任何錯誤或執行 `vpub stop` 後都會結束。發布、`resume`、`edit` 和登入會先關閉它再單獨執行。已送出的指令不會自動重送。第二個指令會等第一個完成，最多等三分鐘，不會直接失敗。若要關閉此功能，在設定檔把 `browser_idle_seconds` 設為 0，或設定環境變數 `VPUB_BROWSER_IDLE_SECONDS=0`。
+
+## 查看需要處理的事項
+
+```sh
+vpub status
+```
+
+`vpub status` 只讀取本機記錄，不需要登入，也不會連線到任何平台。它會列出目前的暫停狀態與原因、每個未完成的發布及下一步的確切指令和上傳進度、執行中的背景瀏覽器、待處理訊息、最近一次巡檢，以及影片副本佔用的磁碟空間。列出的已存登入不代表即時狀態；要即時確認請用 `vpub auth status`。
+
+`vpub stop` 會暫停發布和瀏覽器指令。工具不會自行解除暫停：處理完原因後，由操作者刪除 `vpub stop` 和 `vpub status` 指出的那個檔案。
+
+## 釋放磁碟空間
+
+```sh
+vpub cleanup
+vpub cleanup --apply
+```
+
+每次發布都會保留一份已核准影片的私有副本，避免之後的修改影響上傳內容。第一個指令只列出可刪除的項目。加上 `--apply` 時，只有當使用該副本的發布全部已核驗，且原始影片仍在原處、內容未變時才會刪除，因此不會刪掉唯一的完整副本。之後把同一方案發布到其他平台時，會從原始影片重新建立副本。

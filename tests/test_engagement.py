@@ -1,9 +1,8 @@
 from copy import deepcopy
 import os,tempfile,unittest
-from pathlib import Path
-from unittest.mock import patch,MagicMock
-from video_publisher import engagement as e,engagement_api as api,cli,operations
-from video_publisher.core import home,read_json,VpubError,atomic_json
+from unittest.mock import patch
+from video_publisher import engagement as e, cli, operations
+from video_publisher.core import home, VpubError
 
 
 class EngagementTests(unittest.TestCase):
@@ -102,14 +101,6 @@ class EngagementTests(unittest.TestCase):
         self.assertIn('提交前停止',r['summary'])
 
 
-class APITests(unittest.TestCase):
-    def setUp(self):
-        self.s=MagicMock();self.s.channels.return_value.list.return_value.execute.return_value={'items':[{'id':'owner'}]}
-        self.s.videos.return_value.list.return_value.execute.return_value={'items':[{'id':'abcdefghijk'}]}
-        self.s.videos.return_value.getRating.return_value.execute.return_value={'items':[{'videoId':'abcdefghijk','rating':'none'}]}
-        self.s.playlists.return_value.list.return_value.execute.return_value={'items':[{'id':'PLtest','snippet':{'channelId':'owner'}}]}
-        self.member={'id':'item','snippet':{'playlistId':'PLtest','resourceId':{'videoId':'abcdefghijk'}}}
-        self.s.playlistItems.return_value.list.return_value.execute.return_value={'items':[self.member]}
 
 
 class DouyinDetailTests(unittest.TestCase):

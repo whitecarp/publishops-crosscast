@@ -91,9 +91,9 @@ class Transaction:
         return dict(self.receipt)
 
     def media(self):
-        self.validate_assets()
         src = Path(self.plan["video"])
-        dst = snapshot_file(src, src.with_name("crosscast-" + self.plan["video_sha256"][:16] + src.suffix), self.plan["video_sha256"])
+        # The upload's file name, as a link to the private snapshot rather than a second copy of the video.
+        dst = snapshot_file(src, src.with_name("crosscast-" + self.plan["video_sha256"][:16] + src.suffix), self.plan["video_sha256"], link=True)
         self.save(phase="selecting_media", media_selected=True, upload_filename=dst.name)
         return dst
 

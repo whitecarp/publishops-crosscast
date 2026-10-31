@@ -9,6 +9,9 @@ import sys
 
 from .core import VpubError, stop_check, platform_check
 
+ROUTES = {"bilibili": {"cli"}, "douyin": {"browser"}, "youtube": {"api"}, "x": {"browser", "api"}, "instagram": {"browser", "api"}}
+
+
 def bili(args, timeout=180):
     stop_check("bilibili")
     env = dict(os.environ, PYTHONIOENCODING="utf-8")
@@ -16,8 +19,11 @@ def bili(args, timeout=180):
     for key in ("NO_PROXY", "no_proxy"):
         if key in env:
             env[key] = ",".join(x for x in env[key].split(",") if ":" not in x)
-    cp = subprocess.run([sys.executable, "-c", "from bili_cli.main import main; main()", *args],
-                        capture_output=True, text=True, encoding="utf-8", env=env, timeout=timeout)
+    try:
+        cp = subprocess.run([sys.executable, "-c", "from bili_cli.main import main; main()", *args],
+                            capture_output=True, text=True, encoding="utf-8", env=env, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise VpubError("backend_timeout", "bili-cli did not finish in time.", "Inspect the original work before any retry; do not repeat a submission.") from None
     try:
         result = json.loads(cp.stdout)
     except ValueError:
@@ -71,7 +77,9 @@ def default_method(platform):
 
 
 def browser_timeout(action):
-    return 1900 if action in {"publish", "resume", "read_all"} else 600 if action in {'edit','verify','operations_batch','chat_unlock','message_sources','discover_works','adopt_work'} else 120
+    from .browser_worker import action_timeout
+    # Leaves room for the sign-in check, so a slow page is not reported as an interrupted command.
+    return action_timeout(action) + 120
 
 
 def browser_call(platform, action, account, **kwargs):
@@ -108,8 +116,7 @@ def auth_status(platform, account, method=None):
     if method == "native":
         from .native_browser import login
         return login(platform)
-    supported = {"bilibili": {"cli"}, "douyin": {"browser"}, "youtube": {"api"}, "x": {"browser", "api"}, "instagram": {"browser", "api"}}
-    if method not in supported[platform]:
+    if method not in ROUTES[platform]:
         raise VpubError("invalid_method", "This backend is unavailable on the selected platform.")
     if platform == "bilibili":
         v = bili(["auth", "status"])
@@ -126,20 +133,19 @@ def auth_status(platform, account, method=None):
     return browser_call(platform, "status", account)
 
 
-def auth_login(platform, account, client_json=None, method=None, manage_playlists=False):
+def auth_login(platform, account, client_json=None, method=None):
     platform_check(platform)
     stop_check(platform)
     method = method or default_method(platform)
     if method == "native":
         from .native_browser import login
         return login(platform)
-    supported = {"bilibili": {"cli"}, "douyin": {"browser"}, "youtube": {"api"}, "x": {"browser", "api"}, "instagram": {"browser", "api"}}
-    if method not in supported[platform]:
+    if method not in ROUTES[platform]:
         raise VpubError("invalid_method", "This login method is unavailable on the selected platform.")
     if platform == "bilibili":
         return bili(["auth", "login"])
     if platform == "youtube":
-        return youtube_api().login(account, client_json, manage_playlists)
+        return youtube_api().login(account, client_json)
     if method == "api":
         return paid_api().login(platform, account, client_json)
     from .auth_jobs import start

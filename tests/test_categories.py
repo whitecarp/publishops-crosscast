@@ -1,7 +1,6 @@
 """Category omission, reclassification and upload/receipt regression tests."""
 import unittest
-from unittest.mock import MagicMock, patch
-from video_publisher import adapters, metadata, native_browser
+from video_publisher import metadata, native_browser
 from video_publisher.core import atomic_json, load_plan, read_json, VpubError
 import test_metadata_cover_playlist as fixtures
 

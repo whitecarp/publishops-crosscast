@@ -1,5 +1,4 @@
 import unittest
-from unittest.mock import patch
 import test_collections as base
 from video_publisher import collections as c
 from video_publisher.collections_instagram import members

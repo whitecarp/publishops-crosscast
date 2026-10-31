@@ -1,11 +1,10 @@
-from copy import deepcopy
 import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-from video_publisher import adapters, cli, metadata, native_browser
+from video_publisher import cli, metadata, native_browser
 from video_publisher.core import atomic_json, load_plan, read_json, VpubError
 
 
@@ -33,7 +32,7 @@ class MetadataTests(unittest.TestCase):
         self.temp.cleanup()
 
     def prepared_response(self):
-        job = metadata.request(self.path, bilingual=['youtube'])
+        job = metadata.request(self.path)
         response = {'request_id':job['request_id'],'platforms':{p: {
             'title':'测试' if p in ('bilibili','douyin') else 'Test',
             'description':'内容' if p in ('bilibili','douyin') else 'Video description',

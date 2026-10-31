@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from video_publisher import adapters, cli
 from video_publisher.browser_backends import Transaction, execute, work_url, links
-from video_publisher.browser_runtime import check_identity, profile_lock
+from video_publisher.browser_runtime import profile_lock
 from video_publisher.core import VpubError, file_sha, read_json
 
 
@@ -137,6 +137,7 @@ class BrowserSafetyTests(unittest.TestCase):
         named=source.with_name('crosscast-'+self.plan['video_sha256'][:16]+source.suffix)
         named.write_bytes(b'fixture')
         self.assertEqual(source.read_bytes(),tx.media().read_bytes())
+        self.assertTrue(os.path.samefile(source,named))
 
 
 if __name__=='__main__': unittest.main()

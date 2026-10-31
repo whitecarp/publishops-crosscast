@@ -1,5 +1,4 @@
 """Explicit, idempotent likes/saves with durable single-attempt receipts."""
-from pathlib import Path
 import re
 import uuid
 from . import adapters, operations

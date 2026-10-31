@@ -9,22 +9,20 @@ import re
 
 from .core import PLATFORMS, VpubError, atomic_json, digest, load_plan, read_json, title_limit
 
-from .language_policy import TARGETS, route
+from .language_policy import route
 
 
-def request(manifest, source=None, bilingual=(), allow_links=False):
+def request(manifest, source=None, allow_links=False):
     path = Path(manifest).resolve()
     value = read_json(path)
     platforms = value.get("platforms", {})
-    if not platforms or set(platforms) - set(PLATFORMS) or set(bilingual) - set(platforms):
-        raise VpubError("invalid_platform", "Choose supported platforms already in the manifest for bilingual output.")
+    if not platforms or set(platforms) - set(PLATFORMS):
+        raise VpubError("invalid_platform", "Choose supported platforms already in the manifest.")
     context = Path(source).read_text(encoding="utf-8-sig") if source else ""
     if len(context) > 100000:
         raise VpubError("source_too_large", "Use a bounded script/transcript of at most 100000 characters.")
     routes = {p: route(opts.get('content_language', value.get('content_language', 'und')), p)
               for p, opts in platforms.items()}
-    if any(routes[p]['mode'] != 'bilingual' for p in bilingual):
-        raise VpubError('language_policy_conflict', 'Bilingual mode follows the video language; matching-language videos need only the platform language.')
     payload = {"schema_version": 1, "manifest_sha256": digest(value),
                "source_language": value.get("content_language", "und"),
                "source": {"title": value.get("title", ""), "description": value.get("description", ""),

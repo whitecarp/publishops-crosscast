@@ -1,4 +1,3 @@
-from copy import deepcopy
 import os
 from pathlib import Path
 import tempfile
@@ -100,15 +99,6 @@ class EditFreshnessTests(unittest.TestCase):
             self.assertEqual(1,result['platform_writes'])
 
 
-class YouTubeEditTests(unittest.TestCase):
-    def setUp(self):
-        self.before={'id':'video123','snippet':{'channelId':'channel123','title':'Old','description':'Old copy',
-                     'categoryId':'1','tags':['animation'],'defaultLanguage':'zh-Hans','defaultAudioLanguage':'zh-Hans'},
-                     'status':{'privacyStatus':'private'}}
-        self.patch={'expected_identity':'channel123','title':'New','description':'原文\n\nTranslation'}
-        self.service=MagicMock()
-        self.service.channels.return_value.list.return_value.execute.return_value={'items':[{'id':'channel123'}]}
-        self.service.videos.return_value.list.return_value.execute.return_value={'items':[self.before]}
 
 
 

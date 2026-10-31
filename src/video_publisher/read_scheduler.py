@@ -7,7 +7,6 @@ import sys
 import time
 import uuid
 
-from .core import now, read_json
 
 MERGE_LOCK = RLock()
 
@@ -50,7 +49,7 @@ def execute(run, progress=False):
     with ThreadPoolExecutor(max_workers=run['options']['workers'], thread_name_prefix='vpub-read') as pool:
         pending = {pool.submit(work, c) for c in snapshots if c['state'] != 'COLLECTED'}
         while pending:
-            ready, pending = wait(pending, timeout=0.25, return_when=FIRST_COMPLETED)
+            ready, pending = wait(pending, timeout=1, return_when=FIRST_COMPLETED)
             collect()
             signature = tuple((j['job_id'], j['state']) for j in run['jobs'])
             elapsed = round(time.monotonic() - started, 3)

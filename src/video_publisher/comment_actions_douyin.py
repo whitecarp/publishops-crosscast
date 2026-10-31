@@ -1,5 +1,4 @@
 """Exact Creator Center comment likes/deletion, with fresh UI response evidence."""
-from urllib.parse import urlsplit
 from .core import VpubError, atomic_json, read_json, stop_check
 from .browser_runtime import risk_check, unique_visible
 from .operations_browser import open_work

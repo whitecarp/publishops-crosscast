@@ -7,14 +7,13 @@ cannot independently inspect the host's browser and never claims that it did.
 from __future__ import annotations
 
 import re
-import shutil
 import sqlite3
 from copy import deepcopy
 from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
 
 from .core import (Ledger, VpubError, atomic_json, file_sha, home, now,
-                   publication_lock, read_json, stop_check, platform_check, load_plan, digest)
+                   publication_lock, read_json, snapshot_file, stop_check, platform_check, load_plan, digest)
 
 URLS = {
     "bilibili": "https://member.bilibili.com/",
@@ -348,12 +347,7 @@ def revise_cover(key, cover_path, identity, portrait_path=None):
                 raise VpubError("unsupported_cover", "Portrait variants currently require Douyin/Instagram native mode.")
             stop_check(old["platform"])
             sha = file_sha(source)
-            target = home() / "covers" / (sha + source.suffix.lower())
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if not target.exists():
-                shutil.copyfile(source, target)
-            if file_sha(target) != sha:
-                raise VpubError("source_changed", "Cover snapshot changed during copying.")
+            target = snapshot_file(source, home() / "covers" / (sha + source.suffix.lower()), sha)
             plan = deepcopy({k: v for k, v in data["approved_plan"].items() if k != "confirmation"})
             plan.update(cover=str(target), cover_sha256=sha)
             if portrait_path:
@@ -361,11 +355,7 @@ def revise_cover(key, cover_path, identity, portrait_path=None):
                 if not portrait.is_file() or portrait.suffix.lower() not in {".jpg", ".jpeg", ".png"} or not portrait.stat().st_size:
                     raise VpubError("invalid_cover", "Choose a complete portrait JPG/PNG.")
                 portrait_sha = file_sha(portrait)
-                portrait_target = target.parent / (portrait_sha + portrait.suffix.lower())
-                if not portrait_target.exists():
-                    shutil.copyfile(portrait, portrait_target)
-                if file_sha(portrait_target) != portrait_sha:
-                    raise VpubError("source_changed", "Portrait snapshot changed.")
+                portrait_target = snapshot_file(portrait, target.parent / (portrait_sha + portrait.suffix.lower()), portrait_sha)
                 plan.setdefault("covers", {})[old["platform"]] = {
                     "landscape": {"path": str(target), "sha256": sha},
                     "portrait": {"path": str(portrait_target), "sha256": portrait_sha}}

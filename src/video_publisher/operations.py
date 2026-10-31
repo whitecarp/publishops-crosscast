@@ -1,7 +1,6 @@
 """Account operations, bounded observations and direct, deduplicated replies."""
 from datetime import datetime, timedelta, timezone
 import locale
-from pathlib import Path
 import re
 import uuid
 
@@ -52,7 +51,7 @@ def record(action, platform, work, result):
 def browser_identity(platform, work):
     ledger=Ledger()
     try:
-        rows=[r for r in ledger.rows() if r['platform']==platform and r['data'].get('receipt',{}).get('id')==work]
+        rows=[r for r in ledger.rows(platform) if r['data'].get('receipt',{}).get('id')==work]
         identities={r['data'].get('identity',{}).get('identity') or r['data'].get('receipt',{}).get('identity') for r in rows}
         identities.discard(None)
         from .work_catalog import binding
@@ -230,13 +229,19 @@ def self_test(platform, work, test_id):
     return {**saved,'state':'TEST_VERIFIED' if result['state']=='REPLY_VERIFIED' else 'TEST_REPLY_UNVERIFIED','reply':result}
 
 
+def recent_events(start):
+    # Events are written once, at their own time, so files older than the window need no parsing.
+    cutoff=start.timestamp()-86400
+    return [read_json(p) for p in (home()/'operations/events').glob('*.json') if p.stat().st_mtime>=cutoff]
+
+
 def report(since=None, language='auto', notes=None, _events=None):
     lang=reporting_language(language)
     try:
         start=datetime.fromisoformat(since.replace('Z','+00:00')) if since else datetime.now(timezone.utc)-timedelta(days=1)
         if start.tzinfo is None: raise ValueError()
     except ValueError: raise VpubError('invalid_since','Use an ISO timestamp with a timezone.')
-    events=_events if _events is not None else [read_json(p) for p in (home()/'operations/events').glob('*.json')]
+    events=_events if _events is not None else recent_events(start)
     events=sorted((e for e in events if datetime.fromisoformat(e['at'].replace('Z','+00:00'))>=start),key=lambda e:e['at'])
     parts=[];details={}
     for platform in NAMES:
@@ -332,7 +337,7 @@ def capabilities():
             'adoption':'ops discover/adopt: bounded account work discovery and fresh ownership checks; separate adoption evidence, no fabricated upload receipt.',
             'resumption':'ops sync persists completed reads and API pages; 300-second freshness reuse, --full forces bounded reads; ops runs/run/resume inspect and resume. Unfinished browser work restarts from its visible page.',
             'batch_reads':'One CLI-owned browser per group of up to ten watched works on the same platform/account; read-only, stops on failure.',
-            'local_inbox':'inbox list/mark: account-scoped history, unread/read/handled/deferred, changed text reopens; no private messages.',
+            'local_inbox':'messages list/mark --kind comments: account-scoped history, unread/read/handled/deferred, changed text reopens.',
             'unified_messages':'messages sync/list/mark: watched comments, Douyin @ notifications, Instagram Tags & mentions, X visible mentions, and three browser-platform conversation previews. Per-source baselines and partial states; local marks never send. ID-less notification previews may coalesce identical events; no full-history claim. Instagram nonempty mentions await a live fixture.',
             'bounded_browser_comments':'comments collect and ops sync: bounded scrolling and visible reply expansion, union by ID, explicit stop reason. No fabricated parent IDs or cursors.',
             'comment_management':'Bilibili/Instagram/X/Douyin comment like/unlike; YouTube/Douyin own-comment delete; YouTube own-comment edit; Bilibili root pin/unpin via upstream (not live-tested this release). Exact targets and fresh read-back.',

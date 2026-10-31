@@ -1,11 +1,11 @@
 import os
 import tempfile
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from video_publisher import direct_messages as dm, comment_actions as actions, comment_actions_api as api
 from video_publisher.direct_messages_browser import new_outgoing, MESSAGE_ROWS
 from video_publisher.comment_actions_douyin import observed
-from video_publisher.core import VpubError, atomic_json, home, read_json
+from video_publisher.core import VpubError, home
 from video_publisher import cli, operations
 
 

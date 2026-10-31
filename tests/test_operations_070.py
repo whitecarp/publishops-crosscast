@@ -3,11 +3,11 @@ from copy import deepcopy
 import os
 import tempfile
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from video_publisher import operations as ops, operations_inbox as inbox, operations_batch as batch
-from video_publisher import operations_sync as sync, comment_actions as actions, comment_actions_api as api, cli
-from video_publisher.core import VpubError, atomic_json, home, read_json
+from video_publisher import operations_sync as sync, operations_runs as runs, comment_actions as actions, cli, messages
+from video_publisher.core import VpubError, atomic_json, home
 
 
 class LocalTests(unittest.TestCase):
@@ -20,22 +20,22 @@ class LocalTests(unittest.TestCase):
 
     def test_history_retained_when_next_page_is_empty(self):
         self.observe();self.observe({**self.observation,'items':[]})
-        self.assertEqual('comment',inbox.listing()['items'][0]['comment']['id'])
+        self.assertEqual('comment',messages.listing()['items'][0]['comment']['id'])
 
     def test_handled_persists_and_text_edit_reopens(self):
-        self.observe();key=inbox.listing()['items'][0]['key'];inbox.mark(key,'handled')
-        self.observe();self.assertEqual([],inbox.listing()['items'])
+        self.observe();key=messages.listing()['items'][0]['key'];inbox.mark(key,'handled')
+        self.observe();self.assertEqual([],messages.listing()['items'])
         changed=deepcopy(self.observation);changed['items'][0]['text']='新问题';self.observe(changed)
-        item=inbox.listing()['items'][0];self.assertEqual('unread',item['status']);self.assertEqual(2,item['revision'])
+        item=messages.listing()['items'][0];self.assertEqual('unread',item['status']);self.assertEqual(2,item['revision'])
 
     def test_identity_and_work_keys_do_not_collide(self):
         self.observe();self.observe({**self.observation,'identity':'other'})
-        self.assertEqual(2,inbox.listing()['matching_total'])
-        self.assertEqual(1,inbox.listing(identity='owner')['matching_total'])
+        self.assertEqual(2,messages.listing()['matching_total'])
+        self.assertEqual(1,messages.listing(identity='owner')['matching_total'])
 
     def test_local_paging_and_marks_do_not_call_network(self):
         self.observe();self.observe({**self.observation,'identity':'other'})
-        first=inbox.listing(limit=1);second=inbox.listing(limit=1,cursor=first['next_cursor'])
+        first=messages.listing(limit=1);second=messages.listing(limit=1,cursor=first['next_cursor'])
         self.assertNotEqual(first['items'][0]['key'],second['items'][0]['key'])
         with patch.object(ops,'backend') as network:
             for state in inbox.STATES:inbox.mark(first['items'][0]['key'],state)
@@ -43,8 +43,8 @@ class LocalTests(unittest.TestCase):
 
     def test_own_and_owner_answered_excluded_from_pending(self):
         self.observe({**self.observation,'items':[{'id':'own','is_owner':True}, {'id':'done','owner_replied':True}]})
-        self.assertEqual([],inbox.listing()['items'])
-        self.assertEqual(2,len(inbox.listing(status='all',include_own=True)['items']))
+        self.assertEqual([],messages.listing()['items'])
+        self.assertEqual(2,len(messages.listing(status='all',include_own=True)['items']))
 
     def test_historical_reply_target_is_retained_but_backend_rechecks(self):
         self.observe();self.observe({**self.observation,'items':[]})
@@ -69,12 +69,12 @@ class LocalTests(unittest.TestCase):
     def test_sync_groups_two_works_one_browser_session(self):
         targets=[{'platform':'x','identity':'owner','work_id':w} for w in ('123456789','234567890')]
         atomic_json(home()/'operations/watchlist.json',{'items':targets})
-        def run(ts,limit,pages,reply_pages):
-            self.assertEqual((2,1),(pages,reply_pages))
-            return {'browser_sessions':1,'results':[{'job':{'work_id':t['work_id'],'operation':a},'ok':True,
-                'data':deepcopy(self.observation if a=='comments' else {'identity':'owner','metrics':{},'source':'dom'})} for t in ts for a in ('comments','stats')]}
-        with patch.object(sync,'browser_batch',side_effect=run) as called:
-            r=sync.sync(platforms='x')
+        def run(p,action,account,**kw):
+            self.assertEqual({(2,1)},{(j['pages'],j['reply_pages']) for j in kw['jobs'] if j['operation']=='comments'})
+            return {'identity':'owner','results':[{'job':j,'ok':True,
+                'data':deepcopy(self.observation if j['operation']=='comments' else {'identity':'owner','metrics':{},'source':'dom'})} for j in kw['jobs']]}
+        with patch.object(ops,'browser_identity',return_value='owner'),patch.object(runs.adapters,'browser_call',side_effect=run) as called:
+            r=runs.sync(platforms='x')
         called.assert_called_once();self.assertEqual(1,r['browser_sessions']);self.assertEqual(2,len(r['items']))
 
     def test_reply_expansion_keeps_owner_reply_and_continuation(self):
@@ -118,7 +118,7 @@ class LocalTests(unittest.TestCase):
 
     def test_cli_exposes_local_status_and_bounded_replies(self):
         p=cli.parser()
-        self.assertEqual('deferred',p.parse_args(['inbox','mark','a'*64,'deferred']).status)
+        self.assertEqual('deferred',p.parse_args(['messages','mark','a'*64,'deferred']).status)
         self.assertEqual(1,p.parse_args(['ops','sync']).reply_pages)
         self.assertEqual('delete',p.parse_args(['comments','delete','youtube','abcdefghijk','id']).action)
 
@@ -131,22 +131,8 @@ class LocalTests(unittest.TestCase):
             self.assertEqual(1,r['comment_management_verified']);self.assertEqual(1,r['comment_management_pending'])
 
     def test_sync_does_not_resurface_local_handled_comment(self):
-        self.observe();key=inbox.listing()['items'][0]['key'];inbox.mark(key,'handled')
+        self.observe();key=messages.listing()['items'][0]['key'];inbox.mark(key,'handled')
         atomic_json(home()/'operations/watchlist.json',{'items':[{'platform':'youtube','work_id':'abcdefghijk','identity':'owner'}]})
         with patch.object(ops,'backend',side_effect=[deepcopy(self.observation),{'identity':'owner','metrics':{},'source':'api'}]):
-            r=sync.sync()
+            r=runs.sync()
         self.assertEqual([],r['inbox'])
-
-
-class YouTubeCommentTests(unittest.TestCase):
-    def setUp(self):
-        self.s=MagicMock();self.request={'platform':'youtube','work_id':'abcdefghijk','identity':'owner','kind':'edit','desired':'Updated',
-            'comment':{'id':'reply','parent_id':'root','thread_id':'root','text':'Original','is_owner':True}}
-        self.s.channels.return_value.list.return_value.execute.return_value={'items':[{'id':'owner'}]}
-        self.s.videos.return_value.list.return_value.execute.return_value={'items':[{'snippet':{'channelId':'owner'}}]}
-        self.s.comments.return_value.list.return_value.execute.return_value={'items':[{'id':'reply','snippet':{'parentId':'root','textOriginal':'Original','authorChannelId':{'value':'owner'}}}]}
-        self.s.commentThreads.return_value.list.return_value.execute.return_value={'items':[{'snippet':{'videoId':'abcdefghijk','topLevelComment':{'id':'root'}}}]}
-
-
-
-

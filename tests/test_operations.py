@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import MagicMock,patch
+from unittest.mock import patch
 
 from video_publisher import operations as ops, operations_api as api, cli
 from video_publisher.core import atomic_json,home,digest,VpubError,read_json
@@ -146,12 +146,6 @@ class MetricsTests(unittest.TestCase):
         self.assertIsNone(d['views']['value'])
 
 
-class YouTubeOperationsTests(unittest.TestCase):
-    def setUp(self):
-        self.service=MagicMock()
-        self.service.channels.return_value.list.return_value.execute.return_value={'items':[{'id':'owner'}]}
-        self.service.videos.return_value.list.return_value.execute.return_value={'items':[{'id':'abcdefghijk',
-            'snippet':{'channelId':'owner','title':'Video'},'statistics':{'viewCount':'1','likeCount':'0'}}]}
 
 
 

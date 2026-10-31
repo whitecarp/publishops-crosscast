@@ -33,25 +33,6 @@ def entries():
             yield path, item
 
 
-def listing(platform=None, status='pending', limit=50, cursor=None, include_own=False, identity=None):
-    from .core import platform_check
-    if platform: platform_check(platform)
-    if status not in (*STATES, 'pending', 'all') or not 1 <= limit <= 200:
-        raise VpubError('invalid_inbox_filter', 'Choose pending/all/unread/read/handled/deferred and limit 1–200.')
-    if cursor and not re.fullmatch(r'[a-f0-9]{64}', cursor):
-        raise VpubError('invalid_cursor', 'Use the next_cursor returned by inbox list.')
-    rows = [row for _, row in entries() if (not platform or row['platform'] == platform)
-            and (not identity or row['identity'] == identity)
-            and (include_own or not row['comment'].get('is_owner'))
-            and (status == 'all' or (status == 'pending' and row['status'] in {'unread', 'read'}
-                                    and row['comment'].get('owner_replied') is not True) or row['status'] == status)]
-    rows.sort(key=lambda r: r['key'])
-    eligible = [row for row in rows if not cursor or row['key'] > cursor]
-    page = eligible[:limit]
-    return {'items': page, 'matching_total': len(rows), 'next_cursor': page[-1]['key'] if len(eligible) > limit else None,
-            'platform_writes': 0, 'scope': 'Local observed comments only. Missing rows are not proof of deletion; last_seen_at records freshness.'}
-
-
 def mark(key, status):
     if not re.fullmatch(r'[a-f0-9]{64}', key) or status not in STATES:
         raise VpubError('invalid_inbox_mark', 'Use an inbox key and unread/read/handled/deferred.')

@@ -1,5 +1,4 @@
 """AI-generated and ordinary videos on every route. Offline; no platform is contacted."""
-import argparse
 import os
 from pathlib import Path
 import asyncio

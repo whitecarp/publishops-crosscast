@@ -20,10 +20,6 @@ def read_session():
         _READ.cache=previous
 
 
-def youtube_account():
-    return adapters.youtube_api().account()
-
-
 def metric(value, label, unit='count'):
     return {'value':value,'label':label,'unit':unit,'availability':'observed' if value is not None else 'unavailable'}
 

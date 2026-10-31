@@ -66,8 +66,11 @@ def file_sha(path):
     return h.hexdigest()
 
 
-def snapshot_file(source, target, sha):
-    """Give target exactly the approved bytes; a cut-off copy never looks like a changed source."""
+def snapshot_file(source, target, sha, link=False):
+    """Give target exactly the approved bytes; a cut-off copy never looks like a changed source.
+
+    link shares the bytes instead of copying them, for a source nothing else will change.
+    """
     target = Path(target)
     if target.exists() and file_sha(target) == sha:
         return target
@@ -75,7 +78,14 @@ def snapshot_file(source, target, sha):
     fd, name = tempfile.mkstemp(prefix=".vpub-", dir=target.parent)
     os.close(fd)
     try:
-        shutil.copyfile(source, name)
+        if link:
+            os.unlink(name)
+            try:
+                os.link(source, name)
+            except OSError:
+                shutil.copyfile(source, name)
+        else:
+            shutil.copyfile(source, name)
         if file_sha(name) != sha:
             raise VpubError("source_changed", "A file differs from the approved plan; create a fresh plan.")
         os.replace(name, target)
@@ -254,7 +264,7 @@ def load_plan(path, selected=None):
             try:
                 when = datetime.fromisoformat(schedule.replace("Z", "+00:00"))
                 delta = (when - datetime.now(timezone.utc)).total_seconds()
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, AttributeError):
                 raise VpubError("invalid_schedule", "Use a future ISO timestamp with an explicit timezone.")
             if delta < 60 or (platform == "bilibili" and not 7200 <= delta <= 15 * 86400):
                 raise VpubError("invalid_schedule", "Schedule is too near/past or outside Bilibili's 2h–15d range.")
@@ -337,8 +347,10 @@ class Ledger:
         r = self.db.execute("SELECT * FROM publications WHERE key=?", (key,)).fetchone()
         return {**dict(r), "data": json.loads(r["data"])} if r else None
 
-    def rows(self):
-        return [self.get(r[0]) for r in self.db.execute("SELECT key FROM publications ORDER BY updated_at DESC")]
+    def rows(self, platform=None):
+        where, values = ("WHERE platform=?", (platform,)) if platform else ("", ())
+        return [{**dict(r), "data": json.loads(r["data"])}
+                for r in self.db.execute(f"SELECT * FROM publications {where} ORDER BY updated_at DESC", values)]
 
     def claim(self, platform, account, sha, data):
         key = self.key(platform, account, sha)

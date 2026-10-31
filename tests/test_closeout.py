@@ -1,16 +1,13 @@
-import asyncio
-from copy import deepcopy
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-from video_publisher import adapters, process_lock
-from video_publisher.core import VpubError, publication_lock, home, file_sha
+from video_publisher import process_lock
+from video_publisher.core import VpubError, publication_lock, home
 
 
 class ProcessLockTests(unittest.TestCase):
@@ -62,31 +59,3 @@ class ProcessLockTests(unittest.TestCase):
         self.assertTrue(process_lock.alive(os.getpid()))
         self.assertTrue(process_lock.alive(None))
         self.assertTrue(process_lock.alive(False))
-
-
-class YoutubeCompletionTests(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
-        cover = Path(self.tmp.name) / 'cover.jpg'; cover.write_bytes(b'cover')
-        self.plan = {'cover': str(cover), 'cover_sha256': file_sha(cover)}
-        self.opts = {'account': 'default', 'expected_channel_id': 'owner', 'visibility': 'private'}
-        self.receipt = {'state': 'SUBMITTED', 'method': 'api', 'id': 'abcdefghijk',
-                        'postprocess': {'cover': 'PENDING', 'playlist_ids': ['list']}}
-        self.service = MagicMock()
-        self.service.channels().list().execute.return_value = {'items': [{'id': 'owner'}]}
-        self.service.videos().list().execute.return_value = {'items': [{'id': 'abcdefghijk',
-            'snippet': {'channelId': 'owner'}, 'status': {'privacyStatus': 'private', 'uploadStatus': 'processed'}}]}
-        self.service.thumbnails().set().execute.return_value = {'items': [{'default': {'url': 'https://example.test/cover.jpg'}}]}
-        self.service.playlistItems().list().execute.return_value = {'items': [{'id': 'member'}]}
-        self.events = []
-
-    def finish(self, checkpoint=None):
-        with patch.object(adapters, 'yt_service', return_value=self.service):
-            return adapters.finish_youtube(self.plan, self.opts, self.receipt,
-                checkpoint or (lambda value: self.events.append(deepcopy(value))))
-
-
-
-
-
-

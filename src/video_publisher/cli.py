@@ -9,10 +9,17 @@ import subprocess
 import sys
 
 from . import __version__, adapters
-from .core import (Ledger, PLATFORMS, VpubError, account_name, atomic_json,
-                   config, file_sha, home, load_plan, now, publication_lock, read_json, snapshot_file, stop_check, platform_check)
+from .core import Ledger, PLATFORMS, VpubError, atomic_json, config, file_sha, home, load_plan, now, publication_lock, read_json, snapshot_file, stop_check, platform_check
 
 RISK_CODES = {"risk_control", "captcha_required", "rate_limited"}
+# The command finished, but the work it was asked to do did not.
+UNFINISHED_STATES = {"INCOMPLETE", "INTERRUPTED", "UPLOAD_PAUSED", "UPLOAD_INITIATING", "UPLOAD_SESSION_CHECK", "UPLOADING", "UPLOAD_INTERRUPTED", "UPLOAD_EXPIRED", "UPLOAD_UNVERIFIED",
+                     "DM_READY", "DM_SUBMITTING", "DM_UNVERIFIED", "DM_FAILED", "COMMENT_READY", "COMMENT_SUBMITTING", "COMMENT_UNVERIFIED", "COMMENT_FAILED",
+                     "ACTION_READY", "ACTION_SUBMITTING", "ACTION_UNVERIFIED", "ACTION_FAILED", "PARTIAL", "WAITING_FOR_USER", "PREPARATION_INCOMPLETE", "SUBMITTED_UNVERIFIED", "UNKNOWN",
+                     "EDIT_SUBMITTING", "EDIT_SUBMITTED_UNVERIFIED", "EDIT_UNAVAILABLE", "REPLY_READY", "REPLY_PENDING", "REPLY_SUBMITTING", "REPLY_UNVERIFIED", "REPLY_REJECTED",
+                     "TEST_SEED_UNVERIFIED", "TEST_REPLY_UNVERIFIED", "TEST_COMMENT_NOT_VISIBLE"}
+# Commands whose --out saves the JSON result. For the others, --out names the file the command produces.
+SAVES_RESULT = {"dm", "read-all", "collection", "playlist", "messages", "engage", "ops", "comments", "stats", "report", "works", "status", "cleanup"}
 
 
 def snapshot_plan(plan, platform):
@@ -132,9 +139,19 @@ def publish_plan(plan, confirm):
 
 
 def doctor():
+    from .overview import chrome_path, stop_state
+    addon = adapters.addon_installed()
     modules = {name: importlib.util.find_spec(name) is not None for name in
-               ("bili_cli", "socks", "patchright")}
+               ("bili_cli", "patchright", *(("crosscast_api", "socks") if addon else ()))}
+    chrome, stop = chrome_path(), stop_state()
+    issues = [{"code": "dependency_missing", "message": f"Python package missing: {name}", "fix": "Reinstall CrossCast in this Python environment."}
+              for name, found in modules.items() if not found]
+    if not chrome:
+        issues.append({"code": "chrome_missing", "message": "Google Chrome was not found.", "fix": "vpub setup --install-browser"})
+    if stop["active"]:
+        issues.append({"code": "stopped", "message": stop["message"], "fix": stop["hint"]})
     return {"version": __version__, "python": sys.version.split()[0], "dependencies": modules,
+            "google_chrome": chrome, "paid_api_addon": addon, "ready": not issues, "issues": issues,
             "local_stop": (home() / "STOP.json").exists(), "runtime_directory": str(home()),
             "credentials_configured": {
                 "youtube_api": (home() / "accounts/default/youtube-token.json").exists(),
@@ -257,11 +274,6 @@ def parser():
     q.add_argument('--status',choices=['pending','all','unread','read','handled','deferred'],default='pending');q.add_argument('--limit',type=int,default=50)
     q.add_argument('--cursor');q.add_argument('--include-own',action='store_true');q.add_argument('--out')
     q=m.add_parser('mark');q.add_argument('key');q.add_argument('status',choices=['unread','read','handled','deferred']);q.add_argument('--out')
-    inbox=sub.add_parser('inbox',help='Local observed comments; no private messages or automatic replies.').add_subparsers(dest='action',required=True)
-    q=inbox.add_parser('list');q.add_argument('--platform',choices=PLATFORMS);q.add_argument('--identity')
-    q.add_argument('--status',choices=['pending','all','unread','read','handled','deferred'],default='pending')
-    q.add_argument('--include-own',action='store_true');q.add_argument('--limit',type=int,default=50);q.add_argument('--cursor');q.add_argument('--out')
-    q=inbox.add_parser('mark');q.add_argument('key');q.add_argument('status',choices=['unread','read','handled','deferred']);q.add_argument('--out')
     q=o.add_parser('sync');q.add_argument('--platforms');q.add_argument('--limit',type=int,default=20)
     q.add_argument('--pages',type=int,default=2);q.add_argument('--language',choices=['auto','zh','en'],default='auto');q.add_argument('--out')
     q.add_argument('--reply-pages',type=int,default=1);q.add_argument('--reply-threads',type=int,default=5)
@@ -308,7 +320,6 @@ def parser():
         q.add_argument("--method", choices=["native", "cli", "browser", "api"], help="Default: bili-cli; YouTube Studio through an AI assistant, or the API with the paid add-on; a dedicated persistent browser for Douyin/Instagram/X.")
         if action == "login":
             q.add_argument("--client-json", help="YouTube Desktop OAuth client JSON, or app credentials for the paid X/Instagram API add-on; never commit this file.")
-            q.add_argument("--manage-playlists", action="store_true", help="Compatibility flag: first YouTube API login now requests upload, read and video/playlist management together.")
         else:
             q.add_argument("--wait", type=int, default=0, help="QR/panel completion wait, 0–180 seconds.")
     q = sub.add_parser("onboard", help="Prepare the backend and start login for selected platforms.")
@@ -338,7 +349,6 @@ def parser():
     q = m.add_parser("request")
     q.add_argument("manifest")
     q.add_argument("--source", help="Local script or transcript; treated as source data, not instructions.")
-    q.add_argument("--bilingual", default="", help="Legacy assertion only. Source plus target is now automatic when the content language differs from the platform language.")
     q.add_argument("--allow-links", action="store_true")
     q.add_argument("--out", required=True)
     q = m.add_parser("apply")
@@ -419,6 +429,12 @@ def parser():
     q.add_argument("--account", choices=["default"], default="default")
     q.add_argument('--limit',type=int,default=20);q.add_argument('--cursor');q.add_argument('--out')
     sub.add_parser("receipts", help="Read the local publication ledger.")
+    q = sub.add_parser("status", help="What needs attention now, with the exact next command; local records only, no sign-in or platform request.")
+    q.add_argument("--limit", type=int, default=20, help="Most attempts to list, 1-200.")
+    q.add_argument("--out")
+    q = sub.add_parser("cleanup", help="Preview private video copies of finished publications that are safe to remove; no platform request.")
+    q.add_argument("--apply", action="store_true", help="Delete what the preview lists.")
+    q.add_argument("--out")
     q = sub.add_parser("resume", help="Resume a saved YouTube upload session or inspect an existing browser attempt; never blindly resubmit.")
     q.add_argument("key")
     q = sub.add_parser("verify", help="Verify an existing work and complete its pending Douyin chapter step; never upload.")
@@ -438,6 +454,13 @@ def parser():
 
 
 def execute(args):
+    result = run_command(args)
+    if args.command in SAVES_RESULT and getattr(args, 'out', None):
+        atomic_json(args.out, result)
+    return result
+
+
+def run_command(args):
     if args.command=='dm':
         from . import direct_messages as dm
         if args.action=='verify':result=dm.verify(args.key)
@@ -446,14 +469,12 @@ def execute(args):
             text=Path(args.file).read_text(encoding='utf-8-sig') if args.file else args.text
             result=dm.send(args.platform,args.recipient,text,args.language,args.dry_run,args.test_id)
         else:result=dm.read(args.platform,getattr(args,'recipient',None),args.limit)
-        if args.out:atomic_json(args.out,result)
         return result
     if args.command=='read-all':
         from . import full_read
         if args.action=='start':result=full_read.start(args.platform,args.resource,args.work,args.page_size,args.max_pages,args.collection)
         elif args.action=='resume':result=full_read.resume(args.run_id,args.max_pages)
         else:result=full_read.status(args.run_id)
-        if args.out:atomic_json(args.out,result)
         return result
     if args.command=='collection':
         from . import collections
@@ -461,14 +482,12 @@ def execute(args):
         elif args.action=='verify':result=collections.verify(args.key)
         elif args.action in {'add','remove'}:result=collections.membership(args.platform,args.action,args.collection,args.work,args.request_id)
         else:result=collections.change(args.platform,args.action,getattr(args,'collection',None),getattr(args,'title',None),args.request_id,getattr(args,'cover',None),getattr(args,'description',None))
-        if args.out:atomic_json(args.out,result)
         return result
     if args.command=='playlist':
         playlists = adapters.youtube_api().playlists
         if args.action in {'list','items'}:result=playlists.listing(getattr(args,'playlist',None),args.cursor,args.limit)
         elif args.action=='verify':result=playlists.verify(args.key)
         else:result=playlists.change(args.action,**{k:getattr(args,k,None) for k in ('playlist','title','description','privacy','video','item','position','request_id')})
-        if args.out:atomic_json(args.out,result)
         return result
     if args.command=='messages':
         from . import messages
@@ -477,12 +496,6 @@ def execute(args):
             result=messages.resume(args.run_id,args.progress)
         elif args.action=='mark':result=messages.mark(args.key,args.status)
         else:result=messages.listing(args.platform,args.kind,args.status,args.limit,args.cursor,args.identity,args.include_own)
-        if args.out:atomic_json(args.out,result)
-        return result
-    if args.command=='inbox':
-        from . import operations_inbox
-        result=operations_inbox.mark(args.key,args.status) if args.action=='mark' else operations_inbox.listing(args.platform,args.status,args.limit,args.cursor,args.include_own,args.identity)
-        if args.out:atomic_json(args.out,result)
         return result
     if args.command=='engage':
         from . import engagement
@@ -490,7 +503,6 @@ def execute(args):
         elif args.action=='collections':result=engagement.collections(args.platform,args.cursor)
         elif args.action=='verify':result=engagement.verify(args.key)
         else:result=engagement.set_action(args.platform,args.work,args.action,not args.remove,args.collection,args.dry_run,args.test_id)
-        if args.out:atomic_json(args.out,result)
         return result
     if args.command=='ops':
         from . import operations_sync, operations_runs, work_catalog
@@ -501,7 +513,6 @@ def execute(args):
         elif args.action=='discover':result=work_catalog.discover(args.platform,args.limit,args.pages)
         elif args.action=='adopt':result=work_catalog.adopt(args.platform,args.work,args.pages)
         else:result=operations_sync.watch(args.watch_action,getattr(args,'platform',None),getattr(args,'work',None))
-        if getattr(args,'out',None):atomic_json(args.out,result)
         return result
     if args.command in {'comments','stats','report','preferences'}:
         from . import operations
@@ -539,7 +550,6 @@ def execute(args):
         elif args.command=='stats': result=operations.observe(args.platform,args.work,'stats')
         elif args.command=='preferences': result=operations.set_language(args.language)
         else: result=operations.report(args.since,args.language,args.notes)
-        if getattr(args,'out',None): atomic_json(args.out,result)
         return result
     if args.command == 'edit':
         from .edits import run
@@ -547,7 +557,6 @@ def execute(args):
     if args.command == "works":
         from .operations_sync import works
         result=works(args.platform,args.limit,args.cursor)
-        if args.out:atomic_json(args.out,result)
         return result
     if args.command == "resume":
         with publication_lock():
@@ -613,7 +622,7 @@ def execute(args):
         if args.action == "request":
             if Path(args.out).exists():
                 raise VpubError("already_exists", "Request already exists; choose a new output.")
-            result = metadata.request(args.manifest, args.source, args.bilingual.split(",") if args.bilingual else [], args.allow_links)
+            result = metadata.request(args.manifest, args.source, args.allow_links)
             atomic_json(args.out, result)
             return result
         return metadata.apply(args.manifest, args.request, args.response, args.out)
@@ -669,21 +678,17 @@ def execute(args):
                 "requirements": {"x": capabilities()['x_requirements']} if 'x' in selected else {},
                 "email_notifications": onboarding()}
     if args.command == "auth":
-        if args.action == "login" and args.manage_playlists and (args.platform != "youtube" or args.method != "api"):
-            raise VpubError("invalid_method", "--manage-playlists requires YouTube --method api.")
+        if args.action == "status" and not 0 <= args.wait <= 180:
+            raise VpubError("invalid_wait", "--wait must be between 0 and 180 seconds.")
         if args.platform == "all":
             if args.action == "login":
                 return login_selected(PLATFORMS, args.method)
             return status_selected(PLATFORMS, args.wait, args.method)
         if args.action == "login":
-            if args.manage_playlists and (args.platform != "youtube" or args.method != "api"):
-                raise VpubError("invalid_method", "--manage-playlists requires YouTube --method api.")
-            return adapters.auth_login(args.platform, args.account, args.client_json, args.method, args.manage_playlists)
+            return adapters.auth_login(args.platform, args.account, args.client_json, args.method)
         method = args.method or adapters.default_method(args.platform)
         if method in {"native", "api"}:
             return adapters.auth_status(args.platform, args.account, method)
-        if not 0 <= args.wait <= 180:
-            raise VpubError("invalid_wait", "--wait must be between 0 and 180 seconds.")
         if args.wait and args.platform == "bilibili":
             return adapters.bili(["auth", "status", "--wait", str(args.wait)], timeout=args.wait + 60)
         if args.platform != "bilibili":
@@ -696,6 +701,8 @@ def execute(args):
         out = Path(args.out)
         if out.exists():
             raise VpubError("already_exists", "Manifest already exists; no overwrite.")
+        if not Path(args.video).is_file():
+            raise VpubError("invalid_video", f"Video file not found: {args.video}")
         chosen = args.platforms.split(",")
         if not chosen or set(chosen) - set(PLATFORMS) or len(chosen) != len(set(chosen)):
             raise VpubError("invalid_platform", "Choose a unique subset of supported platforms.")
@@ -720,8 +727,16 @@ def execute(args):
             return {**plan, "mode": "LOCAL_DRY_RUN", "platform_writes": 0}
         return publish_plan(plan, args.confirm)
     if args.command == "stop":
-        atomic_json(home() / "STOP.json", {"reason": args.reason, "at": now()})
-        return {"stopped": True}
+        path = home() / "STOP.json"
+        atomic_json(path, {"reason": args.reason, "at": now()})
+        return {"stopped": True, "stop_file": str(path),
+                "hint": "Publishing and browser commands now refuse to run. To resume, the operator deletes this file."}
+    if args.command == "status":
+        from .overview import status
+        return status(args.limit)
+    if args.command == "cleanup":
+        from .overview import cleanup
+        return cleanup(args.apply)
     ledger = Ledger()
     try:
         if args.command == "receipts":
@@ -842,7 +857,8 @@ def capabilities():
             "upload_recovery": "New YouTube API uploads persist private resumable sessions and acknowledged offsets. resume queries the server and continues the same account/media/metadata; expired or uncertain sessions are not replaced automatically. Never-started YouTube cover/playlist steps resume against the same owned video; uncertain writes are not repeated. Dead-owner lock markers can be reclaimed without clearing receipts. X retains saved Studio asset recovery. Douyin/Instagram pre-submit interruptions still need draft inspection.",
             "full_reads": "read-all start/resume/status: YouTube works, playlists/members and comments including reply pages; Bilibili works/comments via upstream. API checkpoints advance rows and cursor atomically. Browser Douyin/Instagram collections and members, X folder lists follow official controls; explicit server end required. Browser resume replays the page and retains prior rows while incomplete; a complete pass replaces them with current observations. Other DOM feeds and X folder members remain incomplete/unverified.",
             "session_reuse": "Non-publishing browser commands share one background browser per account over a private authenticated local pipe. It exits after 5 idle minutes (browser_idle_seconds; 0 disables), 1 hour, any error or a stop file. A second command waits for the first. Publishing, resume, edit and login close it and run alone. A sent command is never replayed.",
-            "release_scope": "Frozen closeout of existing functionality; no new feature commitments.",
+            "status": "vpub status reads local records only: any active stop, unfinished publications with the exact next command and upload progress, background browsers, pending messages, the last sync and snapshot disk use.",
+            "cleanup": "vpub cleanup previews private video copies; --apply deletes only copies whose publications are all verified and whose original video is unchanged.",
             "suspended_platforms": {"tiktok": "Login test with a Hong Kong number was unsuccessful; see docs/TIKTOK_STATUS.md."},
             "not_implemented": "Full historical analytics/inbox, a free background-browser route for YouTube, and YouTube cards/clickable end screens. Instagram mobile-cover replacement remains user-assisted. Douyin replies to nested replies are not supported.",
             "interaction_rule": "Login/setup does not authorize comments, messages, likes or publication."}
@@ -854,9 +870,7 @@ def main():
     try:
         args = parser().parse_args()
         value = execute(args)
-        ok = not (isinstance(value, dict) and (value.get("all_submissions_verified") is False or
-                  value.get('state') in {'INCOMPLETE','INTERRUPTED','UPLOAD_PAUSED','UPLOAD_INITIATING','UPLOAD_SESSION_CHECK','UPLOADING','UPLOAD_INTERRUPTED','UPLOAD_EXPIRED','UPLOAD_UNVERIFIED'} or
-                  value.get('state') in {'DM_READY','DM_SUBMITTING','DM_UNVERIFIED','DM_FAILED','COMMENT_READY','COMMENT_SUBMITTING','COMMENT_UNVERIFIED','COMMENT_FAILED','ACTION_READY','ACTION_SUBMITTING','ACTION_UNVERIFIED','ACTION_FAILED','PARTIAL','WAITING_FOR_USER','PREPARATION_INCOMPLETE','SUBMITTED_UNVERIFIED','UNKNOWN','EDIT_SUBMITTING','EDIT_SUBMITTED_UNVERIFIED','EDIT_UNAVAILABLE','REPLY_READY','REPLY_PENDING','REPLY_SUBMITTING','REPLY_UNVERIFIED','REPLY_REJECTED','TEST_SEED_UNVERIFIED','TEST_REPLY_UNVERIFIED','TEST_COMMENT_NOT_VISIBLE'}))
+        ok = not (isinstance(value, dict) and (value.get("all_submissions_verified") is False or value.get("state") in UNFINISHED_STATES))
         print(json.dumps({"ok": ok, "data": value}, ensure_ascii=False))
         raise SystemExit(0 if ok else 4)
     except VpubError as e:

@@ -2,7 +2,6 @@
 import asyncio
 from multiprocessing.connection import Client, Listener
 import os
-from pathlib import Path
 import sys
 import tempfile
 from threading import Event, Thread

@@ -230,9 +230,10 @@ def recover_batches(run):
 
 
 def browser_group(run,group):
+    from .direct_messages import identity as account_identity
     p,identity=group[0]['platform'],group[0]['identity'];o=run['options']
     for j in group:
-        if (ops.browser_identity(p,j['work_id']) if j['work_id']!='@account' else __import__('video_publisher.direct_messages',fromlist=['identity']).identity(p))!=identity:raise VpubError('wrong_account','Work binding changed.')
+        if (ops.browser_identity(p,j['work_id']) if j['work_id']!='@account' else account_identity(p))!=identity:raise VpubError('wrong_account','Work binding changed.')
     reads=[{'operation':j['operation'],'work_id':j['work_id'],'limit':o['limit'],
             **({'pages':o['pages'],'reply_pages':o['reply_pages']} if j['operation']=='comments' else {})} for j in group]
     batch={'id':uuid.uuid4().hex,'identity':identity,'platform':p,'job_ids':[j['job_id'] for j in group],

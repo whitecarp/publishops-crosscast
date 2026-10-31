@@ -10,8 +10,8 @@ This requirement exists because non-subscribers are limited to **140-second, 512
 
 | Capability | Bilibili | YouTube | Douyin | X | Instagram |
 |---|---|---|---|---|---|
-| Login | Upstream CLI | Desktop OAuth | Dedicated official Chrome | Dedicated official Chrome | Dedicated official Chrome |
-| Default publish | bili-cli | Official API | Background browser | Background Media Studio | Background browser |
+| Login | Upstream CLI | Your assistant's browser; Desktop OAuth with the paid add-on | Dedicated official Chrome | Dedicated official Chrome | Dedicated official Chrome |
+| Default publish | bili-cli | AI assistant on YouTube Studio; official API with the paid add-on | Background browser | Background Media Studio | Background browser |
 | Cover | Upstream | Thumbnail API | Landscape + portrait | Custom Studio thumbnail | Separate cover; Original crop |
 | Target metadata language | Simplified Chinese | English | Simplified Chinese | English | English |
 | Work read-back | Upstream | API | Creator cards/detail IDs | Own profile/status | Own grid/Reel |
@@ -24,7 +24,9 @@ This requirement exists because non-subscribers are limited to **140-second, 512
 | Mentions | Upstream | Not integrated | Visible previews | Mentions | Tags/mentions; nonempty fixture pending |
 | Moderation / hiding | Upstream | Viewer hold/approve | Not integrated | Hide/unhide other-author replies | Not integrated |
 
-Shared: exact-source plans, per-platform account checks, immutable upload snapshots, local receipts and no blind retry after final submission. Browser `works` is limited to the visible first page (up to ten Douyin cards). Review cards without detail IDs remain pending.
+Every other API entry in the YouTube column also needs the paid add-on; `vpub capabilities` shows what this machine has.
+
+Shared: exact-source plans, per-platform account checks, immutable upload snapshots, local receipts and no blind retry after final submission. Browser `works` is limited to the visible first page (up to ten Douyin cards). Review cards without detail IDs remain pending. `vpub status` shows what is unfinished and the next command for each item, and `vpub cleanup` frees the disk space used by copies of finished videos.
 
 Real episode-two uploads and their development limitations are recorded in [validation](VALIDATION_EN.md). Background browser automation is not an official direct API or a speed guarantee. Platform changes, expired sessions and challenges can require intervention. Metadata writing/translation uses the host conversation model through request/apply; it does not translate the video itself.
 

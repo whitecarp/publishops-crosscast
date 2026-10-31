@@ -27,9 +27,7 @@ classifiers = [
 dependencies = [
   "Pillow>=11,<14",
   "bili-agent==0.7.0",
-  "PySocks==1.7.1",
   "patchright==1.58.2",
-  "qrcode==8.2",
 ]
 
 [project.scripts]

@@ -25,10 +25,11 @@ Use the installed `vpub` CLI. Read `vpub --help`, `vpub capabilities`, and the r
 
 With the paid add-on, use `resume KEY` for new YouTube API upload sessions; never recreate an uncertain upload. Use `read-all start/resume/status` for supported API lists and official collection pagination. Preserve partial checkpoints, distinguish explicit end proof from a stalled page, and retain bounded-history limits on other browser feeds. Browser commands share one background session per account, and a second command waits for the first; do not start a second process on the same profile.
 
-`resume` may complete never-started YouTube cover/playlist steps for the original video; uncertain writes remain verification-only. Partial browser replays retain prior rows until a complete fresh pass. Kernel locks release on exit, but marker cleanup requires a confirmed dead owner; do not remove active/unknown locks or browser data. Keep this closeout within existing functionality and documented platform limits, without adding a new feature backlog.
+`resume` may complete never-started YouTube cover/playlist steps for the original video; uncertain writes remain verification-only. Partial browser replays retain prior rows until a complete fresh pass. Kernel locks release on exit, but marker cleanup requires a confirmed dead owner; do not remove active/unknown locks or browser data.
 
 ## Receipts and verification
 
+- Start with `vpub status` when picking work back up or asked what is unfinished: it reads local records only and gives the exact next command for each attempt. Run `vpub cleanup` to preview reclaimable video copies, and add `--apply` only when the user wants disk space back.
 - Use exact platform/work/comment/collection IDs from reads. A matching title alone is insufficient. Distinguish private saved collections from public work series.
 - Use stable request IDs when provided by the command. After interruption, reuse the original request or its read-only verify/resume command. Never blindly repeat a publish, comment, message, delete or collection mutation.
 - Treat `UNVERIFIED`, partial reads, pending platform review and test fixtures honestly. A successful click or zero exit code alone is not proof of a persisted result. Read back through the CLI and retain the receipt.

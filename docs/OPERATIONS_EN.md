@@ -291,11 +291,11 @@ For a pending action, first run `comments verify-action ACTION_KEY`; it only rea
 
 ```sh
 vpub ops sync --reply-pages 1 --reply-threads 5 --out round.json
-vpub inbox list --status pending --limit 50
-vpub inbox list --platform youtube --status all --include-own
-vpub inbox mark COMMENT_KEY handled
-vpub inbox mark COMMENT_KEY deferred
-vpub inbox mark COMMENT_KEY unread
+vpub messages list --kind comments --status pending --limit 50
+vpub messages list --kind comments --platform youtube --status all --include-own
+vpub messages mark COMMENT_KEY handled
+vpub messages mark COMMENT_KEY deferred
+vpub messages mark COMMENT_KEY unread
 ```
 
 The local inbox retains observed comments by platform, account, work and comment ID. New entries are unread; read/handled/deferred marks survive later syncs. Changed text reopens an item. A missing comment on a partial page is not deleted from history. Read `last_seen_at` before relying on old entries. `pending` excludes own comments, known answered threads and handled/deferred items; `--cursor` continues local results. `--identity` selects one recorded account. Marking an item performs no platform write and does not send a reply.
@@ -380,9 +380,9 @@ vpub auth login youtube --method api --client-json /path/to/client.json
 vpub auth status youtube --method api
 ```
 
-Open the printed official Google authorization link on the same computer running the CLI, choose your channel and grant access. The callback waits for five minutes. Keep client JSON and tokens local; never commit them to GitHub. Set the YouTube manifest's `method` to `api` to use this backend; signing in does not change existing manifests. First connection requests upload, read and video/playlist management permissions together for the user to approve in Google. Old upload/read-only tokens need one reauthorization; `--manage-playlists` remains a compatibility flag. Permission does not authorize arbitrary deletion.
+Open the printed official Google authorization link on the same computer running the CLI, choose your channel and grant access. The callback waits for five minutes. Keep client JSON and tokens local; never commit them to GitHub. Set the YouTube manifest's `method` to `api` to use this backend; signing in does not change existing manifests. First connection requests upload, read and video/playlist management permissions together for the user to approve in Google. Old upload/read-only tokens need one reauthorization. Permission does not authorize arbitrary deletion.
 
-If authorization completes but API reads time out, run `vpub doctor`. Dependencies include [PySocks](https://pypi.org/project/PySocks/): without it, the Google client's `httplib2` transport can ignore a configured proxy. In an older environment, run `python -m pip install PySocks==1.7.1` with the same Python environment and retry the status query; do not reupload the video.
+If authorization completes but API reads time out, run `vpub doctor`. The paid add-on's dependencies include [PySocks](https://pypi.org/project/PySocks/): without it, the Google client's `httplib2` transport can ignore a configured proxy. In an older environment, run `python -m pip install PySocks==1.7.1` with the same Python environment and retry the status query; do not reupload the video.
 
 ## Login once, publish through the CLI
 
@@ -418,7 +418,7 @@ vpub metadata request publish.json --source script.txt --out request.json
 vpub metadata apply publish.json --request request.json --response response.json --out localized.json
 ```
 
-Bilingual responses include two `description_parts`; `description` must join them with a blank line. The CLI validates order, mode and length. Legacy `--bilingual` is a compatibility assertion and is no longer needed. If the language is unknown, the host inspects the script/subtitles and sets `content_language` first; documentation language is not evidence.
+Bilingual responses include two `description_parts`; `description` must join them with a blank line. The CLI validates order, mode and length. If the language is unknown, the host inspects the script/subtitles and sets `content_language` first; documentation language is not evidence.
 
 `bili-cli` submits supplied descriptions; the host conversation model writes them. CrossCast adds structured requests and validation without reading hidden history or embedding a translation model. External links are off by default; irrelevant BV references are omitted while context and plain-text third-party credits/licenses remain. Schema checks do not prove translation quality.
 
@@ -556,4 +556,23 @@ These routes are a separate paid add-on, and YouTube commands below that use the
 
 ## Faster repeat commands
 
-Comment, stats, like, message and other non-publishing browser commands now share one background browser per account, so later commands skip starting Chrome. It runs only on your computer over a private authenticated pipe, and it exits after 5 idle minutes, after 1 hour, after any error, or when `vpub stop` is used. Publishing, `resume`, `edit` and login close it first and run alone. A command that was already sent is never repeated automatically. To turn this off, set `browser_idle_seconds` to 0 in the settings file or `VPUB_BROWSER_IDLE_SECONDS=0` in the environment.
+Comment, stats, like, message and other non-publishing browser commands now share one background browser per account, so later commands skip starting Chrome. It runs only on your computer over a private authenticated pipe, and it exits after 5 idle minutes, after 1 hour, after any error, or when `vpub stop` is used. Publishing, `resume`, `edit` and login close it first and run alone. A command that was already sent is never repeated automatically. A second command waits for the first instead of failing, for up to three minutes. To turn this off, set `browser_idle_seconds` to 0 in the settings file or `VPUB_BROWSER_IDLE_SECONDS=0` in the environment.
+
+## See what needs attention
+
+```sh
+vpub status
+```
+
+`vpub status` reads local records only, so it needs no sign-in and contacts no platform. It shows any active stop and its reason, each unfinished publication with the exact next command and how far its upload got, running background browsers, pending messages, the last sync and how much disk the video copies use. Saved sign-ins it lists are not a live check; use `vpub auth status` for that.
+
+`vpub stop` pauses publishing and browser commands. The tool never clears a stop by itself: once the reason is dealt with, the operator deletes the file that `vpub stop` and `vpub status` name.
+
+## Free up disk space
+
+```sh
+vpub cleanup
+vpub cleanup --apply
+```
+
+Each publication keeps a private copy of the approved video, so a later edit cannot change what gets uploaded. The first command only lists what could go. `--apply` deletes a copy only when every publication using it is verified and the original video is still in place and unchanged, so it can never remove the last exact copy. Publishing the same plan to another platform later makes a new copy from the original.

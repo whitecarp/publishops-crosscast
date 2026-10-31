@@ -11,7 +11,6 @@ import contextlib
 import json
 from multiprocessing.connection import Client, Listener
 import os
-from pathlib import Path
 from queue import Empty, Queue
 import secrets
 import subprocess

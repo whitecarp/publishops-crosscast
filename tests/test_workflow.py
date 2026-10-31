@@ -1,5 +1,4 @@
 """Offline contract tests. These do not establish live platform compatibility."""
-import copy
 import io
 import json
 import os

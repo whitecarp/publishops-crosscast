@@ -3,13 +3,12 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager
-import os
 from pathlib import Path
 import re
 import time
 from urllib.parse import urlsplit
 
-from .core import VpubError, account_name, atomic_json, home, now, read_json, stop_check
+from .core import VpubError, account_name, atomic_json, home, now, read_json
 
 BROWSER_PLATFORMS = {"douyin", "instagram", "x"}
 URLS = {"douyin": "https://creator.douyin.com/creator-micro/home",

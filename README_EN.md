@@ -100,7 +100,7 @@ After the first sign-in, the CLI does the uploading itself: Bilibili through bil
 
 ### 🔁 Pick up where it stopped
 
-If an upload is interrupted, `vpub resume` continues the original task: YouTube resumes the same upload session, and X continues from the Studio media it already saved. A submission with an unclear result is never clicked again automatically.
+If an upload is interrupted, `vpub resume` continues the original task: YouTube resumes the same upload session, and X continues from the Studio media it already saved. A submission with an unclear result is never clicked again automatically. `vpub status` lists what is unfinished with the exact next command, using local records only, and `vpub cleanup` frees the disk space taken by copies of finished videos.
 
 ### 🔍 A receipt for every step
 
