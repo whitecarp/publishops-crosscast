@@ -847,7 +847,8 @@ def capabilities():
     from .operations import capabilities as operations_capabilities
     return {"product": "PublishOps CrossCast", "version": __version__,
             "paid_api_addon": {"installed": adapters.addon_installed(),
-                               "covers": "Every official API feature listed below for YouTube, X and Instagram, including YouTube comments, stats, playlists, edits and resumable uploads in the CLI."},
+                               "covers": "Every official API feature listed below for YouTube, X and Instagram, including YouTube comments, stats, playlist management, edits and resumable uploads in the CLI."},
+            "youtube_browser_route": "Free: YouTube Studio's own upload form in a background Chrome. Adds the video to playlists named by exact title and can schedule it (in the time zone Studio shows, otherwise this computer's); both are read back before the final Save.",
             "operations":operations_capabilities(),
             "engagement": {"commands":"engage status/collections/like/save/verify; --remove undoes the selected action, --dry-run is optional.",
                 "bilibili":"bili-cli likes and explicit favorite-folder membership; read membership through the pinned upstream helper.",

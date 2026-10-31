@@ -228,8 +228,8 @@ def load_plan(path, selected=None):
             if v.get("method", "browser") == "browser":
                 if v["category_id"] not in STUDIO_CATEGORIES:
                     raise VpubError("invalid_category", "YouTube Studio's list does not offer this category ID.")
-                if v.get("playlist_ids") or v.get("playlist_titles"):
-                    raise VpubError("unsupported_playlist", "The background browser route cannot add to playlists yet.", "Use method native, or api with the paid add-on.")
+                if v.get("playlist_ids"):
+                    raise VpubError("unsupported_playlist", "Studio's playlist picker shows titles, not IDs.", "Use playlist_titles with the exact titles, or playlist_ids with the paid add-on.")
             for field in ("playlist_ids", "playlist_titles"):
                 values = v.get(field, [])
                 if not isinstance(values, list) or len(values) > 20 or not all(isinstance(x, str) and x.strip() and len(x) <= 150 for x in values) or len(set(values)) != len(values):
@@ -294,8 +294,6 @@ def load_plan(path, selected=None):
         if schedule:
             if platform in {"douyin", "x", "instagram"} or v.get("method") == "native":
                 raise VpubError("unsupported_schedule", "This route supports immediate publication only.")
-            if platform == "youtube" and v.get("method", "browser") != "api":
-                raise VpubError("unsupported_schedule", "The free YouTube routes publish immediately; scheduling needs the paid API add-on.")
             try:
                 when = datetime.fromisoformat(schedule.replace("Z", "+00:00"))
                 delta = (when - datetime.now(timezone.utc)).total_seconds()

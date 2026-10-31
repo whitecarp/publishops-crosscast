@@ -3,14 +3,23 @@ from __future__ import annotations
 
 import asyncio
 import re
+from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlsplit
 
 from .categories import STUDIO_CATEGORIES
 from .core import VpubError, douyin_caption
 from .browser_runtime import unique_visible, visible
-from .browser_backends import normalize, upload_file, wait_until, work_url, works, verify
+from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, normalize, studio_offsets, studio_read, studio_style,
+                               upload_file, wait_until, work_url, works, verify)
 
 YT_DIALOG = 'ytcp-uploads-dialog'
+YT_PLAYLISTS = 'ytcp-playlist-dialog'
+# Each playlist row's checkbox, its own lines of text and whether it is ticked.
+YT_PLAYLIST_ROWS = """boxes => boxes.map(box => {
+    const row = box.closest('li, label, ytcp-ve') || box.parentElement;
+    const lines = (row ? row.innerText : '').split('\\n').map(s => s.replace(/\\s+/g, ' ').trim()).filter(Boolean);
+    return {lines, checked: box.getAttribute('aria-checked') === 'true'};
+})"""
 
 
 async def enabled(locator):
@@ -320,6 +329,74 @@ async def yt_category(page, category_id):
         raise VpubError('category_unverified', 'The YouTube category was not confirmed. The upload is kept as a draft; nothing was published.')
 
 
+async def yt_playlists(page, titles):
+    """Tick exactly the planned playlists by their titles; Studio's picker shows no IDs."""
+    trigger = await unique_visible(page.locator(f'{YT_DIALOG} ytcp-video-metadata-playlists ytcp-dropdown-trigger'), 'YouTube playlist list')
+    await trigger.click(timeout=15000)
+    dialog = page.locator(YT_PLAYLISTS)
+    await wait_until(page, lambda: visible(dialog), seconds=30, label='YouTube playlist picker')
+    boxes = dialog.locator('[role="checkbox"]')
+    wanted = {normalize(title) for title in titles}
+    rows = await boxes.evaluate_all(YT_PLAYLIST_ROWS)
+    for title in wanted:
+        found = [i for i, row in enumerate(rows) if title in row['lines']]
+        if len(found) != 1:
+            raise VpubError('playlist_not_found' if not found else 'playlist_ambiguous',
+                            f'YouTube shows {len(found)} playlists named "{title}". The upload is kept as a draft; nothing was published.',
+                            'Use the exact title of one of this channel\'s playlists, and give playlists different titles.')
+    for i, row in enumerate(rows):
+        if row['checked'] != bool(wanted & set(row['lines'])):
+            await boxes.nth(i).click(timeout=15000)
+    rows = await boxes.evaluate_all(YT_PLAYLIST_ROWS)
+    if any(row['checked'] != bool(wanted & set(row['lines'])) for row in rows):
+        raise VpubError('playlist_unverified', 'The YouTube playlists could not be ticked. The upload is kept as a draft; nothing was published.')
+    # Only this picker's own Done; the upload dialog's final Save also uses a done-button.
+    done = await unique_visible(dialog.locator('.done-button'), 'YouTube playlist Done')
+    await done.click(timeout=15000)
+    await dialog.first.wait_for(state='hidden', timeout=15000)
+    listed = normalize(await trigger.inner_text())
+    if any(title not in listed for title in wanted):
+        raise VpubError('playlist_unverified', 'The YouTube playlists were not confirmed. The upload is kept as a draft; nothing was published.')
+
+
+async def yt_schedule(page, when):
+    """Fill Studio's own schedule and read the date and time back. Nothing is saved here."""
+    for selector in ('#second-container-expand-button', '#schedule-radio-button'):
+        opener = await visible(page.locator(f'{YT_DIALOG} {selector}'))
+        if opener:
+            break
+    else:
+        raise VpubError('schedule_unverified', 'YouTube Studio offered no schedule option. The upload is kept as a draft; nothing was published.')
+    await opener.click(timeout=15000)
+    day = page.locator(f'{YT_DIALOG} #datepicker-trigger')
+    await wait_until(page, lambda: visible(day), seconds=30, label='YouTube schedule date')
+    day = await unique_visible(day, 'YouTube schedule date')
+    clock = await unique_visible(page.locator(f'{YT_DIALOG} #time-of-day-container input'), 'YouTube schedule time')
+    scheduler = page.locator(f'{YT_DIALOG} ytcp-visibility-scheduler')
+    offsets = studio_offsets(await scheduler.first.inner_text() if await scheduler.count() else '')
+    if len(offsets) > 1:
+        raise VpubError('schedule_unverified', 'YouTube Studio named more than one time zone. The upload is kept as a draft; nothing was published.')
+    # Studio's own time zone when it names one, otherwise this computer's, which the browser shares.
+    local = when.astimezone(timezone(timedelta(minutes=next(iter(offsets)))) if offsets else None)
+    date_style = studio_style(STUDIO_DATES, await day.inner_text())
+    time_style = studio_style(STUDIO_TIMES, await clock.input_value())
+    if not date_style or not time_style:
+        raise VpubError('schedule_unverified', 'YouTube Studio wrote its date or time in a style CrossCast cannot read. The upload is kept as a draft; nothing was published.')
+    await day.click(timeout=15000)
+    box = await unique_visible(page.locator('ytcp-date-picker tp-yt-paper-input input'), 'YouTube schedule date box')
+    await box.fill(date_style[2](local))
+    await box.press('Enter')
+    await page.wait_for_timeout(1000)
+    await clock.fill(time_style[2](local))
+    await clock.press('Enter')
+    await page.wait_for_timeout(1000)
+    if (studio_read(STUDIO_DATES, await day.inner_text()) != (local.year, local.month, local.day)
+            or studio_read(STUDIO_TIMES, await clock.input_value()) != (local.hour, local.minute)):
+        raise VpubError('schedule_unverified', 'The YouTube schedule was not confirmed. The upload is kept as a draft; nothing was published.')
+    return {'at': when.isoformat(), 'local': local.isoformat(), 'date': [local.year, local.month, local.day],
+            'time': [local.hour, local.minute], 'timezone_basis': 'studio' if offsets else 'computer'}
+
+
 async def yt_upload_finished(page):
     # The upload stops when the page closes, so it has to finish before this command can leave.
     progress = page.locator(f'{YT_DIALOG} ytcp-video-upload-progress')
@@ -364,6 +441,9 @@ async def publish_youtube(page, tx):
         if await page.locator(f'{YT_DIALOG} #tags-container ytcp-chip').count() != len(set(options['tags'])):
             raise VpubError('metadata_mismatch', 'YouTube tags differ from the manifest.')
     await yt_category(page, options['category_id'])
+    if options.get('playlist_titles'):
+        await yt_playlists(page, options['playlist_titles'])
+        tx.save(playlists=options['playlist_titles'])
     tx.save(phase='details_ready', metadata_readback=True, ai_disclosure='native_control')
     # Details, then video elements, then checks, then visibility.
     for _ in range(3):
@@ -371,7 +451,12 @@ async def publish_youtube(page, tx):
         await wait_until(page, lambda: yt_button_ready(following), seconds=120, label='YouTube Next enabled')
         await following.click(timeout=15000)
         await page.wait_for_timeout(1000)
-    await yt_radio(page, options['visibility'].upper(), 'visibility_unverified', 'visibility')
+    if options.get('schedule'):
+        # A scheduled video stays private until Studio publishes it at that time.
+        when = datetime.fromisoformat(options['schedule'].replace('Z', '+00:00'))
+        tx.save(schedule=await yt_schedule(page, when))
+    else:
+        await yt_radio(page, options['visibility'].upper(), 'visibility_unverified', 'visibility')
     await wait_until(page, lambda: yt_upload_finished(page), seconds=1500, label='YouTube upload')
     tx.save(phase='preview', review_url=page.url)
     if options.get('submission_mode') == 'draft_only':

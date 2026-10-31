@@ -36,7 +36,7 @@ YouTube 欄中其他 API 項目同樣需要付費附加元件；`vpub capabiliti
 
 ## 0.16.0 — 付費 API 附加元件、內含 bili-cli、status 與 cleanup
 
-X、Instagram 與 YouTube 的官方 API 路徑移至獨立的付費附加元件，其他路徑維持免費與 MIT 授權。YouTube 新增透過 Studio 的免費背景瀏覽器路徑。套件內含 bili-cli 1.2.1 及 `bili` 指令。新增 `vpub status`、`vpub cleanup`，`vpub messages sync` 也可讀取 B站 @ 提及與私信會話預覽。移除 `inbox`（改用 `messages`）、`--manage-playlists` 與 `--bilingual`。[升級說明](OPERATIONS.md#0160升級時的變化)。
+X、Instagram 與 YouTube 的官方 API 路徑移至獨立的付費附加元件，其他路徑維持免費與 MIT 授權。YouTube 新增透過 Studio 的免費背景瀏覽器路徑，可依標題加入播放清單並排程發布。套件內含 bili-cli 1.2.1 及 `bili` 指令。新增 `vpub status`、`vpub cleanup`，`vpub messages sync` 也可讀取 B站 @ 提及與私信會話預覽。移除 `inbox`（改用 `messages`）、`--manage-playlists` 與 `--bilingual`。[升級說明](OPERATIONS.md#0160升級時的變化)。
 
 ## 0.15.0 — 恢復與完整讀取
 
@@ -94,7 +94,7 @@ X 私人書籤夾支援列出／建立／更名／刪除；Instagram 支援列�
 | 語言 | B站／抖音為簡體中文，YouTube／Instagram／X 為英文；雙語需明確選擇 |
 | 封面 | 製作封面轉為平台畫布，保留完整圖；不可變快照與逐版讀回 |
 | 現有作品修改 | 修改文案／封面保留原作品 ID；縮小受眾後以實際讀回確認 |
-| 播放列表 | YouTube 內置瀏覽器欄位與選配 API 成員操作；B站合集沿用上游 |
+| 播放列表 | YouTube 上傳時依標題勾選（免費背景路徑或內置瀏覽器）與選配 API 成員操作；B站合集沿用上游 |
 | 郵件 | 預設關閉；宿主 Gmail／Outlook 寄信交接、領取與持久結果；無簡訊 |
 | 章節 | 內置瀏覽器交接；抖音章節已提交，使用者確認手機可見 |
 

@@ -12,6 +12,21 @@ from .browser_runtime import risk_check, unique_visible, visible
 
 MANAGE = "https://creator.douyin.com/creator-micro/content/manage"
 STUDIO_VISIBILITY = {"public": {"Public", "公开", "公開"}, "unlisted": {"Unlisted", "不公开列出", "不公開"}, "private": {"Private", "私享", "私人"}}
+MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+# Studio writes dates and times in its interface language. Each style is (pattern, read, write).
+STUDIO_DATES = (
+    (r"(\d{4})年(\d{1,2})月(\d{1,2})日", lambda m: (int(m[1]), int(m[2]), int(m[3])), lambda d: f"{d.year}年{d.month}月{d.day}日"),
+    (r"([A-Z][a-z]{2}) (\d{1,2}), (\d{4})", lambda m: (int(m[3]), MONTHS.index(m[1]) + 1, int(m[2])) if m[1] in MONTHS else None,
+     lambda d: f"{MONTHS[d.month - 1]} {d.day}, {d.year}"),
+    (r"(\d{1,2}) ([A-Z][a-z]{2}) (\d{4})", lambda m: (int(m[3]), MONTHS.index(m[2]) + 1, int(m[1])) if m[2] in MONTHS else None,
+     lambda d: f"{d.day} {MONTHS[d.month - 1]} {d.year}"),
+)
+# The 12-hour style comes first so "6:00 PM" is never read as 06:00.
+STUDIO_TIMES = (
+    (r"(\d{1,2}):(\d{2}) ?([AaPp][Mm])", lambda m: (int(m[1]) % 12 + (12 if m[3].upper() == "PM" else 0), int(m[2])),
+     lambda d: f"{d.hour % 12 or 12}:{d.minute:02d} {'AM' if d.hour < 12 else 'PM'}"),
+    (r"(\d{1,2}):(\d{2})", lambda m: (int(m[1]), int(m[2])), lambda d: f"{d.hour:02d}:{d.minute:02d}"),
+)
 
 
 def normalize(text):
@@ -190,6 +205,34 @@ def studio_visibility(text):
     return next((value for value, labels in STUDIO_VISIBILITY.items() if lines & labels), None)
 
 
+def studio_style(styles, text):
+    """The style a whole Studio date or time is written in, or None."""
+    text = normalize(text)
+    return next((style for style in styles if (match := re.fullmatch(style[0], text)) and style[1](match)), None)
+
+
+def studio_read(styles, text):
+    style = studio_style(styles, text)
+    return style[1](re.fullmatch(style[0], normalize(text))) if style else None
+
+
+def studio_moments(text):
+    """Every date and every time mentioned in a Studio summary such as "Scheduled for ...", as numbers."""
+    rest = normalize(text)
+    dates = {read(m) for pattern, read, _ in STUDIO_DATES for m in re.finditer(pattern, rest)} - {None}
+    times = set()
+    for pattern, read, _ in STUDIO_TIMES:
+        times |= {read(m) for m in re.finditer(pattern, rest)}
+        rest = re.sub(pattern, " ", rest)
+    return dates, times
+
+
+def studio_offsets(text):
+    """The GMT offsets Studio's scheduler names, in minutes."""
+    return {(-1 if sign in "-−" else 1) * (int(hours) * 60 + int(minutes or 0))
+            for sign, hours, minutes in re.findall(r"GMT\s*([+\-−])\s*(\d{1,2})(?::?(\d{2}))?", text or "")}
+
+
 async def verify_youtube(page, receipt):
     # Studio opens this page only for the signed-in channel's own videos, so reading it also proves ownership.
     url = work_url("youtube", None, receipt["id"])
@@ -204,19 +247,28 @@ async def verify_youtube(page, receipt):
                 break
             await page.wait_for_timeout(1000)
         seen["description"] = normalize(await page.locator("#description-textarea #textbox").first.inner_text())
-        seen["visibility"] = studio_visibility(await page.locator("ytcp-video-metadata-visibility #visibility-text").first.inner_text())
+        shown = await page.locator("ytcp-video-metadata-visibility #visibility-text").first.inner_text()
+        seen["visibility"] = studio_visibility(shown)
+        if receipt.get("schedule"):
+            dates, times = studio_moments(shown)
+            if tuple(receipt["schedule"]["date"]) in dates and tuple(receipt["schedule"]["time"]) in times:
+                seen["visibility"] = "scheduled"
+        if receipt.get("playlists"):
+            listed = normalize(await page.locator("ytcp-video-metadata-playlists").first.inner_text())
+            seen["playlists"] = all(normalize(title) in listed for title in receipt["playlists"])
     except Exception:
         pass
     await risk_check(page)
     expected = {"title": normalize(receipt["title"]) if receipt.get("title") else None,
                 "description": normalize(receipt["expected_text"]) if "expected_text" in receipt else None,
-                "visibility": receipt.get("visibility")}
+                "visibility": "scheduled" if receipt.get("schedule") else receipt.get("visibility"),
+                "playlists": True if receipt.get("playlists") else None}
     differs = sorted(name for name, value in expected.items() if value is not None and seen.get(name) != value)
     present = bool(seen.get("title")) and not differs
     return {**receipt, "url": url, "state": "SUBMISSION_VERIFIED" if present else "SUBMITTED_UNVERIFIED",
             "phase": "complete" if present else "readback_pending", "error": None if present else receipt.get("error"),
             "verification_source": "independent_browser_dom", "verified_at": now(), "readback_differs": differs,
-            "note": "Title, description and visibility read back from the channel's own Studio page; cover pixels and playback are separate." if present else "Expected work/text not yet verified; do not upload again."}
+            "note": "Title, description, visibility or schedule, and playlists read back from the channel's own Studio page; cover pixels and playback are separate." if present else "Expected work/text not yet verified; do not upload again."}
 
 
 async def verify(page, platform, identity, receipt):
@@ -307,7 +359,7 @@ async def execute(page, platform, identity, payload):
         debug.mkdir(parents=True, exist_ok=True)
         try:
             await page.screenshot(path=str(debug/'last-page.png'))
-            controls = await page.locator('button,input,textarea,[contenteditable=true],ytcp-button,tp-yt-paper-radio-button').evaluate_all("es=>es.map(e=>({tag:e.tagName,id:e.id,name:e.getAttribute('name'),type:e.type,placeholder:e.getAttribute('placeholder'),label:e.getAttribute('aria-label'),disabled:e.hasAttribute('disabled'),text:e.tagName==='BUTTON'?e.innerText:null}))")
+            controls = await page.locator('button,input,textarea,[contenteditable=true],ytcp-button,tp-yt-paper-radio-button,[role=checkbox],ytcp-dropdown-trigger').evaluate_all("es=>es.map(e=>({tag:e.tagName,id:e.id,name:e.getAttribute('name'),role:e.getAttribute('role'),testId:e.getAttribute('test-id'),type:e.type,placeholder:e.getAttribute('placeholder'),label:e.getAttribute('aria-label'),disabled:e.hasAttribute('disabled'),text:e.tagName==='BUTTON'?e.innerText:null}))")
             atomic_json(debug/'controls.json', controls)
         except Exception:
             pass

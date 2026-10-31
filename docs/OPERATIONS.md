@@ -21,7 +21,7 @@
 ## 0.16.0：升級時的變化
 
 - **官方 API 路徑改為獨立的付費附加元件。** 涵蓋 X、Instagram 與 YouTube。未安裝時，YouTube、抖音、Instagram 與 X 都使用背景瀏覽器。
-- **YouTube 新增免費背景路徑。** `vpub auth login youtube --method browser` 在專用 Chrome 視窗登入一次；之後經由 YouTube Studio 在背景發布，Windows 上使用隱藏桌面，不會出現視窗或工作列圖示。此路徑立即發布，不支援播放清單與排程；`--draft-only` 會在最後儲存前停止。
+- **YouTube 新增免費背景路徑。** `vpub auth login youtube --method browser` 在專用 Chrome 視窗登入一次；之後經由 YouTube Studio 在背景發布，Windows 上使用隱藏桌面，不會出現視窗或工作列圖示。可依確切標題加入播放清單（`playlist_titles`），也可設定排程（依 Studio 顯示的時區，沒有顯示時依這台電腦的時區）；兩者都在最後儲存前讀回確認，尚未在真實帳號上實測。播放清單 ID（`playlist_ids`）只能走付費 API。`--draft-only` 會在最後儲存前停止。
 - **內含 bili-cli。** 安裝 CrossCast 時會一併提供 `bili` 指令，版本為 1.2.1。如果仍裝有舊版獨立的 `bili-agent`，`vpub doctor` 會說明如何移除。
 - **新增指令。** `vpub status` 列出未完成事項及每項的下一步指令。`vpub cleanup` 預覽可安全移除的已完成影片副本，加上 `--apply` 才會刪除。
 - **B站加入訊息收件匣。** `vpub messages sync` 現在可讀取 B站 @ 提及與私信會話預覽。
@@ -478,7 +478,7 @@ vpub browser cover RECEIPT_KEY --file landscape.jpg --portrait portrait.jpg --id
 
 ## 播放列表、類別與章節
 
-YouTube 可設定 `playlist_titles`（內置瀏覽器）或 `playlist_ids`。API 先查成員避免重複加入，不盲目重試結果不明的寫入。所需管理權限已納入首次 OAuth 授權。Studio 新建私密清單並選入既有影片已驗證，API 路徑仍為模擬測試；B站合集沿用上游能力，尚無統一合集管理命令。
+YouTube 可設定 `playlist_titles`（免費背景路徑或內置瀏覽器，依確切標題勾選）或 `playlist_ids`（付費 API）。API 先查成員避免重複加入，不盲目重試結果不明的寫入。所需管理權限已納入首次 OAuth 授權。Studio 新建私密清單並選入既有影片已驗證，API 路徑仍為模擬測試；B站合集沿用上游能力，尚無統一合集管理命令。
 
 新 YouTube 方案必須明確填寫 `category_id`，由宿主依影片內容與官方選項選擇，不再固定為「人物和博客」。`metadata request/apply` 可提供類別，已指定值會保留。
 

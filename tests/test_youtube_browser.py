@@ -24,8 +24,8 @@ RADIO = 'tp-yt-paper-radio-button[name="%s"]'
 class Element:
     """One thing on the fake page. Writes are logged in order, the way Studio would see them."""
 
-    def __init__(self, page, selector):
-        self.page, self.selector = page, selector
+    def __init__(self, page, selector, index=None):
+        self.page, self.selector, self.index = page, selector, index
         self.key = selector[len(DIALOG):] if selector.startswith(DIALOG) else selector
 
     @property
@@ -35,8 +35,16 @@ class Element:
     def filter(self, **options):
         return self
 
+    def locator(self, selector):
+        return Element(self.page, self.selector + " " + selector)
+
+    def nth(self, index):
+        return Element(self.page, self.selector, index)
+
     def exists(self):
-        return "verifycenter" not in self.key and not any(part in self.key for part in self.page.missing)
+        if "verifycenter" in self.key or any(part in self.key for part in self.page.missing):
+            return False
+        return self.page.picker_open if self.key.startswith(browser_forms.YT_PLAYLISTS) else True
 
     async def all(self):
         return [self] if self.exists() else []
@@ -59,6 +67,12 @@ class Element:
             self.page.steps += 1
         if "tp-yt-paper-item" in self.key:
             self.page.category = "Education"
+        if "ytcp-video-metadata-playlists" in self.key:
+            self.page.picker_open = True
+        if self.key.endswith('[role="checkbox"]') and not self.page.refuse_tick:
+            self.page.ticked ^= {self.index}
+        if self.key.endswith(".done-button"):
+            self.page.picker_open = False
 
     async def get_attribute(self, name):
         if name == "aria-checked":
@@ -71,12 +85,24 @@ class Element:
         return True
 
     async def evaluate_all(self, script):
+        if self.key.endswith('[role="checkbox"]'):
+            return [{"lines": [title, "Private"], "checked": i in self.page.ticked} for i, title in enumerate(self.page.playlists)]
         return [f"https://youtu.be/{VIDEO}"] if self.page.has_link else []
 
     async def fill(self, value, **options):
         self.page.log.append(("fill", self.key, value))
-        if not self.page.ignore_fill:
+        if "ytcp-date-picker" in self.key:
+            self.page.date_text = self.page.date_text if self.page.refuse_schedule else value
+        elif "#time-of-day-container" in self.key:
+            self.page.time_text = self.page.time_text if self.page.refuse_schedule else value
+        elif not self.page.ignore_fill:
             self.page.text[self.key] = value
+
+    async def press(self, key, **options):
+        self.page.log.append(("press", self.key, key))
+
+    async def input_value(self, **options):
+        return self.page.time_text if "#time-of-day-container" in self.key else self.page.text.get(self.key, "")
 
     async def inner_text(self, **options):
         if "ytcp-video-metadata-visibility" in self.key:
@@ -85,6 +111,12 @@ class Element:
             return self.page.category or "Choose"
         if "tp-yt-paper-item" in self.key:
             return "Education"
+        if "ytcp-video-metadata-playlists" in self.key:
+            return ", ".join(title for i, title in enumerate(self.page.playlists) if i in self.page.ticked) or "Select"
+        if "#datepicker-trigger" in self.key:
+            return self.page.date_text
+        if "ytcp-visibility-scheduler" in self.key:
+            return self.page.scheduler_text
         return self.page.text.get(self.key, "")
 
     async def press_sequentially(self, text, **options):
@@ -95,7 +127,10 @@ class Element:
         self.page.log.append(("files", self.key, str(path)))
 
     async def wait_for(self, **options):
-        if not self.exists():
+        if options.get("state") == "hidden":
+            if self.exists():
+                raise TimeoutError(self.key)
+        elif not self.exists():
             raise TimeoutError(self.key)
 
 
@@ -105,6 +140,8 @@ class FakeStudio:
         self.category, self.saved, self.at_final_click, self.polls_at_final_click = None, False, None, None
         self.has_link, self.ignore_fill, self.refuse_radio, self.lost_tags = True, False, False, 0
         self.uploading_polls, self.visibility_text, self.receipt_path = 0, None, None
+        self.playlists, self.ticked, self.picker_open, self.refuse_tick = [], set(), False, False
+        self.date_text, self.time_text, self.scheduler_text, self.refuse_schedule = "2026年10月31日", "18:00", "", False
         self.url = "https://studio.youtube.com/channel/" + CHANNEL
         for name, value in options.items():
             setattr(self, name, value)
@@ -151,7 +188,7 @@ class Temporary(unittest.TestCase):
         self.video.write_bytes(b"fixture-video")
 
 
-class FormTests(Temporary):
+class FormCase(Temporary):
     def plan(self, **options):
         return {"video": str(self.video), "video_sha256": file_sha(self.video), "confirmation": "a" * 64,
                 "options": {"title": "My title", "description": "Line one\nLine two", "tags": ["vlog", "travel"], "visibility": "private",
@@ -162,6 +199,14 @@ class FormTests(Temporary):
         page.receipt_path = tx.path
         return tx, asyncio.run(browser_forms.publish_youtube(page, tx))
 
+    def fails_before_saving(self, page, plan, code):
+        with self.assertRaises(VpubError) as caught:
+            self.run_form(page, plan)
+        self.assertEqual(code, caught.exception.code)
+        self.assertEqual([], page.clicks("#done-button"))
+
+
+class FormTests(FormCase):
     def test_one_upload_one_final_save_then_a_read_back(self):
         page = FakeStudio()
         tx, result = self.run_form(page)
@@ -278,6 +323,73 @@ class FormTests(Temporary):
         self.assertEqual([], page.clicks("#done-button"))
 
 
+class PlaylistTests(FormCase):
+    def test_exactly_the_planned_playlists_are_ticked_and_read_back(self):
+        page = FakeStudio(playlists=["Trips", "Trips 2", "Food"], ticked={1})
+        tx, result = self.run_form(page, self.plan(playlist_titles=["Trips", "Food"]))
+        self.assertEqual({0, 2}, page.ticked)
+        self.assertFalse(page.picker_open)
+        self.assertEqual(1, len(page.clicks("#done-button")))
+        self.assertEqual(["Trips", "Food"], result["playlists"])
+        self.assertEqual("SUBMISSION_VERIFIED", result["state"])
+
+    def test_the_picker_is_closed_with_its_own_done_never_the_final_save(self):
+        page = FakeStudio(playlists=["Trips"])
+        self.run_form(page, self.plan(playlist_titles=["Trips"], submission_mode="draft_only"))
+        self.assertEqual(1, len(page.clicks(browser_forms.YT_PLAYLISTS + " .done-button")))
+        self.assertEqual([], page.clicks("#done-button"))
+
+    def test_a_missing_or_doubled_title_stops_before_the_final_click(self):
+        for playlists, code in [(["Food"], "playlist_not_found"), (["Trips", "Trips"], "playlist_ambiguous")]:
+            with self.subTest(playlists=playlists):
+                plan = self.plan(playlist_titles=["Trips"])
+                plan["confirmation"] = code[9] * 64
+                self.fails_before_saving(FakeStudio(playlists=playlists), plan, code)
+
+    def test_a_box_that_will_not_tick_stops_before_the_final_click(self):
+        self.fails_before_saving(FakeStudio(playlists=["Trips"], refuse_tick=True), self.plan(playlist_titles=["Trips"]), "playlist_unverified")
+
+
+class ScheduleTests(FormCase):
+    WHEN = "2030-01-01T00:00:00+00:00"
+
+    def test_the_time_is_typed_in_studios_own_zone_and_style(self):
+        page = FakeStudio(scheduler_text="Time zone GMT+08:00 China Standard Time", visibility_text="已安排\n2030年1月1日 08:00")
+        _, result = self.run_form(page, self.plan(schedule=self.WHEN))
+        self.assertIn(("fill", "ytcp-date-picker tp-yt-paper-input input", "2030年1月1日"), page.log)
+        self.assertIn(("fill", "#time-of-day-container input", "08:00"), page.log)
+        self.assertEqual({"at": self.WHEN, "local": "2030-01-01T08:00:00+08:00", "date": [2030, 1, 1], "time": [8, 0], "timezone_basis": "studio"}, result["schedule"])
+        self.assertIsNone(page.chosen_visibility())
+        self.assertEqual(1, len(page.clicks("#done-button")))
+        self.assertEqual("SUBMISSION_VERIFIED", result["state"])
+
+    def test_an_english_studio_gets_its_own_date_and_twelve_hour_time(self):
+        page = FakeStudio(date_text="Oct 31, 2026", time_text="6:00 PM", scheduler_text="GMT-05:00", visibility_text="Scheduled\nDec 31, 2029, 7:00 PM")
+        _, result = self.run_form(page, self.plan(schedule=self.WHEN))
+        self.assertEqual(("Dec 31, 2029", "7:00 PM"), (page.date_text, page.time_text))
+        self.assertEqual("SUBMISSION_VERIFIED", result["state"])
+
+    def test_without_a_zone_on_screen_this_computers_zone_is_used(self):
+        local = __import__("datetime").datetime.fromisoformat(self.WHEN).astimezone()
+        page = FakeStudio()
+        _, result = self.run_form(page, self.plan(schedule=self.WHEN, submission_mode="draft_only"))
+        self.assertEqual(("computer", [local.hour, local.minute]), (result["schedule"]["timezone_basis"], result["schedule"]["time"]))
+
+    def test_an_older_studio_layout_still_opens_the_schedule(self):
+        page = FakeStudio(missing={"#second-container-expand-button"})
+        self.run_form(page, self.plan(schedule=self.WHEN, submission_mode="draft_only"))
+        self.assertEqual(1, len(page.clicks("#schedule-radio-button")))
+
+    def test_anything_unconfirmed_stops_before_the_final_click(self):
+        for options, code in [({"missing": {"#second-container-expand-button", "#schedule-radio-button"}}, "a"),
+                              ({"date_text": "31/10/2026"}, "b"), ({"refuse_schedule": True}, "c"),
+                              ({"scheduler_text": "GMT+08:00 or GMT-05:00"}, "d")]:
+            with self.subTest(options=options):
+                plan = self.plan(schedule=self.WHEN)
+                plan["confirmation"] = code * 64
+                self.fails_before_saving(FakeStudio(**options), plan, "schedule_unverified")
+
+
 class ResumeTests(Temporary):
     def plan(self):
         return {"video": str(self.video), "video_sha256": file_sha(self.video), "confirmation": "a" * 64,
@@ -347,6 +459,30 @@ class ReadBackTests(Temporary):
         page = self.studio()
         page.visibility_text = "Public"
         self.assertEqual(["visibility"], self.verify(page)["readback_differs"])
+
+    def test_a_schedule_and_playlists_are_part_of_the_read_back(self):
+        receipt = {**self.receipt, "schedule": {"date": [2030, 1, 1], "time": [8, 0]}, "playlists": ["Trips"]}
+        page = self.studio(playlists=["Trips"], ticked={0})
+        page.visibility_text = "已安排\n2030年1月1日 08:00"
+        self.assertEqual("SUBMISSION_VERIFIED", self.verify(page, receipt)["state"])
+        page.visibility_text = "已安排\n2030年1月1日 09:00"
+        self.assertEqual(["visibility"], self.verify(page, receipt)["readback_differs"])
+        page = self.studio()
+        page.visibility_text = "已安排\n2030年1月1日 08:00"
+        self.assertEqual(["playlists"], self.verify(page, receipt)["readback_differs"])
+
+    def test_studio_dates_times_and_zones_are_read_as_numbers(self):
+        from video_publisher.browser_backends import STUDIO_DATES, STUDIO_TIMES, studio_moments, studio_offsets, studio_read
+        self.assertEqual((2030, 1, 1), studio_read(STUDIO_DATES, "2030年1月1日"))
+        self.assertEqual((2029, 12, 31), studio_read(STUDIO_DATES, "Dec 31, 2029"))
+        self.assertEqual((2029, 12, 31), studio_read(STUDIO_DATES, "31 Dec 2029"))
+        self.assertIsNone(studio_read(STUDIO_DATES, "31/12/2029"))
+        self.assertEqual((18, 0), studio_read(STUDIO_TIMES, "6:00 PM"))
+        self.assertEqual((0, 30), studio_read(STUDIO_TIMES, "12:30 AM"))
+        self.assertEqual((8, 5), studio_read(STUDIO_TIMES, "08:05"))
+        self.assertEqual(({(2029, 12, 31)}, {(19, 0)}), studio_moments("Scheduled\nDec 31, 2029, 7:00 PM"))
+        self.assertEqual({480}, studio_offsets("(GMT+08:00) China Standard Time"))
+        self.assertEqual({-300, 330}, studio_offsets("GMT−5 GMT+5:30"))
 
     def test_an_edit_page_that_does_not_open_stays_unverified(self):
         result = self.verify(FakeStudio(missing={"#title-textarea"}))
@@ -551,11 +687,17 @@ class PlanTests(Temporary):
         self.refused("invalid_method", method="cli")
 
     def test_what_this_route_cannot_do_is_refused_before_any_upload(self):
-        self.refused("unsupported_playlist", playlist_titles=["Trips"])
         self.refused("unsupported_playlist", playlist_ids=["PLabcdefgh"])
-        self.refused("unsupported_schedule", schedule="2030-01-01T00:00:00+00:00")
         self.refused("invalid_category", category_id="30")
         self.assertEqual("api", self.load(method="api", category_id="30")["method"])
+
+    def test_playlists_by_title_and_a_schedule_are_free(self):
+        plan = self.load(playlist_titles=["Trips"], schedule="2030-01-01T00:00:00+00:00")
+        self.assertEqual(("browser", ["Trips"], "2030-01-01T00:00:00+00:00"), (plan["method"], plan["playlist_titles"], plan["schedule"]))
+        # A scheduled video stays private until Studio publishes it.
+        self.refused("invalid_schedule", schedule="2030-01-01T00:00:00+00:00", visibility="public")
+        self.refused("invalid_schedule", schedule="2030-01-01T00:00:00")
+        self.refused("unsupported_schedule", schedule="2030-01-01T00:00:00+00:00", method="native")
 
     def test_characters_youtube_refuses_are_caught_at_plan_time(self):
         self.refused("invalid_title", title="a <b> title")

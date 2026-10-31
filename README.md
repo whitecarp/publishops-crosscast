@@ -96,7 +96,7 @@ B站、抖音用简体中文，YouTube、Instagram、X 用英文。视频本身�
 
 ### 📮 登录一次，之后后台发布
 
-首次登录之后，CLI 自己完成上传：B站走 bili-cli，YouTube、抖音、Instagram、X 由 CLI 在后台操作专用的 Chrome。YouTube、X 和 Instagram 的官方 API 路径需要付费附加组件。B站支持定时发布，YouTube 用付费附加组件也可以。
+首次登录之后，CLI 自己完成上传：B站走 bili-cli，YouTube、抖音、Instagram、X 由 CLI 在后台操作专用的 Chrome。YouTube、X 和 Instagram 的官方 API 路径需要付费附加组件。B站和 YouTube 都支持定时发布。
 
 ### 🔁 中断了也能接着来
 
@@ -127,7 +127,7 @@ B站、抖音用简体中文，YouTube、Instagram、X 用英文。视频本身�
 | 平台 | 登录 | 发布方式 | 实测记录 |
 | --- | --- | --- | --- |
 | **Bilibili** | B站 App 扫码（bili-cli） | bili-cli，可定时发布 | ✅ bili-cli |
-| **YouTube** | 免费：在专用 Chrome 里登录一次。付费附加组件：Google 桌面 OAuth 客户端 | 免费：后台 Chrome 操作 YouTube Studio。付费附加组件：官方 API，可定时发布 | ✅ API 和免费路径 |
+| **YouTube** | 免费：在专用 Chrome 里登录一次。付费附加组件：Google 桌面 OAuth 客户端 | 免费：后台 Chrome 操作 YouTube Studio，可加入播放列表、定时发布。付费附加组件：官方 API | ✅ API 和免费路径 |
 | **抖音** | 专用官方 Chrome | CLI 后台浏览器 | ✅ 已发布 |
 | **Instagram** | 专用官方 Chrome | CLI 后台浏览器，封面在手机上改 | ✅ 已发布 |
 | **X** | 专用官方 Chrome | 只能用 Media Studio（需订阅） | ✅ 已发布 |
@@ -137,7 +137,7 @@ B站、抖音用简体中文，YouTube、Instagram、X 用英文。视频本身�
 
 **发之前需要知道**
 
-- **YouTube**：官方 API 路径，包括 CLI 上的 YouTube 评论、数据、播放列表和编辑，都需要付费的 API 附加组件。免费的后台路径立即发布，暂不支持播放列表和定时发布。项目还在测试模式时，要先把登录用的账号加进“测试用户”；按 Google 的规定，2020 年 7 月 28 日之后创建、又没通过审核的 API 项目，上传的视频会被锁成私享。
+- **YouTube**：官方 API 路径，包括 CLI 上的 YouTube 评论、数据、播放列表管理和编辑，都需要付费的 API 附加组件。免费的后台路径可以按标题把视频加进播放列表，也能定时发布（按 Studio 显示的时区，没有显示时按这台电脑的时区），两者都在最后保存前读回确认；这两项还没在真实账号上实测。项目还在测试模式时，要先把登录用的账号加进“测试用户”；按 Google 的规定，2020 年 7 月 28 日之后创建、又没通过审核的 API 项目，上传的视频会被锁成私享。
 - **X**：只能用 Media Studio。账号必须已订阅并能进入 Media Studio；未订阅账号的视频上限是 140 秒、512 MB，本工具不支持。
 - **Instagram**：视频保留原比例；封面必须在手机上改：打开作品的“编辑封面 → 从相册添加”，选和抖音共用的那张竖版图，再看一眼主页网格的裁切。
 - **抖音**：长时间保持登录的稳定性还在验收；网页上传中断后不能续传，要先检查已有草稿。

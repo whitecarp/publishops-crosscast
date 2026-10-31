@@ -21,7 +21,7 @@ Default routes: Bilibili uses bili-cli, and YouTube/Douyin/Instagram/X use a ded
 ## 0.16.0: what changes when you upgrade
 
 - **Official API routes are a separate paid add-on.** This covers X, Instagram and YouTube. Without it, YouTube, Douyin, Instagram and X all use the background browser.
-- **YouTube has a free background route.** `vpub auth login youtube --method browser` signs in once in a dedicated Chrome window. After that, publishing runs out of sight through YouTube Studio: on Windows it uses a hidden desktop, with no window or taskbar icon. It publishes immediately, with no playlists or scheduling, and `--draft-only` stops before the final Save.
+- **YouTube has a free background route.** `vpub auth login youtube --method browser` signs in once in a dedicated Chrome window. After that, publishing runs out of sight through YouTube Studio: on Windows it uses a hidden desktop, with no window or taskbar icon. It adds the video to playlists by exact title (`playlist_titles`) and can schedule it, in the time zone Studio shows or otherwise this computer's; both are read back before the final Save and have not been tried on a real account yet. Playlist IDs (`playlist_ids`) need the paid API. `--draft-only` stops before the final Save.
 - **bili-cli is included.** Installing CrossCast also gives you the `bili` command, version 1.2.1. If an older separate `bili-agent` is still installed, `vpub doctor` says how to remove it.
 - **New commands.** `vpub status` lists what is unfinished with the next command for each item. `vpub cleanup` previews copies of finished videos that are safe to remove, and deletes them only with `--apply`.
 - **Bilibili in the message inbox.** `vpub messages sync` now reads Bilibili @ mentions and conversation previews.
@@ -476,7 +476,7 @@ vpub browser cover RECEIPT_KEY --file landscape.jpg --portrait portrait.jpg --id
 
 ## Playlists, categories and chapters
 
-YouTube accepts native `playlist_titles` or `playlist_ids`. The API checks membership before inserting and never blindly retries uncertain writes. The required management permission is included in first-time OAuth. Studio creation of a private list and selection for the existing work were verified; the API route remains mock-tested. Bilibili collections remain upstream functionality rather than a unified collection-management command.
+YouTube accepts `playlist_titles` (the free background route or native, ticked by exact title) or `playlist_ids` (paid API). The API checks membership before inserting and never blindly retries uncertain writes. The required management permission is included in first-time OAuth. Studio creation of a private list and selection for the existing work were verified; the API route remains mock-tested. Bilibili collections remain upstream functionality rather than a unified collection-management command.
 
 New YouTube plans require an explicit `category_id`, selected from content and official choices rather than defaulting to People & Blogs. The host model can supply it via `metadata request/apply`; explicit selections are preserved.
 
