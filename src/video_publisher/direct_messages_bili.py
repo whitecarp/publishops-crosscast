@@ -1,4 +1,4 @@
-"""Delegate to upstream bili-cli; new-contact checks remain upstream."""
+"""Delegate to the included bili-cli; its new-contact checks stay in force."""
 from pathlib import Path
 import tempfile
 from . import adapters
@@ -18,7 +18,8 @@ def execute(operation, expected, **kw):
                  'platform_writes': 0, 'scope': 'Bounded upstream conversation page; no mark-read request.'}
         if operation == 'verify':
             receipt = kw['receipt']; old = {str(x.get('seqno')) for x in receipt['before'].get('items', [])}
-            value['matching_outgoing_message'] = any(x.get('from') == 'me' and x.get('text') == receipt['request']['text']
+            # An auto_reply is Bilibili answering in the account's name, not the message that was sent.
+            value['matching_outgoing_message'] = any(x.get('from') == 'me' and not x.get('auto_reply') and x.get('text') == receipt['request']['text']
                 and x.get('seqno') is not None and str(x['seqno']) not in old for x in rows)
         return value
     if operation != 'send': raise VpubError('invalid_operation','Unknown DM action.')
@@ -30,6 +31,6 @@ def execute(operation, expected, **kw):
         submitting(kw['receipt_path'])
         result = adapters.bili(['dm','send',who,'--file',str(path)])
     saved=read_json(kw['receipt_path']); saved.update(state='DM_UNVERIFIED', platform_writes=1,
-        send_acknowledged=result.get('sent') is True, message_id=result.get('msg_key'))
+        send_acknowledged=result.get('sent') is True, message_id=(result.get('msg_keys') or [None])[0])
     atomic_json(kw['receipt_path'], saved)
     return {'state':'DM_UNVERIFIED','platform_writes':1,'send_acknowledged':result.get('sent') is True}

@@ -12,7 +12,8 @@ from .core import VpubError, stop_check, platform_check
 ROUTES = {"bilibili": {"cli"}, "douyin": {"browser"}, "youtube": {"api"}, "x": {"browser", "api"}, "instagram": {"browser", "api"}}
 
 
-def bili(args, timeout=180):
+def bili(args, timeout=210):
+    # bili-cli stops a stuck command after 180 s and says why, so give it time to report that.
     stop_check("bilibili")
     env = dict(os.environ, PYTHONIOENCODING="utf-8")
     # The existing local wrapper applies this HTTPX compatibility fix too.

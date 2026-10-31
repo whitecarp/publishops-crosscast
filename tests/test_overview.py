@@ -308,7 +308,7 @@ class OperatorCommandTests(OverviewFixture):
         self.assertEqual("vpub setup --install-browser", missing["chrome_missing"]["fix"])
 
     def test_doctor_is_ready_when_everything_is_there(self):
-        with patch.object(overview, "chrome_path", return_value="chrome.exe"):
+        with patch.object(overview, "chrome_path", return_value="chrome.exe"), patch.object(cli, "separate_bili_agent", return_value=None):
             result = cli.doctor()
         self.assertEqual([], result["issues"])
         self.assertTrue(result["ready"])
@@ -316,7 +316,7 @@ class OperatorCommandTests(OverviewFixture):
 
     def test_doctor_reports_an_active_stop(self):
         atomic_json(home() / "STOP.json", {"reason": "test"})
-        with patch.object(overview, "chrome_path", return_value="chrome.exe"):
+        with patch.object(overview, "chrome_path", return_value="chrome.exe"), patch.object(cli, "separate_bili_agent", return_value=None):
             result = cli.doctor()
         self.assertFalse(result["ready"])
         self.assertEqual("stopped", result["issues"][0]["code"])

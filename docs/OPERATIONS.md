@@ -174,7 +174,7 @@ vpub engage verify RECEIPT_KEY
 
 `status`、`collections`、`verify` 都是唯讀。收藏夾／播放列表 ID 來自 `collections`；YouTube 清單可用 `--cursor` 繼續。支援 `--out result.json`。`like`／`save` 是直接執行命令，可加 `--dry-run` 預覽；不另加逐次確認。
 
-B站的精確收藏夾成員查詢使用已鎖定 `bili-agent==0.7.0` 的唯讀輔助函式；寫入仍走上游 CLI。升級上游後需要重新驗證這個內部介面，讀不到成員狀態時不猜測或刪除其他收藏。
+B站的精確收藏夾成員查詢使用內含 bili-cli 的唯讀輔助函式；寫入仍走它的 CLI。更新內含版本後需要重新驗證這個內部介面，讀不到成員狀態時不猜測或刪除其他收藏。
 
 每次先核對帳號和當前狀態，相同狀態返回 `NO_CHANGE`。寫入前保存回執，僅提交一次，再以獨立讀取確認；`ACTION_VERIFIED` 才表示讀回相符。若為 `ACTION_UNVERIFIED`，只用 `verify` 核驗，保留記錄，不重點、不反向切換。遇到登入驗證或不能唯一辨識的控制項會停止。操作記錄是帳號狀態證據，不能當作自然流量增長；[YouTube 評分 API](https://developers.google.com/youtube/v3/docs/videos/rate) 亦明確區分帳號評分和官方讚數。
 
@@ -547,7 +547,7 @@ vpub notify record RETURNED_ALERT_ID --claim-token RETURNED_TOKEN --response act
 
 ## 後端與參考
 
-B站重用 [kukemc/bili-cli](https://github.com/kukemc/bili-cli)，YouTube 由 AI 助手操作 YouTube Studio，或使用官方 API（需付費附加元件）；抖音／X／Instagram 使用 CLI 專用背景瀏覽器，宿主瀏覽器僅為明確選用的備援。完整實發及限制見[驗證記錄](VALIDATION.md)。
+B站使用內含的 [kukemc/bili-cli](https://github.com/kukemc/bili-cli)，並提供 `bili` 指令；YouTube 由 AI 助手操作 YouTube Studio，或使用官方 API（需付費附加元件）；抖音／X／Instagram 使用 CLI 專用背景瀏覽器，宿主瀏覽器僅為明確選用的備援。完整實發及限制見[驗證記錄](VALIDATION.md)。
 
 
 ## X、Instagram 與 YouTube 的官方 API 路徑

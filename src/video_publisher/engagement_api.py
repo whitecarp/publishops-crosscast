@@ -8,7 +8,7 @@ from .core import VpubError, stop_check
 
 
 def bili_folders(work):
-    # Pinned bili-agent exposes membership in its read-only helper, but its
+    # The included bili-cli exposes membership in its read-only helper, but its
     # public `me favs` command omits video context. Do not read/copy credentials.
     code='''import sys
 from bili_cli.commands.video import _own_video, _folders

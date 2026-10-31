@@ -32,3 +32,5 @@ jobs:
           python -m pip install --force-reinstall --no-deps dist/*.whl
           python -m video_publisher --help
           vpub --help
+          bili --version
+          python -c "import bili_cli, pathlib; assert (pathlib.Path(bili_cli.__file__).parent / '_skills/bili-cli/SKILL.md').is_file()"

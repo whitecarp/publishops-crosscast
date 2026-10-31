@@ -174,7 +174,7 @@ vpub engage verify RECEIPT_KEY
 
 `status`, `collections` and `verify` are read-only. Choose folder/playlist IDs from `collections`; YouTube supports continuation through `--cursor`. Commands support `--out result.json`. `like` and `save` execute directly with optional `--dry-run`, without another per-action approval step.
 
-Exact Bilibili folder membership uses a read-only helper in pinned `bili-agent==0.7.0`; writes still use its CLI. That internal interface needs revalidation after upstream upgrades. Missing membership information never triggers guessing or removal from other folders.
+Exact Bilibili folder membership uses a read-only helper in the included bili-cli; writes still use its CLI. That internal interface needs revalidation whenever the included copy is updated. Missing membership information never triggers guessing or removal from other folders.
 
 The CLI checks the account and current state first; an already matching state returns `NO_CHANGE`. It writes a durable receipt before one submission and confirms the result through an independent read. Only matching read-back produces `ACTION_VERIFIED`. For `ACTION_UNVERIFIED`, use read-only `verify`, retain the receipt and do not repeat or reverse the pending attempt. Login challenges and ambiguous controls stop the command. Account-state evidence is not organic growth; the [YouTube rating API](https://developers.google.com/youtube/v3/docs/videos/rate) also distinguishes account ratings from official like counts.
 
@@ -547,7 +547,7 @@ Test messages are labelled TEST, with no fabricated sign-in incident. When offic
 
 ## Backends and references
 
-Bilibili reuses [kukemc/bili-cli](https://github.com/kukemc/bili-cli). YouTube uses an AI assistant on YouTube Studio, or its official API with the paid add-on. Douyin/X/Instagram use CLI-owned background browsers, with host-browser handoff as an explicit fallback. See [validation](VALIDATION_EN.md) for actual publication evidence and limits.
+Bilibili uses the included copy of [kukemc/bili-cli](https://github.com/kukemc/bili-cli), which also gives you the `bili` command. YouTube uses an AI assistant on YouTube Studio, or its official API with the paid add-on. Douyin/X/Instagram use CLI-owned background browsers, with host-browser handoff as an explicit fallback. See [validation](VALIDATION_EN.md) for actual publication evidence and limits.
 
 
 ## Official API routes for X, Instagram and YouTube

@@ -1,4 +1,4 @@
-"""Pinned bili-cli comment likes and pins."""
+"""Comment likes and pins through the included bili-cli."""
 from . import adapters
 from .core import VpubError, atomic_json, read_json, stop_check
 

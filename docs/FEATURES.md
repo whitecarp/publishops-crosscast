@@ -6,7 +6,7 @@
 
 原因是未訂閱帳號的影片上傳上限為 **140 秒、512 MB**，且無法使用本工具所依賴的 Media Studio 媒體管理與自訂封面流程。CrossCast 的 X 後端透過 Media Studio 上傳影片並設定製作封面，因此目前僅支援具備此權限的訂閱帳號。登入或付款本身不代表權限已開通，上傳前仍會核對媒體庫入口與所選帳號。[官方上傳限制](https://help.x.com/en/using-x/x-videos) · [Media Studio 權限](https://help.x.com/en/using-x/media-studio)。
 
-**0.15.1 alpha。** 新方案在首次登入後由 CLI 執行；`method: native` 是明確選用的宿主瀏覽器備援。B站繼續呼叫 [bili-cli](https://github.com/kukemc/bili-cli)。
+**0.15.1 alpha。** 新方案在首次登入後由 CLI 執行；`method: native` 是明確選用的宿主瀏覽器備援。B站使用本套件內含的 [bili-cli](https://github.com/kukemc/bili-cli)，同時提供 `bili` 指令。
 
 | 能力 | Bilibili | YouTube | 抖音 | X | Instagram |
 |---|---|---|---|---|---|

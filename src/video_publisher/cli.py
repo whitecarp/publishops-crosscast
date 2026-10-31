@@ -138,6 +138,23 @@ def publish_plan(plan, confirm):
     return {"all_submissions_verified": verified, "results": results}
 
 
+def separate_bili_agent():
+    """bili-cli ships inside this package now; an older separate install would own the same files."""
+    import importlib.metadata
+    try:
+        return importlib.metadata.version("bili-agent")
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def included_bili_version():
+    try:
+        from bili_cli import __version__ as version
+    except ImportError:
+        return None
+    return version
+
+
 def doctor():
     from .overview import chrome_path, stop_state
     addon = adapters.addon_installed()
@@ -148,10 +165,14 @@ def doctor():
               for name, found in modules.items() if not found]
     if not chrome:
         issues.append({"code": "chrome_missing", "message": "Google Chrome was not found.", "fix": "vpub setup --install-browser"})
+    older = separate_bili_agent()
+    if older:
+        issues.append({"code": "separate_bili_agent", "message": f"A separate bili-agent {older} is still installed and owns the same files as the bili-cli inside CrossCast.",
+                       "fix": "python -m pip uninstall -y bili-agent, then install CrossCast again in this environment."})
     if stop["active"]:
         issues.append({"code": "stopped", "message": stop["message"], "fix": stop["hint"]})
     return {"version": __version__, "python": sys.version.split()[0], "dependencies": modules,
-            "google_chrome": chrome, "paid_api_addon": addon, "ready": not issues, "issues": issues,
+            "bili_cli_version": included_bili_version(), "google_chrome": chrome, "paid_api_addon": addon, "ready": not issues, "issues": issues,
             "local_stop": (home() / "STOP.json").exists(), "runtime_directory": str(home()),
             "credentials_configured": {
                 "youtube_api": (home() / "accounts/default/youtube-token.json").exists(),
@@ -850,7 +871,7 @@ def capabilities():
             "platforms": {p: platform_routes(p) for p in PLATFORMS},
             "live_verification_scope": "2026-10-30: source-plus-English YouTube/Instagram corrections and user-accepted v3 shared portrait retained. All five hello reply tests read back; Douyin was repaired through Creator Center and verified with a fresh nested-parent read. Browser evidence differs from API parent-ID verification. Not clean-machine unattended or full-playback acceptance.",
             "native_execution": "The host agent performs real UI actions. A CLI handoff alone is not an executed action or confirmed login.",
-            "bili_cli": "Use installed bili directly for its existing search, video, inbox, comment and creator-data commands.",
+            "bili_cli": f"CrossCast includes bili-cli {included_bili_version()}. Use its bili command directly for search, video, inbox, comment and creator-data work; bili schema lists every command.",
             "works": "Bilibili published-work pages and YouTube upload-playlist pages; Douyin/Instagram/X visible first page only.",
             "work_adoption": "ops discover scans bounded pages; ops adopt freshly verifies ownership and adds existing works to the watchlist without an upload receipt.",
             "resumable_sync": "ops/messages sync use bounded per-platform concurrency, session reuse, durable checkpoints and freshness caches. --workers 1-4; --progress emits body-free JSON to stderr. ops/messages resume skips completed reads; unfinished browser sources restart their page.",

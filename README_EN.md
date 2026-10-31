@@ -281,4 +281,4 @@ Use `vpub verify` to read it back, or `vpub resume` to continue the original tas
 | 🌐 [Website](https://whitecarp.github.io/publishops-crosscast/?lang=en) | Project overview page |
 | 🐞 [Report an issue](https://github.com/whitecarp/publishops-crosscast/issues) | Feedback (remove account and private details first) |
 
-Credits: [agentic-work-lab](https://github.com/whitecarp/agentic-work-lab) (development origin) · [bili-cli](https://github.com/kukemc/bili-cli) (upstream Bilibili tool). Third-party licenses are listed in [NOTICE](NOTICE.md). CrossCast is released under the [MIT License](LICENSE) as an independent integration tool, not an official product of any video platform.
+Credits: [agentic-work-lab](https://github.com/whitecarp/agentic-work-lab) (development origin) · [bili-cli](https://github.com/kukemc/bili-cli) (Bilibili features; its code is included). Third-party licenses are listed in [NOTICE](NOTICE.md). CrossCast is released under the [MIT License](LICENSE) as an independent integration tool, not an official product of any video platform.

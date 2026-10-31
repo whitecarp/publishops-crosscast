@@ -281,4 +281,4 @@ vpub verify RECEIPT_KEY
 | 🌐 [在线介绍](https://whitecarp.github.io/publishops-crosscast/) | 项目概览页 |
 | 🐞 [报告问题](https://github.com/whitecarp/publishops-crosscast/issues) | 问题反馈（请先移除账号与私密信息） |
 
-来源鸣谢：[agentic-work-lab](https://github.com/whitecarp/agentic-work-lab)（开发来源）· [bili-cli](https://github.com/kukemc/bili-cli)（Bilibili 上游工具）。第三方授权详见 [NOTICE](NOTICE.md)。CrossCast 以 [MIT 许可证](LICENSE) 发布，是独立整合工具，并非任何视频平台的官方产品。
+来源鸣谢：[agentic-work-lab](https://github.com/whitecarp/agentic-work-lab)（开发来源）· [bili-cli](https://github.com/kukemc/bili-cli)（Bilibili 功能，其代码已包含在内）。第三方授权详见 [NOTICE](NOTICE.md)。CrossCast 以 [MIT 许可证](LICENSE) 发布，是独立整合工具，并非任何视频平台的官方产品。
