@@ -307,7 +307,7 @@ async def execute(page, platform, identity, payload):
         debug.mkdir(parents=True, exist_ok=True)
         try:
             await page.screenshot(path=str(debug/'last-page.png'))
-            controls = await page.locator('button,input,textarea,[contenteditable=true]').evaluate_all("es=>es.map(e=>({tag:e.tagName,type:e.type,placeholder:e.getAttribute('placeholder'),label:e.getAttribute('aria-label'),text:e.tagName==='BUTTON'?e.innerText:null}))")
+            controls = await page.locator('button,input,textarea,[contenteditable=true],ytcp-button,tp-yt-paper-radio-button').evaluate_all("es=>es.map(e=>({tag:e.tagName,id:e.id,name:e.getAttribute('name'),type:e.type,placeholder:e.getAttribute('placeholder'),label:e.getAttribute('aria-label'),disabled:e.hasAttribute('disabled'),text:e.tagName==='BUTTON'?e.innerText:null}))")
             atomic_json(debug/'controls.json', controls)
         except Exception:
             pass

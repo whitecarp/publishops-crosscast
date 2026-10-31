@@ -36,7 +36,7 @@ The current table and [latest validation](VALIDATION_EN.md) define scope; versio
 
 ## 0.16.0 — paid API add-on, included bili-cli, status and cleanup
 
-Official API routes for X, Instagram and YouTube move to a separate paid add-on; every other route stays free and MIT licensed. YouTube gets a free background browser route through Studio, which has not yet finished a real upload. bili-cli 1.2.1 ships inside this package with the `bili` command. New: `vpub status`, `vpub cleanup`, and Bilibili @ mentions and conversation previews in `vpub messages sync`. Removed: `inbox` (use `messages`), `--manage-playlists` and `--bilingual`. [Upgrade notes](OPERATIONS_EN.md#0160-what-changes-when-you-upgrade).
+Official API routes for X, Instagram and YouTube move to a separate paid add-on; every other route stays free and MIT licensed. YouTube gets a free background browser route through Studio. bili-cli 1.2.1 ships inside this package with the `bili` command. New: `vpub status`, `vpub cleanup`, and Bilibili @ mentions and conversation previews in `vpub messages sync`. Removed: `inbox` (use `messages`), `--manage-playlists` and `--bilingual`. [Upgrade notes](OPERATIONS_EN.md#0160-what-changes-when-you-upgrade).
 
 ## 0.15.0 — recovery and complete reads
 

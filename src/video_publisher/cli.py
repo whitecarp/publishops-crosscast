@@ -840,8 +840,7 @@ def platform_routes(platform):
             "publish_backend": "bili-cli" if platform == "bilibili" else "official API through the paid add-on" if platform == "youtube" and addon else "dedicated persistent background browser",
             "optional_api_route": ("Installed (method: api)." if addon else "Needs the paid CrossCast API add-on (method: api).") if platform in {"youtube", "x", "instagram"} else None,
             "standalone_cli_publish": True,
-            # YouTube's earlier live uploads went through the API and an assistant on Studio, not this browser route.
-            "live_upload_verified": platform in {"x", "instagram", "douyin"} or (platform == "youtube" and addon)}
+            "live_upload_verified": platform in {"youtube", "x", "instagram", "douyin"}}
 
 
 def capabilities():

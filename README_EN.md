@@ -127,7 +127,7 @@ When a platform needs you to scan a QR code or verify, CrossCast can email you a
 | Platform | Sign-in | Publishing route | Tested |
 | --- | --- | --- | --- |
 | **Bilibili** | Bilibili app QR code (bili-cli) | bili-cli, can schedule | ✅&nbsp;bili-cli |
-| **YouTube** | Free: sign in once in the dedicated Chrome. Paid add-on: Google desktop OAuth client | Free: background Chrome on YouTube Studio. Paid add-on: official API, can schedule | ✅&nbsp;API |
+| **YouTube** | Free: sign in once in the dedicated Chrome. Paid add-on: Google desktop OAuth client | Free: background Chrome on YouTube Studio. Paid add-on: official API, can schedule | ✅&nbsp;API and free route |
 | **Douyin** | Dedicated official Chrome | CLI background browser | ✅&nbsp;Published |
 | **Instagram** | Dedicated official Chrome | CLI background browser; cover changed on your phone | ✅&nbsp;Published |
 | **X** | Dedicated official Chrome | Media Studio only (subscription required) | ✅&nbsp;Published |
@@ -137,7 +137,7 @@ See the [validation record](docs/VALIDATION_EN.md) for details. Bilibili uploads
 
 **Know before you post**
 
-- **YouTube**: the official API routes, including CLI comments, stats, playlists and edits on YouTube, need the paid API add-on. The free background route publishes immediately, with no playlists or scheduling, and has not yet finished a real upload. While the project is in testing mode, add the signing-in account under "Test users" first. Under Google's rules, videos uploaded by an API project created after July 28, 2020 that has not passed Google's audit are locked to private.
+- **YouTube**: the official API routes, including CLI comments, stats, playlists and edits on YouTube, need the paid API add-on. The free background route publishes immediately, with no playlists or scheduling yet. While the project is in testing mode, add the signing-in account under "Test users" first. Under Google's rules, videos uploaded by an API project created after July 28, 2020 that has not passed Google's audit are locked to private.
 - **X**: Media Studio only. The account must be subscribed and able to open Media Studio; accounts without it are limited to 140-second, 512 MB videos, which this tool does not support.
 - **Instagram**: the video keeps its original ratio, and the cover must be changed on your phone: open the work's "Edit cover → Add from camera roll", pick the portrait image shared with Douyin, then check how the profile grid crops it.
 - **Douyin**: long-term sign-in stability is still being validated, and an interrupted web upload cannot resume, so check existing drafts first.

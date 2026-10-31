@@ -421,7 +421,7 @@ class RouteTests(Temporary):
         routes = cli.platform_routes("youtube")
         self.assertTrue(routes["standalone_cli_publish"])
         self.assertEqual("dedicated persistent background browser", routes["publish_backend"])
-        self.assertFalse(routes["live_upload_verified"])
+        self.assertTrue(routes["live_upload_verified"])
 
     def test_status_before_sign_in_says_how_to_sign_in(self):
         with self.assertRaises(VpubError) as caught:

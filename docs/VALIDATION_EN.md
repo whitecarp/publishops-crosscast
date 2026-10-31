@@ -6,7 +6,7 @@ Date: **2026-11-01**, PublishOps CrossCast **0.16.0 alpha**.
 
 ## 0.16.0: paid API split, included bili-cli, status and cleanup
 
-**Only read-only checks ran on real accounts for this version.** The live results further down belong to the versions they are listed under. Publishing and other writes through bili-cli 1.2.1 and the free YouTube route have not yet run on a real account.
+**Real-account checks for this version were read-only, plus one private YouTube test upload.** The live results further down belong to the versions they are listed under. Publishing and other writes through bili-cli 1.2.1 have not yet run on a real account.
 
 | Live check | Result |
 |---|---|
@@ -16,7 +16,7 @@ Date: **2026-11-01**, PublishOps CrossCast **0.16.0 alpha**.
 | Unread badges | Unread counts were 0 before and after, so this check cannot show whether reading clears a badge. |
 | YouTube sign-in | Google accepted sign-in in the dedicated Chrome, and the channel was read from Studio's own address. |
 | YouTube background browser | Studio does not run under a headless browser, so it runs as a normal Chrome window on a hidden Windows desktop. Measured from the normal desktop: Chrome running, no window showing, nothing left after it closed. |
-| YouTube Studio pages | Read-only, in Studio's Chinese interface: the upload dialog, file input, audience and AI choices, tags, category codes, thumbnail input and edit-page fields match the form code. The details form after a real file is selected, and the final Save, have not been seen yet. |
+| YouTube free-route upload | `vpub publish` uploaded a 5-second private test clip in about 34 seconds, in Studio's Chinese interface, with nothing on screen. Studio then showed the planned title, multi-line description, tags, category, audience, altered-content answer, private visibility and custom thumbnail. A fresh `vpub verify` agreed, and a signed-out visit got YouTube's private-video refusal. Public and unlisted uploads, long videos, and Chrome being interrupted mid-upload have not been tried. |
 
 **472 offline tests pass on Python 3.12**, and CI runs the same suite on Windows with Python 3.10, 3.11 and 3.12. The paid add-on's own 130 tests pass against this core.
 
