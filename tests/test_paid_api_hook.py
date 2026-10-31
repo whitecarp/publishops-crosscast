@@ -53,12 +53,12 @@ class PaidHookTests(unittest.TestCase):
 
     def test_the_public_core_contains_no_official_api_code(self):
         # Anything that talks to an official API is the paid add-on's. The core only has the hook above.
-        root = Path(adapters.__file__).parent
+        root = Path(__file__).resolve().parents[1]
         calls = re.compile(r"googleapiclient|google_auth_oauthlib|googleapis\.com|api\.x\.com|graph\.facebook\.com|graph\.instagram\.com|rupload|media_publish")
-        found = [path.name for path in root.glob("*.py") if calls.search(path.read_text(encoding="utf-8"))]
-        self.assertEqual([], found)
-        project = (root.parents[1] / "pyproject.toml").read_text(encoding="utf-8")
-        self.assertNotIn("google-api-python-client", project)
+        sources = list((root / "src/video_publisher").glob("*.py"))
+        self.assertGreater(len(sources), 20)
+        self.assertEqual([], [path.name for path in sources if calls.search(path.read_text(encoding="utf-8"))])
+        self.assertNotIn("google-api-python-client", (root / "pyproject.toml").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
