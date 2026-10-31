@@ -6,7 +6,7 @@ Date: **2026-11-01**, PublishOps CrossCast **0.16.0 alpha**.
 
 ## 0.16.0: paid API split, included bili-cli, status and cleanup
 
-**Only one read-only Bilibili check ran on a real account for this version.** The live results further down belong to the versions they are listed under. Publishing and other writes through bili-cli 1.2.1 have not yet run on a real account.
+**Only read-only checks ran on real accounts for this version.** The live results further down belong to the versions they are listed under. Publishing and other writes through bili-cli 1.2.1 and the free YouTube route have not yet run on a real account.
 
 | Live check | Result |
 |---|---|
@@ -14,8 +14,11 @@ Date: **2026-11-01**, PublishOps CrossCast **0.16.0 alpha**.
 | Bilibili message sources | `vpub messages sync --platforms bilibili --sources mentions,dm_preview` read 20 @ mentions and 20 conversation previews with no platform writes. A second full read found nothing new or changed. The report contained no message text. |
 | Blank rows | The first run left 4 mentions and 1 conversation without text: a mention in a post (动态) has no text of its own, and Bilibili returned no name for 5 of the 20 conversations, one of which also had no message text. Rows now say who wrote and where, and a rerun filled all 40. |
 | Unread badges | Unread counts were 0 before and after, so this check cannot show whether reading clears a badge. |
+| YouTube sign-in | Google accepted sign-in in the dedicated Chrome, and the channel was read from Studio's own address. |
+| YouTube background browser | Studio does not run under a headless browser, so it runs as a normal Chrome window on a hidden Windows desktop. Measured from the normal desktop: Chrome running, no window showing, nothing left after it closed. |
+| YouTube Studio pages | Read-only, in Studio's Chinese interface: the upload dialog, file input, audience and AI choices, tags, category codes, thumbnail input and edit-page fields match the form code. The details form after a real file is selected, and the final Save, have not been seen yet. |
 
-**425 offline tests pass on Python 3.12**, and CI runs the same suite on Windows with Python 3.10, 3.11 and 3.12. The paid add-on's own 130 tests pass against this core.
+**472 offline tests pass on Python 3.12**, and CI runs the same suite on Windows with Python 3.10, 3.11 and 3.12. The paid add-on's own 130 tests pass against this core.
 
 | Offline check | Result |
 |---|---|

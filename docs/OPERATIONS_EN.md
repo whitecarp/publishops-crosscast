@@ -14,13 +14,14 @@ This requirement exists because non-subscribers are limited to **140-second, 512
 
 Prepare platform-specific metadata, covers and publication receipts for one original video. Choose any subset of Bilibili, Douyin, YouTube, Instagram and X. Sign in once; the CLI reuses its own local sessions for later uploads.
 
-Default routes: Bilibili uses bili-cli, YouTube uses an AI assistant on YouTube Studio (or its official API with the paid add-on), and Douyin/Instagram/X use a dedicated persistent Chrome profile controlled by the CLI in the background. First login and official verification require the user. Explicit `method: native` retains host-browser handoff. This remains alpha; live development tests are documented separately from unattended acceptance. Comments, work metrics and reports now share CLI commands, with platform-specific validation below. TikTok is suspended; YouTube cards/clickable end screens remain unimplemented.
+Default routes: Bilibili uses bili-cli, and YouTube/Douyin/Instagram/X use a dedicated persistent Chrome profile controlled by the CLI in the background (YouTube uses its official API instead with the paid add-on). First login and official verification require the user. Explicit `method: native` retains host-browser handoff. This remains alpha; live development tests are documented separately from unattended acceptance. Comments, work metrics and reports now share CLI commands, with platform-specific validation below. TikTok is suspended; YouTube cards/clickable end screens remain unimplemented.
 
 [Features](FEATURES_EN.md) · [Validation](VALIDATION_EN.md) · [Draft testing](DRAFT_TESTING_EN.md)
 
 ## 0.16.0: what changes when you upgrade
 
-- **Official API routes are a separate paid add-on.** This covers X, Instagram and YouTube. Without it, YouTube publishes through your AI assistant on YouTube Studio, and Douyin, Instagram and X keep using the background browser.
+- **Official API routes are a separate paid add-on.** This covers X, Instagram and YouTube. Without it, YouTube, Douyin, Instagram and X all use the background browser.
+- **YouTube has a free background route.** `vpub auth login youtube --method browser` signs in once in a dedicated Chrome window. After that, publishing runs out of sight through YouTube Studio: on Windows it uses a hidden desktop, with no window or taskbar icon. It publishes immediately, with no playlists or scheduling, and `--draft-only` stops before the final Save. It has not yet finished a real upload.
 - **bili-cli is included.** Installing CrossCast also gives you the `bili` command, version 1.2.1. If an older separate `bili-agent` is still installed, `vpub doctor` says how to remove it.
 - **New commands.** `vpub status` lists what is unfinished with the next command for each item. `vpub cleanup` previews copies of finished videos that are safe to remove, and deletes them only with `--apply`.
 - **Bilibili in the message inbox.** `vpub messages sync` now reads Bilibili @ mentions and conversation previews.
@@ -556,7 +557,7 @@ Test messages are labelled TEST, with no fabricated sign-in incident. When offic
 
 ## Backends and references
 
-Bilibili uses the included copy of [kukemc/bili-cli](https://github.com/kukemc/bili-cli), which also gives you the `bili` command. YouTube uses an AI assistant on YouTube Studio, or its official API with the paid add-on. Douyin/X/Instagram use CLI-owned background browsers, with host-browser handoff as an explicit fallback. See [validation](VALIDATION_EN.md) for actual publication evidence and limits.
+Bilibili uses the included copy of [kukemc/bili-cli](https://github.com/kukemc/bili-cli), which also gives you the `bili` command. YouTube uses a CLI-owned background browser on YouTube Studio, or its official API with the paid add-on. Douyin/X/Instagram use CLI-owned background browsers, with host-browser handoff as an explicit fallback. See [validation](VALIDATION_EN.md) for actual publication evidence and limits.
 
 
 ## Official API routes for X, Instagram and YouTube

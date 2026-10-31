@@ -46,7 +46,7 @@ Publish final.mp4 publicly to Bilibili, YouTube, Douyin, Instagram, and X, with 
 **Have these ready before you start:**
 
 - **Bilibili**: scan a QR code once with the Bilibili app (through bili-cli).
-- **YouTube**: free publishing needs an AI assistant with browser tools working in YouTube Studio. CLI publishing through the official API needs the paid API add-on and your own Google desktop OAuth client.
+- **YouTube**: free publishing uses YouTube Studio in a dedicated Chrome that runs in the background; you only see it to sign in or pass a Google check. CLI publishing through the official API needs the paid API add-on and your own Google desktop OAuth client.
 - **Douyin, Instagram and X**: the first sign-in opens CrossCast's own official Chrome window, where you scan a QR code or enter your password and verification code yourself; after that, the CLI reuses the sign-in in the background.
 - **X**: publishing works only through Media Studio, so the account must be subscribed and able to open Media Studio.
 - **Google Chrome on your computer**: if it's missing, run `vpub setup --install-browser`.
@@ -96,11 +96,11 @@ Every release starts with a plan that spells out platforms, accounts, visibility
 
 ### 📮 Sign in once, then publish in the background
 
-After the first sign-in, the CLI does the uploading itself: Bilibili through bili-cli, YouTube through the official API with the paid add-on (otherwise an AI assistant works in YouTube Studio), and Douyin, Instagram and X through a dedicated Chrome the CLI runs in the background. Bilibili and YouTube can also schedule.
+After the first sign-in, the CLI does the uploading itself: Bilibili through bili-cli, and YouTube, Douyin, Instagram and X through a dedicated Chrome the CLI runs in the background. The official API routes for YouTube, X and Instagram need the paid add-on. Bilibili can schedule, and YouTube can with the paid add-on.
 
 ### 🔁 Pick up where it stopped
 
-If an upload is interrupted, `vpub resume` continues the original task: YouTube resumes the same upload session, and X continues from the Studio media it already saved. A submission with an unclear result is never clicked again automatically. `vpub status` lists what is unfinished with the exact next command, using local records only, and `vpub cleanup` frees the disk space taken by copies of finished videos.
+If an upload is interrupted, `vpub resume` continues the original task: X continues from the Studio media it already saved, and YouTube resumes the same upload session with the paid add-on. YouTube's free route never uploads again; what was uploaded stays in Studio as a draft. A submission with an unclear result is never clicked again automatically. `vpub status` lists what is unfinished with the exact next command, using local records only, and `vpub cleanup` frees the disk space taken by copies of finished videos.
 
 ### 🔍 A receipt for every step
 
@@ -127,7 +127,7 @@ When a platform needs you to scan a QR code or verify, CrossCast can email you a
 | Platform | Sign-in | Publishing route | Tested |
 | --- | --- | --- | --- |
 | **Bilibili** | Bilibili app QR code (bili-cli) | bili-cli, can schedule | ✅&nbsp;bili-cli |
-| **YouTube** | Free: signed in on YouTube Studio. Paid add-on: Google desktop OAuth client | Free: AI assistant on YouTube Studio. Paid add-on: official API, can schedule | ✅&nbsp;API |
+| **YouTube** | Free: sign in once in the dedicated Chrome. Paid add-on: Google desktop OAuth client | Free: background Chrome on YouTube Studio. Paid add-on: official API, can schedule | ✅&nbsp;API |
 | **Douyin** | Dedicated official Chrome | CLI background browser | ✅&nbsp;Published |
 | **Instagram** | Dedicated official Chrome | CLI background browser; cover changed on your phone | ✅&nbsp;Published |
 | **X** | Dedicated official Chrome | Media Studio only (subscription required) | ✅&nbsp;Published |
@@ -137,7 +137,7 @@ See the [validation record](docs/VALIDATION_EN.md) for details. Bilibili uploads
 
 **Know before you post**
 
-- **YouTube**: the official API routes, including CLI comments, stats, playlists and edits on YouTube, need the paid API add-on. There is no free CLI background browser for YouTube yet. While the project is in testing mode, add the signing-in account under "Test users" first. Under Google's rules, videos uploaded by an API project created after July 28, 2020 that has not passed Google's audit are locked to private.
+- **YouTube**: the official API routes, including CLI comments, stats, playlists and edits on YouTube, need the paid API add-on. The free background route publishes immediately, with no playlists or scheduling, and has not yet finished a real upload. While the project is in testing mode, add the signing-in account under "Test users" first. Under Google's rules, videos uploaded by an API project created after July 28, 2020 that has not passed Google's audit are locked to private.
 - **X**: Media Studio only. The account must be subscribed and able to open Media Studio; accounts without it are limited to 140-second, 512 MB videos, which this tool does not support.
 - **Instagram**: the video keeps its original ratio, and the cover must be changed on your phone: open the work's "Edit cover → Add from camera roll", pick the portrait image shared with Douyin, then check how the profile grid crops it.
 - **Douyin**: long-term sign-in stability is still being validated, and an interrupted web upload cannot resume, so check existing drafts first.
@@ -186,7 +186,8 @@ vpub onboard --platforms bilibili,douyin,youtube
 **Sign in to each platform**
 
 ```sh
-vpub auth login youtube --method api --client-json /path/to/client.json  # paid API add-on
+vpub auth login youtube --method browser
+vpub auth login youtube --method api --client-json /path/to/client.json  # paid API add-on, instead of the line above
 vpub auth login douyin
 vpub auth login instagram
 vpub auth login x
@@ -232,7 +233,7 @@ No. Asking it to publish is the authorization: it submits with the platforms, ac
 <details>
 <summary><b>Does YouTube need an OAuth client?</b></summary>
 
-Only on the paid API route, where an API key on its own cannot authorize uploads. The free route has an AI assistant with browser tools publish through YouTube Studio, with no OAuth client. You authorize once on Google's page with a "Desktop app" OAuth client; it happens on your own computer, and the token stays there.
+Only on the paid API route, where an API key on its own cannot authorize uploads. The free route publishes through YouTube Studio in a background Chrome, with no OAuth client. You authorize once on Google's page with a "Desktop app" OAuth client; it happens on your own computer, and the token stays there.
 
 </details>
 

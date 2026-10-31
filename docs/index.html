@@ -229,8 +229,8 @@
             </tr>
             <tr role="row">
               <th role="rowheader" scope="row"><i class="dot dot-yt" aria-hidden="true"></i>YouTube</th>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thLogin">登录</span><span data-i18n="pYtLogin">免费：在 YouTube Studio 登录。付费附加组件：Google OAuth</span></td>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thRoute">发布方式</span><span data-i18n="pYtRoute">免费：AI 助手操作 YouTube Studio。付费附加组件：官方 API，可定时发布</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thLogin">登录</span><span data-i18n="pYtLogin">免费：在专用 Chrome 里登录一次。付费附加组件：Google OAuth</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thRoute">发布方式</span><span data-i18n="pYtRoute">免费：后台 Chrome 操作 YouTube Studio。付费附加组件：官方 API，可定时发布</span></td>
               <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thTested">实测记录</span><span class="badge badge-ok">API</span></td>
             </tr>
             <tr role="row">
@@ -260,7 +260,7 @@
         </table>
       </div>
       <ul class="notes">
-        <li data-i18n="platNote1">YouTube：免费路径需要能操作浏览器的 AI 助手；官方 API 路径（包括 CLI 上的评论、数据和编辑）需要付费附加组件。按 Google 的规定，2020 年 7 月 28 日之后创建、又没通过审核的 API 项目，上传的视频会被锁成私享。</li>
+        <li data-i18n="platNote1">YouTube：免费路径由后台 Chrome 操作 YouTube Studio，目前还没有完成过真实上传；官方 API 路径（包括 CLI 上的评论、数据和编辑）需要付费附加组件。按 Google 的规定，2020 年 7 月 28 日之后创建、又没通过审核的 API 项目，上传的视频会被锁成私享。</li>
         <li data-i18n="platNote2">X：账号必须已订阅并能进入 Media Studio；未订阅账号的视频上限是 140 秒、512 MB，本工具不支持。</li>
         <li data-i18n="platNote3">抖音：长时间保持登录的稳定性还在验收；网页上传中断后不能续传，要先检查已有草稿。</li>
         <li data-i18n="platNote4">暂不支持：TikTok、YouTube 卡片和可点击片尾、自动或批量的私信和点赞、完整历史导出。</li>
@@ -314,7 +314,7 @@ vpub verify RECEIPT_KEY</code></pre>
       </div>
       <div class="faq-list">
         <details><summary data-i18n="q0">发布前还要我再确认吗？</summary><p data-i18n-html="a0">不用。你说要发布，就是授权：它按你说的平台、账号和公开范围直接提交。只有内容、账号、平台、受众或任务范围变了，它才会再问你。想先看一眼，就说“先别发”，或者用 <code>--dry-run</code> 预演。</p></details>
-        <details><summary data-i18n="q1">需要单独的模型 API Key 吗？</summary><p data-i18n="a1">不需要。CrossCast 不内置模型，标题和简介由你正在用的 AI 助手来写。只有付费的 YouTube API 路径才需要自行配置 Google OAuth 桌面客户端；免费路径由能操作浏览器的 AI 助手在 YouTube Studio 上发布。</p></details>
+        <details><summary data-i18n="q1">需要单独的模型 API Key 吗？</summary><p data-i18n="a1">不需要。CrossCast 不内置模型，标题和简介由你正在用的 AI 助手来写。只有付费的 YouTube API 路径才需要自行配置 Google OAuth 桌面客户端；免费路径由后台 Chrome 在 YouTube Studio 上发布。</p></details>
         <details><summary data-i18n="q2">它会帮我登录账号吗？</summary><p data-i18n="a2">登录在官方页面完成，扫码、密码和验证码都由你本人操作。不要在对话、日志或仓库里提供 Cookie、密码、验证码或令牌。这个页面也不收集任何信息。</p></details>
         <details><summary data-i18n="q3">只在终端里运行 vpub，能直接发出去吗？</summary><p data-i18n="a3">能。首次登录之后，CLI 自己在后台完成上传，不需要 AI 助手一步步操作浏览器。登录过期或平台要求验证时，需要你回到官方页面处理。</p></details>
         <details><summary data-i18n="q4">进了队列或有了回执，就算发出去了吗？</summary><p data-i18n="a4">不算。排队只说明任务已记录；本地回执记录每一步的证据，但它本身不代替平台证据。是否发布成功，以平台页面读回或平台 API 为准。</p></details>

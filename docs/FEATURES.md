@@ -10,11 +10,11 @@
 
 | 能力 | Bilibili | YouTube | 抖音 | X | Instagram |
 |---|---|---|---|---|---|
-| 登入 | 上游 CLI | AI 助手的瀏覽器；付費附加元件用桌面 OAuth | 專用官方 Chrome | 專用官方 Chrome | 專用官方 Chrome |
-| 預設發布 | bili-cli | AI 助手操作 YouTube Studio；付費附加元件走官方 API | 背景瀏覽器 | 背景 Media Studio | 背景瀏覽器 |
-| 封面 | 上游功能 | 封面 API | 橫式＋直式 | Studio 自訂縮圖 | 獨立圖片；原片比例 |
+| 登入 | 上游 CLI | 專用官方 Chrome；付費附加元件用桌面 OAuth | 專用官方 Chrome | 專用官方 Chrome | 專用官方 Chrome |
+| 預設發布 | bili-cli | 背景瀏覽器操作 YouTube Studio；付費附加元件走官方 API | 背景瀏覽器 | 背景 Media Studio | 背景瀏覽器 |
+| 封面 | 上游功能 | Studio 自訂縮圖；付費附加元件用封面 API | 橫式＋直式 | Studio 自訂縮圖 | 獨立圖片；原片比例 |
 | 目標文案語言 | 簡體中文 | 英文 | 簡體中文 | 英文 | 英文 |
-| 作品回讀 | 上游功能 | API | 創作者卡片／詳情 ID | 自己主頁／帖文 | 自己主頁／Reel |
+| 作品回讀 | 上游功能 | Studio 編輯頁；付費附加元件用 API | 創作者卡片／詳情 ID | 自己主頁／帖文 | 自己主頁／Reel |
 | 評論／回覆 | 上游 CLI | 官方 API | 作品頁讀取／創作者中心頂層回覆 | 可見對話／Reply | 可見評論／Reply |
 | 作品數據 | 創作者數據 | 基礎數據 | 創作者後台 | 帖文指標 | 可見欄位；非完整 Insights |
 | 營運匯報 | 本機回執 | 本機回執 | 本機回執 | 本機回執 | 本機回執 |
@@ -36,7 +36,7 @@ YouTube 欄中其他 API 項目同樣需要付費附加元件；`vpub capabiliti
 
 ## 0.16.0 — 付費 API 附加元件、內含 bili-cli、status 與 cleanup
 
-X、Instagram 與 YouTube 的官方 API 路徑移至獨立的付費附加元件，其他路徑維持免費與 MIT 授權。套件內含 bili-cli 1.2.1 及 `bili` 指令。新增 `vpub status`、`vpub cleanup`，`vpub messages sync` 也可讀取 B站 @ 提及與私信會話預覽。移除 `inbox`（改用 `messages`）、`--manage-playlists` 與 `--bilingual`。[升級說明](OPERATIONS.md#0160升級時的變化)。
+X、Instagram 與 YouTube 的官方 API 路徑移至獨立的付費附加元件，其他路徑維持免費與 MIT 授權。YouTube 新增透過 Studio 的免費背景瀏覽器路徑，目前尚未完成過真實上傳。套件內含 bili-cli 1.2.1 及 `bili` 指令。新增 `vpub status`、`vpub cleanup`，`vpub messages sync` 也可讀取 B站 @ 提及與私信會話預覽。移除 `inbox`（改用 `messages`）、`--manage-playlists` 與 `--bilingual`。[升級說明](OPERATIONS.md#0160升級時的變化)。
 
 ## 0.15.0 — 恢復與完整讀取
 

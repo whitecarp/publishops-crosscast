@@ -172,7 +172,8 @@ class StatusTests(OverviewFixture):
             result = overview.status()
         self.assertEqual("creator", result["platforms"]["x"]["sign_in"]["identity"])
         self.assertFalse(result["platforms"]["douyin"]["sign_in"]["saved"])
-        self.assertIsNone(result["platforms"]["youtube"]["sign_in"]["saved"])
+        self.assertFalse(result["platforms"]["youtube"]["sign_in"]["saved"])
+        self.assertIsNone(result["platforms"]["bilibili"]["sign_in"]["saved"])
         self.assertNotIn("cookie-value", json.dumps(result))
 
     def test_damaged_side_records_do_not_break_the_summary(self):

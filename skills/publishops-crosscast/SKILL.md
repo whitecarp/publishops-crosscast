@@ -9,7 +9,7 @@ Use the installed `vpub` CLI. Read `vpub --help`, `vpub capabilities`, and the r
 
 ## Login and execution
 
-- Reuse CrossCast's own saved account sessions. Bilibili uses the included bili-cli, whose `bili` command is also available directly; YouTube uses an AI assistant on YouTube Studio by default, or OAuth and the official API with the paid add-on; Douyin, Instagram and X use dedicated browser profiles controlled by the CLI.
+- Reuse CrossCast's own saved account sessions. Bilibili uses the included bili-cli, whose `bili` command is also available directly; YouTube, Douyin, Instagram and X use dedicated browser profiles controlled by the CLI in the background, so only sign-in and platform checks need the user. YouTube uses OAuth and the official API instead with the paid add-on, and `method: native` remains an explicit fallback.
 - First login, expired sessions and platform identity challenges require the user to complete the official login. Do not request passwords, PINs, cookies or authorization codes in chat. Do not import the host browser's credentials.
 - X publishing requires both a subscription and actual Media Studio access. TikTok is not supported. Check reported capabilities and account-specific limits before an operation.
 - Execute only the requested actions, preserving existing visibility, schedules and unrelated content. Existing user authorization persists; do not add a redundant review step. Ask only when a required target or scope is missing.

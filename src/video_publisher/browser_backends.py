@@ -11,6 +11,7 @@ from .core import VpubError, atomic_json, file_sha, home, now, read_json, snapsh
 from .browser_runtime import risk_check, unique_visible, visible
 
 MANAGE = "https://creator.douyin.com/creator-micro/content/manage"
+STUDIO_VISIBILITY = {"public": {"Public", "公开", "公開"}, "unlisted": {"Unlisted", "不公开列出", "不公開"}, "private": {"Private", "私享", "私人"}}
 
 
 def normalize(text):
@@ -18,13 +19,15 @@ def normalize(text):
 
 
 def work_url(platform, identity, work_id):
-    patterns = {"x": r"\d+", "douyin": r"\d+", "instagram": r"[A-Za-z0-9_-]+"}
+    patterns = {"x": r"\d+", "douyin": r"\d+", "instagram": r"[A-Za-z0-9_-]+", "youtube": r"[\w-]{11}"}
     if not re.fullmatch(patterns[platform], str(work_id)):
         raise VpubError("invalid_id", "Use a platform work ID, not an arbitrary URL.")
     if platform == "x":
         return f"https://x.com/{identity}/status/{work_id}"
     if platform == "douyin":
         return f"https://www.douyin.com/video/{work_id}"
+    if platform == "youtube":
+        return f"https://www.youtube.com/watch?v={work_id}"
     return f"https://www.instagram.com/reel/{work_id}/"
 
 
@@ -181,6 +184,41 @@ async def works(page, platform, identity):
     return {}
 
 
+def studio_visibility(text):
+    """The setting named in Studio's visibility control, in its English or Chinese interface."""
+    lines = {line.strip() for line in (text or "").splitlines()}
+    return next((value for value, labels in STUDIO_VISIBILITY.items() if lines & labels), None)
+
+
+async def verify_youtube(page, receipt):
+    # Studio opens this page only for the signed-in channel's own videos, so reading it also proves ownership.
+    url = work_url("youtube", None, receipt["id"])
+    await page.goto(f"https://studio.youtube.com/video/{receipt['id']}/edit", wait_until="domcontentloaded", timeout=60000)
+    title = page.locator("#title-textarea #textbox").first
+    seen = {}
+    try:
+        await title.wait_for(state="visible", timeout=30000)
+        for _ in range(20):
+            seen["title"] = normalize(await title.inner_text())
+            if seen["title"]:
+                break
+            await page.wait_for_timeout(1000)
+        seen["description"] = normalize(await page.locator("#description-textarea #textbox").first.inner_text())
+        seen["visibility"] = studio_visibility(await page.locator("ytcp-video-metadata-visibility #visibility-text").first.inner_text())
+    except Exception:
+        pass
+    await risk_check(page)
+    expected = {"title": normalize(receipt["title"]) if receipt.get("title") else None,
+                "description": normalize(receipt["expected_text"]) if "expected_text" in receipt else None,
+                "visibility": receipt.get("visibility")}
+    differs = sorted(name for name, value in expected.items() if value is not None and seen.get(name) != value)
+    present = bool(seen.get("title")) and not differs
+    return {**receipt, "url": url, "state": "SUBMISSION_VERIFIED" if present else "SUBMITTED_UNVERIFIED",
+            "phase": "complete" if present else "readback_pending", "error": None if present else receipt.get("error"),
+            "verification_source": "independent_browser_dom", "verified_at": now(), "readback_differs": differs,
+            "note": "Title, description and visibility read back from the channel's own Studio page; cover pixels and playback are separate." if present else "Expected work/text not yet verified; do not upload again."}
+
+
 async def verify(page, platform, identity, receipt):
     if receipt.get('identity') and receipt['identity'].casefold() != identity.casefold():
         raise VpubError('wrong_account', 'Original receipt belongs to another signed-in account.')
@@ -198,6 +236,8 @@ async def verify(page, platform, identity, receipt):
                         'platform_status':'UNDER_REVIEW', 'review_url':MANAGE, 'error':None,
                         'note':'Matching submitted card is under platform review; verify later, never reupload.'}
         return {**receipt, "state": "SUBMITTED_UNVERIFIED", "note": "No durable work ID; inspect the original work, never reupload automatically."}
+    if platform == "youtube":
+        return await verify_youtube(page, receipt)
     url = work_url(platform, identity, receipt["id"])
     owned = None
     if platform == 'instagram':

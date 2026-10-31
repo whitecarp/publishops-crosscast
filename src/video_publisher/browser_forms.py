@@ -3,10 +3,14 @@ from __future__ import annotations
 
 import asyncio
 import re
+from urllib.parse import parse_qs, urlsplit
 
+from .categories import STUDIO_CATEGORIES
 from .core import VpubError, douyin_caption
 from .browser_runtime import unique_visible, visible
-from .browser_backends import normalize, upload_file, wait_until, works, verify
+from .browser_backends import normalize, upload_file, wait_until, work_url, works, verify
+
+YT_DIALOG = 'ytcp-uploads-dialog'
 
 
 async def enabled(locator):
@@ -255,3 +259,135 @@ async def finish_douyin_form(page, tx, before):
     await tx.submit(page, post)
     await page.wait_for_url(re.compile(r'/content/manage'), timeout=60000)
     return await finish(page, tx, before)
+
+
+def youtube_link_id(href):
+    """The video ID from a link Studio shows, or None for anything else."""
+    address = urlsplit(href or '')
+    if address.hostname == 'youtu.be':
+        candidate = address.path.strip('/')
+    elif address.hostname in {'www.youtube.com', 'youtube.com'} and address.path == '/watch':
+        candidate = parse_qs(address.query).get('v', [''])[0]
+    else:
+        return None
+    return candidate if re.fullmatch(r'[\w-]{11}', candidate) else None
+
+
+async def yt_video_id(page):
+    for href in await page.locator(f'{YT_DIALOG} a[href]').evaluate_all('es => es.map(e => e.href)'):
+        found = youtube_link_id(href)
+        if found:
+            return found
+    return None
+
+
+async def yt_button_ready(button):
+    return await button.is_visible() and await button.evaluate(
+        "e => !(e.hasAttribute('disabled') || e.getAttribute('aria-disabled') === 'true' || e.querySelector('button')?.disabled)")
+
+
+async def yt_radio(page, name, code, label):
+    """Choose one of Studio's named options; these names do not change with the interface language."""
+    target = page.locator(f'{YT_DIALOG} tp-yt-paper-radio-button[name="{name}"]')
+    for _ in range(20):
+        radio = await visible(target)
+        if radio:
+            await radio.click(timeout=15000)
+            for _ in range(10):
+                if await radio.get_attribute('aria-checked') == 'true':
+                    return
+                await asyncio.sleep(0.5)
+            break
+        await asyncio.sleep(0.5)
+    raise VpubError(code, f'The YouTube {label} choice could not be confirmed. The upload is kept as a draft; nothing was published.')
+
+
+async def yt_category(page, category_id):
+    trigger = await unique_visible(page.locator(f'{YT_DIALOG} #category ytcp-dropdown-trigger'), 'YouTube category list')
+    await trigger.click(timeout=15000)
+    options = page.locator(f'tp-yt-paper-item[test-id="CREATOR_VIDEO_CATEGORY_{STUDIO_CATEGORIES[category_id]}"]')
+    for _ in range(10):
+        item = await visible(options)
+        if item:
+            break
+        await asyncio.sleep(0.5)
+    if item is None:
+        raise VpubError('category_unverified', 'The YouTube category could not be selected. The upload is kept as a draft; nothing was published.')
+    chosen = normalize(await item.inner_text())
+    await item.click(timeout=15000)
+    await page.wait_for_timeout(500)
+    if chosen not in normalize(await trigger.inner_text()):
+        raise VpubError('category_unverified', 'The YouTube category was not confirmed. The upload is kept as a draft; nothing was published.')
+
+
+async def yt_upload_finished(page):
+    # The upload stops when the page closes, so it has to finish before this command can leave.
+    progress = page.locator(f'{YT_DIALOG} ytcp-video-upload-progress')
+    return await progress.count() > 0 and await progress.first.get_attribute('uploading') is None
+
+
+async def publish_youtube(page, tx):
+    """One upload through Studio's own form. Studio shows the video's ID as soon as the upload starts, so it is saved first."""
+    options = tx.options
+    tx.save(expected_text=options['description'], visibility=options['visibility'])
+    await page.goto(f'https://studio.youtube.com/channel/{tx.identity}/videos/upload?d=ud', wait_until='domcontentloaded', timeout=60000)
+    picker = page.locator('ytcp-uploads-file-picker input[type="file"]')
+    await wait_until(page, picker.count, seconds=60, label='YouTube upload dialog')
+    await picker.first.set_input_files(str(tx.media()), timeout=60000)
+    tx.save(phase='uploading')
+    title_box = page.locator(f'{YT_DIALOG} #title-textarea #textbox')
+    await wait_until(page, lambda: visible(title_box), seconds=180, label='YouTube details form')
+    video_id = await wait_until(page, lambda: yt_video_id(page), seconds=180, label='YouTube video ID')
+    tx.save(phase='editing', draft_id=video_id, draft_url=f'https://studio.youtube.com/video/{video_id}/edit')
+    title = await unique_visible(title_box, 'YouTube title')
+    await title.fill(options['title'])
+    description = await unique_visible(page.locator(f'{YT_DIALOG} #description-textarea #textbox'), 'YouTube description')
+    await description.fill(options['description'])
+    if normalize(await title.inner_text()) != normalize(options['title']) or normalize(await description.inner_text()) != normalize(options['description']):
+        raise VpubError('metadata_mismatch', 'YouTube title or description differs from the manifest.')
+    if tx.cover():
+        if not await page.locator(f'{YT_DIALOG} input#file-loader').count():
+            raise VpubError('cover_unavailable', 'YouTube offers no custom thumbnail on this channel yet. The upload is kept as a draft; nothing was published.',
+                            'Custom thumbnails need a verified channel. Verify it in YouTube Studio, or plan without a cover.')
+        await page.locator(f'{YT_DIALOG} input#file-loader').first.set_input_files(tx.cover(), timeout=60000)
+        await page.wait_for_timeout(2000)
+        tx.save(cover={'state': 'UI_ACCEPTED', 'source': 'production_artwork', 'remote_pixels_verified': False})
+    await yt_radio(page, 'VIDEO_MADE_FOR_KIDS_MFK' if options['made_for_kids'] else 'VIDEO_MADE_FOR_KIDS_NOT_MFK', 'audience_unverified', 'audience')
+    more = await visible(page.locator(f'{YT_DIALOG} #toggle-button'))
+    if more:
+        await more.click(timeout=15000)
+    # The native AI control is required either way; never silently omit it.
+    await yt_radio(page, 'VIDEO_HAS_ALTERED_CONTENT_YES' if options['ai_generated'] else 'VIDEO_HAS_ALTERED_CONTENT_NO', 'declaration_unverified', 'altered-content')
+    if options['tags']:
+        box = await unique_visible(page.locator(f'{YT_DIALOG} #tags-container input'), 'YouTube tags box')
+        await box.press_sequentially(','.join(options['tags']) + ',')
+        if await page.locator(f'{YT_DIALOG} #tags-container ytcp-chip').count() != len(set(options['tags'])):
+            raise VpubError('metadata_mismatch', 'YouTube tags differ from the manifest.')
+    await yt_category(page, options['category_id'])
+    tx.save(phase='details_ready', metadata_readback=True, ai_disclosure='native_control')
+    # Details, then video elements, then checks, then visibility.
+    for _ in range(3):
+        following = await unique_visible(page.locator(f'{YT_DIALOG} #next-button'), 'YouTube Next')
+        await wait_until(page, lambda: yt_button_ready(following), seconds=120, label='YouTube Next enabled')
+        await following.click(timeout=15000)
+        await page.wait_for_timeout(1000)
+    await yt_radio(page, options['visibility'].upper(), 'visibility_unverified', 'visibility')
+    await wait_until(page, lambda: yt_upload_finished(page), seconds=1500, label='YouTube upload')
+    tx.save(phase='preview', review_url=page.url)
+    if options.get('submission_mode') == 'draft_only':
+        return tx.save(state='PREVIEW_READY', note='Uploaded as an unpublished draft in YouTube Studio; nothing was published.')
+    done = await unique_visible(page.locator(f'{YT_DIALOG} #done-button'), 'YouTube final Save')
+    await wait_until(page, lambda: yt_button_ready(done), seconds=120, label='YouTube final Save enabled')
+    tx.save(id=video_id, url=work_url('youtube', tx.identity, video_id))
+    await tx.submit(page, done)
+    try:
+        await done.wait_for(state='hidden', timeout=60000)
+    except Exception:
+        pass
+    result = {}
+    for attempt in range(8):
+        result = await verify(page, 'youtube', tx.identity, tx.receipt)
+        if result['state'] == 'SUBMISSION_VERIFIED':
+            break
+        await asyncio.sleep(5)
+    return tx.save(**result)

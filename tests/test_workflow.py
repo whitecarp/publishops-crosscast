@@ -162,7 +162,7 @@ class WorkflowTests(unittest.TestCase):
         plan = load_plan(output)
         self.assertTrue(all(o["submission_mode"] == "draft_only" for o in plan["platforms"].values()))
         args.out = str(self.root / "invalid-init.json")
-        args.platforms = "youtube,x"
+        args.platforms = "douyin,x"
         self.code("invalid_submission_mode", cli.execute, args)
         self.assertFalse(Path(args.out).exists())
 
@@ -386,7 +386,7 @@ class WorkflowTests(unittest.TestCase):
         p = load_plan(out)
         self.assertEqual(5, len(p["platforms"]))
         self.assertEqual("account", p["platforms"]["instagram"]["visibility"])
-        self.assertEqual({'bilibili':'cli','youtube':'native','douyin':'browser','instagram':'browser','x':'browser'},
+        self.assertEqual({'bilibili':'cli','youtube':'browser','douyin':'browser','instagram':'browser','x':'browser'},
                          {k:v['method'] for k,v in p['platforms'].items()})
 
     def test_cli_plan_never_calls_platform(self):

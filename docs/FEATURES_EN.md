@@ -10,11 +10,11 @@ This requirement exists because non-subscribers are limited to **140-second, 512
 
 | Capability | Bilibili | YouTube | Douyin | X | Instagram |
 |---|---|---|---|---|---|
-| Login | Upstream CLI | Your assistant's browser; Desktop OAuth with the paid add-on | Dedicated official Chrome | Dedicated official Chrome | Dedicated official Chrome |
-| Default publish | bili-cli | AI assistant on YouTube Studio; official API with the paid add-on | Background browser | Background Media Studio | Background browser |
-| Cover | Upstream | Thumbnail API | Landscape + portrait | Custom Studio thumbnail | Separate cover; Original crop |
+| Login | Upstream CLI | Dedicated official Chrome; Desktop OAuth with the paid add-on | Dedicated official Chrome | Dedicated official Chrome | Dedicated official Chrome |
+| Default publish | bili-cli | Background browser on YouTube Studio; official API with the paid add-on | Background browser | Background Media Studio | Background browser |
+| Cover | Upstream | Studio thumbnail; Thumbnail API with the paid add-on | Landscape + portrait | Custom Studio thumbnail | Separate cover; Original crop |
 | Target metadata language | Simplified Chinese | English | Simplified Chinese | English | English |
-| Work read-back | Upstream | API | Creator cards/detail IDs | Own profile/status | Own grid/Reel |
+| Work read-back | Upstream | Studio edit page; API with the paid add-on | Creator cards/detail IDs | Own profile/status | Own grid/Reel |
 | Comments/replies | Upstream CLI | Official API | Public reads/Creator Center top-level replies | Visible conversation/Reply | Visible comments/Reply |
 | Work metrics | Creator data | Basic statistics | Creator Center | Post metrics | Visible values; not full Insights |
 | Operations report | Local receipts | Local receipts | Local receipts | Local receipts | Local receipts |
@@ -36,7 +36,7 @@ The current table and [latest validation](VALIDATION_EN.md) define scope; versio
 
 ## 0.16.0 — paid API add-on, included bili-cli, status and cleanup
 
-Official API routes for X, Instagram and YouTube move to a separate paid add-on; every other route stays free and MIT licensed. bili-cli 1.2.1 ships inside this package with the `bili` command. New: `vpub status`, `vpub cleanup`, and Bilibili @ mentions and conversation previews in `vpub messages sync`. Removed: `inbox` (use `messages`), `--manage-playlists` and `--bilingual`. [Upgrade notes](OPERATIONS_EN.md#0160-what-changes-when-you-upgrade).
+Official API routes for X, Instagram and YouTube move to a separate paid add-on; every other route stays free and MIT licensed. YouTube gets a free background browser route through Studio, which has not yet finished a real upload. bili-cli 1.2.1 ships inside this package with the `bili` command. New: `vpub status`, `vpub cleanup`, and Bilibili @ mentions and conversation previews in `vpub messages sync`. Removed: `inbox` (use `messages`), `--manage-playlists` and `--bilingual`. [Upgrade notes](OPERATIONS_EN.md#0160-what-changes-when-you-upgrade).
 
 ## 0.15.0 — recovery and complete reads
 

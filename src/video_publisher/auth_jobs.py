@@ -19,7 +19,7 @@ def status(platform):
 
 
 def start(platform, account):
-    if platform not in {"douyin", "instagram", "x"}:
+    if platform not in {"douyin", "instagram", "x", "youtube"}:
         raise VpubError("native_login_required", "Use the official website directly in the host's built-in browser.")
     path = job_path(platform)
     previous = status(platform)

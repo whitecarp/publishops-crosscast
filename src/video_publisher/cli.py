@@ -347,7 +347,7 @@ def parser():
         q = a.add_parser(action)
         q.add_argument("platform", choices=[*PLATFORMS, "all"])
         q.add_argument("--account", default="default", choices=["default"])
-        q.add_argument("--method", choices=["native", "cli", "browser", "api"], help="Default: bili-cli; YouTube Studio through an AI assistant, or the API with the paid add-on; a dedicated persistent browser for Douyin/Instagram/X.")
+        q.add_argument("--method", choices=["native", "cli", "browser", "api"], help="Default: bili-cli for Bilibili; a dedicated persistent browser for YouTube/Douyin/Instagram/X. api needs the paid add-on.")
         if action == "login":
             q.add_argument("--client-json", help="YouTube Desktop OAuth client JSON, or app credentials for the paid X/Instagram API add-on; never commit this file.")
         else:
@@ -734,8 +734,8 @@ def run_command(args):
         chosen = args.platforms.split(",")
         if not chosen or set(chosen) - set(PLATFORMS) or len(chosen) != len(set(chosen)):
             raise VpubError("invalid_platform", "Choose a unique subset of supported platforms.")
-        if args.draft_only and set(chosen) - {"instagram", "x"}:
-            raise VpubError("invalid_submission_mode", "--draft-only currently supports only Instagram and X. Use an explicit private setting for other supported routes.")
+        if args.draft_only and set(chosen) - {"instagram", "x", "youtube"}:
+            raise VpubError("invalid_submission_mode", "--draft-only currently supports only Instagram, X and YouTube. Use an explicit private setting for other supported routes.")
         from .core import language_tag
         ai_generated = args.ai_generated == "yes"
         value = template(args.video, language_tag(args.language), ai_generated)
@@ -805,7 +805,7 @@ def status_selected(platforms, wait_seconds=0, method=None):
     for platform in platforms:
         try:
             selected_method = method or adapters.default_method(platform)
-            if platform in {"douyin", "instagram", "x"} and selected_method == "browser":
+            if platform in {"douyin", "instagram", "x", "youtube"} and selected_method == "browser":
                 from .auth_jobs import wait
                 job = wait(platform, wait_seconds)
                 if job and job.get("state") in {"STARTING", "LOGIN_PENDING", "VERIFICATION_REQUIRED"}:
@@ -837,10 +837,11 @@ def platform_routes(platform):
     """What this machine can do now, so an assistant never promises a route that is not installed."""
     addon = adapters.addon_installed()
     return {"default_method": adapters.default_method(platform), "native_login": True,
-            "publish_backend": {"bilibili": "bili-cli", "youtube": "official API through the paid add-on" if addon else "AI assistant on YouTube Studio"}.get(platform, "dedicated persistent background browser"),
+            "publish_backend": "bili-cli" if platform == "bilibili" else "official API through the paid add-on" if platform == "youtube" and addon else "dedicated persistent background browser",
             "optional_api_route": ("Installed (method: api)." if addon else "Needs the paid CrossCast API add-on (method: api).") if platform in {"youtube", "x", "instagram"} else None,
-            "standalone_cli_publish": platform != "youtube" or addon,
-            "live_upload_verified": platform in {"youtube", "x", "instagram", "douyin"}}
+            "standalone_cli_publish": True,
+            # YouTube's earlier live uploads went through the API and an assistant on Studio, not this browser route.
+            "live_upload_verified": platform in {"x", "instagram", "douyin"} or (platform == "youtube" and addon)}
 
 
 def capabilities():
@@ -874,7 +875,7 @@ def capabilities():
             "youtube_category": "Explicit per-video category required; host-model selection, in-place revision and read-back. API validates assignability before upload; no People & Blogs fallback.",
             "playlists": "YouTube playlist list/items/create/update/add/remove/move/delete/verify: ordinary owned playlists, durable request IDs, no write retries; default private creation.",
             "collections": "collection list/items/create/rename/add/remove/delete/verify: Instagram and Douyin support exact-ID membership and collection management; X supports folder CRUD but not named membership. Writes require complete member baselines; pagination is bounded and incomplete pages never prove absence.",
-            "draft_only": "Instagram/X: init --draft-only stops CLI before Share/Post. PREVIEW_READY is not a guaranteed persistent draft after closing the browser.",
+            "draft_only": "Instagram/X: init --draft-only stops CLI before Share/Post. PREVIEW_READY is not a guaranteed persistent draft after closing the browser. YouTube browser route: stops before the final Save and leaves an unpublished draft in Studio.",
             "platforms": {p: platform_routes(p) for p in PLATFORMS},
             "live_verification_scope": "2026-10-30: source-plus-English YouTube/Instagram corrections and user-accepted v3 shared portrait retained. All five hello reply tests read back; Douyin was repaired through Creator Center and verified with a fresh nested-parent read. Browser evidence differs from API parent-ID verification. Not clean-machine unattended or full-playback acceptance.",
             "native_execution": "The host agent performs real UI actions. A CLI handoff alone is not an executed action or confirmed login.",
@@ -882,7 +883,7 @@ def capabilities():
             "works": "Bilibili published-work pages and YouTube upload-playlist pages; Douyin/Instagram/X visible first page only.",
             "work_adoption": "ops discover scans bounded pages; ops adopt freshly verifies ownership and adds existing works to the watchlist without an upload receipt.",
             "resumable_sync": "ops/messages sync use bounded per-platform concurrency, session reuse, durable checkpoints and freshness caches. --workers 1-4; --progress emits body-free JSON to stderr. ops/messages resume skips completed reads; unfinished browser sources restart their page.",
-            "upload_recovery": "New YouTube API uploads persist private resumable sessions and acknowledged offsets. resume queries the server and continues the same account/media/metadata; expired or uncertain sessions are not replaced automatically. Never-started YouTube cover/playlist steps resume against the same owned video; uncertain writes are not repeated. Dead-owner lock markers can be reclaimed without clearing receipts. X retains saved Studio asset recovery. Douyin/Instagram pre-submit interruptions still need draft inspection.",
+            "upload_recovery": "New YouTube API uploads persist private resumable sessions and acknowledged offsets. resume queries the server and continues the same account/media/metadata; expired or uncertain sessions are not replaced automatically. Never-started YouTube cover/playlist steps resume against the same owned video; uncertain writes are not repeated. Dead-owner lock markers can be reclaimed without clearing receipts. X retains saved Studio asset recovery. Douyin/Instagram and YouTube browser pre-submit interruptions still need draft inspection; the video is never uploaded again.",
             "full_reads": "read-all start/resume/status: YouTube works, playlists/members and comments including reply pages; Bilibili works/comments via upstream. API checkpoints advance rows and cursor atomically. Browser Douyin/Instagram collections and members, X folder lists follow official controls; explicit server end required. Browser resume replays the page and retains prior rows while incomplete; a complete pass replaces them with current observations. Other DOM feeds and X folder members remain incomplete/unverified.",
             "session_reuse": "Non-publishing browser commands share one background browser per account over a private authenticated local pipe. It exits after 5 idle minutes (browser_idle_seconds; 0 disables), 1 hour, any error or a stop file. A second command waits for the first. Publishing, resume, edit and login close it and run alone. A sent command is never replayed.",
             "status": "vpub status reads local records only: any active stop, unfinished publications with the exact next command and upload progress, background browsers, pending messages, the last sync and snapshot disk use.",

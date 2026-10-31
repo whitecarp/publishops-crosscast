@@ -210,7 +210,7 @@ def load_plan(path, selected=None):
             raise VpubError("invalid_manifest", "Each platform needs an object.")
         permitted = {"account", "title", "description", "tags", "visibility", "ai_generated", "schedule", "content_language", "metadata_language", "metadata_mode", "chapters", "duration_seconds"}
         permitted |= {"tid", "expected_uid", "method"} if platform == "bilibili" else set()
-        permitted |= {"category_id", "made_for_kids", "expected_channel_id", "method", "playlist_ids", "playlist_titles"} if platform == "youtube" else set()
+        permitted |= {"category_id", "made_for_kids", "expected_channel_id", "method", "playlist_ids", "playlist_titles", "submission_mode"} if platform == "youtube" else set()
         permitted |= {"method", "expected_identity"} if platform == "douyin" else set()
         permitted |= {"method", "expected_identity", "submission_mode"} if platform in {"x", "instagram"} else set()
         if set(v) - permitted:
@@ -220,11 +220,16 @@ def load_plan(path, selected=None):
                 raise VpubError("invalid_" + field, f"{platform} {field} must be text.")
         if v.get("account", "default") != "default":
             raise VpubError("unsupported_account", "v0.1 supports one account per platform: default.")
-        if platform == "youtube" and v.get("method", "native") not in {"native", "api"}:
-            raise VpubError("invalid_method", "YouTube method must be native or api. The screen-relay prototype was retired.")
+        if platform == "youtube" and v.get("method", "browser") not in {"native", "browser", "api"}:
+            raise VpubError("invalid_method", "YouTube method must be browser, api or native. The screen-relay prototype was retired.")
         if platform == "youtube":
-            from .categories import validate_youtube
+            from .categories import STUDIO_CATEGORIES, validate_youtube
             validate_youtube(v.get("category_id"))
+            if v.get("method", "browser") == "browser":
+                if v["category_id"] not in STUDIO_CATEGORIES:
+                    raise VpubError("invalid_category", "YouTube Studio's list does not offer this category ID.")
+                if v.get("playlist_ids") or v.get("playlist_titles"):
+                    raise VpubError("unsupported_playlist", "The background browser route cannot add to playlists yet.", "Use method native, or api with the paid add-on.")
             for field in ("playlist_ids", "playlist_titles"):
                 values = v.get(field, [])
                 if not isinstance(values, list) or len(values) > 20 or not all(isinstance(x, str) and x.strip() and len(x) <= 150 for x in values) or len(set(values)) != len(values):
@@ -244,7 +249,9 @@ def load_plan(path, selected=None):
             raise VpubError("invalid_method", "X/Instagram method must be browser, api or native.")
         if platform in {"x", "instagram"} and v.get("method") == "api" and v.get("submission_mode", "publish") != "publish":
             raise VpubError("invalid_submission_mode", "The API routes have no drafts; use browser or native for draft_only.")
-        if platform in {"x", "instagram"} and v.get("submission_mode", "publish") not in {"publish", "draft_only"}:
+        if platform == "youtube" and v.get("method", "browser") != "browser" and v.get("submission_mode", "publish") != "publish":
+            raise VpubError("invalid_submission_mode", "YouTube draft_only needs the browser route.")
+        if platform in {"x", "instagram", "youtube"} and v.get("submission_mode", "publish") not in {"publish", "draft_only"}:
             raise VpubError("invalid_submission_mode", "Use publish or draft_only. Draft-only permits media upload/preview, never Share/Post or scheduling.")
         if platform == "x" and v.get("expected_identity") is not None and not re.fullmatch(r"[A-Za-z0-9_]{1,15}", str(v["expected_identity"])):
             raise VpubError("invalid_identity", "Use the X handle without @, as observed in the signed-in profile.")
@@ -256,10 +263,14 @@ def load_plan(path, selected=None):
         limit = title_limit(platform, v.get("method"))
         if not isinstance(title, str) or not title.strip() or len(title) > limit or any(c in title for c in "\r\n\x00"):
             raise VpubError("invalid_title", f"{platform} title must contain 1–{limit} characters, one line.")
+        if platform == "youtube" and ("<" in title or ">" in title):
+            raise VpubError("invalid_title", "YouTube titles cannot contain < or >.")
         if not isinstance(desc, str) or "\x00" in desc or len(desc) > (2000 if platform != "youtube" else 5000):
             raise VpubError("invalid_description", f"Invalid {platform} description.")
         if platform == "youtube" and len(desc.encode("utf-8")) > 5000:
             raise VpubError("invalid_description", "YouTube description exceeds 5000 UTF-8 bytes.")
+        if platform == "youtube" and ("<" in desc or ">" in desc):
+            raise VpubError("invalid_description", "YouTube descriptions cannot contain < or >.")
         if not isinstance(tags, list) or not all(isinstance(t, str) and t.strip() and not any(c in t for c in ",\r\n\x00") for t in tags):
             raise VpubError("invalid_tags", "Tags must be a list of nonempty strings without commas/newlines.")
         if platform == "bilibili" and not 1 <= len(tags) <= 10:
@@ -283,8 +294,8 @@ def load_plan(path, selected=None):
         if schedule:
             if platform in {"douyin", "x", "instagram"} or v.get("method") == "native":
                 raise VpubError("unsupported_schedule", "This route supports immediate publication only.")
-            if platform == "youtube" and v.get("method", "native") != "api":
-                raise VpubError("unsupported_schedule", "YouTube browser v0.1 supports immediate publication; scheduled API mode is optional.")
+            if platform == "youtube" and v.get("method", "browser") != "api":
+                raise VpubError("unsupported_schedule", "The free YouTube routes publish immediately; scheduling needs the paid API add-on.")
             try:
                 when = datetime.fromisoformat(schedule.replace("Z", "+00:00"))
                 delta = (when - datetime.now(timezone.utc)).total_seconds()
@@ -307,7 +318,7 @@ def load_plan(path, selected=None):
             if v['metadata_mode'] != policy['mode'] or v.get('metadata_language', policy['language']) != policy['language']:
                 raise VpubError('wrong_metadata_language', 'Metadata mode/language conflicts with the video content language. Run vpub metadata request/apply.')
         if platform == "youtube":
-            plans[platform]["method"] = v.get("method", "native")
+            plans[platform]["method"] = v.get("method", "browser")
         if platform == "douyin":
             plans[platform]["method"] = v.get("method", "browser")
         if platform in {"x", "instagram"}:

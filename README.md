@@ -46,7 +46,7 @@
 **开始前准备好这几样：**
 
 - **B站**：用 B站 App 扫码登录一次（通过 bili-cli）。
-- **YouTube**：免费发布需要能操作浏览器的 AI 助手在 YouTube Studio 上完成。用 CLI 走官方 API 需要付费的 API 附加组件，以及你自己的 Google 桌面 OAuth 客户端。
+- **YouTube**：免费发布通过专用 Chrome 在后台操作 YouTube Studio，只有登录或 Google 要求验证时才会看到浏览器。用 CLI 走官方 API 需要付费的 API 附加组件，以及你自己的 Google 桌面 OAuth 客户端。
 - **抖音、Instagram、X**：第一次会打开 CrossCast 专用的官方 Chrome 窗口，你自己扫码或输入密码、验证码；之后 CLI 在后台复用这个登录。
 - **X**：只能用 Media Studio 发布，账号必须已订阅并能进入 Media Studio。
 - **电脑上要有 Google Chrome**：没有的话，运行 `vpub setup --install-browser` 安装。
@@ -96,11 +96,11 @@ B站、抖音用简体中文，YouTube、Instagram、X 用英文。视频本身�
 
 ### 📮 登录一次，之后后台发布
 
-首次登录之后，CLI 自己完成上传：B站走 bili-cli，YouTube 用付费附加组件走官方 API（否则由 AI 助手操作 YouTube Studio），抖音、Instagram、X 由 CLI 在后台操作专用的 Chrome。B站和 YouTube 还支持定时发布。
+首次登录之后，CLI 自己完成上传：B站走 bili-cli，YouTube、抖音、Instagram、X 由 CLI 在后台操作专用的 Chrome。YouTube、X 和 Instagram 的官方 API 路径需要付费附加组件。B站支持定时发布，YouTube 用付费附加组件也可以。
 
 ### 🔁 中断了也能接着来
 
-上传途中断开，`vpub resume` 接着原来的任务继续：YouTube 从同一个上传会话续传，X 接着已经存好的 Studio 素材。结果不明的提交不会自动再点一次。`vpub status` 只读本地记录，列出没做完的事和下一步的确切命令；`vpub cleanup` 可释放已发布视频副本占用的磁盘空间。
+上传途中断开，`vpub resume` 接着原来的任务继续：X 接着已经存好的 Studio 素材，YouTube 用付费附加组件时从同一个上传会话续传。YouTube 免费路径不会重新上传，已上传的内容留在 Studio 里作为草稿。结果不明的提交不会自动再点一次。`vpub status` 只读本地记录，列出没做完的事和下一步的确切命令；`vpub cleanup` 可释放已发布视频副本占用的磁盘空间。
 
 ### 🔍 每一步都有回执
 
@@ -127,7 +127,7 @@ B站、抖音用简体中文，YouTube、Instagram、X 用英文。视频本身�
 | 平台 | 登录 | 发布方式 | 实测记录 |
 | --- | --- | --- | --- |
 | **Bilibili** | B站 App 扫码（bili-cli） | bili-cli，可定时发布 | ✅ bili-cli |
-| **YouTube** | 免费：在 YouTube Studio 登录。付费附加组件：Google 桌面 OAuth 客户端 | 免费：AI 助手操作 YouTube Studio。付费附加组件：官方 API，可定时发布 | ✅ API |
+| **YouTube** | 免费：在专用 Chrome 里登录一次。付费附加组件：Google 桌面 OAuth 客户端 | 免费：后台 Chrome 操作 YouTube Studio。付费附加组件：官方 API，可定时发布 | ✅ API |
 | **抖音** | 专用官方 Chrome | CLI 后台浏览器 | ✅ 已发布 |
 | **Instagram** | 专用官方 Chrome | CLI 后台浏览器，封面在手机上改 | ✅ 已发布 |
 | **X** | 专用官方 Chrome | 只能用 Media Studio（需订阅） | ✅ 已发布 |
@@ -137,7 +137,7 @@ B站、抖音用简体中文，YouTube、Instagram、X 用英文。视频本身�
 
 **发之前需要知道**
 
-- **YouTube**：官方 API 路径，包括 CLI 上的 YouTube 评论、数据、播放列表和编辑，都需要付费的 API 附加组件。YouTube 暂时没有免费的 CLI 后台浏览器路径。项目还在测试模式时，要先把登录用的账号加进“测试用户”；按 Google 的规定，2020 年 7 月 28 日之后创建、又没通过审核的 API 项目，上传的视频会被锁成私享。
+- **YouTube**：官方 API 路径，包括 CLI 上的 YouTube 评论、数据、播放列表和编辑，都需要付费的 API 附加组件。免费的后台路径立即发布，不支持播放列表和定时发布，目前还没有完成过真实上传。项目还在测试模式时，要先把登录用的账号加进“测试用户”；按 Google 的规定，2020 年 7 月 28 日之后创建、又没通过审核的 API 项目，上传的视频会被锁成私享。
 - **X**：只能用 Media Studio。账号必须已订阅并能进入 Media Studio；未订阅账号的视频上限是 140 秒、512 MB，本工具不支持。
 - **Instagram**：视频保留原比例；封面必须在手机上改：打开作品的“编辑封面 → 从相册添加”，选和抖音共用的那张竖版图，再看一眼主页网格的裁切。
 - **抖音**：长时间保持登录的稳定性还在验收；网页上传中断后不能续传，要先检查已有草稿。
@@ -186,7 +186,8 @@ vpub onboard --platforms bilibili,douyin,youtube
 **登录各平台**
 
 ```sh
-vpub auth login youtube --method api --client-json /path/to/client.json  # 付费 API 附加组件
+vpub auth login youtube --method browser
+vpub auth login youtube --method api --client-json /path/to/client.json  # 付费 API 附加组件，用它代替上一行
 vpub auth login douyin
 vpub auth login instagram
 vpub auth login x
@@ -232,7 +233,7 @@ vpub verify RECEIPT_KEY
 <details>
 <summary><b>YouTube 一定要配 OAuth 客户端吗？</b></summary>
 
-只有付费的 API 路径需要：API Key 本身不能授权上传，必须用“桌面应用”OAuth 客户端在 Google 页面授权一次。免费路径由能操作浏览器的 AI 助手在 YouTube Studio 上发布，不需要 OAuth 客户端。授权在你自己的电脑上完成，令牌只留在本机。
+只有付费的 API 路径需要：API Key 本身不能授权上传，必须用“桌面应用”OAuth 客户端在 Google 页面授权一次。免费路径由后台 Chrome 在 YouTube Studio 上发布，不需要 OAuth 客户端。授权在你自己的电脑上完成，令牌只留在本机。
 
 </details>
 

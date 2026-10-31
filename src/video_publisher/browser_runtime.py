@@ -10,15 +10,16 @@ from urllib.parse import urlsplit
 
 from .core import VpubError, account_name, atomic_json, home, now, read_json
 
-BROWSER_PLATFORMS = {"douyin", "instagram", "x"}
+BROWSER_PLATFORMS = {"douyin", "instagram", "x", "youtube"}
 URLS = {"douyin": "https://creator.douyin.com/creator-micro/home",
-        "instagram": "https://www.instagram.com/", "x": "https://x.com/home"}
-HUMAN_LABELS = re.compile(r"安全验证|请完成验证|滑块验证|操作频繁|验证是你本人|Confirm it's you|Verify your identity|Authenticate your account|Confirm your identity|Unusual activity", re.I)
+        "instagram": "https://www.instagram.com/", "x": "https://x.com/home",
+        "youtube": "https://studio.youtube.com/"}
+HUMAN_LABELS = re.compile(r"安全验证|请完成验证|滑块验证|操作频繁|验证是你本人|Confirm it's you|Verify it's you|Verify your identity|Authenticate your account|Confirm your identity|Unusual activity", re.I)
 
 
 def profile_dir(platform, account="default"):
     if platform not in BROWSER_PLATFORMS:
-        raise VpubError("invalid_platform", "Persistent browser supports douyin, instagram and x.")
+        raise VpubError("invalid_platform", "Persistent browser supports douyin, instagram, x and youtube.")
     return home() / "accounts" / account_name(account) / (platform + "-browser-profile")
 
 
@@ -66,6 +67,12 @@ async def identity(page, platform):
             path = urlsplit(await link.get_attribute("href") or "").path.strip("/")
             if re.fullmatch(r"[A-Za-z0-9_.]{1,30}", path) and path not in {"accounts", "explore", "reels"}:
                 return path
+    elif platform == "youtube":
+        # Studio's address names the signed-in channel; a signed-out visit lands on Google's sign-in page.
+        address = urlsplit(page.url)
+        found = re.fullmatch(r"/channel/(UC[\w-]{22})(?:/.*)?", address.path) if address.hostname == "studio.youtube.com" else None
+        if found:
+            return found[1]
     else:
         # Creator dashboard exposes the Douyin account identifier, distinct from nickname.
         text = await page.locator("body").inner_text(timeout=10000)
@@ -86,9 +93,13 @@ def check_identity(actual, expected):
 async def open_context(pw, platform, account, interactive=False):
     path = profile_dir(platform, account)
     path.mkdir(parents=True, exist_ok=True)
+    # Studio does not run under a headless browser, so YouTube's background browser is a real Chrome window:
+    # off-screen, and on Windows also on its own hidden desktop (see hidden_desktop.py), so there is no taskbar icon either.
+    off_screen = platform == "youtube" and not interactive
     try:
         context = await pw.chromium.launch_persistent_context(
-            str(path), channel="chrome", headless=not interactive,
+            str(path), channel="chrome", headless=not interactive and not off_screen,
+            args=["--window-position=-32000,-32000"] if off_screen else [],
             viewport={"width": 1440, "height": 1000}, locale="en-US",
             accept_downloads=False)
         session = path.parent / (platform + "-browser-session.json")
@@ -135,6 +146,10 @@ async def login(pw, payload):
 
 
 async def save_session(context, platform, account):
+    # Google replaces its sign-in cookies as they are used, and restoring an older copy can sign the
+    # account out. The dedicated Chrome profile already keeps them, so YouTube saves no separate copy.
+    if platform == "youtube":
+        return
     state = await context.storage_state()
     domains = {"x": ("x.com", "twitter.com"), "instagram": ("instagram.com",),
                "douyin": ("douyin.com", "bytedance.com")}[platform]

@@ -110,6 +110,9 @@ def main():
                "hint": e.hint if isinstance(e, VpubError) else "Inspect the original draft/work and receipt before retrying; no automatic resubmission."}}
         if payload.get("job_path"):
             atomic_json(payload["job_path"], {"state": "FAILED", "platform": payload.get("platform"), **out})
+    # On a hidden desktop there is no console to answer on.
+    if payload.get("result_path"):
+        atomic_json(payload["result_path"], out)
     print(json.dumps(out, ensure_ascii=False))
 
 

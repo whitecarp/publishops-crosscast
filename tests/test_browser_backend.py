@@ -81,7 +81,7 @@ class BrowserSafetyTests(unittest.TestCase):
             with self.assertRaises(VpubError): work_url(platform,'tester','https://example.com')
 
     def test_default_routes_and_explicit_native_fallback(self):
-        self.assertEqual(['cli','native','browser','browser','browser'],
+        self.assertEqual(['cli','browser','browser','browser','browser'],
                          [adapters.default_method(p) for p in cli.PLATFORMS])
         with patch.object(adapters,'browser_call') as browser:
             result=adapters.auth_login('instagram','default',method='native')

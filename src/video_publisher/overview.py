@@ -112,14 +112,14 @@ def attempt(row, busy):
 
 def sign_in(platform):
     root = home() / "accounts" / "default"
-    if platform in {"douyin", "instagram", "x"}:
+    if platform == "youtube" and adapters.addon_installed():
+        return {"saved": (root / "youtube-token.json").exists()}
+    if platform in {"douyin", "instagram", "x", "youtube"}:
         saved = read_quietly(root / (platform + "-identity.json"))
         if isinstance(saved, dict):
             return {"saved": True, "identity": saved.get("identity"), "verified_at": saved.get("verified_at")}
         return {"saved": False}
-    if platform == "youtube" and adapters.addon_installed():
-        return {"saved": (root / "youtube-token.json").exists()}
-    return {"saved": None, "note": "bili-cli keeps this sign-in." if platform == "bilibili" else "Your assistant's browser keeps this sign-in."}
+    return {"saved": None, "note": "bili-cli keeps this sign-in."}
 
 
 def background_browsers():

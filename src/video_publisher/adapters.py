@@ -9,7 +9,7 @@ import sys
 
 from .core import VpubError, stop_check, platform_check
 
-ROUTES = {"bilibili": {"cli"}, "douyin": {"browser"}, "youtube": {"api"}, "x": {"browser", "api"}, "instagram": {"browser", "api"}}
+ROUTES = {"bilibili": {"cli"}, "douyin": {"browser"}, "youtube": {"browser", "api"}, "x": {"browser", "api"}, "instagram": {"browser", "api"}}
 
 
 def bili(args, timeout=210):
@@ -72,8 +72,8 @@ def addon_installed():
 
 
 def default_method(platform):
-    if platform == "youtube":
-        return "api" if addon_installed() else "native"
+    if platform == "youtube" and addon_installed():
+        return "api"
     return {"bilibili": "cli"}.get(platform, "browser")
 
 
@@ -83,27 +83,37 @@ def browser_timeout(action):
     return action_timeout(action) + 120
 
 
+def hidden_desktop_call(payload, timeout):
+    from .hidden_desktop import call_worker
+    return call_worker(payload, timeout)
+
+
+def worker_call(payload, timeout):
+    try:
+        cp = subprocess.run([sys.executable, "-m", "video_publisher.browser_worker"],
+                            input=json.dumps(payload), capture_output=True, encoding="utf-8",
+                            timeout=timeout,
+                            env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+    except subprocess.TimeoutExpired:
+        raise VpubError("browser_timeout", "Browser command timed out; existing receipts are retained.", "Inspect the existing draft/work; do not repeat an upload or final submit.")
+    try:
+        return json.loads(cp.stdout)
+    except ValueError:
+        raise VpubError("browser_error", "Browser command returned no valid JSON receipt.")
+
+
 def browser_call(platform, action, account, **kwargs):
     payload = {"platform": platform, "action": action, "account": account, **kwargs}
     from . import browser_broker
-    if browser_broker.enabled():
+    # YouTube's background browser is a real Chrome window, so it closes after each command instead of lingering.
+    if platform != "youtube" and browser_broker.enabled():
         if action in browser_broker.REUSABLE:
             result = browser_broker.call(payload, browser_timeout(action))
             if result is not None:
                 return result
         else:
             browser_broker.release(platform, account)
-    try:
-        cp = subprocess.run([sys.executable, "-m", "video_publisher.browser_worker"],
-                            input=json.dumps(payload), capture_output=True, encoding="utf-8",
-                            timeout=browser_timeout(action),
-                            env=dict(os.environ, PYTHONIOENCODING="utf-8"))
-    except subprocess.TimeoutExpired:
-        raise VpubError("browser_timeout", "Browser command timed out; existing receipts are retained.", "Inspect the existing draft/work; do not repeat an upload or final submit.")
-    try:
-        result = json.loads(cp.stdout)
-    except ValueError:
-        raise VpubError("browser_error", "Browser command returned no valid JSON receipt.")
+    result = hidden_desktop_call(payload, browser_timeout(action)) if platform == "youtube" and os.name == "nt" else worker_call(payload, browser_timeout(action))
     if not result.get("ok"):
         e = result["error"]
         raise VpubError(e["code"], e["message"], e.get("hint", ""))
@@ -124,7 +134,7 @@ def auth_status(platform, account, method=None):
         if not v.get("logged_in"):
             raise VpubError("not_logged_in", "Bilibili is not logged in.", "vpub auth login bilibili")
         return {"logged_in": True, "account": account, "identity": str(v["user"]["mid"]), "name": v["user"].get("name")}
-    if platform == "youtube":
+    if platform == "youtube" and method == "api":
         return youtube_api().status(account)
     if method == "api":
         return paid_api().status(platform, account)
@@ -145,7 +155,7 @@ def auth_login(platform, account, client_json=None, method=None):
         raise VpubError("invalid_method", "This login method is unavailable on the selected platform.")
     if platform == "bilibili":
         return bili(["auth", "login"])
-    if platform == "youtube":
+    if platform == "youtube" and method == "api":
         return youtube_api().login(account, client_json)
     if method == "api":
         return paid_api().login(platform, account, client_json)
@@ -156,7 +166,7 @@ def auth_login(platform, account, client_json=None, method=None):
 def preflight(platform, options):
     if options.get("method") == "native":
         return {"logged_in": None, "method": "native", "note": "Account must be checked in the built-in browser before browser begin."}
-    if platform == "youtube" and options.get("playlist_ids"):
+    if platform == "youtube" and options.get("method") == "api" and options.get("playlist_ids"):
         youtube_api().check_playlist_scope(options)
     identity = auth_status(platform, options["account"], options.get("method"))
     expected = options.get("expected_uid") if platform == "bilibili" else options.get("expected_channel_id") if platform == "youtube" else options.get("expected_identity")
@@ -199,7 +209,7 @@ def publish(platform, plan, options, checkpoint):
         plan = {**plan, "cover": landscape["path"], "cover_sha256": landscape["sha256"]}
     if platform == "bilibili":
         return publish_bilibili(plan, options, checkpoint)
-    if platform == "youtube":
+    if platform == "youtube" and options.get("method") == "api":
         return youtube_api().publish(plan, options, checkpoint)
     if options.get("method") == "api":
         return paid_api().publish(platform, plan, options, checkpoint)
@@ -213,7 +223,7 @@ def verify(platform, account, receipt):
     if receipt.get("method") == "native":
         return {**receipt, "state": "BROWSER_VERIFICATION_REQUIRED", "note": "Re-open the original work in the same built-in browser and record actual UI evidence. No CLI platform check was performed."}
     video_id = receipt.get("id")
-    if receipt.get("method") == "browser" and platform in {"douyin", "instagram", "x"}:
+    if receipt.get("method") == "browser" and platform in {"douyin", "instagram", "x", "youtube"}:
         return browser_call(platform, "verify", account, expected_identity=receipt.get("identity"), receipt=receipt)
     if not video_id:
         raise VpubError("receipt_missing", "No platform video ID; inspect the original submission before retrying.")
