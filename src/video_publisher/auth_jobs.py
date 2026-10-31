@@ -19,20 +19,23 @@ def status(platform):
 
 
 def start(platform, account):
-    if platform != "douyin":
+    if platform not in {"douyin", "instagram", "x"}:
         raise VpubError("native_login_required", "Use the official website directly in the host's built-in browser.")
     path = job_path(platform)
     previous = status(platform)
     if previous and previous.get("state") in {"STARTING", "LOGIN_PENDING", "VERIFICATION_REQUIRED"} and previous.get("expires_epoch", 0) > time.time():
         return previous
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"action": "login", "account": account, "job_path": str(path), "headless": True}
+    payload = {"action": "login", "platform": platform, "account": account, "job_path": str(path)}
     request = path.with_suffix(".request.json")
     atomic_json(request, payload)
-    atomic_json(path, {"state": "STARTING", "platform": platform, "created_at": now(), "expires_epoch": time.time() + 600})
+    atomic_json(path, {"state": "STARTING", "platform": platform, "created_at": now(), "expires_epoch": time.time() + 900})
     options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {"start_new_session": True}
     with open(os.devnull, "wb") as sink:
-        module = "video_publisher.douyin_worker"
+        module = "video_publisher.browser_worker"
+        from .browser_broker import enabled, release
+        if enabled():
+            release(platform, account)
         subprocess.Popen([sys.executable, "-m", module, "--job", str(request)],
                          stdin=subprocess.DEVNULL, stdout=sink, stderr=sink, close_fds=True, **options)
     # Return promptly; status --wait can continue waiting if QR rendering is slow.

@@ -16,7 +16,8 @@ class ChapterTests(unittest.TestCase):
     def test_rejects_unsupported_routes_and_bad_times(self):
         valid=[{'start_seconds':0,'title':'Start'},{'start_seconds':19,'title':'Next'}]
         self.assertEqual(valid,validate(valid,'douyin','native',79))
-        for platform,method in [('x','native'),('douyin','browser'),('youtube','api')]:
+        self.assertEqual(valid,validate(valid,'douyin','browser',79))
+        for platform,method in [('x','native'),('youtube','api')]:
             with self.assertRaises(VpubError):
                 validate(valid,platform,method,79)
         for values,duration in [([{'start_seconds':1,'title':'Start'}],79),

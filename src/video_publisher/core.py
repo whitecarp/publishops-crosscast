@@ -79,8 +79,8 @@ def config():
 
 def platform_check(platform):
     if platform == "tiktok":
-        raise VpubError("platform_suspended", "TikTok support is currently suspended.",
-                        "See docs/PLATFORMS.md. Existing receipts are retained; no new login or upload is allowed.")
+        raise VpubError("platform_suspended", "TikTok support is suspended after an unsuccessful Hong Kong phone-number login test.",
+                        "See docs/TIKTOK_STATUS.md. Existing receipts are retained; no new login or upload is allowed.")
     if platform not in PLATFORMS:
         raise VpubError("invalid_platform", "Choose " + ", ".join(PLATFORMS))
 
@@ -172,22 +172,20 @@ def load_plan(path, selected=None):
         if platform == "douyin" and v.get("method", "browser") not in {"native", "browser"}:
             raise VpubError("invalid_method", "Douyin method must be native or browser.")
         if platform == "douyin" and "expected_identity" in v:
-            if v.get("method", "browser") != "native":
-                raise VpubError("unsupported_identity_check", "Douyin expected_identity currently requires native mode and a host-observed account ID.")
             if not isinstance(v["expected_identity"], str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", v["expected_identity"]):
                 raise VpubError("invalid_identity", "Use the Douyin account ID observed in the creator dashboard, not the display name.")
         if platform == "bilibili" and v.get("method", "cli") not in {"native", "cli"}:
             raise VpubError("invalid_method", "Bilibili method must be native or cli.")
-        if platform in {"x", "instagram"} and v.get("method", "native") != "native":
-            raise VpubError("invalid_method", "X/Instagram currently require the host's native browser; official API integration is not implemented.")
+        if platform in {"x", "instagram"} and v.get("method", "browser") not in {"native", "browser", "api"}:
+            raise VpubError("invalid_method", "X/Instagram method must be browser, api or native.")
+        if platform in {"x", "instagram"} and v.get("method") == "api" and v.get("submission_mode", "publish") != "publish":
+            raise VpubError("invalid_submission_mode", "The API routes have no drafts; use browser or native for draft_only.")
         if platform in {"x", "instagram"} and v.get("submission_mode", "publish") not in {"publish", "draft_only"}:
             raise VpubError("invalid_submission_mode", "Use publish or draft_only. Draft-only permits media upload/preview, never Share/Post or scheduling.")
         if platform == "x" and v.get("expected_identity") is not None and not re.fullmatch(r"[A-Za-z0-9_]{1,15}", str(v["expected_identity"])):
             raise VpubError("invalid_identity", "Use the X handle without @, as observed in the signed-in profile.")
-        if platform == "x" and cover:
+        if platform == "x" and cover and v.get("method", "browser") == "native":
             raise VpubError("unsupported_cover", "X native alpha uses the video's default thumbnail; shared covers are not implemented.")
-        if platform == "douyin" and cover and v.get("method", "browser") != "native":
-            raise VpubError("unsupported_cover", "Douyin custom covers require the native host-browser workflow; the experimental standalone backend cannot set them.")
         title = v.get("title", m.get("title", ""))
         desc = v.get("description", m.get("description", ""))
         tags = v.get("tags", m.get("tags", []))
@@ -205,15 +203,14 @@ def load_plan(path, selected=None):
         if platform == "youtube" and sum(len(t) + 1 for t in tags) > 500:
             raise VpubError("invalid_tags", "YouTube tags exceed the 500-character budget.")
         visibility = v.get("visibility")
-        supported = {"bilibili": {"public", "private"}, "youtube": {"public", "private", "unlisted"}, "douyin": {"public", "private"} if v.get("method") == "native" else {"public"},
+        supported = {"bilibili": {"public", "private"}, "youtube": {"public", "private", "unlisted"}, "douyin": {"public", "private"},
                      "x": {"account"}, "instagram": {"account"}}
         if visibility not in supported[platform]:
             raise VpubError("invalid_visibility", f"Explicit {platform} visibility required: {sorted(supported[platform])}")
+        # Every route supports both values: AI-generated videos get each platform's
+        # AI-content declaration, ordinary videos get none. The value must be explicit.
         if type(v.get("ai_generated")) is not bool:
             raise VpubError("invalid_declaration", "Explicit ai_generated true/false required per platform.")
-        # v0.1 implements Douyin's AI declaration, not arbitrary declaration variants.
-        if platform in {"bilibili", "douyin"} and not v["ai_generated"]:
-            raise VpubError("unsupported_declaration", "v0.1 Bilibili/Douyin route supports AI-declared videos only.")
         if platform == "youtube" and type(v.get("made_for_kids")) is not bool:
             raise VpubError("invalid_audience", "YouTube made_for_kids must be explicitly true/false.")
         schedule = v.get("schedule")
@@ -238,16 +235,23 @@ def load_plan(path, selected=None):
             plans[platform]["metadata_language"] = language_tag(v["metadata_language"])
         if v.get("metadata_mode", "target_only") not in {"target_only", "bilingual"}:
             raise VpubError("invalid_metadata_mode", "Choose target_only or bilingual.")
+        if 'metadata_mode' in v:
+            from .language_policy import route
+            policy = route(plans[platform]['content_language'], platform)
+            if v['metadata_mode'] != policy['mode'] or v.get('metadata_language', policy['language']) != policy['language']:
+                raise VpubError('wrong_metadata_language', 'Metadata mode/language conflicts with the video content language. Run vpub metadata request/apply.')
         if platform == "youtube":
             plans[platform]["method"] = v.get("method", "native")
         if platform == "douyin":
             plans[platform]["method"] = v.get("method", "browser")
         if platform in {"x", "instagram"}:
-            plans[platform]["method"] = "native"
+            plans[platform]["method"] = v.get("method", "browser")
         if platform in {"x", "instagram"}:
             if any(not re.fullmatch(r"#?\w+", t) for t in tags):
                 raise VpubError("invalid_tags", "Caption hashtags must contain only letters, digits or underscores, without spaces.")
             plans[platform]["post_text"] = x_post_text(title, desc, tags, v["ai_generated"], plans[platform].get("metadata_language", plans[platform]["content_language"]))
+            if platform == "instagram" and v.get("method") == "api" and len(plans[platform]["post_text"]) > 2200:
+                raise VpubError("invalid_description", "Instagram API captions are limited to 2200 characters.")
             # The actual website counter (URL/emoji/CJK weights, account plan)
             # is authoritative. Never silently truncate or assume Premium.
         if platform == "bilibili":
@@ -263,9 +267,9 @@ def load_plan(path, selected=None):
         variants = supplied_covers.get(platform, {})
         if not isinstance(variants, dict) or set(variants) - {"landscape", "portrait"}:
             raise VpubError("invalid_cover", "Use landscape and/or portrait cover roles.")
-        if variants and (platform == "x" or (platform == "douyin" and plans[platform]["method"] != "native")):
+        if variants and platform == "x" and plans[platform]["method"] == "native":
             raise VpubError("unsupported_cover", "This route cannot set custom covers.")
-        if "portrait" in variants and platform in {"youtube", "bilibili"}:
+        if "portrait" in variants and platform in {"youtube", "bilibili", "x"}:
             raise VpubError("unsupported_cover", "This platform uses one landscape thumbnail in this workflow.")
         for role, filename in variants.items():
             if not isinstance(filename, str):
@@ -326,15 +330,6 @@ class Ledger:
 
 @contextlib.contextmanager
 def publication_lock():
-    path = home() / "publisher.lock"
-    try:
-        f = path.open("x", encoding="utf-8")
-    except FileExistsError:
-        raise VpubError("busy", "Another publication is running or a previous process was interrupted.",
-                        "Check the ledger and running processes; never blindly clear this lock.")
-    with f:
-        f.write(json.dumps({"pid": os.getpid(), "created_at": now()}))
-    try:
+    from .process_lock import hold
+    with hold(home() / 'publisher.lock', 'busy', 'Another publication command owns this workspace.'):
         yield
-    finally:
-        path.unlink(missing_ok=True)

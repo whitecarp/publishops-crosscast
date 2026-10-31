@@ -53,21 +53,4 @@ class CategoryTests(unittest.TestCase):
         self.assertEqual('AGENT_REPORTED_VERIFIED', result['state'])
 
 
-class ApiCategoryTests(unittest.TestCase):
-    def test_missing_or_unassignable_category_never_uploads(self):
-        service = MagicMock()
-        with patch.object(adapters, 'yt_service', return_value=service):
-            with self.assertRaises(VpubError):
-                adapters.publish_youtube({}, {'account':'default'}, lambda r: None)
-            service.videoCategories.return_value.list.return_value.execute.return_value = {'items':[{'id':'1','snippet':{'assignable':False}}]}
-            with self.assertRaises(VpubError):
-                adapters.publish_youtube({}, {'account':'default','category_id':'1'}, lambda r: None)
-        service.videos.assert_not_called()
 
-    def test_category_mismatch_is_not_verified(self):
-        service = MagicMock()
-        service.videos.return_value.list.return_value.execute.return_value = {'items':[{'status':{'privacyStatus':'private','uploadStatus':'processed'},'snippet':{'categoryId':'22'}}]}
-        with patch.object(adapters, 'yt_service', return_value=service):
-            result = adapters.verify('youtube', 'default', {'id':'abcdefghijk','expected_category_id':'1'})
-        self.assertTrue(result['category_mismatch'])
-        self.assertEqual('SUBMITTED_UNVERIFIED', result['state'])

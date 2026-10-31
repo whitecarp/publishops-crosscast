@@ -76,7 +76,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual("BROWSER_IN_PROGRESS", native_browser.begin(key, "123456789")["state"])
         self.value["platforms"]["douyin"]["method"] = "browser"
         self.save()
-        self.code("unsupported_identity_check", self.plan, ["douyin"])
+        self.assertEqual('123456789', self.plan(['douyin'])['platforms']['douyin']['expected_identity'])
 
     def test_instagram_caption_readback_includes_ai_disclosure(self):
         self.value["platforms"] = {"instagram": {"method": "native", "visibility": "account", "ai_generated": True,
@@ -311,7 +311,7 @@ class WorkflowTests(unittest.TestCase):
     def test_native_login_does_not_launch_or_claim_logged_in(self):
         with patch("subprocess.Popen") as launch:
             for platform in cli.PLATFORMS:
-                r = adapters.auth_login(platform, "default")
+                r = adapters.auth_login(platform, "default", method="native")
                 self.assertIsNone(r["logged_in"])
                 self.assertEqual("NATIVE_BROWSER_REQUIRED", r["state"])
             launch.assert_not_called()
@@ -385,7 +385,8 @@ class WorkflowTests(unittest.TestCase):
         p = load_plan(out)
         self.assertEqual(5, len(p["platforms"]))
         self.assertEqual("account", p["platforms"]["instagram"]["visibility"])
-        self.assertTrue(all(v["method"] == "native" for v in p["platforms"].values()))
+        self.assertEqual({'bilibili':'cli','youtube':'native','douyin':'browser','instagram':'browser','x':'browser'},
+                         {k:v['method'] for k,v in p['platforms'].items()})
 
     def test_cli_plan_never_calls_platform(self):
         with patch.object(adapters, "publish") as publish, patch.object(adapters, "auth_status") as status:
@@ -420,7 +421,7 @@ class WorkflowTests(unittest.TestCase):
     def x_manifest(self):
         self.value.update(title="原創短片", description="Original short", tags=["AI"], content_language="zh-Hant")
         self.value["platforms"] = {"x": {"method": "native", "visibility": "account",
-                                             "ai_generated": True, "expected_identity": "tester"}}
+                                             "ai_generated": True, "expected_identity": "tester", "metadata_mode":"bilingual"}}
         self.save()
 
     def test_x_caption_visibility_and_methods(self):
@@ -435,7 +436,7 @@ class WorkflowTests(unittest.TestCase):
         self.save()
         self.code("invalid_tags", self.plan)
         self.value["tags"] = ["AI"]
-        self.value["platforms"]["x"]["method"] = "api"
+        self.value["platforms"]["x"]["method"] = "cli"
         self.save()
         self.code("invalid_method", self.plan)
 

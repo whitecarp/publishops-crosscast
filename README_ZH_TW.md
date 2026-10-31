@@ -46,7 +46,7 @@
 **開始前準備好這幾樣：**
 
 - **B站**：用 B站 App 掃碼登入一次（透過 bili-cli）。
-- **YouTube**：只能走官方 API。在 Google Cloud 啟用 YouTube Data API v3，建立一個「桌面應用程式」OAuth 用戶端，把下載的 JSON 交給 AI 助手。
+- **YouTube**：免費發布需要能操作瀏覽器的 AI 助手在 YouTube Studio 上完成。用 CLI 走官方 API 需要付費的 API 附加元件，以及你自己的 Google 桌面 OAuth 用戶端。
 - **抖音、Instagram、X**：第一次會開啟 CrossCast 專用的官方 Chrome 視窗，由你自己掃碼或輸入密碼、驗證碼；之後 CLI 在背景沿用這個登入。
 - **X**：只能用 Media Studio 發布，帳號必須已訂閱並能進入 Media Studio。
 - **電腦上要有 Google Chrome**：沒有的話，執行 `vpub setup --install-browser` 安裝。
@@ -96,7 +96,7 @@ B站、抖音用簡體中文，YouTube、Instagram、X 用英文。影片本身�
 
 ### 📮 登入一次，之後背景發布
 
-首次登入之後，CLI 自己完成上傳：B站走 bili-cli，YouTube 走官方 API，抖音、Instagram、X 由 CLI 在背景操作專用的 Chrome。B站和 YouTube 也支援排程發布。
+首次登入之後，CLI 自己完成上傳：B站走 bili-cli，YouTube 用付費附加元件走官方 API（否則由 AI 助手操作 YouTube Studio），抖音、Instagram、X 由 CLI 在背景操作專用的 Chrome。B站和 YouTube 也支援排程發布。
 
 ### 🔁 中斷了也能接著做
 
@@ -127,7 +127,7 @@ B站、抖音用簡體中文，YouTube、Instagram、X 用英文。影片本身�
 | 平台 | 登入 | 發布方式 | 實測記錄 |
 | --- | --- | --- | --- |
 | **Bilibili** | B站 App 掃碼（bili-cli） | bili-cli，可排程發布 | ✅ bili-cli |
-| **YouTube** | Google 桌面 OAuth 用戶端 | 只能走官方 API，可排程發布 | ✅ API |
+| **YouTube** | 免費：在 YouTube Studio 登入。付費附加元件：Google 桌面 OAuth 用戶端 | 免費：AI 助手操作 YouTube Studio。付費附加元件：官方 API，可排程發布 | ✅ API |
 | **抖音** | 專用官方 Chrome | CLI 背景瀏覽器 | ✅ 已發布 |
 | **Instagram** | 專用官方 Chrome | CLI 背景瀏覽器，封面在手機上改 | ✅ 已發布 |
 | **X** | 專用官方 Chrome | 只能用 Media Studio（需訂閱） | ✅ 已發布 |
@@ -137,11 +137,11 @@ B站、抖音用簡體中文，YouTube、Instagram、X 用英文。影片本身�
 
 **發布前需要知道**
 
-- **YouTube**：只能走官方 API。專案還在測試模式時，要先把登入用的帳號加進「測試使用者」；依 Google 的規定，2020 年 7 月 28 日之後建立、又沒通過審查的 API 專案，上傳的影片會被鎖定為私人。
+- **YouTube**：官方 API 路徑，包括 CLI 上的 YouTube 留言、數據、播放清單和編輯，都需要付費的 API 附加元件。YouTube 暫時沒有免費的 CLI 背景瀏覽器路徑。專案還在測試模式時，要先把登入用的帳號加進「測試使用者」；依 Google 的規定，2020 年 7 月 28 日之後建立、又沒通過審查的 API 專案，上傳的影片會被鎖定為私人。
 - **X**：只能用 Media Studio。帳號必須已訂閱並能進入 Media Studio；未訂閱帳號的影片上限是 140 秒、512 MB，本工具不支援。
 - **Instagram**：影片保留原比例；封面必須在手機上改：開啟作品的「編輯封面 → 從相機膠卷新增」，選和抖音共用的那張直式圖，再看一下個人檔案格狀版面的裁切。
 - **抖音**：長時間維持登入的穩定性還在驗收；網頁上傳中斷後不能續傳，要先檢查既有的草稿。
-- **還沒有的**：TikTok（暫停）、YouTube 資訊卡和可點擊片尾、X 和 Instagram 的官方 API、自動或大量私訊與按讚、完整歷史匯出。
+- **還沒有的**：TikTok（暫停）、YouTube 資訊卡和可點擊片尾、自動或大量私訊與按讚、完整歷史匯出。
 
 ## 🔒 安全護欄
 
@@ -186,7 +186,7 @@ vpub onboard --platforms bilibili,douyin,youtube
 **登入各平台**
 
 ```sh
-vpub auth login youtube --method api --client-json /path/to/client.json
+vpub auth login youtube --method api --client-json /path/to/client.json  # 付費 API 附加元件
 vpub auth login douyin
 vpub auth login instagram
 vpub auth login x
@@ -230,9 +230,9 @@ vpub verify RECEIPT_KEY
 </details>
 
 <details>
-<summary><b>為什麼 YouTube 一定要設定 OAuth 用戶端？</b></summary>
+<summary><b>YouTube 一定要設定 OAuth 用戶端嗎？</b></summary>
 
-YouTube 只能走官方 API 發布，而 API 金鑰本身不能授權上傳，必須用「桌面應用程式」OAuth 用戶端在 Google 頁面授權一次。授權在你自己的電腦上完成，權杖只留在本機。
+只有付費的 API 路徑需要：API 金鑰本身不能授權上傳，必須用「桌面應用程式」OAuth 用戶端在 Google 頁面授權一次。免費路徑由能操作瀏覽器的 AI 助手在 YouTube Studio 上發布，不需要 OAuth 用戶端。授權在你自己的電腦上完成，權杖只留在本機。
 
 </details>
 
