@@ -23,7 +23,7 @@
 - **官方 API 路徑改為獨立的付費附加元件。** 涵蓋 X、Instagram 與 YouTube。未安裝時，YouTube 由 AI 助手在 YouTube Studio 發布，抖音、Instagram 與 X 繼續使用背景瀏覽器。
 - **內含 bili-cli。** 安裝 CrossCast 時會一併提供 `bili` 指令，版本為 1.2.1。如果仍裝有舊版獨立的 `bili-agent`，`vpub doctor` 會說明如何移除。
 - **新增指令。** `vpub status` 列出未完成事項及每項的下一步指令。`vpub cleanup` 預覽可安全移除的已完成影片副本，加上 `--apply` 才會刪除。
-- **B站加入訊息收件匣。** `vpub messages sync` 現在可讀取 B站 @ 提及與私信會話預覽，尚未在真實帳號上執行過。
+- **B站加入訊息收件匣。** `vpub messages sync` 現在可讀取 B站 @ 提及與私信會話預覽。
 - **已移除。** `inbox` 由 `messages` 取代；登入用的 `--manage-playlists` 與文案用的 `--bilingual` 已移除。
 
 ## 0.15.1 收尾：固定範圍與修復
@@ -272,7 +272,7 @@ vpub comments collect douyin WORK_ID --pages 3 --reply-pages 1 --limit 50
 
 評論來源沿用 `ops watch` 追蹤清單，評論歷史與處理標記由 `messages` 統一管理。B站透過內含的 bili-cli 讀取 @ 提及與私信會話預覽；如果會話最後一則是 B站代發的自動回覆，該會話仍列為待處理，因為對方還在等真正的回覆。抖音讀取「通知 → @我的」，Instagram 讀取「Notifications → Tags & mentions」，X 讀取 Mentions；三站亦可讀取私信會話預覽。抖音會同時核對創作者中心與公開個人頁的帳號。每個來源獨立建立首次基線，之後去重並保留處理標記；穩定會話 ID 的預覽正文改變會重新列為未讀。Instagram／抖音未提供穩定 ID 時，保存的是內容預覽快照，不能當作新收件訊息數，也不能用暱稱推斷收件人。相對時間標籤改變不算新訊息。
 
-`messages sync` 只讀取並產生使用者語言的匯報，不建立排程或自動發送。私信正文只存本機，不放入匯報或 GitHub。開啟平台通知頁可能改變平台的已讀標示；`messages mark` 只改本機狀態。首次基線不代表新收到訊息，部分頁面沒有出現的舊項目不會刪除。來源回傳 `FAILED`／`UNSUPPORTED`／`NOT_CONFIGURED` 時，整輪明確標為 `PARTIAL`，不當成零訊息。抖音與 Instagram 的通知只覆蓋已載入可見區域；沒有穩定事件 ID 的項目標為 `stable_source_id: false`，完全相同的通知可能合併，不能作為精確新增數或回覆目標。抖音真實 @ 留言及再次讀取去重已測；Instagram 已測入口與明確空列表，非空提及仍待驗證。B站的這兩個來源尚未在真實帳號上執行過。YouTube 沒有訊息來源。其他 `bili` 指令仍可直接使用。
+`messages sync` 只讀取並產生使用者語言的匯報，不建立排程或自動發送。私信正文只存本機，不放入匯報或 GitHub。開啟平台通知頁可能改變平台的已讀標示；`messages mark` 只改本機狀態。首次基線不代表新收到訊息，部分頁面沒有出現的舊項目不會刪除。來源回傳 `FAILED`／`UNSUPPORTED`／`NOT_CONFIGURED` 時，整輪明確標為 `PARTIAL`，不當成零訊息。抖音與 Instagram 的通知只覆蓋已載入可見區域；沒有穩定事件 ID 的項目標為 `stable_source_id: false`，完全相同的通知可能合併，不能作為精確新增數或回覆目標。抖音真實 @ 留言及再次讀取去重已測；Instagram 已測入口與明確空列表，非空提及仍待驗證。B站的這兩個來源已在真實帳號上通過一次唯讀檢查；當時未讀數為 0，因此仍不確定讀取是否會清除未讀標記。YouTube 沒有訊息來源。其他 `bili` 指令仍可直接使用。
 
 `comments collect` 及瀏覽器 `ops sync` 加入有界捲動與可見回覆展開，保留跨頁 ID 聯集及停止原因。`--pages` 為讀取輪數，`--limit` 為瀏覽器結果總上限，`--reply-pages` 每單位最多展開五個可見回覆控制項；0 表示不主動展開。完整歷史、未知父子關係與頁碼不會被推測。B站／YouTube 繼續使用原有 API 分頁和樓層預算。
 

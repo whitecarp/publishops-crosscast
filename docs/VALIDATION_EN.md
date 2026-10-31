@@ -6,9 +6,16 @@ Date: **2026-11-01**, PublishOps CrossCast **0.16.0 alpha**.
 
 ## 0.16.0: paid API split, included bili-cli, status and cleanup
 
-**No real account was used for this version.** The live results further down belong to the versions they are listed under. bili-cli 1.2.1 and the new Bilibili message sources have not yet run on a real account.
+**Only one read-only Bilibili check ran on a real account for this version.** The live results further down belong to the versions they are listed under. Publishing and other writes through bili-cli 1.2.1 have not yet run on a real account.
 
-**423 offline tests pass on Python 3.12**, and CI runs the same suite on Windows with Python 3.10, 3.11 and 3.12. The paid add-on's own 130 tests pass against this core.
+| Live check | Result |
+|---|---|
+| Bilibili sign-in | QR sign-in through the included bili-cli 1.2.1 worked. |
+| Bilibili message sources | `vpub messages sync --platforms bilibili --sources mentions,dm_preview` read 20 @ mentions and 20 conversation previews with no platform writes. A second full read found nothing new or changed. The report contained no message text. |
+| Blank rows | The first run left 4 mentions and 1 conversation without text: a mention in a post (动态) has no text of its own, and Bilibili returned no name for 5 of the 20 conversations, one of which also had no message text. Rows now say who wrote and where, and a rerun filled all 40. |
+| Unread badges | Unread counts were 0 before and after, so this check cannot show whether reading clears a badge. |
+
+**425 offline tests pass on Python 3.12**, and CI runs the same suite on Windows with Python 3.10, 3.11 and 3.12. The paid add-on's own 130 tests pass against this core.
 
 | Offline check | Result |
 |---|---|

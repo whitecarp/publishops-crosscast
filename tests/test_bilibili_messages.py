@@ -21,9 +21,9 @@ def mention(event_id, text, mid=7, name="Viewer"):
     return notice
 
 
-def conversations(*sessions):
+def conversations(*sessions, named=True):
     """Conversations exactly as `bili dm list` builds them from Bilibili's response."""
-    names = {session["talker_id"]: f"Name{session['talker_id']}" for session in sessions}
+    names = {session["talker_id"]: f"Name{session['talker_id']}" for session in sessions} if named else {}
     with patch.object(bili_dm, "_sessions", new=AsyncMock(return_value=list(sessions))), patch.object(bili_dm, "_names", new=AsyncMock(return_value=names)):
         return asyncio.run(bili_dm.conversations(SimpleNamespace(dedeuserid="1"), False, 20))
 
@@ -50,8 +50,25 @@ class SourceTests(unittest.TestCase):
         self.assertEqual("1", value["identity"])
         self.assertTrue(value["complete"])
         first, own = value["items"]
-        self.assertEqual({"id": "9", "text": "@me look", "url": "https://www.bilibili.com/video/BV1ab411c7mD", "author": "Viewer", "is_owner": False}, first)
+        self.assertEqual({"id": "9", "text": "Viewer\n@me look", "url": "https://www.bilibili.com/video/BV1ab411c7mD", "is_owner": False}, first)
         self.assertTrue(own["is_owner"])
+
+    def test_a_mention_without_text_says_who_and_where(self):
+        # Seen on a real account: a mention in a post has no text, title or comment ID.
+        raw = {"id": 11, "at_time": 1800000000, "user": {"mid": 7, "nickname": "Viewer"},
+               "item": {"source_content": "", "uri": "https://t.bilibili.com/1", "business": "动态", "subject_id": 66}}
+        notice = bili_feed._notice(raw, "at_time", None, False)
+        with patch.object(adapters, "bili", return_value={"items": [notice], "next_cursor": None}):
+            item = operations_api.bilibili_source("mentions", "1", 20)["items"][0]
+        self.assertEqual("Viewer\n[动态]", item["text"])
+        self.assertEqual("https://t.bilibili.com/1", item["url"])
+
+    def test_a_conversation_is_never_blank(self):
+        # Seen on a real account: no name for some accounts, and no text for some message types.
+        rows = conversations({"talker_id": 5, "unread_count": 0}, session(6, "hello", 6), named=False)
+        with patch.object(adapters, "bili", return_value={"items": rows}):
+            value = operations_api.bilibili_source("dm_preview", "1", 20)
+        self.assertEqual(["UID 5", "UID 6\nhello"], [item["preview"] for item in value["items"]])
 
     def test_a_next_page_means_the_read_is_not_complete(self):
         with patch.object(adapters, "bili", return_value={"items": [], "next_cursor": "9,1"}):

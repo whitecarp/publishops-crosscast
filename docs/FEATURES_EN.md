@@ -21,7 +21,7 @@ This requirement exists because non-subscribers are limited to **140-second, 512
 | Like / unlike | Upstream CLI | Rating API | Video controls | Post controls | Post toolbar |
 | Private text messages | Upstream (not live-tested this round) | No adapter | CLI official UI | CLI X Chat | CLI official UI |
 | Save / remove | Selected favorite folder | Selected ordinary playlist | Default saved items | Private bookmarks | Default Saved |
-| Mentions | bili-cli; `vpub messages sync` not yet live-tested | Not integrated | Visible previews | Mentions | Tags/mentions; nonempty fixture pending |
+| Mentions | bili-cli; `vpub messages sync` | Not integrated | Visible previews | Mentions | Tags/mentions; nonempty fixture pending |
 | Moderation / hiding | Upstream | Viewer hold/approve | Not integrated | Hide/unhide other-author replies | Not integrated |
 
 Every other API entry in the YouTube column also needs the paid add-on; `vpub capabilities` shows what this machine has.
@@ -36,7 +36,7 @@ The current table and [latest validation](VALIDATION_EN.md) define scope; versio
 
 ## 0.16.0 — paid API add-on, included bili-cli, status and cleanup
 
-Official API routes for X, Instagram and YouTube move to a separate paid add-on; every other route stays free and MIT licensed. bili-cli 1.2.1 ships inside this package with the `bili` command. New: `vpub status`, `vpub cleanup`, and Bilibili @ mentions and conversation previews in `vpub messages sync` (not yet run on a real account). Removed: `inbox` (use `messages`), `--manage-playlists` and `--bilingual`. [Upgrade notes](OPERATIONS_EN.md#0160-what-changes-when-you-upgrade).
+Official API routes for X, Instagram and YouTube move to a separate paid add-on; every other route stays free and MIT licensed. bili-cli 1.2.1 ships inside this package with the `bili` command. New: `vpub status`, `vpub cleanup`, and Bilibili @ mentions and conversation previews in `vpub messages sync`. Removed: `inbox` (use `messages`), `--manage-playlists` and `--bilingual`. [Upgrade notes](OPERATIONS_EN.md#0160-what-changes-when-you-upgrade).
 
 ## 0.15.0 — recovery and complete reads
 

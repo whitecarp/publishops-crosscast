@@ -21,7 +21,7 @@
 | 點讚／取消讚 | 上游 CLI | 評分 API | 影片控制項 | 帖文控制項 | 作品工具列 |
 | 文字私信 | 上游委派（本輪未實測） | 無後端 | CLI 官方網頁 | CLI X Chat | CLI 官方網頁 |
 | 保存／移除 | 指定收藏夾 | 指定普通播放列表 | 預設收藏 | 私人書籤 | 預設 Saved |
-| @ 通知 | bili-cli；`vpub messages sync` 尚未實測 | 未接入 | 可見提及預覽 | Mentions | 標註／提及；非空樣本待驗 |
+| @ 通知 | bili-cli；`vpub messages sync` | 未接入 | 可見提及預覽 | Mentions | 標註／提及；非空樣本待驗 |
 | 審核／隱藏 | 上游 | 觀眾留言待審／批准 | 未接入 | 他人回覆隱藏／恢復 | 未接入 |
 
 YouTube 欄中其他 API 項目同樣需要付費附加元件；`vpub capabilities` 會顯示本機實際可用的路徑。
@@ -36,7 +36,7 @@ YouTube 欄中其他 API 項目同樣需要付費附加元件；`vpub capabiliti
 
 ## 0.16.0 — 付費 API 附加元件、內含 bili-cli、status 與 cleanup
 
-X、Instagram 與 YouTube 的官方 API 路徑移至獨立的付費附加元件，其他路徑維持免費與 MIT 授權。套件內含 bili-cli 1.2.1 及 `bili` 指令。新增 `vpub status`、`vpub cleanup`，`vpub messages sync` 也可讀取 B站 @ 提及與私信會話預覽（尚未在真實帳號上執行過）。移除 `inbox`（改用 `messages`）、`--manage-playlists` 與 `--bilingual`。[升級說明](OPERATIONS.md#0160升級時的變化)。
+X、Instagram 與 YouTube 的官方 API 路徑移至獨立的付費附加元件，其他路徑維持免費與 MIT 授權。套件內含 bili-cli 1.2.1 及 `bili` 指令。新增 `vpub status`、`vpub cleanup`，`vpub messages sync` 也可讀取 B站 @ 提及與私信會話預覽。移除 `inbox`（改用 `messages`）、`--manage-playlists` 與 `--bilingual`。[升級說明](OPERATIONS.md#0160升級時的變化)。
 
 ## 0.15.0 — 恢復與完整讀取
 
