@@ -34,7 +34,7 @@ vpub browser begin RECEIPT_KEY --identity OBSERVED_ACCOUNT
 | Instagram | 未發布的預覽，關閉瀏覽器後不一定還在 | `PREVIEW_READY` |
 | X | 發文編輯器，媒體已存進 Media Studio；不是已確認保存的草稿 | `PREVIEW_READY` |
 
-YouTube、X 和 Instagram 的付費 API 路徑沒有草稿，會拒絕這個旗標。B站或抖音的草稿只保留標題、簡介、標籤與封面，所以同時有排程、章節或合集的計畫會被拒絕。CrossCast 沒有刪除草稿的指令：B站的草稿請自己到其上傳管理的「草稿」頁面刪除。因為沒有發布任何內容，即使草稿已儲存，執行仍會以 `ok: false` 和退出碼 4 結束：請看狀態，不要看退出碼。`vpub status` 會列出已儲存的草稿。在真實帳號上，B站用這個方式儲存過一份草稿、讀回後自己刪除；其他平台還沒用這個指令試過。
+YouTube、X 和 Instagram 的付費 API 路徑沒有草稿，會拒絕這個旗標。B站或抖音的草稿只保留標題、簡介、標籤與封面，所以同時有排程、章節或合集的計畫會被拒絕。CrossCast 沒有刪除草稿的指令：B站的草稿請自己到其上傳管理的「草稿」頁面刪除。含草稿的方案會回報 `all_drafts_saved`，每份草稿都以 `DRAFT_SAVED` 或 `PREVIEW_READY` 結束時退出碼為 0（只有 B站的草稿會從清單讀回）。方案裡沒有任何平台要發布時，`all_submissions_verified` 是 `null`，所以草稿不會被當成已發布。`vpub status` 會列出已儲存的草稿。在真實帳號上，B站用這個方式儲存過草稿、讀回後自己刪除；其他平台還沒用這個指令試過。
 
 ## 本次實測
 
