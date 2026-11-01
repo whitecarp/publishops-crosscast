@@ -309,6 +309,13 @@ class RelayTests(Temporary):
         with patch("pathlib.Path.touch", side_effect=PermissionError), progress.relay("x", payload):
             self.assertNotIn("stages_path", payload)
 
+    def test_no_failure_in_setting_up_the_lines_can_fail_the_command(self):
+        for target, error in (("video_publisher.progress.home", RuntimeError("no home")), ("threading.Thread.start", RuntimeError("no thread"))):
+            with self.subTest(target=target):
+                payload = {}
+                with patch(target, side_effect=error), progress.relay("x", payload):
+                    self.assertNotIn("stages_path", payload)
+
 
 class RouteTests(Temporary):
     def test_every_route_receives_the_file_and_the_command_gets_its_answer(self):

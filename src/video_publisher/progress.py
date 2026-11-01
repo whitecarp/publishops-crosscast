@@ -111,22 +111,22 @@ def copy_lines(platform, path, done):
 
 @contextlib.contextmanager
 def relay(platform, payload):
-    """In the command's own process: give the payload a file and copy its words to stderr until the browser step ends."""
-    path = home() / "browser-jobs" / (uuid.uuid4().hex + ".stages")
-    done = threading.Event()
-    thread = threading.Thread(target=copy_lines, args=(platform, path, done), daemon=True)
+    """In the command's own process: give the payload a file and copy its words to stderr until the browser step ends. Whatever goes wrong here, the command still runs."""
+    path, thread, done = None, None, threading.Event()
     try:
+        path = home() / "browser-jobs" / (uuid.uuid4().hex + ".stages")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.touch()
         payload["stages_path"] = str(path)
+        thread = threading.Thread(target=copy_lines, args=(platform, path, done), daemon=True)
         thread.start()
-    except (OSError, RuntimeError):
+    except Exception:
         payload.pop("stages_path", None)
     try:
         yield
     finally:
         done.set()
-        if thread.is_alive():
+        if thread and thread.is_alive():
             thread.join(1)
-        with contextlib.suppress(OSError):
+        with contextlib.suppress(Exception):
             path.unlink()
