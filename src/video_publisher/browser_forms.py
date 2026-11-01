@@ -509,21 +509,36 @@ async def yt_playlists(page, titles):
 
 
 async def yt_set_time(page, clock, wanted):
-    """Studio's time box comes with a list of times. A field check found a time put into it all at once was gone after Enter, and Studio's own time was back.
-    So it is typed a key at a time, as a person would, and if that does not hold, chosen from the list when the list offers exactly this time. The caller reads back what stayed."""
+    """Studio's time box comes with a list of times. Field checks found a time typed or put into it and confirmed with Enter came back an hour later, while a quarter-hour time could still be set.
+    So it is typed, then chosen from the list when the list offers exactly this time, then typed again and left without Enter. The caller reads back what stayed; this says what the box showed at each step."""
+    steps = {}
+
+    async def held(step):
+        steps[step] = normalize(await clock.input_value())
+        return steps[step] == normalize(wanted)
     await clock.click(timeout=10000)
     await clock.select_text(timeout=5000)
     await clock.press_sequentially(wanted)
+    await held('typed')
     await clock.press('Enter')
     await page.wait_for_timeout(1000)
-    if normalize(await clock.input_value()) == normalize(wanted):
-        return
+    if await held('after_enter'):
+        return steps
     await clock.click(timeout=10000)
     await page.wait_for_timeout(500)
     offered = page.locator('tp-yt-paper-item:visible, [role="option"]:visible').filter(has_text=re.compile(r'^\s*' + re.escape(wanted) + r'\s*$'))
-    if await offered.count() == 1:
+    steps['listed'] = await offered.count()
+    if steps['listed'] == 1:
         await offered.click(timeout=5000)
         await page.wait_for_timeout(1000)
+        if await held('from_list'):
+            return steps
+    await clock.select_text(timeout=5000)
+    await clock.press_sequentially(wanted)
+    await clock.press('Tab')
+    await page.wait_for_timeout(1000)
+    await held('after_leaving')
+    return steps
 
 
 async def yt_schedule(page, when):
@@ -555,12 +570,13 @@ async def yt_schedule(page, when):
     await box.press('Enter')
     await page.wait_for_timeout(1000)
     held_before = await clock.input_value()
-    await yt_set_time(page, clock, time_style[2](local))
+    entered = await yt_set_time(page, clock, time_style[2](local))
     shown_day, shown_time = await day.inner_text(), await clock.input_value()
     if studio_read(STUDIO_DATES, shown_day) != (local.year, local.month, local.day) or studio_read(STUDIO_TIMES, shown_time) != (local.hour, local.minute):
-        raise VpubError('schedule_unverified', f'The YouTube schedule was not confirmed: Studio shows {normalize(shown_day)} {normalize(shown_time)} for {local.strftime("%Y-%m-%d %H:%M")}, and its time box held {normalize(held_before)} before. The upload is kept as a draft; nothing was published.')
+        raise VpubError('schedule_unverified', f'The YouTube schedule was not confirmed: Studio shows {normalize(shown_day)} {normalize(shown_time)} for {local.strftime("%Y-%m-%d %H:%M")}. Its time box held {normalize(held_before)} before, then {entered}. The upload is kept as a draft; nothing was published.',
+                         "A time on the quarter hour can be chosen from Studio's own list, which has worked on a real channel. Choose one and make a new plan.")
     return {'at': when.isoformat(), 'local': local.isoformat(), 'date': [local.year, local.month, local.day],
-            'time': [local.hour, local.minute], 'timezone_basis': 'studio' if offsets else 'computer'}
+            'time': [local.hour, local.minute], 'timezone_basis': 'studio' if offsets else 'computer', 'time_entry': entered}
 
 
 async def yt_upload_finished(page):

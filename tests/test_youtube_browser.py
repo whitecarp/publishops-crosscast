@@ -367,7 +367,8 @@ class ScheduleTests(FormCase):
         _, result = self.run_form(page, self.plan(schedule=self.WHEN))
         self.assertIn(("fill", "ytcp-date-picker tp-yt-paper-input input", "2030年1月1日"), page.log)
         self.assertIn(("type", "#time-of-day-container input", "08:00"), page.log)
-        self.assertEqual({"at": self.WHEN, "local": "2030-01-01T08:00:00+08:00", "date": [2030, 1, 1], "time": [8, 0], "timezone_basis": "studio"}, result["schedule"])
+        self.assertEqual({"at": self.WHEN, "local": "2030-01-01T08:00:00+08:00", "date": [2030, 1, 1], "time": [8, 0], "timezone_basis": "studio",
+                          "time_entry": {"typed": "08:00", "after_enter": "08:00"}}, result["schedule"])
         self.assertIsNone(page.chosen_visibility())
         self.assertEqual(1, len(page.clicks("#done-button")))
         self.assertEqual("SUBMISSION_VERIFIED", result["state"])
@@ -388,6 +389,13 @@ class ScheduleTests(FormCase):
         page = FakeStudio(missing={"#second-container-expand-button"})
         self.run_form(page, self.plan(schedule=self.WHEN, submission_mode="draft_only"))
         self.assertEqual(1, len(page.clicks("#schedule-radio-button")))
+
+    def test_a_time_that_will_not_hold_says_what_the_box_showed_and_how_to_get_past_it(self):
+        with self.assertRaises(VpubError) as caught:
+            self.run_form(FakeStudio(refuse_schedule=True), self.plan(schedule=self.WHEN))
+        self.assertIn("held 18:00 before", caught.exception.message)
+        self.assertIn("after_enter", caught.exception.message)
+        self.assertIn("quarter hour", caught.exception.hint)
 
     def test_anything_unconfirmed_stops_before_the_final_click(self):
         for options, code in [({"missing": {"#second-container-expand-button", "#schedule-radio-button"}}, "a"),
