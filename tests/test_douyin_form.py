@@ -271,6 +271,21 @@ class ScheduledCardTests(Base):
         await self.show(self.card_with_caption("CC test. Private test. 五秒测试。"))
         self.assertIs(True, await browser_backends.douyin_scheduled_card(self.page, self.receipt_with_caption()))
 
+    async def test_a_real_card_marks_each_new_paragraph_with_a_star(self):
+        """Word for word from a field check: the title, then the caption with a star where each paragraph began."""
+        title = "CC test B9I 临时排期"
+        caption = "CC test. Private five-second schedule test; removed immediately after inspection.\n\n五秒私密排期测试，检查后立即删除。\n\n#CrossCastTest"
+        node = "CC test B9I 临时排期 CC test. Private five-second schedule test; removed immediately after inspection. *五秒私密排期测试，检查后立即删除。 *#CrossCastTest"
+        await self.show(self.card(title=node))
+        self.assertIs(True, await browser_backends.douyin_scheduled_card(self.page, {**self.receipt(), "title": title, "expected_caption": caption}))
+
+    async def test_a_star_stands_only_for_a_new_paragraph(self):
+        for caption, node, same in (("One. Two.", f"{TITLE} One. *Two.", False), ("One.\n\nTwo.", f"{TITLE} One. *Two. *", False), ("One.\n\nTwo.", f"{TITLE} One. Two.", True),
+                                    ("2*3 is six", f"{TITLE} 2*3 is six", True), ("2*3 is six", f"{TITLE} 23 is six", False), ("One.\nTwo.", f"{TITLE} One. *Two.", True)):
+            with self.subTest(caption=caption, node=node):
+                await self.show(self.card(title=node))
+                self.assertIs(same, await browser_backends.douyin_scheduled_card(self.page, {**self.receipt(), "expected_caption": caption}))
+
     async def test_invisible_marks_are_no_part_of_what_was_written(self):
         for mark in ("\ufeff", "\u200b", "\u200d"):
             with self.subTest(mark=mark):

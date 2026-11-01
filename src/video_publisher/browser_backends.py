@@ -200,8 +200,8 @@ def douyin_card_words(text):
 
 
 async def douyin_cards_titled(page, title, caption=''):
-    """The Creator Center cards with exactly this title, or exactly this title and then this caption, which a field check found a card's title node holds. A longer title or another caption is another work."""
-    wanted = {douyin_card_words(title), douyin_card_words(title + caption)}
+    """The Creator Center cards with exactly this title, or exactly this title and then this caption, which a field check found a card's title node holds, with a star where each new paragraph begins. A longer title or another caption is another work."""
+    wanted = {douyin_card_words(title), douyin_card_words(title + caption), douyin_card_words(title + re.sub(r'\s*\n\s*', '*', caption.strip()))}
     cards = []
     for card in await page.locator(DOUYIN_CARD).all():
         names = card.locator('[class^="info-title-text-"]')
