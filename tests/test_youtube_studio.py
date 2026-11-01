@@ -121,6 +121,12 @@ class FakePage:
     def locator(self, selector):
         return Element(self, selector)
 
+    def on(self, event, handler):
+        pass
+
+    def remove_listener(self, event, handler):
+        pass
+
     def get_by_text(self, pattern, **options):
         return MagicMock(all=AsyncMock(return_value=[]))
 

@@ -69,7 +69,9 @@ def verify(key):
         if identity(r['platform'])!=r['identity']:raise VpubError('wrong_account', 'Reconnect the original account.')
         if r['state'] in {'READY','FAILED_BEFORE_SUBMIT'}:
             return {**r, 'platform_writes':0, 'hint':'No submit was recorded. Verify the platform before creating a new request.'}
-        try:r=checked_result(r,members(r['platform'],r['identity'],r['collection_id'],r['work_id']) if r['action'] in {'add','remove'} else call(r['platform'],'list',r['identity']))
+        try:
+            r=checked_result(r,members(r['platform'],r['identity'],r['collection_id'],r['work_id']) if r['action'] in {'add','remove'} else call(r['platform'],'list',r['identity']))
+            if r['state']=='CONFIRMED':r.pop('error',None)
         except Exception as exc:r.update(state='UNVERIFIED',error=exc.code if isinstance(exc,VpubError) else type(exc).__name__)
         atomic_json(path,r)
         return {**r,'platform_writes':0}

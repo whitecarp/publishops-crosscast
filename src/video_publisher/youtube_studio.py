@@ -22,6 +22,10 @@ EDIT_ITEM = re.compile(r"^\s*(Edit|修改|編輯)\s*$")
 DELETE_ITEM = re.compile(r"^\s*(Delete|删除|刪除)\s*$")
 # A Studio list is read to its end, within reason; a longer one is reported as not complete.
 TABLE_PAGES = 20
+# After a change the page is left alone until its own requests have stopped for this many half-seconds, up to the limit.
+PAGE_REQUESTS = "/youtubei/v1/"
+QUIET_TICKS = 10
+MOST_TICKS = 90
 METRICS = {"views": {"Views", "观看次数", "觀看次數"},
            "watch_time_hours": {"Watch time (hours)", "观看时长（小时）", "觀看時長（小時）", "觀看時間 (小時)"},
            "subscribers": {"Subscribers", "订阅人数", "訂閱人數"}}
@@ -95,6 +99,40 @@ async def appears(page, target, seconds):
             return True
         await page.wait_for_timeout(500)
     return False
+
+
+async def act_and_settle(page, act):
+    """Do something, then stay until the page has finished its own requests. Whether it worked is for the read-back to say.
+
+    On a real channel Studio greyed Save out at once and sent the change about 6 seconds later, after its own checks.
+    A delete was answered at once, then sent again after those checks. Leaving at either point cancelled the change.
+    """
+    busy = {"open": 0, "seen": 0}
+
+    def sent(request):
+        if PAGE_REQUESTS in request.url:
+            busy["open"] += 1
+            busy["seen"] += 1
+
+    def ended(request):
+        if PAGE_REQUESTS in request.url:
+            busy["open"] = max(0, busy["open"] - 1)
+
+    listeners = (("request", sent), ("requestfinished", ended), ("requestfailed", ended))
+    for event, listener in listeners:
+        page.on(event, listener)
+    try:
+        await act()
+        quiet, last = 0, busy["seen"]
+        for _ in range(MOST_TICKS):
+            await page.wait_for_timeout(500)
+            quiet = quiet + 1 if not busy["open"] and busy["seen"] == last else 0
+            last = busy["seen"]
+            if quiet >= QUIET_TICKS:
+                return
+    finally:
+        for event, listener in listeners:
+            page.remove_listener(event, listener)
 
 
 async def own_handle(page, identity):
@@ -226,7 +264,7 @@ async def operations(page, identity, payload):
     saved = read_json(path)
     saved.update(before_reply_ids=[c["id"] for c in current], submitted_text=request["text"], state="REPLY_SUBMITTING")
     atomic_json(path, saved)
-    await button.click(timeout=20000)
+    await act_and_settle(page, lambda: button.click(timeout=20000))
     saved["state"] = "REPLY_UNVERIFIED"
     atomic_json(path, saved)
     await page.wait_for_timeout(3000)
@@ -296,8 +334,7 @@ async def engagement(page, identity, payload):
     stop_check("youtube")
     from .engagement import submitting
     submitting(payload["receipt_path"])
-    await control.click(timeout=15000)
-    await page.wait_for_timeout(1500)
+    await act_and_settle(page, lambda: control.click(timeout=15000))
     await risk_check(page)
     return {"state": "ACTION_UNVERIFIED", "platform_writes": 1}
 
@@ -372,10 +409,10 @@ async def studio_confirm(page):
         await page.wait_for_timeout(500)
 
 
-async def wait_ready(page, button, ready=True, tries=60):
+async def wait_ready(page, button, tries=20):
     from .browser_forms import yt_button_ready
     for _ in range(tries):
-        if await yt_button_ready(button) is ready:
+        if await yt_button_ready(button):
             return True
         await page.wait_for_timeout(500)
     return False
@@ -420,12 +457,11 @@ async def rename_playlist(page, identity, payload, before_submit):
     if privacy:
         await set_privacy(page, visibility_trigger(page), privacy)
     button = page.locator("ytcp-button#save").first
-    if not await wait_ready(page, button, tries=20):
+    if not await wait_ready(page, button):
         raise VpubError("edit_not_ready", "Studio did not enable Save; nothing was saved.")
     await risk_check(page)
     before_submit(payload, identity)
-    await button.click(timeout=20000)
-    await wait_ready(page, button, ready=False)
+    await act_and_settle(page, lambda: button.click(timeout=20000))
     title, notes = await playlist_fields(page, playlist)
     kept = normalize(await title.inner_text()) == normalize(payload["title"]) and (description is None or normalize(await notes.inner_text()) == normalize(description))
     if privacy and studio_visibility(await visibility_trigger(page).inner_text()) != privacy:
@@ -451,16 +487,21 @@ async def create_playlist(page, identity, payload, before_submit):
         await boxes.nth(1).fill(payload["description"])
     await set_privacy(page, dialog.locator("ytcp-dropdown-trigger").first, payload.get("privacy") or "private")
     button = dialog.locator("ytcp-button#create-button").first
-    if not await wait_ready(page, button, tries=20):
+    if not await wait_ready(page, button):
         raise VpubError("edit_not_ready", "Studio did not enable Create; nothing was created.")
     await risk_check(page)
     before_submit(payload, identity)
     await button.click(timeout=20000)
-    await dialog.wait_for(state="hidden", timeout=30000)
+    await button.wait_for(state="hidden", timeout=30000)
     await risk_check(page)
-    # The new ID shows only in the list, as the one row that was not there before.
+    # The new ID shows only in the list, as the one row that was not there before, and the list can take a moment to catch up.
     known = set(read_json(receipt_path(payload["receipt_key"]))["before_ids"])
-    new = [row["id"] for row in (await read_playlists(page, identity))[0] if row["id"] not in known and row["title"] == normalize(payload["title"])]
+    new = []
+    for _ in range(4):
+        new = [row["id"] for row in (await read_playlists(page, identity))[0] if row["id"] not in known and row["title"] == normalize(payload["title"])]
+        if new:
+            break
+        await page.wait_for_timeout(3000)
     return {"identity": identity, "submitted": True, "collection_id": new[0] if len(new) == 1 else None}
 
 
@@ -476,16 +517,29 @@ async def delete_playlist(page, identity, payload, before_submit):
             raise VpubError("collection_not_visible", "This playlist is not in Studio's list; nothing changed.")
         await after.click(timeout=15000)
         await page.wait_for_timeout(1500)
+    title = normalize(await row.first.locator("#playlist-title-link").inner_text())
     await row.first.hover()
     await row.first.locator("#overflow-menu-button").first.click(timeout=15000)
     item = page.locator('tp-yt-paper-item[test-id="DELETE_FOREVER"]')
     await appears(page, item, 10)
-    item = await unique_visible(item, "Delete playlist")
+    await (await unique_visible(item, "Delete playlist")).click(timeout=15000)
+    # Studio asks once more and names the playlist, so that name is checked before anything is deleted.
+    # The window's outer element never counts as visible, so its button is what shows it has opened.
+    buttons = page.locator("ytcp-confirmation-dialog#playlist-delete-dialog ytcp-button#confirm-button")
+    confirm = None
+    for _ in range(20):
+        confirm = await visible(buttons)
+        if confirm:
+            break
+        await page.wait_for_timeout(500)
+    if confirm is None:
+        await risk_check(page)
+        raise VpubError("layout_changed", "Studio did not ask to confirm the delete; nothing was deleted.")
+    if not title or title not in normalize(await confirm.locator("xpath=ancestor::ytcp-confirmation-dialog[1]").inner_text()):
+        raise VpubError("wrong_collection", "Studio's confirmation names another playlist; nothing was deleted.")
     await risk_check(page)
     before_submit(payload, identity)
-    await item.click(timeout=15000)
-    await studio_confirm(page)
-    await page.wait_for_timeout(2000)
+    await act_and_settle(page, lambda: confirm.click(timeout=15000))
     await risk_check(page)
     return {"identity": identity, "submitted": True, "collection_id": payload["collection_id"]}
 
@@ -521,11 +575,7 @@ async def playlists(page, identity, payload):
         await risk_check(page)
         await row.click(trial=True, timeout=10000)
         before_submit(payload, identity)
-        await row.click(timeout=15000)
-        for _ in range(20):
-            if await pressed(row) is not inside:
-                break
-            await page.wait_for_timeout(500)
+        await act_and_settle(page, lambda: row.click(timeout=15000))
         await risk_check(page)
         return {"identity": identity, "submitted": True, "collection_id": playlist}
     if operation == "create":
@@ -582,8 +632,7 @@ async def comment_action(page, identity, payload):
         button = like.locator("ytcp-icon-button").first
         await button.click(trial=True, timeout=10000)
         submitting(payload["receipt_path"])
-        await button.click(timeout=15000)
-        await page.wait_for_timeout(1500)
+        await act_and_settle(page, lambda: button.click(timeout=15000))
         return sent()
     if kind == "edit":
         item = await comment_menu_item(page, row, EDIT_ITEM)
@@ -598,15 +647,17 @@ async def comment_action(page, identity, payload):
         if not await button.is_enabled():
             raise VpubError("reply_not_ready", "YouTube has not enabled saving this comment.")
         submitting(payload["receipt_path"])
-        await button.click(timeout=15000)
-        await page.wait_for_timeout(2000)
+        await act_and_settle(page, lambda: button.click(timeout=15000))
         return sent()
     if kind == "delete":
         item = await comment_menu_item(page, row, DELETE_ITEM)
         submitting(payload["receipt_path"])
-        await item.click(timeout=10000)
-        await studio_confirm(page)
-        await page.wait_for_timeout(2000)
+
+        async def remove():
+            await item.click(timeout=10000)
+            await studio_confirm(page)
+
+        await act_and_settle(page, remove)
         return sent()
     raise VpubError("paid_feature_required", "This comment action needs the paid CrossCast add-on for now.", "Comment likes, and editing or deleting the channel's own comments, are free.")
 
@@ -664,11 +715,7 @@ async def edit(page, payload, save, submit):
     else:
         raise VpubError("edit_not_ready", "Studio did not enable Save; nothing was saved.")
     save(state="EDIT_PREPARED")
-    await submit(button)
-    for _ in range(120):
-        if not await yt_button_ready(button):
-            break
-        await page.wait_for_timeout(500)
+    await act_and_settle(page, lambda: submit(button))
     if changes is None:
         return save(state="EDIT_VERIFIED", platform_writes=1, cover={"state": "UI_ACCEPTED", "remote_pixels_verified": False}, **evidence)
     title, description = await edit_fields(page, url)

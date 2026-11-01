@@ -21,7 +21,7 @@
 ## 0.16.0：升級時的變化
 
 - **官方 API 路徑改為獨立的付費附加元件。** 涵蓋 X、Instagram 與 YouTube。未安裝時，YouTube、抖音、Instagram 與 X 都使用背景瀏覽器。
-- **YouTube 作品、數據、留言與編輯可透過其官方頁面免費使用。** 未安裝附加元件時，`vpub works`、`vpub stats`、`vpub comments list`、`vpub comments reply`、`vpub comments like`、`vpub engage like`、`vpub engage save`、`vpub playlist` 與 `vpub edit` 會在背景瀏覽器中執行，頻道自己留言的 `vpub comments edit` 與 `vpub comments delete` 也一樣。讀取已在真實頻道上檢查過；會造成變更的操作都尚未在真實頻道上試過。留言為 Studio 載入的內容，並非完整歷史。調整播放清單順序與待審核留言佇列需要附加元件。
+- **YouTube 作品、數據、留言與編輯可透過其官方頁面免費使用。** 未安裝附加元件時，`vpub works`、`vpub stats`、`vpub comments list`、`vpub comments reply`、`vpub comments like`、`vpub engage like`、`vpub engage save`、`vpub playlist` 與 `vpub edit` 會在背景瀏覽器中執行，頻道自己留言的 `vpub comments edit` 與 `vpub comments delete` 也一樣。讀取，以及建立、重新命名、刪除私人播放清單並在其中新增和移除影片，都已在真實頻道上檢查過；其他會造成變更的操作尚未在真實頻道上試過。留言為 Studio 載入的內容，並非完整歷史。調整播放清單順序與待審核留言佇列需要附加元件。
 - **YouTube 新增免費背景路徑。** `vpub auth login youtube --method browser` 在專用 Chrome 視窗登入一次；之後經由 YouTube Studio 在背景發布，Windows 上使用隱藏桌面，不會出現視窗或工作列圖示。可依確切標題加入播放清單（`playlist_titles`），也可設定排程（依 Studio 顯示的時區，沒有顯示時依這台電腦的時區）；兩者都在最後儲存前讀回確認，尚未在真實帳號上實測。播放清單 ID（`playlist_ids`）只能走付費 API。`--draft-only` 會在最後儲存前停止。
 - **同樣移至附加元件：** 營運匯報（`vpub report`）、完整讀取（`vpub read-all`）與郵件提醒（`vpub notify`）。
 - **內含 bili-cli。** 安裝 CrossCast 時會一併提供 `bili` 指令，版本為 1.2.1。如果仍裝有舊版獨立的 `bili-agent`，`vpub doctor` 會說明如何移除。
@@ -124,7 +124,7 @@ vpub ops runs
 
 管理本帳號的一般播放列表：建立、改名、修改說明／可見性、添加／移除影片和刪除列表。建立預設私密；改名保留原說明及可見性。
 
-**未安裝附加元件時**，這些操作在背景瀏覽器中透過 YouTube 自己的頁面執行。`remove` 使用 VIDEO_ID。添加與移除使用影片觀看頁的儲存視窗，它會標明這部影片是否在該列表中；該視窗不顯示 ID，因此播放列表的標題不能重複。清單與讀取已在真實頻道上檢查過；變更尚未在真實頻道上試過。調整順序（`move`）會回傳 `paid_feature_required`。
+**未安裝附加元件時**，這些操作在背景瀏覽器中透過 YouTube 自己的頁面執行。`remove` 使用 VIDEO_ID。添加與移除使用影片觀看頁的儲存視窗，它會標明這部影片是否在該列表中；該視窗不顯示 ID，因此播放列表的標題不能重複。清單、讀取、建立、改名、添加、移除與刪除，都已用臨時的私人播放清單在真實頻道上檢查過；修改說明或可見性尚未在真實頻道上試過。調整順序（`move`）會回傳 `paid_feature_required`。
 
 **安裝附加元件後**改用官方 API，也可調整順序。移動／移除使用 `playlist items` 返回的精確 **ITEM_ID**，不是 VIDEO_ID；排序位置從 0 開始。
 
