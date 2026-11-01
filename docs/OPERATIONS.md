@@ -533,7 +533,7 @@ vpub instagram prepare ready.json --out instagram-ready.json
 
 修改支援平台的現有作品可用下列交接命令；需核對原帳號、作品及保存結果。Instagram 手機換圖與 X Studio 使用上面的專用流程。
 
-Instagram 文案修正會打開原作品的編輯欄，完整比較已保存的原始文字；不把頁面翻譯、留言或舊成功回執當作目前簡介。相同文字不再保存；不一致時修正同一作品，再重新開啟編輯欄讀回。`vpub edit KEY PATCH --verify-only` 只核驗、不保存；`EDIT_MISMATCH` 代表實際文字不同，可檢查後明確重新執行修改。
+Instagram 文案修正會打開原作品的編輯欄，完整比較已保存的原始文字；不把頁面翻譯、留言或舊成功回執當作目前簡介。相同文字不再保存；不一致時修正同一作品，再重新開啟編輯欄讀回。`vpub edit KEY PATCH --verify-only` 只核驗、不保存；`EDIT_MISMATCH` 代表實際文字不同，可檢查後明確重新執行修改。儲存結果不明時，核驗只能確認它：其他結果都維持 `EDIT_SUBMITTED_UNVERIFIED`，因為頁面可能暫時顯示舊文字；再次儲存會以 `inspect_existing_edit` 拒絕，直到有人看過作品並加上 `--person-approved`。
 
 ```sh
 vpub browser cover RECEIPT_KEY --file landscape.jpg --portrait portrait.jpg --identity OBSERVED_ACCOUNT

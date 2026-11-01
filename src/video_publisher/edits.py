@@ -67,7 +67,7 @@ def validate_patch(platform, value, verifying=False, ai_generated=True):
     return p
 
 
-def send(platform, account, actual, receipt, key, patch, dry_run, verify_only):
+def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, person_approved=False):
     """One correction, once. An uncertain save keeps its receipt, which blocks a repeat until the work is inspected."""
     work_id=receipt['id']
     if actual!=patch['expected_identity']: raise VpubError('wrong_account','Correction identity differs from the publication receipt.')
@@ -80,8 +80,9 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only):
         # A prior success is history, not current platform state. The backend
         # reads the existing work and skips saving only when it still matches.
         tried=saved.get('state') in {'EDIT_SUBMITTING','EDIT_SUBMITTED_UNVERIFIED'}
-        if tried and not verify_only:
-            raise VpubError('inspect_existing_edit','A save was already attempted; inspect the existing work before any retry.')
+        if tried and not verify_only and not person_approved:
+            raise VpubError('inspect_existing_edit','A save was already attempted; inspect the existing work before any retry.',
+                            'If a person has looked at the work and the change is not there, add --person-approved to try once more.')
     def checkpoint(data): atomic_json(path,{'key':key,'edit_id':edit_id,'at':now(),**data})
     if not verify_only: checkpoint({'state':'EDIT_PREPARING','id':work_id})
     from . import adapters
@@ -96,11 +97,13 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only):
             receipt=receipt,patch=patch,edit_receipt_path=str(path),verify_only=verify_only)
     # A check changes nothing, so it must not leave what reads as a save that was tried and block the real one.
     if verify_only and not tried and result.get('state')=='EDIT_SUBMITTED_UNVERIFIED': result={**result,'state':'EDIT_MISMATCH'}
+    # A check can confirm an unclear save, and nothing less clears it: a page can show the old words for a while, and a cover cannot be compared at all.
+    if verify_only and tried and result.get('state')!='EDIT_VERIFIED': result={**result,'state':'EDIT_SUBMITTED_UNVERIFIED'}
     checkpoint(result)
     return result
 
 
-def run_adopted(platform, work, patch_path, dry_run=False, verify_only=False):
+def run_adopted(platform, work, patch_path, dry_run=False, verify_only=False, person_approved=False):
     """The same correction for a work CrossCast adopted rather than published, using the owner that adoption verified."""
     from .work_catalog import binding
     with publication_lock():
@@ -111,13 +114,13 @@ def run_adopted(platform, work, patch_path, dry_run=False, verify_only=False):
             raise VpubError('unsupported_edit','Douyin covers and chapters find the work by its title, and this adoption recorded none; nothing changed.')
         receipt={'id':work,'identity':adopted['identity'],'title':adopted.get('title')}
         key=digest(['adopted',platform,work])
-        result=send(platform,'default',adopted['identity'],receipt,key,patch,dry_run,verify_only)
+        result=send(platform,'default',adopted['identity'],receipt,key,patch,dry_run,verify_only,person_approved)
         if result.get('state')=='EDIT_VERIFIED' and 'title' in patch:
             atomic_json(home()/'operations/adopted'/(digest([platform,work])+'.json'),{**adopted,'title':patch['title']})
         return {'platform':platform,'work_id':work,**result}
 
 
-def run(key, patch_path, dry_run=False, verify_only=False):
+def run(key, patch_path, dry_run=False, verify_only=False, person_approved=False):
     with publication_lock():
         ledger=Ledger()
         try:
@@ -127,7 +130,7 @@ def run(key, patch_path, dry_run=False, verify_only=False):
             if not work_id: raise VpubError('work_id_required','Verify the existing work ID first; never infer an ID from a title or upload again.')
             patch=validate_patch(row['platform'],read_json(patch_path),verify_only,record.get('options',{}).get('ai_generated',True))
             actual=record.get('identity',{}).get('identity') or receipt.get('identity')
-            result=send(row['platform'],row['account'],actual,receipt,key,patch,dry_run,verify_only)
+            result=send(row['platform'],row['account'],actual,receipt,key,patch,dry_run,verify_only,person_approved)
             if dry_run: return result
             edit_id=digest([key,patch])
             record.setdefault('edits',[]).append({'edit_id':edit_id,'patch':patch,'result':result,'at':now()})

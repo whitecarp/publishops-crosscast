@@ -496,12 +496,14 @@ def parser():
     q.add_argument('patch', help='JSON with expected_identity and replacement caption, Douyin portrait or chapters.')
     q.add_argument('--dry-run', action='store_true')
     q.add_argument('--verify-only', action='store_true', help='Read back the existing correction without saving; covers return evidence for visual inspection.')
+    q.add_argument('--person-approved', action='store_true', help='After an unclear save: a person has looked at the work, the change is not there, and this tries once more.')
     q = sub.add_parser('edit-work', help='Correct a work adopted with vpub ops adopt, by platform and ID; never upload/delete a video.')
     q.add_argument('platform', choices=PLATFORMS)
     q.add_argument('work')
     q.add_argument('patch', help='The same JSON as vpub edit.')
     q.add_argument('--dry-run', action='store_true')
     q.add_argument('--verify-only', action='store_true', help='Read back the existing correction without saving.')
+    q.add_argument('--person-approved', action='store_true', help='After an unclear save: a person has looked at the work, the change is not there, and this tries once more.')
     q = sub.add_parser("adopt", help="Associate an already-published video to avoid duplicate Bilibili uploads.")
     q.add_argument("manifest")
     q.add_argument("--platform", choices=["bilibili", "youtube"], required=True)
@@ -627,10 +629,10 @@ def run_command(args):
         return result
     if args.command == 'edit':
         from .edits import run
-        return run(args.key, args.patch, args.dry_run, args.verify_only)
+        return run(args.key, args.patch, args.dry_run, args.verify_only, args.person_approved)
     if args.command == 'edit-work':
         from .edits import run_adopted
-        return run_adopted(args.platform, args.work, args.patch, args.dry_run, args.verify_only)
+        return run_adopted(args.platform, args.work, args.patch, args.dry_run, args.verify_only, args.person_approved)
     if args.command == "works":
         from .operations_sync import works
         result=works(args.platform,args.limit,args.cursor)

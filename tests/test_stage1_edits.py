@@ -195,6 +195,34 @@ class CheckingTests(Temporary):
             self.run_send({"state": "EDIT_VERIFIED", "platform_writes": 1}, False)
         self.assertEqual("inspect_existing_edit", caught.exception.code)
 
+    def tried(self):
+        atomic_json(home() / "edits" / (digest(["key", edits.validate_patch("x", TEXT)]) + ".json"), {"state": "EDIT_SUBMITTED_UNVERIFIED"})
+
+    def test_a_check_that_cannot_confirm_an_unclear_save_never_clears_it(self):
+        """From a review: a thumbnail check said it could not compare, that read as a difference, and the same thumbnail was saved a second time."""
+        for answer in ("EDIT_MISMATCH", "EDIT_SUBMITTED_UNVERIFIED"):
+            with self.subTest(answer=answer):
+                self.tried()
+                result, _ = self.run_send({"state": answer, "platform_writes": 0}, True)
+                self.assertEqual("EDIT_SUBMITTED_UNVERIFIED", result["state"])
+                with self.assertRaises(VpubError) as caught:
+                    self.run_send({"state": "EDIT_VERIFIED", "platform_writes": 1}, False)
+                self.assertEqual("inspect_existing_edit", caught.exception.code)
+                self.assertIn("--person-approved", caught.exception.hint)
+
+    def test_once_a_person_has_looked_it_can_be_tried_once_more(self):
+        self.tried()
+        patch_value = edits.validate_patch("x", TEXT)
+        with patch.object(adapters, "browser_call", return_value={"state": "EDIT_VERIFIED", "platform_writes": 1}) as call:
+            result = edits.send("x", "default", OWNER, {"id": "1234567890"}, "key", patch_value, False, False, person_approved=True)
+        self.assertEqual("EDIT_VERIFIED", result["state"])
+        call.assert_called_once()
+
+    def test_a_check_before_any_save_still_does_not_block_the_save(self):
+        result, _ = self.run_send({"state": "EDIT_MISMATCH", "platform_writes": 0}, True)
+        self.assertEqual("EDIT_MISMATCH", result["state"])
+        self.assertEqual("EDIT_VERIFIED", self.run_send({"state": "EDIT_VERIFIED", "platform_writes": 1}, False)[0]["state"])
+
     def test_a_check_that_finds_the_words_there_clears_an_earlier_unclear_save(self):
         patch_value = edits.validate_patch("x", TEXT)
         atomic_json(home() / "edits" / (digest(["key", patch_value]) + ".json"), {"state": "EDIT_SUBMITTING"})

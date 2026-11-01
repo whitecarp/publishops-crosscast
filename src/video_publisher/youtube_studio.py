@@ -845,8 +845,7 @@ async def edit(page, payload, save, submit):
     evidence = {"url": url, "verification_source": "studio_edit_page"}
     if "cover" in patch:
         if payload.get("verify_only"):
-            # A read that cannot compare says nothing about an earlier save, so it must not read as a difference that clears one.
-            return save(state="EDIT_SUBMITTED_UNVERIFIED", platform_writes=0, reason="Studio does not expose the thumbnail's pixels for comparison; nothing changed.", **evidence)
+            return save(state="EDIT_MISMATCH", platform_writes=0, reason="Studio does not expose the thumbnail's pixels for comparison; nothing changed.", **evidence)
         if file_sha(patch["cover"]) != patch["cover_sha256"]:
             raise VpubError("source_changed", "The cover changed before upload; nothing changed.")
         inputs = page.locator("input#file-loader")
