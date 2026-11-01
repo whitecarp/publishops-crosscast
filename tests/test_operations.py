@@ -98,7 +98,7 @@ class OperationsTests(unittest.TestCase):
     def test_uncertain_self_test_never_posts_a_second_seed(self):
         key=digest(['youtube','abcdefghijk','test-one'])
         atomic_json(home()/'operations/tests'/(key+'.json'),{'platform':'youtube','work_id':'abcdefghijk','state':'TEST_SEED_SUBMITTING'})
-        with patch.object(ops,'backend',return_value={'state':'TEST_SEED_UNVERIFIED'}) as backend:
+        with patch.object(ops,'backend',return_value={'state':'TEST_SEED_UNVERIFIED'}) as backend,patch('video_publisher.adapters.addon_installed',return_value=True):
             result=ops.self_test('youtube','abcdefghijk','test-one')
         self.assertEqual('TEST_SEED_UNVERIFIED',result['state'])
         self.assertEqual('test_seed_verify',backend.call_args.args[1]);backend.assert_called_once()

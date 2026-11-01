@@ -5,7 +5,7 @@ import uuid
 
 from . import safety
 from .core import (Ledger, VpubError, atomic_json, config, digest, home,
-                   language_tag, now, platform_check, publication_lock, read_json, stop_check)
+                   language_tag, now, observation_lock, platform_check, publication_lock, read_json, stop_check)
 
 NAMES={'bilibili':'B站','youtube':'YouTube','douyin':'抖音','instagram':'Instagram','x':'X'}
 
@@ -78,7 +78,7 @@ def backend(platform, action, work, **kw):
 
 def save_observation(platform, work, action, result):
     result.update(platform=platform,work_id=work,observed_at=now())
-    with publication_lock():
+    with observation_lock():
         if action=='comments':
             for comment in result.get('items',[]):
                 comment.setdefault('language_hint',language_hint(comment.get('text','')))
@@ -215,6 +215,10 @@ def verify_reply(key):
 def self_test(platform, work, test_id):
     """Explicitly requested live hello test, at most one seed and one reply per ID."""
     work=work_id(platform,work);stop_check(platform)
+    from . import adapters
+    if platform=='youtube' and not adapters.addon_installed():
+        raise VpubError('unsupported_operation','The self-test posts its own comment first, which the free YouTube route cannot do; nothing was sent.',
+                        'Reply to an existing comment with vpub comments reply, or install the add-on.')
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,80}',test_id):
         raise VpubError('invalid_test_id','Use a stable alphanumeric test ID; reruns reuse it.')
     key=digest([platform,work,test_id]);path=home()/'operations/tests'/(key+'.json')

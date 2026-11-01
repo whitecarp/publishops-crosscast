@@ -1,6 +1,6 @@
 """Local, account-scoped comment history. Marking items never changes a platform."""
 import re
-from .core import VpubError, atomic_json, digest, home, now, publication_lock, read_json
+from .core import VpubError, atomic_json, digest, home, now, observation_lock, read_json
 
 STATES = ('unread', 'read', 'handled', 'deferred')
 
@@ -36,7 +36,7 @@ def entries():
 def mark(key, status):
     if not re.fullmatch(r'[a-f0-9]{64}', key) or status not in STATES:
         raise VpubError('invalid_inbox_mark', 'Use an inbox key and unread/read/handled/deferred.')
-    with publication_lock():
+    with observation_lock():
         matches = [(path, row) for path, row in entries() if row['key'] == key]
         if len(matches) != 1: raise VpubError('inbox_item_missing', 'The exact local comment was not found.')
         path, row = matches[0]

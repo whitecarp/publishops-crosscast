@@ -10,6 +10,7 @@ import re
 import shutil
 import sqlite3
 import tempfile
+import time
 from datetime import datetime, timezone
 
 PLATFORMS = ("bilibili", "youtube", "douyin", "instagram", "x")
@@ -421,3 +422,23 @@ def publication_lock():
     from .process_lock import hold
     with hold(home() / 'publisher.lock', 'busy', 'Another publication command owns this workspace.'):
         yield
+
+
+@contextlib.contextmanager
+def observation_lock(seconds=30):
+    """Saving what a read found touches only local files for a moment, so it never waits for a publish or a change on another platform."""
+    from .process_lock import hold
+    deadline = time.monotonic() + seconds
+    while True:
+        held = hold(home() / 'observations.lock', 'busy', 'Another command is saving what it read.')
+        try:
+            held.__enter__()
+            break
+        except VpubError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.2)
+    try:
+        yield
+    finally:
+        held.__exit__(None, None, None)

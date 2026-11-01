@@ -334,7 +334,10 @@ async def yt_playlists(page, titles):
     trigger = await unique_visible(page.locator(f'{YT_DIALOG} ytcp-video-metadata-playlists ytcp-dropdown-trigger'), 'YouTube playlist list')
     await trigger.click(timeout=15000)
     dialog = page.locator(YT_PLAYLISTS)
-    await wait_until(page, lambda: visible(dialog), seconds=30, label='YouTube playlist picker')
+    # Only this picker's own Done; the upload dialog's final Save also uses a done-button.
+    # The picker's outer element has no size, so this button is what shows it has opened.
+    finish = dialog.locator('.done-button')
+    await wait_until(page, lambda: visible(finish), seconds=30, label='YouTube playlist picker')
     boxes = dialog.locator('[role="checkbox"]')
     wanted = {normalize(title) for title in titles}
     rows = await boxes.evaluate_all(YT_PLAYLIST_ROWS)
@@ -350,10 +353,9 @@ async def yt_playlists(page, titles):
     rows = await boxes.evaluate_all(YT_PLAYLIST_ROWS)
     if any(row['checked'] != bool(wanted & set(row['lines'])) for row in rows):
         raise VpubError('playlist_unverified', 'The YouTube playlists could not be ticked. The upload is kept as a draft; nothing was published.')
-    # Only this picker's own Done; the upload dialog's final Save also uses a done-button.
-    done = await unique_visible(dialog.locator('.done-button'), 'YouTube playlist Done')
+    done = await unique_visible(finish, 'YouTube playlist Done')
     await done.click(timeout=15000)
-    await dialog.first.wait_for(state='hidden', timeout=15000)
+    await finish.first.wait_for(state='hidden', timeout=15000)
     listed = normalize(await trigger.inner_text())
     if any(title not in listed for title in wanted):
         raise VpubError('playlist_unverified', 'The YouTube playlists were not confirmed. The upload is kept as a draft; nothing was published.')

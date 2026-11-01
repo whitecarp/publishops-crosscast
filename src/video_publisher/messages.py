@@ -1,7 +1,7 @@
 """Account-scoped local inbox for comments, mentions and conversation previews."""
 import re
 from . import operations_inbox, safety
-from .core import VpubError, atomic_json, digest, home, now, publication_lock, read_json, platform_check
+from .core import VpubError, atomic_json, digest, home, now, observation_lock, read_json, platform_check
 
 KINDS=('comments','mentions','dm_preview')
 
@@ -18,7 +18,7 @@ def stable_preview(row):
 def merge(platform, kind, value, observation_id=None):
     """Only successful source reads advance their own baseline; absence is not deletion."""
     identity=value['identity'];path=home()/'operations/messages'/(digest([platform,identity,kind])+'.json')
-    with publication_lock():
+    with observation_lock():
         data=read_json(path) if path.exists() else {'items':{},'schema_version':1}
         if observation_id and observation_id in data.get('observations',{}):return data['observations'][observation_id]
         baseline='observed_at' not in data;added=changed=0;observed=now()
@@ -77,7 +77,7 @@ def mark(key,status):
     matches=[(path,row) for path,row in entries() if row['key']==key]
     if not matches:return operations_inbox.mark(key,status)
     if len(matches)!=1:raise VpubError('ambiguous_key','Local message key is ambiguous.')
-    with publication_lock():
+    with observation_lock():
         path,_=matches[0];data=read_json(path);row=data['items'][key]
         row.update(status=status,marked_at=now());atomic_json(path,data)
     return {**row,'platform_writes':0}

@@ -42,6 +42,7 @@ class FakeYouTube:
         self.confirm = True
         self.keep = True
         self.dialog_title = None
+        self.other_box = False
 
     async def html(self, route, body):
         await route.fulfill(status=200, content_type="text/html; charset=utf-8", body="<!doctype html><title>t</title>" + STYLE + "<body>" + body)
@@ -86,6 +87,8 @@ class FakeYouTube:
             next(row for row in self.comments if row["id"] == parts[1])["liked"] ^= True
         elif kind == "comment-edit":
             next(row for row in self.comments if row["id"] == parts[1])["text"] = data["text"]
+        elif kind == "comment-reply":
+            self.comments.append({"id": "r1", "text": data["text"], "own": True, "liked": False})
         elif kind in {"comment-delete", "comment-remove"}:
             self.comments = [row for row in self.comments if row["id"] != parts[1]]
         elif kind == "comment-pin":
@@ -166,7 +169,10 @@ class FakeYouTube:
             rows += f"""<ytcp-comment-thread><ytcp-comment comment-id="{row['id']}">{pinned_label}<a id="name" href="http://www.youtube.com/@{handle}"><span class="author-text">{handle}</span></a><span class="published-time-text">now</span>
               <div id="content-text">{row['text']}</div>
               <ytcp-comment-toggle-button id="like-button"><ytcp-icon-button aria-label="赞" onclick="fetch('/youtubei/v1/comment/perform_comment_action?write=comment-like/{row['id']}', {{method: 'POST', body: '{{}}'}}); this.parentElement.isToggled = !this.parentElement.isToggled"></ytcp-icon-button></ytcp-comment-toggle-button>
+              <div id="reply-button"><button onclick="replying(this.closest('ytcp-comment'))">回复</button></div>
               <ytcp-icon-button id="action-menu-button" data-opens="menu-{row['id']}"></ytcp-icon-button><div id="menu-{row['id']}" hidden>{items}</div></ytcp-comment></ytcp-comment-thread>"""
+        if self.other_box:
+            rows += '<ytcp-commentbox><textarea id="textarea"></textarea><div id="submit-button"><button onclick="fetch(\'/youtubei/v1/comment/create_comment_reply?write=comment-reply/other\', {method: \'POST\', body: \'{\\"text\\": \\"wrong box\\"}\'})">Send</button></div></ytcp-commentbox>'
         states = json.dumps({row["id"]: row["liked"] for row in self.comments})
         confirm = "document.getElementById('sure').hidden = false; document.getElementById('sure').dataset.comment = id" if self.confirm else "fetch('/youtubei/v1/comment/perform_comment_action?write=comment-delete/' + id, {method: 'POST', body: '{}'})"
         return f"""{rows}<div id="box"></div>
@@ -176,6 +182,8 @@ class FakeYouTube:
             for (const button of document.querySelectorAll('#like-button')) button.isToggled = states[button.closest('ytcp-comment').getAttribute('comment-id')];
             function removing(id) {{ {confirm} }}
             function act(write) {{ fetch('/youtubei/v1/comment/perform_comment_action?write=' + write, {{method: 'POST', body: '{{}}'}}); }}
+            function replying(row) {{ const box = document.createElement('ytcp-commentbox'); box.innerHTML = '<textarea id="textarea"></textarea><div id="submit-button"><button>Send</button></div>'; row.append(box);
+              box.querySelector('button').onclick = () => {{ fetch('/youtubei/v1/comment/create_comment_reply?write=comment-reply/' + row.getAttribute('comment-id'), {{method: 'POST', body: JSON.stringify({{text: box.querySelector('textarea').value}})}}); box.remove(); }}; }}
             document.addEventListener('keydown', event => {{ if (event.key === 'Escape') for (const menu of document.querySelectorAll('[id^="menu-"]')) menu.hidden = true; }});
             function editing(id) {{ document.getElementById('box').innerHTML = '<ytcp-commentbox><textarea id="textarea"></textarea><div id="submit-button"><button>Save</button></div></ytcp-commentbox>';
               document.querySelector('#submit-button button').onclick = () => {{ fetch('/youtubei/v1/comment/update_comment?write=comment-edit/' + id, {{method: 'POST', body: JSON.stringify({{text: document.getElementById('textarea').value}})}}); document.getElementById('box').innerHTML = ''; }}; }}
@@ -477,6 +485,21 @@ class CommentTests(Browser):
         with self.assertRaises(VpubError) as caught:
             await yt.comment_action(self.page, "UC" + "b" * 22, self.payload("like", receipt=self.receipt_file()))
         self.assertEqual("wrong_account", caught.exception.code)
+
+    async def reply_to_first(self):
+        path = home() / "reply.json"
+        atomic_json(path, {"state": "REPLY_READY"})
+        return await yt.operations(self.page, CHANNEL, {"operation": "reply", "work_id": VIDEO, "reply_receipt_path": str(path),
+                                                        "reply_request": {"expected_identity": CHANNEL, "text": "Thanks", "comment": {"id": "c1", "text": "Nice"}}})
+
+    async def test_a_reply_uses_the_box_under_its_comment(self):
+        await self.reply_to_first()
+        self.assertEqual([("comment-reply", "c1", "Thanks")], self.site.writes)
+
+    async def test_another_box_elsewhere_on_the_page_is_left_alone(self):
+        self.site.other_box = True
+        await self.reply_to_first()
+        self.assertEqual([("comment-reply", "c1", "Thanks")], self.site.writes)
 
     async def test_the_pin_state_is_read_from_the_comments_own_menu(self):
         self.assertIs(False, (await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])

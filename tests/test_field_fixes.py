@@ -192,6 +192,93 @@ class SignedInWithoutRecordTests(Home):
         self.assertEqual("human_verification_required", caught.exception.code)
 
 
+class ReceiptTests(Home):
+    def test_a_verified_engagement_no_longer_carries_the_error_it_recovered_from(self):
+        from video_publisher import engagement
+        from video_publisher.core import home
+        key = "a" * 32
+        path = home() / "engagement/receipts" / (key + ".json")
+        atomic_json(path, {"key": key, "state": "ACTION_UNVERIFIED", "platform": "youtube", "work_id": "dQw4w9WgXcQ", "identity": "UC1", "kind": "save", "desired": False,
+                           "collection": "PLaaaaaaaaaaaaaaaaaaaa", "error_code": "wrong_work", "platform_writes": None})
+        with patch.object(engagement, "dispatch", return_value={"identity": "UC1", "saved": False}), patch.object(engagement.operations, "record"):
+            result = engagement.verify(key)
+        self.assertEqual("ACTION_VERIFIED", result["state"])
+        self.assertNotIn("error_code", result)
+        self.assertEqual("wrong_work", result["resolved_errors"][0]["code"])
+
+
+class SharedLockTests(Home):
+    def test_saving_a_read_does_not_wait_for_a_change_on_another_platform(self):
+        from video_publisher import operations as ops
+        from video_publisher.core import publication_lock
+        with publication_lock(), patch.object(ops, "record", side_effect=lambda action, platform, work, result: result):
+            result = ops.save_observation("instagram", "abc", "stats", {"identity": "me", "metrics": {}})
+        self.assertEqual("instagram", result["platform"])
+
+    def test_two_saves_take_turns_and_a_stuck_one_is_reported_as_busy(self):
+        from video_publisher.core import observation_lock
+        with observation_lock():
+            with self.assertRaises(VpubError) as caught:
+                with observation_lock(seconds=0.2):
+                    pass
+        self.assertEqual("busy", caught.exception.code)
+        with observation_lock():
+            pass
+
+    def test_an_error_inside_it_is_not_mistaken_for_a_busy_lock(self):
+        from video_publisher.core import observation_lock
+        with self.assertRaises(VpubError) as caught:
+            with observation_lock():
+                raise VpubError("wrong_account", "No.")
+        self.assertEqual("wrong_account", caught.exception.code)
+
+
+class CaptionReadBackTests(Home, unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        Home.setUp(self)
+
+    async def run_edit(self, saved_after):
+        from video_publisher import browser_edits, edits
+        texts = iter(["Old words", *saved_after])
+
+        class Editor:
+            async def inner_text(self):
+                return self.text
+
+            async def fill(self, value):
+                self.text = value
+
+            async def wait_for(self, **options):
+                return None
+
+        async def open_editor(page, work):
+            editor = Editor()
+            editor.text = next(texts)
+            return editor
+        page = MagicMock(wait_for_timeout=AsyncMock())
+        wanted = {"post_text": "New words"}
+        with patch.object(browser_edits, "instagram_caption_editor", side_effect=open_editor), patch.object(browser_edits, "unique_visible", new=AsyncMock(return_value=MagicMock(click=AsyncMock()))), patch.object(browser_edits, "risk_check", new=AsyncMock()):
+            return await browser_edits.execute(page, "instagram", "me", {"patch": wanted, "receipt": {"id": "abc"}, "edit_receipt_path": str(self.root / "edit.json")}), page
+
+    async def test_old_words_for_a_moment_do_not_count_as_failure_and_nothing_saves_twice(self):
+        result, page = await self.run_edit(["Old words", "Old words", "New words"])
+        self.assertEqual(("EDIT_VERIFIED", 1), (result["state"], result["platform_writes"]))
+        self.assertEqual(2, page.wait_for_timeout.await_count)
+
+    async def test_old_words_that_stay_are_reported_as_unconfirmed(self):
+        result, _ = await self.run_edit(["Old words"] * 4)
+        self.assertEqual(("EDIT_SUBMITTED_UNVERIFIED", 1), (result["state"], result["platform_writes"]))
+
+
+class SelfTestTests(Home):
+    def test_the_free_youtube_route_says_it_cannot_and_sends_nothing(self):
+        from video_publisher import operations as ops
+        with patch.object(adapters, "addon_installed", return_value=False), patch.object(ops, "backend") as backend, self.assertRaises(VpubError) as caught:
+            ops.self_test("youtube", "dQw4w9WgXcQ", "t1")
+        self.assertEqual("unsupported_operation", caught.exception.code)
+        backend.assert_not_called()
+
+
 class ExitCodeTests(unittest.TestCase):
     def test_a_change_that_failed_or_could_not_be_confirmed_is_not_reported_as_success(self):
         for state in ("FAILED_BEFORE_SUBMIT", "UNVERIFIED", "EDIT_FAILED", "EDIT_MISMATCH"):

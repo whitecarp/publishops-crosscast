@@ -55,7 +55,8 @@ class Element:
         return 1 if self.exists() else 0
 
     async def is_visible(self):
-        return self.exists()
+        # The picker's outer element has no size on the real page, so it never counts as visible.
+        return self.exists() and self.key != browser_forms.YT_PLAYLISTS
 
     async def click(self, timeout=None):
         self.page.log.append(("click", self.key))

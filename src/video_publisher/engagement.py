@@ -117,6 +117,8 @@ def verify(key):
         observed=status(saved['platform'],saved['work_id'],saved['collection'],saved['identity'])
         if saved['state'] in PENDING|{'ACTION_VERIFIED'}:saved=finish(saved,observed)
         else:saved['after']=observed
+        if saved['state']=='ACTION_VERIFIED' and saved.get('error_code'):
+            saved.setdefault('resolved_errors',[]).append({'code':saved.pop('error_code'),'resolved_at':now()})
         atomic_json(path,saved)
         operations.record('engagement',saved['platform'],saved['work_id'],saved)
         return {**saved,'platform_writes':0}

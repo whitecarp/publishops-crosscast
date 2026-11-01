@@ -7,6 +7,9 @@ from .core import VpubError, atomic_json, file_sha, now
 from .browser_runtime import risk_check, unique_visible, visible
 from .browser_backends import normalize, work_url
 
+READ_BACKS = 4
+READ_BACK_WAIT = 10000
+
 
 async def instagram_caption_editor(page, work_id):
     """Read the owning work's editor, never translated text or comments in body."""
@@ -53,9 +56,13 @@ async def execute(page, platform, identity, payload):
         save(state='EDIT_PREPARED',before=before)
         await submit(await unique_visible(page.get_by_role('button',name='Done',exact=True),'save caption'))
         await editor.wait_for(state='hidden',timeout=45000)
-        saved_editor=await instagram_caption_editor(page,work_id)
-        after=await saved_editor.inner_text()
-        matched=normalize(after)==normalize(patch['post_text'])
+        # Instagram can show the old words for a while after a save, so the read-back looks a few times. It never saves again.
+        for attempt in range(READ_BACKS):
+            if attempt: await page.wait_for_timeout(READ_BACK_WAIT)
+            saved_editor=await instagram_caption_editor(page,work_id)
+            after=await saved_editor.inner_text()
+            matched=normalize(after)==normalize(patch['post_text'])
+            if matched: break
         return save(state='EDIT_VERIFIED' if matched else 'EDIT_SUBMITTED_UNVERIFIED',
                     before=before,caption=after,platform_writes=1,**evidence)
     if platform=='x':

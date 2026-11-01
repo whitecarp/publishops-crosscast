@@ -10,7 +10,7 @@ from video_publisher.core import VpubError, atomic_json, digest
 
 class InstagramCaptionTests(unittest.IsolatedAsyncioTestCase):
     async def check_caption(self, before, after=None, verify_only=False):
-        page=MagicMock()
+        page=MagicMock();page.wait_for_timeout=AsyncMock()
         # Comments/translated body text may contain the desired copy while the
         # persisted caption is stale. It must never be accepted as the caption.
         page.locator.return_value.inner_text=AsyncMock(return_value='中文原文\n\nEnglish')
@@ -24,7 +24,7 @@ class InstagramCaptionTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             payload={'patch':{'post_text':'中文原文\n\nEnglish'},'receipt':{'id':'Reel123'},
                      'edit_receipt_path':str(Path(tmp)/'edit.json'),'verify_only':verify_only}
-            with patch.object(browser_edits,'instagram_caption_editor',new_callable=AsyncMock,side_effect=[editor,reopened]), \
+            with patch.object(browser_edits,'instagram_caption_editor',new_callable=AsyncMock,side_effect=[editor]+[reopened]*browser_edits.READ_BACKS), \
                  patch.object(browser_edits,'unique_visible',new_callable=AsyncMock,return_value=done), \
                  patch.object(browser_edits,'risk_check',new_callable=AsyncMock):
                 result=await browser_edits.execute(page,'instagram','owner',payload)

@@ -1,7 +1,7 @@
 """YouTube through its own Studio and watch pages, in CrossCast's dedicated browser. No official API."""
 from pathlib import Path
 import re
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from .browser_backends import normalize, studio_visibility, work_url
 from .browser_runtime import risk_check, unique_visible, visible
@@ -218,6 +218,24 @@ def find_reply(items, text, before, parent):
     return [c for c in items if c["is_owner"] and c["id"] not in before and normalize(c["text"]) == normalize(text) and c["parent_id"] == parent]
 
 
+async def comment_box(page, row, label):
+    """The reply or edit box that belongs to this comment, and its own send button. Studio can show other boxes on the page."""
+    thread = row.locator("xpath=ancestor::ytcp-comment-thread[1]")
+    found = []
+    for _ in range(20):
+        for scope in (row, thread, page):
+            found = [editor for editor in await scope.locator("ytcp-commentbox textarea#textarea").all() if await editor.is_visible()]
+            if found:
+                break
+        if found:
+            break
+        await page.wait_for_timeout(250)
+    if len(found) != 1:
+        raise VpubError("layout_changed", f"Expected one visible {label}; found {len(found)}.", "Inspect the existing page before retrying. No final submission is repeated.")
+    box = found[0].locator("xpath=ancestor::ytcp-commentbox[1]")
+    return found[0], await unique_visible(box.locator("#submit-button button"), label + " send")
+
+
 async def operations(page, identity, payload):
     action, work = payload["operation"], payload["work_id"]
     if action == "stats":
@@ -250,16 +268,10 @@ async def operations(page, identity, payload):
         raise VpubError("comment_changed", "The exact comment is not visible or changed; collect it again.")
     row = page.locator(f'ytcp-comment[comment-id="{target["id"]}"]').first
     await row.locator("#reply-button button").first.click(timeout=15000)
-    editors = page.locator("ytcp-commentbox textarea#textarea")
-    for _ in range(20):
-        if await visible(editors):
-            break
-        await page.wait_for_timeout(250)
-    editor = await unique_visible(editors, "reply editor")
+    editor, button = await comment_box(page, row, "reply editor")
     await editor.fill(request["text"])
     if await editor.input_value() != request["text"]:
         raise VpubError("metadata_mismatch", "The reply box did not keep the intended text; nothing was sent.")
-    button = await unique_visible(page.locator("ytcp-commentbox #submit-button button"), "reply submit")
     await risk_check(page)
     stop_check("youtube")
     if not await button.is_enabled():
@@ -285,10 +297,16 @@ async def pressed(button):
 
 async def open_watch_page(page, work):
     await page.goto(f"https://www.youtube.com/watch?v={work}", wait_until="domcontentloaded", timeout=60000)
+    # A fresh browser can pass through Google's sign-in addresses first, so the address gets a moment to settle.
+    for _ in range(40):
+        if urlsplit(page.url).path == "/watch":
+            break
+        await page.wait_for_timeout(500)
     # The player keeps a hidden copy; the one under the video is the first with a pressed state in the row of actions.
     buttons = page.locator("ytd-watch-metadata ytd-menu-renderer button[aria-pressed], like-button-view-model button, ytd-segmented-like-dislike-button-renderer button")
     await appears(page, buttons, 25)
-    if urlsplit(page.url).path != "/watch":
+    address = urlsplit(page.url)
+    if address.path != "/watch" or parse_qs(address.query).get("v") != [work]:
         raise VpubError("wrong_work", "The page left the exact requested video.")
     # The button shows before its state does.
     for _ in range(20):
@@ -675,13 +693,10 @@ async def comment_action(page, identity, payload):
     if kind == "edit":
         item = await comment_menu_item(page, row, EDIT_ITEM)
         await item.click(timeout=10000)
-        editors = page.locator("ytcp-commentbox textarea#textarea")
-        await appears(page, editors, 8)
-        editor = await unique_visible(editors, "comment editor")
+        editor, button = await comment_box(page, row, "comment editor")
         await editor.fill(request["desired"])
         if await editor.input_value() != request["desired"]:
             raise VpubError("metadata_mismatch", "The comment box did not keep the intended text; nothing was sent.")
-        button = await unique_visible(page.locator("ytcp-commentbox #submit-button button"), "comment save")
         if not await button.is_enabled():
             raise VpubError("reply_not_ready", "YouTube has not enabled saving this comment.")
         submitting(payload["receipt_path"])
