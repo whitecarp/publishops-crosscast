@@ -253,6 +253,15 @@ async def serve(listener, handle, platform, *, idle=None, lifetime=MAX_LIFETIME_
             return "idle"
 
 
+async def within(step, work, seconds):
+    """A time limit that says which step ran out, because a bare timeout says nothing. Running out proves nothing about the sign-in."""
+    try:
+        return await asyncio.wait_for(work, seconds)
+    except asyncio.TimeoutError:
+        raise VpubError("browser_step_timeout", f"The background browser ran out of time while {step}.",
+                        "This computer or the site may be busy; a sign-in has not been shown to have expired. Check any receipt before trying again. Nothing is resent automatically.") from None
+
+
 async def run(platform, account, on_closing=None):
     from patchright.async_api import async_playwright
     from . import browser_runtime as runtime
@@ -264,8 +273,8 @@ async def run(platform, account, on_closing=None):
         async with async_playwright() as pw:
             context, usable = None, True
             try:
-                context = await asyncio.wait_for(runtime.open_context(pw, platform, account), SIGN_IN_SECONDS)
-                page, owner = await asyncio.wait_for(runtime.signed_in_page(context, platform), SIGN_IN_SECONDS)
+                context = await within("starting Chrome", runtime.open_context(pw, platform, account), SIGN_IN_SECONDS)
+                page, owner = await within("checking who is signed in", runtime.signed_in_page(context, platform), SIGN_IN_SECONDS)
                 checked = time.monotonic()
 
                 async def handle(payload):
@@ -278,14 +287,14 @@ async def run(platform, account, on_closing=None):
                         validate(payload)
                     action = payload["action"]
                     if action not in CACHED_IDENTITY or time.monotonic() - checked > IDENTITY_SECONDS:
-                        page, owner = await asyncio.wait_for(runtime.signed_in_page(context, platform), SIGN_IN_SECONDS)
+                        page, owner = await within("checking who is signed in", runtime.signed_in_page(context, platform), SIGN_IN_SECONDS)
                         checked = time.monotonic()
                     else:
-                        await asyncio.wait_for(runtime.risk_check(page), SIGN_IN_SECONDS)
+                        await within("checking the page for a platform's warning", runtime.risk_check(page), SIGN_IN_SECONDS)
                     runtime.check_identity(owner, payload.get("expected_identity"))
                     if action == "status":
                         return {"logged_in": True, "identity": owner, "account": account, "method": "browser"}
-                    result = await asyncio.wait_for(dispatch(page, platform, owner, payload), timeout=action_timeout(action))
+                    result = await within("running the command", dispatch(page, platform, owner, payload), action_timeout(action))
                     usable = await runtime.keep_session(context, platform, account)
                     return result
 

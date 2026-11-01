@@ -360,10 +360,27 @@ class HangingBrowserTests(unittest.TestCase):
         self.wait_for_session()
         with self.assertRaises(VpubError) as caught:
             broker.call({"platform": "x", "account": "default", "action": "operations"}, 5)
-        self.assertEqual("browser_error", caught.exception.code)
+        self.assertEqual("browser_step_timeout", caught.exception.code)
+        self.assertIn("who is signed in", caught.exception.message)
+        self.assertNotIn("expired.", caught.exception.message)
         thread.join(10)
         self.assertFalse(thread.is_alive())
         self.assertEqual([True], self.closing)
+        self.assertTrue(self.lock_is_free())
+
+    def test_a_command_that_runs_out_of_time_says_that_is_where_it_stopped(self):
+        async def forever(*args):
+            await asyncio.Event().wait()
+        context = MagicMock(close=AsyncMock(), storage_state=AsyncMock(return_value={"cookies": []}))
+        with patch("video_publisher.browser_worker.action_timeout", return_value=0.2):
+            thread = self.session(context, dispatch=forever)
+            self.wait_for_session()
+            with self.assertRaises(VpubError) as caught:
+                broker.call({"platform": "x", "account": "default", "action": "operations"}, 5)
+        self.assertEqual("browser_step_timeout", caught.exception.code)
+        self.assertIn("running the command", caught.exception.message)
+        thread.join(10)
+        self.assertFalse(thread.is_alive())
         self.assertTrue(self.lock_is_free())
 
     def test_chrome_that_never_starts_ends_the_session_too(self):
