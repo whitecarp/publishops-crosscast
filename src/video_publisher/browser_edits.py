@@ -31,6 +31,12 @@ async def instagram_caption_editor(page, work_id):
     return await unique_visible(editor,'work caption editor')
 
 
+async def x_post_says(post,words):
+    """This post's own words, so the same words elsewhere on the page prove nothing."""
+    fields=await x_pages.post_fields(post.first)
+    return bool(fields) and normalize(fields['text'])==normalize(words)
+
+
 async def execute(page, platform, identity, payload):
     patch=payload['patch'];receipt=payload['receipt'];work_id=receipt['id']
     output=Path(payload['edit_receipt_path'])
@@ -73,9 +79,10 @@ async def execute(page, platform, identity, payload):
         await page.goto(url,wait_until='domcontentloaded',timeout=60000)
         post=x_pages.post_row(page,work_id)
         await post.first.wait_for(state='visible',timeout=60000)
+        if await x_post_says(post,patch['post_text']):
+            return save(state='EDIT_VERIFIED',unchanged=True,url=url,platform_writes=0)
         if payload.get('verify_only'):
-            matched=normalize(patch['post_text']) in normalize(await post.first.inner_text())
-            return save(state='EDIT_VERIFIED' if matched else 'EDIT_SUBMITTED_UNVERIFIED',url=url,platform_writes=0)
+            return save(state='EDIT_SUBMITTED_UNVERIFIED',url=url,platform_writes=0)
         await x_pages.open_menu(page,await unique_visible(post.locator('button[aria-label="More"], '+x_pages.MORE),'post More'))
         edit=await visible(page.get_by_role('menuitem',name=x_pages.EDIT_POST))
         if edit is None:
@@ -92,10 +99,14 @@ async def execute(page, platform, identity, payload):
         if not await update.is_enabled(): raise VpubError('edit_not_ready','X cannot save this text; inspect its account/length constraints.')
         await submit(update)
         await editor.wait_for(state='hidden',timeout=30000)
-        await page.reload(wait_until='domcontentloaded')
-        await page.get_by_text(patch['title'],exact=False).first.wait_for(timeout=45000)
-        ok=normalize(patch['post_text']) in normalize(await page.locator('body').inner_text())
-        return save(state='EDIT_VERIFIED' if ok else 'EDIT_SUBMITTED_UNVERIFIED',url=url)
+        # A page can show the old words for a while after a save, so the read-back looks a few times. It never saves again.
+        for attempt in range(READ_BACKS):
+            if attempt: await page.wait_for_timeout(READ_BACK_WAIT)
+            await page.reload(wait_until='domcontentloaded')
+            await post.first.wait_for(state='visible',timeout=45000)
+            ok=await x_post_says(post,patch['post_text'])
+            if ok: break
+        return save(state='EDIT_VERIFIED' if ok else 'EDIT_SUBMITTED_UNVERIFIED',url=url,platform_writes=1)
     if platform=='douyin':
         if not str(work_id).isdigit(): raise VpubError('invalid_id','Invalid Douyin ID.')
         if 'portrait' in patch:

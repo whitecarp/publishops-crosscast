@@ -41,6 +41,7 @@ class FakeX:
         self.mentions = [{"id": REPLY, "author": "viewer", "text": "@owner hello"}]
         self.writes = []
         self.post_text = "ty for 4 years of bangers"
+        self.keeps_edits = True
         self.confirm_hide = True
         self.chat_ready = True
         self.gone_words = "Hmm...this page doesn't exist. Try searching for something else."
@@ -136,7 +137,7 @@ class FakeX:
         elif parts[0] == "reply":
             self.replies.append({"id": post_id_now(), "author": OWNER, "text": data["text"]})
         elif parts[0] == "edit":
-            self.post_text = data["text"]
+            self.post_text = data["text"] if self.keeps_edits else self.post_text
         elif parts[0] == "delete":
             self.replies = [row for row in self.replies if row["id"] != parts[1]]
         elif parts[0] == "hide":
@@ -423,6 +424,20 @@ class ChangeTests(Site):
         self.assertEqual("EDIT_VERIFIED", result["state"])
         self.assertEqual([("edit", POST, "New words")], self.x.writes)
         self.assertEqual("New words", self.x.post_text)
+
+    async def test_words_already_on_the_post_are_not_saved_again(self):
+        """From a review: the words were already there, and it still filled the box and pressed Update."""
+        result = await browser_edits.execute(self.page, "x", OWNER, self.edit_payload(self.x.post_text))
+        self.assertEqual(("EDIT_VERIFIED", True, 0), (result["state"], result["unchanged"], result["platform_writes"]))
+        self.assertEqual([], self.x.writes)
+
+    async def test_the_same_words_elsewhere_on_the_page_do_not_confirm_an_edit(self):
+        """From a review: the read-back looked at the whole page, so a reply saying the same words passed for this post."""
+        self.x.keeps_edits = False
+        words = self.x.replies[0]["text"]
+        with patch.object(browser_edits, "READ_BACK_WAIT", 10):
+            result = await browser_edits.execute(self.page, "x", OWNER, self.edit_payload(words))
+        self.assertEqual("EDIT_SUBMITTED_UNVERIFIED", result["state"])
 
     async def test_checking_an_edit_changes_nothing(self):
         payload = {**self.edit_payload(self.x.post_text), "verify_only": True}

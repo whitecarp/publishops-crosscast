@@ -407,6 +407,15 @@ class EditTests(Temporary):
             self.run_edit(FakePage(), {"cover": str(cover), "cover_sha256": "old"})
         self.assertEqual("source_changed", caught.exception.code)
 
+    def test_checking_a_thumbnail_says_nothing_that_could_clear_an_unclear_save(self):
+        """From a review: the check read as a difference, which let the same thumbnail be saved a second time."""
+        cover = self.root / "cover.jpg"
+        cover.write_bytes(b"cover")
+        page = FakePage()
+        result = self.run_edit(page, {"cover": str(cover), "cover_sha256": file_sha(cover)}, verify_only=True)
+        self.assertEqual(("EDIT_SUBMITTED_UNVERIFIED", 0), (result["state"], result["platform_writes"]))
+        self.assertNotIn(("files", "input#file-loader", str(cover)), page.log)
+
     def test_chapters_replace_only_the_old_list_in_the_description(self):
         page = FakePage(fields={"title": "Same", "description": "Intro\n\n0:00 Old\n1:00 Older\n\nBye"})
         chapters = [{"start_seconds": 0, "title": "One"}, {"start_seconds": 60, "title": "Two"}, {"start_seconds": 120, "title": "Three"}]
