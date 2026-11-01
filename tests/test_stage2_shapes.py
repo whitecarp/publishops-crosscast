@@ -18,7 +18,7 @@ class Temporary(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
-        self.root = Path(temp.name)
+        self.root = Path(temp.name).resolve()  # As home() resolves it: Windows can give a temporary folder a shortened name.
         env = patch.dict(os.environ, {"VPUB_HOME": str(self.root / "runtime")})
         env.start()
         self.addCleanup(env.stop)
