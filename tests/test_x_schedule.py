@@ -87,6 +87,27 @@ class OpeningMediaTests(ChromeCase):
         await self.browser.close()
         await self.pw.stop()
 
+    async def test_a_file_that_opens_nothing_at_first_is_tried_until_its_page_comes(self):
+        """From field runs: its name showed at once and a click opened nothing, while a click two minutes later opened it straight away."""
+        self.LIBRARY = self.LIBRARY.replace("location.href=", "if (++window.clicks > 2) location.href=") + "<script>window.clicks = 0</script>"
+        tx = self.Tx()
+        with patch.object(browser_forms, "X_OPEN_MS", 300):
+            self.assertEqual("PREVIEW_READY", (await browser_forms.publish_x(self.page, tx))["state"])
+        self.assertEqual("https://studio.x.com/library/13_77/edit", tx.receipt["media_url"])
+
+    async def test_a_file_that_never_opens_stops_and_leaves_it_for_a_resume(self):
+        self.LIBRARY = self.LIBRARY.replace("location.href=", "window.ignored=")
+        tx = self.Tx()
+        real = browser_forms.wait_until
+
+        async def soon(page, predicate, *, seconds=120, label="page state"):
+            return await real(page, predicate, seconds=2, label=label)
+        with patch.object(browser_forms, "X_OPEN_MS", 300), patch.object(browser_forms, "wait_until", soon), self.assertRaises(VpubError) as caught:
+            await browser_forms.publish_x(self.page, tx)
+        self.assertEqual("processing_timeout", caught.exception.code)
+        self.assertNotIn("media_url", tx.receipt)
+        self.assertEqual((True, "clip.mp4"), (tx.receipt["media_selected"], tx.receipt["upload_filename"]))
+
     async def test_a_media_page_still_loading_does_not_stop_the_upload_and_its_address_is_kept(self):
         tx = self.Tx()
         self.assertEqual("PREVIEW_READY", (await browser_forms.publish_x(self.page, tx))["state"])

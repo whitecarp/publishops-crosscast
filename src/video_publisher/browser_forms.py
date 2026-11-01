@@ -25,6 +25,10 @@ YT_PLAYLIST_ROWS = """boxes => boxes.map(box => {
 })"""
 
 
+X_MEDIA_PAGE = re.compile(r'https://studio\.x\.com/library/\d+_\d+/edit')
+X_OPEN_MS = 15000
+
+
 async def enabled(locator):
     return await locator.is_visible() and await locator.is_enabled()
 
@@ -101,6 +105,23 @@ async def x_send_scheduled(page, tx):
     return tx.save(**await verify_scheduled_x(page, tx.identity, tx.receipt))
 
 
+async def x_open_media(page, item):
+    """Field runs clicked the uploaded file's name as soon as it showed, and no page opened in 30 seconds. A click two minutes later opened it at once, and nothing on the page said what had changed.
+    Opening it changes nothing, so this exact file is tried until its page comes."""
+    from patchright.async_api import TimeoutError as BrowserTimeout
+
+    async def opened():
+        if X_MEDIA_PAGE.search(page.url):
+            return True
+        try:
+            await item.click(timeout=X_OPEN_MS)
+            await page.wait_for_url(X_MEDIA_PAGE, wait_until='commit', timeout=X_OPEN_MS)
+        except BrowserTimeout:
+            return False
+        return True
+    await wait_until(page, opened, seconds=600, label="the uploaded file's page in Media Studio")
+
+
 async def publish_x(page, tx):
     before = tx.receipt.get('before_ids')
     if before is None:
@@ -127,9 +148,7 @@ async def publish_x(page, tx):
             tx.save(phase='uploading')
         item = page.get_by_text(tx.receipt['upload_filename'], exact=True)
         await item.wait_for(state='visible', timeout=600000)
-        await item.click()
-        # Its address is what has to be kept, and the next step waits for the page's controls.
-        await page.wait_for_url(re.compile(r'https://studio\.x\.com/library/\d+_\d+/edit'), wait_until='commit', timeout=30000)
+        await x_open_media(page, item)
         tx.save(phase='opening_media', media_url=page.url)
     change = page.locator('button').filter(has_text=re.compile(r'^\s*Change thumbnail\s*$'))
     await change.wait_for(state='visible', timeout=300000)
