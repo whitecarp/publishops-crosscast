@@ -307,7 +307,7 @@ async def douyin_collection(page, title):
 
 
 async def douyin_offers_draft(page, seconds):
-    """Whether the upload page offers a kept draft. A field check found opening it uses it up, so this only looks. It can't say whose draft it is, and an old one can show late."""
+    """Whether the upload page offers a kept draft. Opening one can change what is on offer, so this only looks. It can't say whose draft it is, and an old one can show late."""
     offer = page.get_by_text('继续编辑', exact=True)
     for _ in range(seconds):
         if await visible(offer):
@@ -330,7 +330,7 @@ async def douyin_keep_draft(page, tx):
     await risk_check(page)
     seen = await douyin_offers_draft(page, 10) and tx.receipt.get('draft_offered_before') is False
     note = 'Its upload page now offers a draft under 继续编辑 that it did not offer before, which may be this one.' if seen else 'Its upload page offers no draft that is new since this upload began.'
-    return tx.save(state='PREVIEW_READY', phase='draft_saved', draft_offer_seen=seen, note='Pressed Douyin\'s 暂存离开 once; nothing was published. This is not read back as this draft. ' + note + ' Opening one uses it up.')
+    return tx.save(state='PREVIEW_READY', phase='draft_saved', draft_offer_seen=seen, note='Pressed Douyin\'s 暂存离开 once; nothing was published. This is not read back as this draft. ' + note)
 
 
 async def finish_douyin_form(page, tx, before):
