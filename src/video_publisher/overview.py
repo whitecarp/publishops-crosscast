@@ -100,12 +100,20 @@ def progress(row):
     return view
 
 
+def part_left_undone(row):
+    """Chapters or a collection chosen at upload that did not land, on a work that did."""
+    receipt = row["data"].get("receipt") or {}
+    return receipt.get("chapters_state") not in {None, "VERIFIED"} or (receipt.get("season") or {}).get("added") is False
+
+
 def attempt(row, busy):
     command, note = next_step(row, busy)
     data, receipt = row["data"], row["data"].get("receipt") or {}
     item = {"key": row["key"], "platform": row["platform"], "state": row["state"], "title": data.get("title"),
             "method": (data.get("options") or {}).get("method"), "id": receipt.get("id"), "url": receipt.get("url"),
             "updated_at": row["updated_at"], "next_command": command, "note": note}
+    if part_left_undone(row):
+        item.update({name: receipt[name] for name in ("chapters_state", "season") if name in receipt})
     done = progress(row)
     return {**item, "progress": done} if done else item
 
@@ -257,7 +265,7 @@ def status(limit=20):
     rows = read_rows()
     busy = workspace_busy()
     drafts = [row for row in rows if row["state"] in DRAFTS]
-    attention = [row for row in rows if row["state"] not in FINISHED | DRAFTS]
+    attention = [row for row in rows if row["state"] not in FINISHED | DRAFTS or part_left_undone(row)]
     folders = snapshot_folders(rows, check_hash=False)
     reclaimable = sum(item["bytes"] for item in folders if "kept_because" not in item)
     stop = stop_state()

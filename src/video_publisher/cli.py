@@ -17,7 +17,8 @@ UNFINISHED_STATES = {"INCOMPLETE", "INTERRUPTED", "UPLOAD_PAUSED", "UPLOAD_INITI
                      "DM_READY", "DM_REPLACED", "DM_SUBMITTING", "DM_UNVERIFIED", "DM_FAILED", "COMMENT_READY", "COMMENT_SUBMITTING", "COMMENT_UNVERIFIED", "COMMENT_FAILED",
                      "ACTION_READY", "ACTION_SUBMITTING", "ACTION_UNVERIFIED", "ACTION_FAILED", "PARTIAL", "WAITING_FOR_USER", "PREPARATION_INCOMPLETE", "SUBMITTED_UNVERIFIED", "UNKNOWN",
                      "EDIT_SUBMITTING", "EDIT_SUBMITTED_UNVERIFIED", "EDIT_UNAVAILABLE", "REPLY_READY", "REPLY_PENDING", "REPLY_SUBMITTING", "REPLY_UNVERIFIED", "REPLY_REJECTED",
-                     "TEST_SEED_UNVERIFIED", "TEST_REPLY_UNVERIFIED", "TEST_COMMENT_NOT_VISIBLE", "FAILED_BEFORE_SUBMIT", "UNVERIFIED", "EDIT_FAILED", "EDIT_MISMATCH"}
+                     "TEST_SEED_UNVERIFIED", "TEST_REPLY_UNVERIFIED", "TEST_COMMENT_NOT_VISIBLE", "FAILED_BEFORE_SUBMIT", "UNVERIFIED", "EDIT_FAILED", "EDIT_MISMATCH",
+                     "READY", "SUBMITTING", "PLATFORM_REJECTED", "BROWSER_VERIFICATION_REQUIRED", "TEST_READY", "TEST_SEED_SUBMITTING"}
 # Commands whose --out saves the JSON result. For the others, --out names the file the command produces.
 SAVES_RESULT = {"dm", "read-all", "collection", "playlist", "messages", "engage", "ops", "comments", "stats", "report", "works", "status", "cleanup"}
 
@@ -952,13 +953,26 @@ def capabilities():
             "interaction_rule": "Login/setup does not authorize comments, messages, likes or publication."}
 
 
+def part_left_undone(value):
+    """Chapters or a collection chosen at upload that did not land, on a work that did."""
+    return isinstance(value, dict) and (value.get("chapters_state") not in {None, "VERIFIED"} or (value.get("season") or {}).get("added") is False)
+
+
+def finished(value):
+    if not isinstance(value, dict):
+        return True
+    results = value.get("results")
+    parts = results.values() if isinstance(results, dict) else ()
+    return not (value.get("all_submissions_verified") is False or value.get("state") in UNFINISHED_STATES or part_left_undone(value) or any(part_left_undone(part) for part in parts))
+
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     try:
         args = parser().parse_args()
         value = execute(args)
-        ok = not (isinstance(value, dict) and (value.get("all_submissions_verified") is False or value.get("state") in UNFINISHED_STATES))
+        ok = finished(value)
         print(json.dumps({"ok": ok, "data": value}, ensure_ascii=False))
         raise SystemExit(0 if ok else 4)
     except VpubError as e:
