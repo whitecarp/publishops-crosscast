@@ -77,6 +77,7 @@ class Base(unittest.IsolatedAsyncioTestCase):
         self.page.set_default_timeout(5000)
         self.writes = []
         self.html = form()
+        self.upload_page = "<!doctype html><body><input type=file>"
         await self.page.route("**/*", self.handle)
 
     async def asyncTearDown(self):
@@ -87,7 +88,8 @@ class Base(unittest.IsolatedAsyncioTestCase):
         if route.request.method == "POST":
             self.writes.append(json.loads(route.request.post_data))
             return await route.fulfill(status=200, content_type="application/json", body="{}")
-        await route.fulfill(status=200, content_type="text/html; charset=utf-8", body=self.html)
+        body = self.upload_page if route.request.url.endswith("/content/upload") else self.html
+        await route.fulfill(status=200, content_type="text/html; charset=utf-8", body=body)
 
     async def open(self, html=None):
         self.html = html or self.html
@@ -191,8 +193,29 @@ class WholeFormTests(Base):
         tx = StubTx(submission_mode="draft_only")
         result = await self.run_form(tx)
         self.assertEqual(["keep"], [write["word"] for write in self.writes])
-        self.assertEqual(("PREVIEW_READY", "draft_saved"), (result["state"], result["phase"]))
+        self.assertEqual(("PREVIEW_READY", "draft_saved", False), (result["state"], result["phase"], result["draft_offered"]))
         self.assertIn("not read back", result["note"])
+
+    OFFERS = '<!doctype html><meta charset="utf-8"><body><input type=file><button>继续编辑</button><button>放弃</button>'
+
+    async def draft(self, before):
+        await self.open()
+        self.upload_page = self.OFFERS
+        tx = StubTx(submission_mode="draft_only")
+        tx.receipt["draft_offered_before"] = before
+        return await self.run_form(tx)
+
+    async def test_the_upload_page_offering_a_new_draft_is_its_read_back_and_nothing_is_opened(self):
+        result = await self.draft(False)
+        self.assertIs(True, result["draft_offered"])
+        self.assertIn("继续编辑", result["note"])
+        self.assertEqual(["keep"], [write["word"] for write in self.writes])
+
+    async def test_a_draft_already_on_offer_before_the_upload_proves_nothing(self):
+        self.assertIs(False, (await self.draft(True))["draft_offered"])
+
+    async def test_a_receipt_from_before_this_check_proves_nothing_either(self):
+        self.assertIs(False, (await self.draft(None))["draft_offered"])
 
     async def test_a_stop_holds_the_draft_too(self):
         await self.open()

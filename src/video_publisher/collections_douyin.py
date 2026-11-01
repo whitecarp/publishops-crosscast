@@ -88,7 +88,8 @@ async def execute(page, owner, payload):
         await page.get_by_placeholder('请输入合集的简介',exact=True).fill(payload.get('description') or '')
         await page.locator('input[type=file]').set_input_files(payload['cover'])
         await click(page.get_by_role('button',name='保存',exact=True))
-        await page.get_by_text('修改合集封面',exact=True).wait_for(state='visible')
+        # The cover uploads before this shows, which a field run found can take longer than the usual wait.
+        await page.get_by_text('修改合集封面',exact=True).wait_for(state='visible',timeout=45000)
         final=await rt.unique_visible(page.get_by_role('button',name='创建',exact=True),'create collection')
         route='/web/api/mix/create'
     elif op=='rename':
