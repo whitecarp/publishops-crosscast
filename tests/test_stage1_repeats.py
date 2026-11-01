@@ -12,6 +12,72 @@ from video_publisher.core import VpubError, atomic_json, digest, home, read_json
 
 OWNER = "owner"
 
+class FileSharingTests(unittest.TestCase):
+    """From a CI run: a read at the moment another step replaced the same receipt stopped with PermissionError. Windows refuses for a moment in both directions."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.path = Path(temp.name) / "receipt.json"
+
+    @unittest.skipUnless(os.name == "nt", "Windows file sharing")
+    def test_a_refusal_for_a_moment_is_waited_out(self):
+        atomic_json(self.path, {"state": "ready"})
+        refusals = [PermissionError(13, "in use"), PermissionError(13, "in use")]
+        real = Path.read_text
+
+        def read_text(path, *args, **options):
+            if refusals:
+                raise refusals.pop()
+            return real(path, *args, **options)
+        with patch.object(Path, "read_text", read_text):
+            self.assertEqual({"state": "ready"}, read_json(self.path))
+        real_replace = os.replace
+        refusals = [PermissionError(13, "in use")]
+
+        def replace(source, target):
+            if refusals:
+                raise refusals.pop()
+            return real_replace(source, target)
+        with patch("video_publisher.core.os.replace", replace):
+            atomic_json(self.path, {"state": "moved on"})
+        self.assertEqual({"state": "moved on"}, read_json(self.path))
+
+    @unittest.skipUnless(os.name == "nt", "Windows file sharing")
+    def test_a_refusal_that_lasts_still_says_so(self):
+        atomic_json(self.path, {"state": "ready"})
+        with patch.object(Path, "read_text", side_effect=PermissionError(13, "in use")), patch("video_publisher.core.time.sleep"), self.assertRaises(PermissionError):
+            read_json(self.path)
+
+    def test_reading_while_another_thread_replaces_the_file_never_stops(self):
+        atomic_json(self.path, {"count": 0})
+        errors, done = [], threading.Event()
+
+        def write():
+            try:
+                for count in range(1, 100):
+                    atomic_json(self.path, {"count": count})
+            except Exception as exc:
+                errors.append(exc)
+            finally:
+                done.set()
+
+        def keep_reading():
+            try:
+                while not done.is_set():
+                    self.assertIn("count", read_json(self.path))
+                    time.sleep(0.002)  # Tight loops with no pause can hold the file open almost all the time, which nothing here does.
+            except Exception as exc:
+                errors.append(exc)
+        threads = [threading.Thread(target=write), threading.Thread(target=keep_reading), threading.Thread(target=keep_reading)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(60)
+        self.assertEqual([], errors)
+        self.assertEqual({"count": 99}, read_json(self.path))
+
+
 class SecondAttemptTests(unittest.TestCase):
     """A command killed part way can go on running in the shared background browser, and a second attempt starts behind it."""
 

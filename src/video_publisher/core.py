@@ -68,8 +68,20 @@ def home():
     return p.resolve()
 
 
+def when_the_file_is_free(step):
+    """On Windows a file being replaced refuses to open for a moment, and one being read refuses to be replaced. A CI run saw a second attempt at a message stop on this while a press was being recorded. Neither lasts."""
+    for pause in (0.02, 0.05, 0.1, 0.2, 0.5, 1):
+        try:
+            return step()
+        except PermissionError:
+            if os.name != "nt":
+                raise
+            time.sleep(pause)
+    return step()
+
+
 def read_json(path):
-    return json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    return json.loads(when_the_file_is_free(lambda: Path(path).read_text(encoding="utf-8-sig")))
 
 
 def atomic_json(path, value):
@@ -83,7 +95,7 @@ def atomic_json(path, value):
             f.write("\n")
             f.flush()
             os.fsync(f.fileno())
-        os.replace(name, path)
+        when_the_file_is_free(lambda: os.replace(name, path))
     finally:
         if os.path.exists(name):
             os.unlink(name)
