@@ -50,6 +50,7 @@ class FakeYouTube:
         self.open_box = False
         self.keep_row = False  # Whether a deleted comment stays on the open page.
         # From a field check: pinning opens Studio's confirmation, whose own element holds a real button.
+        self.watch_comments = True
         self.pin_ready_after = 0
         self.pin_sent_after = 0
         self.says_empty = True
@@ -102,8 +103,9 @@ class FakeYouTube:
         elif kind in {"comment-delete", "comment-remove"}:
             self.comments = [row for row in self.comments if row["id"] != parts[1]]
         elif kind == "comment-pin":
-            row = next(row for row in self.comments if row["id"] == parts[1])
-            row["pinned"] = not row.get("pinned")
+            next(row for row in self.comments if row["id"] == parts[1])["pinned"] = True
+        elif kind == "comment-unpin":
+            next(row for row in self.comments if row["id"] == parts[1])["pinned"] = False
         await route.fulfill(status=200, content_type="application/json", body=json.dumps({"actionResults": [{"status": "STATUS_SUCCEEDED"}]}) if kind.startswith("comment-") else "{}")
 
     def list_page(self):
@@ -162,21 +164,28 @@ class FakeYouTube:
     def watch_page(self):
         rows = '<toggleable-list-item-view-model><button aria-pressed="false">Watch later<br>Private</button></toggleable-list-item-view-model>' + "".join(
             f"""<toggleable-list-item-view-model><button aria-pressed="{'true' if VIDEO in self.saved[key] else 'false'}" onclick="flip(this, '{key}')">{row['title']}<br>{WORDS[row['visibility']]}</button></toggleable-list-item-view-model>""" for key, row in self.playlists.items())
+        # From a field check: a pinned comment comes first with its badge, and only this page shows it.
+        threads = "".join(f"""<ytd-comment-thread-renderer>{'<div id="pinned-comment-badge">Pinned</div>' if row.get('pinned') else ''}<a href="/watch?v={VIDEO}&lc={row['id']}">now</a>{row['text']}
+              <ytd-menu-renderer><button id="button" data-opens="watch-menu-{row['id']}">...</button></ytd-menu-renderer>
+              <div id="watch-menu-{row['id']}" hidden><ytd-menu-service-item-renderer onclick="fetch('/youtubei/v1/comment/perform_comment_action?write=comment-unpin/{row['id']}', {{method: 'POST', body: '{{}}'}}); this.parentElement.hidden = true">{'取消置顶' if row.get('pinned') else '置顶'}</ytd-menu-service-item-renderer></div></ytd-comment-thread-renderer>"""
+                          for row in sorted(self.comments, key=lambda row: not row.get("pinned")))
         return f"""<yt-player-quick-action-buttons><like-button-view-model style="display:block;width:0;height:0;overflow:hidden"><button aria-pressed="false" style="width:0;height:0;padding:0;border:0"></button></like-button-view-model></yt-player-quick-action-buttons>
+            {threads if self.watch_comments else ''}
             <ytd-watch-metadata><ytd-menu-renderer>
               <button aria-pressed="{'true' if self.liked else 'false'}" aria-label="like this video" onclick="fetch('/youtubei/v1/like/like?write=like', {{method: 'POST', body: '{{}}'}}); this.setAttribute('aria-pressed', this.getAttribute('aria-pressed') === 'true' ? 'false' : 'true')">Like</button>
               <button aria-label="Share">Share</button>
               <button aria-label="Save to playlist" onclick="document.getElementById('sheet').hidden = false">Save</button>
             </ytd-menu-renderer></ytd-watch-metadata>
             <yt-sheet-view-model id="sheet" hidden>{rows}</yt-sheet-view-model>
-            <script>function flip(button, key) {{ fetch('/youtubei/v1/browse/edit_playlist?write=save/' + key + '/{VIDEO}', {{method: 'POST', body: '{{}}'}}).then(() => button.setAttribute('aria-pressed', button.getAttribute('aria-pressed') === 'true' ? 'false' : 'true')); }}</script>"""
+            <script>{menu_script()}
+            function flip(button, key) {{ fetch('/youtubei/v1/browse/edit_playlist?write=save/' + key + '/{VIDEO}', {{method: 'POST', body: '{{}}'}}).then(() => button.setAttribute('aria-pressed', button.getAttribute('aria-pressed') === 'true' ? 'false' : 'true')); }}</script>"""
 
     def comments_page(self):
         rows = ""
         for row in self.comments:
             handle = "mychannel" if row["own"] else "viewer"
-            pin_choice = f"act('comment-pin/{row['id']}')" if row.get("pinned") else f"pinning('{row['id']}')"
-            pin = f"""<ytcp-menu-service-item-renderer onclick="{pin_choice}">{'取消置顶' if row.get('pinned') else '置顶'}</ytcp-menu-service-item-renderer>"""
+            # From a field check: Studio's menu keeps offering to pin, even a comment that is pinned.
+            pin = f"""<ytcp-menu-service-item-renderer onclick="pinning('{row['id']}')">置顶</ytcp-menu-service-item-renderer>"""
             items = (pin + f"""<ytcp-menu-service-item-renderer onclick="editing('{row['id']}')">修改</ytcp-menu-service-item-renderer>
                         <ytcp-menu-service-item-renderer onclick="removing('{row['id']}')">删除</ytcp-menu-service-item-renderer>""" if row["own"]
                      else pin + f"""<ytcp-menu-service-item-renderer onclick="act('comment-remove/{row['id']}')">移除</ytcp-menu-service-item-renderer><ytcp-menu-service-item-renderer>举报</ytcp-menu-service-item-renderer>""")
@@ -633,10 +642,23 @@ class CommentTests(Browser):
         self.assertEqual("layout_changed", caught.exception.code)
         self.assertEqual([], self.site.writes)
 
-    async def test_the_pin_state_is_read_from_the_comments_own_menu(self):
+    async def test_the_pin_state_is_read_from_the_videos_own_page(self):
         self.assertIs(False, (await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
         self.site.comments[0]["pinned"] = True
         self.assertIs(True, (await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
+        self.assertEqual([], self.site.writes)
+
+    async def test_another_comments_pin_does_not_read_as_this_ones(self):
+        self.site.comments[1]["pinned"] = True
+        self.assertIs(False, (await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
+
+    async def test_a_page_showing_no_comments_says_nothing_about_a_pin(self):
+        self.site.watch_comments = False
+        with patch.object(yt, "WATCH_TICKS", 2):
+            self.assertIsNone((await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
+            with self.assertRaises(VpubError) as caught:
+                await yt.comment_action(self.page, CHANNEL, self.payload("pin", receipt=self.receipt_file()))
+        self.assertEqual("state_unavailable", caught.exception.code)
         self.assertEqual([], self.site.writes)
 
     async def test_pinning_marks_the_receipt_then_chooses_it_once(self):
@@ -663,10 +685,20 @@ class CommentTests(Browser):
         self.assertEqual("layout_changed", caught.exception.code)
         self.assertEqual([], self.site.writes)
 
-    async def test_unpinning_uses_the_other_menu_item(self):
+    async def test_unpinning_goes_through_the_videos_own_page_once(self):
         self.site.comments[0]["pinned"] = True
-        await yt.comment_action(self.page, CHANNEL, self.payload("pin", desired=False, receipt=self.receipt_file()))
-        self.assertEqual([("comment-pin", "c1")], self.site.writes)
+        path = self.receipt_file()
+        result = await yt.comment_action(self.page, CHANNEL, self.payload("pin", desired=False, receipt=path))
+        self.assertEqual(("COMMENT_UNVERIFIED", 1), (result["state"], result["platform_writes"]))
+        self.assertEqual([("comment-unpin", "c1")], self.site.writes)
+        self.assertEqual(["/youtubei/v1/comment/perform_comment_action"], result["page_requests"])
+        self.assertIs(False, (await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
+
+    async def test_it_never_unpins_another_comment(self):
+        self.site.comments[1]["pinned"] = True
+        result = await yt.comment_action(self.page, CHANNEL, self.payload("pin", desired=False, receipt=self.receipt_file()))
+        self.assertEqual("NO_CHANGE", result["state"])
+        self.assertEqual([], self.site.writes)
 
     async def test_a_comment_already_pinned_sends_nothing(self):
         self.site.comments[0]["pinned"] = True

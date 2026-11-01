@@ -31,7 +31,7 @@ DELETE_ITEM = re.compile(r"^\s*(Delete|删除|刪除)\s*$")
 PIN_ITEM = re.compile(r"^\s*(Pin|置顶|置頂)\s*$")
 UNPIN_ITEM = re.compile(r"^\s*(Unpin|取消置顶|取消置頂)\s*$")
 REMOVE_ITEM = re.compile(r"^\s*(Remove|移除)\s*$")
-PINNED_BY = re.compile(r"Pinned by|置顶者|置頂者|已置顶|已置頂")
+WATCH_TICKS = 20  # How long the video's page gets to load its comments, in seconds of scrolling.
 # A Studio list is read to its end, within reason; a longer one is reported as not complete.
 TABLE_PAGES = 20
 # After a change the page is left alone until its own requests have stopped for this many half-seconds, up to the limit.
@@ -669,16 +669,46 @@ async def comment_menu_item(page, row, words):
     return await unique_visible(items, "comment menu item")
 
 
-async def pinned_state(page, row):
-    """The row's own menu says which way the pin would go. Closed again without choosing anything."""
-    await row.hover()
-    await row.locator("#action-menu-button").first.click(timeout=10000)
-    items = page.locator("ytcp-menu-service-item-renderer")
+async def watch_first_thread(page, work):
+    """The first comment thread on the video's own page, which loads its comments once scrolled to. None if it shows none."""
+    await page.goto(f"https://www.youtube.com/watch?v={work}", wait_until="domcontentloaded", timeout=60000)
+    await risk_check(page)
+    threads = page.locator("ytd-comment-thread-renderer")
+    for _ in range(WATCH_TICKS):
+        if await threads.count():
+            return threads.first
+        await page.mouse.wheel(0, 1200)
+        await page.wait_for_timeout(1000)
+    return threads.first if await threads.count() else None
+
+
+async def watch_pin(page, work, comment):
+    """Which comment is pinned, from the video's own page. A field check found a pin that held changes nothing in Studio's row or menu,
+    while this page shows it first with its badge. None if the page shows no comments to say."""
+    first = await watch_first_thread(page, work)
+    if first is None:
+        return None
+    if not await visible(first.locator("#pinned-comment-badge")):
+        return {"pinned": False, "other": False}
+    mine = await first.locator(f'a[href*="lc={comment}"]').count() > 0
+    return {"pinned": mine, "other": not mine}
+
+
+async def watch_unpin(page, work, comment, receipt_path):
+    """A field check found Studio's menu keeps offering to pin a pinned comment. The comment's menu on the video's own page offers to take it off, with no confirmation."""
+    from .comment_actions import submitting
+    first = await watch_first_thread(page, work)
+    if first is None or not await visible(first.locator("#pinned-comment-badge")) or not await first.locator(f'a[href*="lc={comment}"]').count():
+        raise VpubError("comment_changed", "This comment is no longer the pinned one; nothing changed.")
+    await first.hover()
+    await first.locator("ytd-menu-renderer button#button").first.click(timeout=10000)
+    items = page.locator("ytd-menu-service-item-renderer").filter(has_text=UNPIN_ITEM)
     await appears(page, items, 8)
-    state = True if await visible(items.filter(has_text=UNPIN_ITEM)) else False if await visible(items.filter(has_text=PIN_ITEM)) else None
-    await page.keyboard.press("Escape")
-    await page.wait_for_timeout(300)
-    return state
+    item = await unique_visible(items, "comment menu item")
+    await risk_check(page)
+    stop_check("youtube")
+    submitting(receipt_path)
+    return await act_and_settle(page, lambda: item.click(timeout=10000), PIN_TICKS)
 
 
 async def comment_action(page, identity, payload):
@@ -687,6 +717,8 @@ async def comment_action(page, identity, payload):
     target, kind = request["comment"], request.get("kind")
     if identity != request["identity"]:
         raise VpubError("wrong_account", "Account changed since comment collection.")
+    # Read first, because Studio's list then stays open for the press.
+    pin = await watch_pin(page, request["work_id"], target["id"]) if kind == "pin" else None
     current = (await read_comments(page, identity, request["work_id"], 100))["items"]
     found = [c for c in current if c["id"] == target["id"]]
     if len(found) != 1:
@@ -697,7 +729,8 @@ async def comment_action(page, identity, payload):
     liked = await like.evaluate("e => e.isToggled", isolated_context=False) if await like.count() else None
     observed = {"identity": identity, "text": found[0]["text"], "liked": liked if type(liked) is bool else None, "deleted": False, "source": "studio_comment_list"}
     if kind == "pin":
-        observed["pinned"] = await pinned_state(page, row)
+        observed["pinned"] = pin["pinned"] if pin else None
+        observed["source"] = "watch_page_badge"
     if payload["operation"] == "status":
         return observed
     if payload["operation"] != "set":
@@ -739,17 +772,19 @@ async def comment_action(page, identity, payload):
                 raise VpubError("state_unavailable", "The comment's pin state is unavailable; nothing changed.")
             if observed["pinned"] is request["desired"]:
                 return {"state": "NO_CHANGE", "platform_writes": 0}
-            others = page.locator("ytcp-comment").filter(has_text=PINNED_BY)
-            if request["desired"] and await others.count():
+            if request["desired"] and pin["other"]:
                 raise VpubError("another_comment_pinned", "Another comment is pinned; this command will not replace it implicitly.")
-        words = {"delete": DELETE_ITEM, "remove": REMOVE_ITEM}.get(kind) or (PIN_ITEM if request["desired"] else UNPIN_ITEM)
+            if not request["desired"]:
+                requests = await watch_unpin(page, request["work_id"], target["id"], payload["receipt_path"])
+                return {**sent(), "page_requests": sorted({urlsplit(item.url).path for item in requests}), "write_answers": await write_answers(requests, target["id"])}
+        words = {"delete": DELETE_ITEM, "remove": REMOVE_ITEM}.get(kind) or PIN_ITEM
         item = await comment_menu_item(page, row, words)
         submitting(payload["receipt_path"])
 
         async def choose():
             await item.click(timeout=10000)
-            # Pinning was seen to ask. Unpinning has not been seen yet, so it may or may not.
-            await studio_confirm(page, needed=kind == "pin" and request["desired"])
+            # Pinning was seen to ask. Deleting may.
+            await studio_confirm(page, needed=kind == "pin")
 
         requests = await act_and_settle(page, choose, PIN_TICKS if kind == "pin" else 0)
         # By address and shape only, in case the read-back disagrees.
