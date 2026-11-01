@@ -380,7 +380,7 @@ vpub comments verify-action RECEIPT_KEY
 | Platform | New comment controls |
 |---|---|
 | Bilibili | Like/unlike and pin/unpin a top-level comment through the included bili-cli; delete your own comment or remove a viewer's on your own work; exact comment state read back. Deleting and removing have not been tried on a real account. |
-| Instagram / X | Like/unlike the exact visible comment; an ambiguous heart stops the action. X also hides or unhides a viewer's reply and deletes your own, read back from that reply's own page; deleting has not been tried on a real account. |
+| Instagram / X | Like/unlike the exact visible comment; an ambiguous heart stops the action. X also hides or unhides a viewer's reply and deletes your own, read back from that reply's own page; deleting has not been tried on a real account. Instagram also deletes your own comment through its own menu; that has not been tried on a real account either. |
 | YouTube | On Studio's comment page, like/unlike or pin/unpin any comment, remove a viewer's, and edit or delete your own; with the add-on, editing and deleting use the official API. Pinning never replaces another pinned comment. These have not been tried on a real channel. |
 | Douyin | Creator Center comment like/unlike; delete your own comment without replies on your own work; existing top-level replies remain available |
 
@@ -649,6 +649,8 @@ vpub status
 ```
 
 `vpub status` reads local records only, so it needs no sign-in and contacts no platform. It shows any active stop and its reason, each unfinished publication with the exact next command and how far its upload got, running background browsers, pending messages, the last sync and how much disk the video copies use. Saved sign-ins it lists are not a live check; use `vpub auth status` for that.
+
+When a browser command fails, CrossCast keeps a small local record of the step and the page's controls: what each control is, never what it holds, and addresses without their query strings. Page text and pictures can hold private messages, so they are kept only if you set `"page_diagnostics": true` in `config.json` while looking into a problem. Field contents are never kept. Turn it off afterwards, delete what it saved, and read any record before sharing it.
 
 `vpub stop` pauses publishing and browser commands. The tool never clears a stop by itself: once the reason is dealt with, the operator deletes the file that `vpub stop` and `vpub status` name.
 

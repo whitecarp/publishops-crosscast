@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .core import VpubError, atomic_json, file_sha, home, now, read_json, snapshot_file, stop_check
-from .browser_runtime import risk_check, unique_visible, visible
+from .browser_runtime import failure_record, plain_address, risk_check, unique_visible, visible
 from .x_pages import own_posts
 
 MANAGE = "https://creator.douyin.com/creator-micro/content/manage"
@@ -106,6 +106,9 @@ class Transaction:
             self.receipt['chapters_state']='PENDING_WORK_ID'
 
     def save(self, **changes):
+        for key in ("review_url", "draft_url", "media_url"):
+            if changes.get(key):
+                changes[key] = plain_address(changes[key])
         self.receipt.update(changes, updated_at=now())
         atomic_json(self.path, self.receipt)
         return dict(self.receipt)
@@ -397,14 +400,11 @@ async def execute(page, platform, identity, payload):
         result=await getattr(browser_forms, "publish_" + platform)(page, tx)
         return tx.save(**await complete_pending_chapters(page,platform,identity,result))
     except Exception as e:
-        # Local diagnostics are deliberately outside the repository. No cookies,
-        # form values, private URLs or raw page source are included in stdout.
+        # Local diagnostics, deliberately outside the repository.
         debug = home() / 'browser-debug' / (payload['plan']['confirmation']+'-'+platform)
         debug.mkdir(parents=True, exist_ok=True)
         try:
-            await page.screenshot(path=str(debug/'last-page.png'))
-            controls = await page.locator('button,input,textarea,[contenteditable=true],ytcp-button,tp-yt-paper-radio-button,[role=checkbox],ytcp-dropdown-trigger').evaluate_all("es=>es.map(e=>({tag:e.tagName,id:e.id,name:e.getAttribute('name'),role:e.getAttribute('role'),testId:e.getAttribute('test-id'),type:e.type,placeholder:e.getAttribute('placeholder'),label:e.getAttribute('aria-label'),disabled:e.hasAttribute('disabled'),text:e.tagName==='BUTTON'?e.innerText:null}))")
-            atomic_json(debug/'controls.json', controls)
+            await failure_record(page, e, debug/'failure.json', picture=debug/'last-page.png')
         except Exception:
             pass
         human = isinstance(e, VpubError) and e.code in {"human_verification_required", "auth_expired"}

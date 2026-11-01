@@ -1,8 +1,45 @@
-"""Like/unlike the exact visible Instagram/X comment, never a nearby video."""
+"""Like/unlike the exact visible Instagram/X comment, never a nearby video, and delete your own on Instagram."""
 from . import x_pages
 from .browser_runtime import unique_visible, risk_check
 from .operations_browser import open_work, comments
 from .core import VpubError, atomic_json, read_json, stop_check
+
+COMMENT_OPTIONS = '[role="button"]:has(svg[aria-label="Comment Options"]), [role="button"][aria-label="Comment Options"]'
+
+
+async def press_once(page, platform, payload, control):
+    """The receipt says it is going before the one click that sends it, and that it went straight after."""
+    await risk_check(page); stop_check(platform)
+    await control.click(trial=True, timeout=10000)
+    from .comment_actions import submitting
+    submitting(payload['receipt_path'])
+    await control.click(timeout=15000)
+    saved = read_json(payload['receipt_path']); saved.update(state='COMMENT_UNVERIFIED', platform_writes=1); atomic_json(payload['receipt_path'], saved)
+
+
+async def instagram_delete(page, identity, payload, comment):
+    """Your own comment's menu, which appears when the pointer rests on its row. A field check found only Delete and Cancel in it."""
+    observed = {'identity': identity, 'text': comment['text'], 'liked': None, 'deleted': False, 'source': 'instagram_comment_list'}
+    if payload['operation'] == 'status': return observed
+    if payload['operation'] != 'set' or not comment.get('is_owner'):
+        raise VpubError('own_comment_required', 'Deleting is restricted to your own comment; nothing changed.')
+    row = page.locator(f'[data-crosscast-comment-row="{comment["ui_index"]}"]')
+    await row.hover(timeout=10000)
+    # The text and its menu can be sibling nodes. Climb only while the container holds this one marked comment.
+    for _ in range(3):
+        if await row.locator(COMMENT_OPTIONS).count(): break
+        parent = row.locator('xpath=..')
+        if await parent.locator('[data-crosscast-comment-row]').count() != 1: break
+        row = parent
+    await (await unique_visible(row.locator(COMMENT_OPTIONS), 'Comment Options')).click(timeout=10000)
+    choices = page.get_by_role('dialog').get_by_role('button', name='Delete', exact=True)
+    try:
+        await choices.first.wait_for(state='visible', timeout=10000)
+    except Exception:
+        raise VpubError('layout_changed', 'Instagram did not offer Delete for this comment; nothing changed.') from None
+    await press_once(page, 'instagram', payload, await unique_visible(choices, 'comment Delete'))
+    await page.wait_for_timeout(2000)
+    return {'state': 'COMMENT_UNVERIFIED', 'platform_writes': 1}
 
 
 async def execute(page, platform, identity, payload):
@@ -24,8 +61,13 @@ async def execute(page, platform, identity, payload):
     await open_work(page, platform, identity, work)
     data = await comments(page, platform, identity, work, 100)
     found = [c for c in data['items'] if c['id'] == target['id'] and c['text'] == target['text']]
+    deleting = platform == 'instagram' and r.get('kind') == 'delete'
+    # Absence means something only when the whole short list was read, and only about the comment itself.
+    if deleting and not [c for c in data['items'] if c['id'] == target['id']] and len(data['items']) < 100:
+        return {'identity': identity, 'text': None, 'liked': None, 'deleted': True, 'source': 'instagram_comment_list'}
     if len(found) != 1: raise VpubError('comment_changed', 'Exact comment is absent or changed.')
     c = found[0]
+    if deleting: return await instagram_delete(page, identity, payload, c)
     if platform == 'x':
         row = await unique_visible(x_pages.post_row(page, c['id']), 'comment article')
         on = row.locator(x_pages.LIKE_ON); off = row.locator(x_pages.LIKE_OFF)
@@ -52,11 +94,6 @@ async def execute(page, platform, identity, payload):
     if liked == r['desired']: return {'state': 'NO_CHANGE', 'platform_writes': 0}
     control = (ons or offs)[0]
     if platform == 'instagram': control = await unique_visible(control.locator('xpath=ancestor::*[@role="button" or self::button][1]'), 'comment like button')
-    await risk_check(page); stop_check(platform)
-    await control.click(trial=True, timeout=10000)
-    from .comment_actions import submitting
-    submitting(payload['receipt_path'])
-    await control.click(timeout=15000)
-    saved = read_json(payload['receipt_path']); saved.update(state='COMMENT_UNVERIFIED', platform_writes=1); atomic_json(payload['receipt_path'], saved)
+    await press_once(page, platform, payload, control)
     await (off if liked else on).wait_for(state='visible', timeout=15000)
     return {'state': 'COMMENT_UNVERIFIED', 'platform_writes': 1}

@@ -4,7 +4,7 @@ import uuid
 from . import adapters, operations as ops, safety
 from .core import VpubError, atomic_json, digest, error_fields, home, now, publication_lock, read_json, stop_check
 
-SUPPORTED = {'bilibili': {'like', 'pin', 'delete', 'remove'}, 'instagram': {'like'}, 'x': {'like', 'hide', 'delete'}, 'youtube': {'like', 'pin', 'edit', 'delete', 'remove', 'moderate'}, 'douyin': {'like', 'delete'}}
+SUPPORTED = {'bilibili': {'like', 'pin', 'delete', 'remove'}, 'instagram': {'like', 'delete'}, 'x': {'like', 'hide', 'delete'}, 'youtube': {'like', 'pin', 'edit', 'delete', 'remove', 'moderate'}, 'douyin': {'like', 'delete'}}
 PENDING = {'COMMENT_SUBMITTING', 'COMMENT_UNVERIFIED'}
 # YouTube's API cannot do these, so they use Studio's own page on every route.
 STUDIO_ONLY = {'like', 'pin', 'remove'}

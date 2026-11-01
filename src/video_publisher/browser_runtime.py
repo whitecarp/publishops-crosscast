@@ -10,7 +10,7 @@ import threading
 import time
 from urllib.parse import urlsplit
 
-from .core import VpubError, account_name, atomic_json, home, now, read_json
+from .core import VpubError, account_name, atomic_json, config, home, now, read_json
 
 BROWSER_PLATFORMS = {"douyin", "instagram", "x", "youtube"}
 URLS = {"douyin": "https://creator.douyin.com/creator-micro/home",
@@ -40,6 +40,11 @@ SOMEONES_WORDS = """(e, others) => {
   }
   return false;
 }"""
+# What a failure record says about a control: what it is, never what it holds.
+CONTROL_SHAPES = """es => es.map(e => ({tag: e.tagName, type: e.getAttribute('type'), name: e.getAttribute('name'), id: e.id, role: e.getAttribute('role'), testid: e.getAttribute('data-testid'),
+                                       test_id: e.getAttribute('test-id'), placeholder: e.getAttribute('placeholder'), label: e.getAttribute('aria-label'), disabled: e.hasAttribute('disabled')}))"""
+# The page's words with its form fields taken out first, so even a record a person asked for holds nothing typed into one.
+PAGE_WORDS = """() => { const copy = document.body.cloneNode(true); copy.querySelectorAll('input,textarea,select,script,style,[contenteditable=true]').forEach(e => e.remove()); return copy.textContent; }"""
 SITES = {"x": ("x.com", "twitter.com"), "instagram": ("instagram.com",), "douyin": ("douyin.com", "bytedance.com"), "youtube": ("youtube.com", "google.com")}
 # Chrome can stop answering, and this process holds the profile lock until it ends.
 CLOSE_SECONDS = 30
@@ -266,6 +271,24 @@ def exit_soon(seconds=EXIT_SECONDS):
     timer = threading.Timer(seconds, os._exit, args=(0,))
     timer.daemon = True
     timer.start()
+
+
+def plain_address(address):
+    """An address with no query or fragment, which can hold sign-in values. Receipts and failure records keep only this."""
+    parts = urlsplit(str(address))
+    return f"{parts.scheme}://{parts.hostname or ''}{parts.path}" if parts.scheme else ""
+
+
+async def failure_record(page, exc, path, picture=None, **fields):
+    """Which step failed and which controls the page had. Page text and pictures can hold private messages, so they are kept
+    only with page_diagnostics turned on in config.json. Field contents are never kept."""
+    record = {"at": now(), **fields, "error": exc.message if isinstance(exc, VpubError) else failure_message(exc), "url": plain_address(page.url),
+              "controls": await page.locator("input,textarea,select,button,[role=button],[role=checkbox],[contenteditable=true],ytcp-button,ytcp-dropdown-trigger,tp-yt-paper-radio-button").evaluate_all(CONTROL_SHAPES)}
+    if config().get("page_diagnostics") is True:
+        record["text"] = (await page.evaluate(PAGE_WORDS))[:18000]
+        if picture:
+            await page.screenshot(path=str(picture), timeout=3000)
+    atomic_json(path, record)
 
 
 def failure_message(exc):

@@ -47,22 +47,14 @@ async def dispatch(page, platform, actual, payload):
             return await batch(page,platform,actual,payload)
         return await execute(page, platform, actual, payload)
     except Exception as exc:
-        if payload['action'] in {'operations','collections'}:
-            # Local diagnostics only; never included in public reports.
-            try:
-                atomic_json(home()/'operations/errors'/(platform+'-last-error.json'),
-                    {'at':now(),'operation':payload.get('operation'),'error':str(exc)[:1800],
-                     'url':page.url,'text':(await page.locator('body').inner_text())[:18000],
-                     'editors':await page.locator('textarea,input,[contenteditable=true]').evaluate_all('es=>es.map(e=>e.outerHTML.slice(0,5000))')})
-            except Exception: pass
-        if payload['action']=='edit':
-            output=Path(payload['edit_receipt_path'])
-            # A closed page must not replace the real error with a diagnostics failure.
-            try:
-                atomic_json(output.with_suffix('.error.json'),{'type':type(exc).__name__, 'message':str(exc)[:1600], 'url':page.url,
-                    'controls':await page.locator('input,textarea,button,[role=button],[contenteditable=true]').evaluate_all('es=>es.map(e=>({tag:e.tagName,type:e.type,placeholder:e.getAttribute("placeholder"),aria:e.getAttribute("aria-label"),text:e.tagName==="BUTTON"?e.innerText:null}))')})
-                await page.screenshot(path=str(output.with_suffix('.error.png')),timeout=3000)
-            except Exception: pass
+        # A closed page must not replace the real error with a diagnostics failure.
+        try:
+            if payload['action'] in {'operations','collections'}:
+                await runtime.failure_record(page,exc,home()/'operations/errors'/(platform+'-last-error.json'),operation=payload.get('operation'))
+            elif payload['action']=='edit':
+                output=Path(payload['edit_receipt_path'])
+                await runtime.failure_record(page,exc,output.with_suffix('.error.json'),picture=output.with_suffix('.error.png'))
+        except Exception: pass
         raise
 
 
