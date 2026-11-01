@@ -14,12 +14,18 @@ import time
 from datetime import datetime, timezone
 
 PLATFORMS = ("bilibili", "youtube", "douyin", "instagram", "x")
+HELD_BACK = "write_spacing"
 
 
 class VpubError(Exception):
     def __init__(self, code, message, hint=""):
         super().__init__(message)
         self.code, self.message, self.hint = code, message, hint
+
+
+def never_sent(exc):
+    """bili-cli held this write back to keep its own spacing, so nothing reached the platform, whatever the receipt said just before."""
+    return isinstance(exc, VpubError) and exc.code == HELD_BACK
 
 
 def error_fields(exc, name="error"):

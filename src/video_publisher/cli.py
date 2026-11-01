@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 from . import __version__, adapters
-from .core import Ledger, PLATFORMS, VpubError, atomic_json, config, file_sha, home, load_plan, now, publication_lock, read_json, snapshot_file, stop_check, platform_check
+from .core import Ledger, PLATFORMS, VpubError, atomic_json, config, file_sha, home, load_plan, never_sent, now, publication_lock, read_json, snapshot_file, stop_check, platform_check
 from .safety import pushed_back
 
 # The command finished, but the work it was asked to do did not.
@@ -116,8 +116,9 @@ def publish_plan(plan, confirm):
                     results[platform] = {"key": key, **receipt}
                 except Exception as e:
                     code = e.code if isinstance(e, VpubError) else "backend_error"
-                    if code == "browser_busy" and not record.get("receipt"):
-                        # The worker was refused the profile lock before it opened a page.
+                    if never_sent(e) or (code == "browser_busy" and not record.get("receipt")):
+                        # The worker was refused the profile lock before it opened a page, or bili-cli held the upload back to keep its spacing.
+                        ledger.save(key, "IN_PROGRESS", record)
                         ledger.forget(key)
                         results[platform] = {"state": "NOT_STARTED", "code": code, "message": e.message, "hint": e.hint}
                         continue

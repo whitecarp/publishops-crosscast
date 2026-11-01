@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 from . import safety
-from .core import VpubError, stop_check, platform_check
+from .core import HELD_BACK, VpubError, stop_check, platform_check
 
 ROUTES = {"bilibili": {"cli"}, "douyin": {"browser"}, "youtube": {"browser", "api"}, "x": {"browser", "api"}, "instagram": {"browser", "api"}}
 BILI_MAIN = "from bili_cli.main import main; main()"
@@ -34,6 +34,9 @@ def bili(args, timeout=210, program=BILI_MAIN):
         raise VpubError("backend_error", "bili-cli did not return valid JSON.", "Run bili schema to diagnose; do not repeat a submission.")
     if not result.get("ok"):
         e = result.get("error", {})
+        # bili-cli's own spacing between writes says when to try again. Bilibili never saw the request, so it has not objected.
+        if e.get("code") == "rate_limited" and (e.get("detail") or {}).get("limit"):
+            raise VpubError(HELD_BACK, e.get("message", "bili-cli held this write back."), e.get("hint", ""))
         safety.pushed_back("bilibili", e.get("code"))
         raise VpubError(e.get("code", "backend_error"), e.get("message", "bili-cli failed"), e.get("hint", ""))
     return result.get("data", {})

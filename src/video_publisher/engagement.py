@@ -2,7 +2,7 @@
 import re
 import uuid
 from . import adapters, operations, safety
-from .core import VpubError, atomic_json, digest, error_fields, home, now, publication_lock, read_json, stop_check
+from .core import VpubError, atomic_json, digest, error_fields, home, never_sent, now, publication_lock, read_json, stop_check
 
 PENDING={'ACTION_SUBMITTING','ACTION_UNVERIFIED'}
 
@@ -99,7 +99,7 @@ def set_action(platform,work,kind,desired=True,collection=None,dry_run=False,tes
             atomic_json(path,saved)
         except Exception as exc:
             saved=read_json(path)
-            saved['state']='ACTION_UNVERIFIED' if saved['state'] in PENDING else 'ACTION_FAILED'
+            saved['state']='ACTION_UNVERIFIED' if saved['state'] in PENDING and not never_sent(exc) else 'ACTION_FAILED'
             saved.update(error_fields(exc,'error_code'))
             saved['platform_writes']=None if saved['state']=='ACTION_UNVERIFIED' else 0
             atomic_json(path,saved)

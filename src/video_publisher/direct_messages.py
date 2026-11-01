@@ -2,7 +2,7 @@
 import re
 import uuid
 from . import adapters, safety
-from .core import VpubError, atomic_json, digest, error_fields, home, now, publication_lock, read_json, stop_check
+from .core import VpubError, atomic_json, digest, error_fields, home, never_sent, now, publication_lock, read_json, stop_check
 
 PENDING = {'DM_SUBMITTING', 'DM_UNVERIFIED'}
 
@@ -94,7 +94,7 @@ def send(platform, who, text, language, dry_run=False, test_id=None, written_by=
             return _verify(path)
         except Exception as exc:
             saved = read_json(path)
-            saved.update(state='DM_UNVERIFIED' if saved['state'] in PENDING else 'DM_FAILED', **error_fields(exc, 'error_code'))
+            saved.update(state='DM_UNVERIFIED' if saved['state'] in PENDING and not never_sent(exc) else 'DM_FAILED', **error_fields(exc, 'error_code'))
             saved['platform_writes'] = None if saved['state'] == 'DM_UNVERIFIED' else 0
             atomic_json(path, saved)
             if saved['state'] == 'DM_FAILED': safety.release(ticket)

@@ -1,10 +1,10 @@
 """Corrections to a published Bilibili work through the included bili-cli. Bilibili reviews each one again."""
 from . import adapters
 from .chapters import chapter_lines
-from .core import VpubError, file_sha, now
+from .core import HELD_BACK, VpubError, file_sha, now
 
 # bili-cli answered and said no, so the change did not go through. Anything else may have reached Bilibili.
-REFUSED = {"invalid_argument", "not_logged_in", "auth_expired", "not_found", "risk_control", "captcha_required", "rate_limited"}
+REFUSED = {"invalid_argument", "not_logged_in", "auth_expired", "not_found", "risk_control", "captcha_required", "rate_limited", HELD_BACK}
 REVIEW = "Bilibili reviews every edit again, and the old version may show until that finishes."
 
 

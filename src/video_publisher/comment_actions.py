@@ -2,7 +2,7 @@
 import re
 import uuid
 from . import adapters, operations as ops, safety
-from .core import VpubError, atomic_json, digest, error_fields, home, now, publication_lock, read_json, stop_check
+from .core import VpubError, atomic_json, digest, error_fields, home, never_sent, now, publication_lock, read_json, stop_check
 
 SUPPORTED = {'bilibili': {'like', 'pin', 'delete', 'remove'}, 'instagram': {'like', 'delete'}, 'x': {'like', 'hide', 'delete'}, 'youtube': {'like', 'pin', 'edit', 'delete', 'remove', 'moderate'}, 'douyin': {'like', 'delete'}}
 PENDING = {'COMMENT_SUBMITTING', 'COMMENT_UNVERIFIED'}
@@ -129,7 +129,7 @@ def mutate(platform, work, comment_id, kind, desired=True, dry_run=False, test_i
             if state == 'COMMENT_VERIFIED': refresh_snapshot(request)
         except Exception as exc:
             saved = read_json(path)
-            saved.update(state='COMMENT_UNVERIFIED' if saved['state'] in PENDING else 'COMMENT_FAILED', **error_fields(exc, 'error_code'))
+            saved.update(state='COMMENT_UNVERIFIED' if saved['state'] in PENDING and not never_sent(exc) else 'COMMENT_FAILED', **error_fields(exc, 'error_code'))
             saved['platform_writes'] = None if saved['state'] == 'COMMENT_UNVERIFIED' else 0
             if saved['state'] == 'COMMENT_FAILED': safety.release(ticket)
         atomic_json(path, saved)
