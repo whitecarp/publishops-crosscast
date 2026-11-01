@@ -140,7 +140,10 @@ def account(platform, value):
         return None
     value = value.strip()
     if platform in {"instagram", "douyin"}:
-        value = urlsplit(value).path.strip("/").removeprefix("user/") or value
+        try:
+            value = urlsplit(value).path.strip("/").removeprefix("user/") or value
+        except ValueError:
+            pass  # Not an address at all, so it stays as written.
     return f"{platform}:{value.casefold() if platform in {'x', 'instagram'} or value.startswith('@') else value}"
 
 

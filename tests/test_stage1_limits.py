@@ -123,6 +123,12 @@ class SamePersonTests(Temporary):
             with self.subTest(platform=platform, first=first):
                 self.assertNotEqual(safety.account(platform, first), safety.account(platform, second))
 
+    def test_an_address_that_cannot_be_read_as_one_is_kept_as_it_was_written(self):
+        for value in ("//[evil", "http://[", "/user/[x"):
+            with self.subTest(value=value):
+                self.assertTrue(safety.account("instagram", value).startswith("instagram:"))
+                self.assertTrue(safety.account("douyin", value).startswith("douyin:"))
+
     def reply_to(self, platform, work, author_id, text, comment="c1"):
         atomic_json(home() / "operations/comments" / (digest([platform, work]) + ".json"), {"identity": "me", "items": [
             {"id": comment, "text": "Question", "author": "Viewer", "author_id": author_id, "is_owner": False, "owner_replied": False, "language_hint": "en"}]})
