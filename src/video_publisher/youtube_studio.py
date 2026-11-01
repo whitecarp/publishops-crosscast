@@ -7,8 +7,9 @@ from .browser_backends import normalize, studio_visibility, work_url
 from .browser_runtime import risk_check, unique_visible, visible
 from .core import VpubError, atomic_json, file_sha, home, now, read_json, stop_check
 from .operations_api import metric
+from .progress import stage
 
-STUDIO = "https://studio.youtube.com"
+STUDIO ="https://studio.youtube.com"
 PLAYLIST_ROWS = """rows => rows.map(row => ({href: row.querySelector('#playlist-title-link')?.getAttribute('href') || '', title: row.querySelector('#playlist-title-link')?.innerText || '',
     visibility: row.querySelector('.visibility-label')?.innerText || '', videos: row.querySelector('.videos-count-cell')?.innerText || '', updated: row.querySelector('.last-time-updated-cell')?.innerText || ''}))"""
 VIDEO_LINKS = "rows => rows.map(row => ({href: row.querySelector('a#video-title')?.getAttribute('href') || '', title: row.querySelector('a#video-title')?.innerText || ''}))"
@@ -295,6 +296,7 @@ async def operations(page, identity, payload):
     saved = read_json(path)
     saved.update(before_reply_ids=[c["id"] for c in current], submitted_text=request["text"], state="REPLY_SUBMITTING")
     atomic_json(path, saved)
+    stage("pressing")
     await act_and_settle(page, lambda: button.click(timeout=20000))
     saved["state"] = "REPLY_UNVERIFIED"
     atomic_json(path, saved)
@@ -522,7 +524,7 @@ async def ensure_playlists(page, identity, titles):
         raise VpubError("read_incomplete", "Studio's playlist list could not be read to its end, so a missing playlist is not proven; nothing was uploaded.")
     made = []
     for title in missing:
-        result = await create_playlist(page, identity, {"title": title, "privacy": "private"}, lambda *_: None, known=[row["id"] for row in rows])
+        result = await create_playlist(page, identity, {"title": title, "privacy": "private"}, lambda *_: stage("pressing"), known=[row["id"] for row in rows])
         if not result.get("collection_id"):
             raise VpubError("playlist_unverified", f'Studio did not show the new playlist "{title}"; nothing was uploaded.')
         made.append({"id": result["collection_id"], "title": title})

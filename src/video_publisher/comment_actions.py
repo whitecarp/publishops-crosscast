@@ -3,6 +3,7 @@ import re
 import uuid
 from . import adapters, operations as ops, safety
 from .core import VpubError, atomic_json, digest, error_fields, home, now, publication_lock, read_json, stop_check
+from .progress import stage
 
 SUPPORTED = {'bilibili': {'like', 'pin', 'delete', 'remove'}, 'instagram': {'like', 'delete'}, 'x': {'like', 'hide', 'delete'}, 'youtube': {'like', 'pin', 'edit', 'delete', 'remove', 'moderate'}, 'douyin': {'like', 'delete'}}
 PENDING = {'COMMENT_SUBMITTING', 'COMMENT_UNVERIFIED'}
@@ -64,6 +65,7 @@ def status(platform, work, comment_id):
 def submitting(path):
     saved = read_json(path); saved.update(state='COMMENT_SUBMITTING', submitted_at=now())
     atomic_json(path, saved)
+    stage('pressing')
 
 
 def matches(request, observed):

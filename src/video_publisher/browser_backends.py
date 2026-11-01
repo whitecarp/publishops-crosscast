@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 from .core import VpubError, atomic_json, file_sha, home, now, read_json, snapshot_file, stop_check
 from .browser_runtime import failure_record, plain_address, risk_check, unique_visible, visible
+from .progress import stage
 from .x_pages import own_posts
 
 MANAGE = "https://creator.douyin.com/creator-micro/content/manage"
@@ -118,6 +119,7 @@ class Transaction:
         # The upload's file name, as a link to the private snapshot rather than a second copy of the video.
         dst = snapshot_file(src, src.with_name("crosscast-" + self.plan["video_sha256"][:16] + src.suffix), self.plan["video_sha256"], link=True)
         self.save(phase="selecting_media", media_selected=True, upload_filename=dst.name)
+        stage("uploading")
         return dst
 
     def validate_assets(self):
@@ -144,6 +146,7 @@ class Transaction:
         await risk_check(page)
         stop_check(self.platform)
         self.save(state="UNKNOWN", phase="submitting", final_submit_attempted=True, review_url=page.url)
+        stage("pressing")
         # Persist BEFORE clicking. A timeout must never cause another click.
         await button.click(timeout=20000)
 

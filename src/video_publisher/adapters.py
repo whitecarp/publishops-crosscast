@@ -8,7 +8,7 @@ import os
 import subprocess
 import sys
 
-from . import safety
+from . import progress, safety
 from .core import VpubError, stop_check, platform_check
 
 ROUTES = {"bilibili": {"cli"}, "douyin": {"browser"}, "youtube": {"browser", "api"}, "x": {"browser", "api"}, "instagram": {"browser", "api"}}
@@ -142,7 +142,8 @@ def browser_call(platform, action, account, **kwargs):
     stop_check(platform)
     payload = {"platform": platform, "action": action, "account": account, **kwargs}
     try:
-        return browser_answer(platform, action, account, payload)
+        with progress.relay(platform, payload):
+            return browser_answer(platform, action, account, payload)
     except VpubError as exc:
         safety.pushed_back(platform, exc.code)
         raise
@@ -157,7 +158,9 @@ def browser_answer(platform, action, account, payload):
             if result is not None:
                 return result
         else:
+            progress.stage("waiting for the browser", payload.get("stages_path"))
             browser_broker.release(platform, account)
+    progress.stage("starting the browser", payload.get("stages_path"))
     result = hidden_desktop_call(payload, browser_timeout(action)) if platform == "youtube" and os.name == "nt" else worker_call(payload, browser_timeout(action))
     if not result.get("ok"):
         e = result["error"]

@@ -5,6 +5,7 @@ from urllib.parse import urlsplit
 from .core import VpubError, atomic_json, read_json, stop_check
 from .browser_runtime import risk_check, unique_visible
 from .browser_backends import normalize
+from .progress import stage
 
 
 def creator_target(data, work, target):
@@ -82,6 +83,7 @@ async def reply(page, identity, payload):
     saved.update(state='REPLY_SUBMITTING',submitted_text=request['text'],
                  before_reply_ids=[str(c['cid']) for c in data.get('comments',[])],send_surface='creator_center')
     atomic_json(path,saved)
+    stage('pressing')
     from patchright.async_api import TimeoutError as BrowserTimeout
     result={'state':'REPLY_UNVERIFIED','send_acknowledged':False}
     try:

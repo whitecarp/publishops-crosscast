@@ -11,6 +11,7 @@ import time
 from urllib.parse import urlsplit
 
 from .core import VpubError, account_name, atomic_json, config, home, now, read_json
+from .progress import stage, watch
 
 BROWSER_PLATFORMS = {"douyin", "instagram", "x", "youtube"}
 URLS = {"douyin": "https://creator.douyin.com/creator-micro/home",
@@ -261,6 +262,7 @@ async def keep_session(context, platform, account):
 
 async def close_context(context, platform=None, account=None):
     """Save and close, each with a limit. A session that cannot be saved or closed must not fail the finished command."""
+    stage("closing the browser")
     if platform:
         await keep_session(context, platform, account)
     try:
@@ -319,6 +321,8 @@ async def save_session(context, platform, account):
 async def signed_in_page(context, platform, expected=None):
     page = context.pages[0] if context.pages else await context.new_page()
     page.set_default_timeout(10000)
+    stage("checking the account")
+    watch(page)
     await page.goto(URLS[platform], wait_until="domcontentloaded", timeout=60000)
     for _ in range(45):
         await risk_check(page)

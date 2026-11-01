@@ -642,6 +642,8 @@ These routes are a separate paid add-on, and YouTube commands below that use the
 
 Comment, stats, like, message and other non-publishing browser commands now share one background browser per account, so later commands skip starting Chrome. It runs only on your computer over a private authenticated pipe, and it exits after 5 idle minutes, after 1 hour, after any error, or when `vpub stop` is used. Publishing, `resume`, `edit` and login close it first and run alone. A command that was already sent is never repeated automatically. A second command waits for the first instead of failing, for up to three minutes. To turn this off, set `browser_idle_seconds` to 0 in the settings file or `VPUB_BROWSER_IDLE_SECONDS=0` in the environment.
 
+While a browser command works it writes short JSON lines to stderr, one at each stage and at least every 15 seconds, so a slow command does not look hung: `{"event": "browser_progress", "platform": "youtube", "stage": "opening the page", "elapsed_seconds": 12.3}`. The stages are `waiting for the browser`, `starting the browser`, `checking the account`, `opening the page`, `reading the page`, `uploading`, `pressing`, `reading back` and `closing the browser`. They never hold anyone's words, names, IDs or addresses. Stdout stays the one JSON answer, so read the two streams separately.
+
 ## See what needs attention
 
 ```sh

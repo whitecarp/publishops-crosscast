@@ -3,6 +3,7 @@ import re
 import uuid
 from . import adapters, safety
 from .core import VpubError, atomic_json, digest, error_fields, home, now, publication_lock, read_json, stop_check
+from .progress import stage
 
 PENDING = {'DM_SUBMITTING', 'DM_UNVERIFIED'}
 
@@ -103,6 +104,7 @@ def send(platform, who, text, language, dry_run=False, test_id=None, written_by=
 
 def submitting(path):
     saved = read_json(path); saved.update(state='DM_SUBMITTING', submitted_at=now()); atomic_json(path, saved)
+    stage('pressing')
 
 
 def _verify(path):

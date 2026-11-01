@@ -9,6 +9,7 @@ from .core import VpubError, atomic_json, digest, read_json, stop_check
 from .browser_runtime import risk_check, unique_visible
 from .operations_api import metric
 from .browser_backends import normalize
+from .progress import stage
 
 
 def number(text):
@@ -253,6 +254,7 @@ async def execute(page,platform,identity,payload):
             if not await button.is_enabled(): raise VpubError('reply_not_ready','Test submission is disabled.')
             await button.click(trial=True,timeout=10000)
             atomic_json(Path(payload['test_receipt_path']),{**test,'state':'TEST_SEED_SUBMITTING'})
+            stage('pressing')
             await button.click(timeout=20000)
             saved={**test,'state':'TEST_SEED_UNVERIFIED'}
             atomic_json(Path(payload['test_receipt_path']),saved)
@@ -325,6 +327,7 @@ async def execute(page,platform,identity,payload):
     saved['submitted_text']=await editor.input_value() if await editor.evaluate('e=>e.tagName')=='TEXTAREA' else await editor.inner_text()
     await button.click(trial=True,timeout=10000)
     saved['state']='REPLY_SUBMITTING';atomic_json(path,saved)
+    stage('pressing')
     await button.click(timeout=20000)
     # A successful click alone is not confirmed visibility. Keep this durable
     # uncertainty; verify-reply reads the original conversation without resending.

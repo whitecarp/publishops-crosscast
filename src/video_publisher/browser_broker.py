@@ -18,6 +18,7 @@ import sys
 from threading import Thread
 import time
 
+from . import progress
 from .core import VpubError, account_name, atomic_json, config, home, read_json, stop_check
 
 # Publish, resume, edit, login and read_all keep their own one-shot worker.
@@ -122,6 +123,8 @@ def start(platform, account):
 def call(payload, timeout):
     """Run one command in the shared session. None means nothing was sent: use a one-shot worker."""
     platform, account = payload["platform"], payload["account"]
+    stages = payload.get("stages_path")
+    progress.stage("waiting for the browser", stages)
     # A busy session still owns the profile, so wait for it; a second session could never start.
     conn = connect(platform, account, BUSY_SECONDS)
     if conn is None:
@@ -130,6 +133,7 @@ def call(payload, timeout):
         failure.unlink(missing_ok=True)
         if not wait_for_lock(platform, account, CLOSING_SECONDS):
             raise busy_error()
+        progress.stage("starting the browser", stages)
         process = start(platform, account)
         deadline = time.monotonic() + START_SECONDS
         while conn is None and time.monotonic() < deadline:
@@ -270,6 +274,7 @@ async def run(platform, account, on_closing=None):
 
                 async def handle(payload):
                     nonlocal owner, checked, page, usable
+                    progress.attach(payload)
                     stop_check(platform)
                     if (payload.get("platform"), payload.get("account"), payload.get("action") in REUSABLE) != (platform, account, True):
                         raise VpubError("session_scope", "This session cannot run that command.")
