@@ -91,7 +91,7 @@ Five-platform work listing; Bilibili/YouTube pagination and reply-page reads; ac
 | Capability | This release |
 | --- | --- |
 | Copywriting | Host-model request/apply, source-bound validation; no independent model API |
-| Language | Bilibili/Douyin → Simplified Chinese; YouTube/Instagram/X → English; bilingual opt-in |
+| Language | Bilibili/Douyin → Simplified Chinese; YouTube/Instagram/X → English; a video in another language automatically keeps its original text first |
 | Covers | Production artwork → platform canvases; no cropping; immutable snapshots and read-back per variant |
 | Existing-work edits | Metadata/cover changes retain the original work ID; privacy reduction preserved after actual read-back |
 | Playlists | YouTube `vpub playlist` on its own pages, or through the API with the add-on, plus upload-form selection by title; Bilibili collections through `vpub collection` |

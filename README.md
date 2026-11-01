@@ -31,7 +31,7 @@
 </p>
 
 > [!IMPORTANT]
-> **0.16.0 alpha。** YouTube、抖音、Instagram、X 都已真实发布并读回过，B站也用 bili-cli 上传并核验过，详见[验证记录](docs/VALIDATION.md)。它仍是 alpha：登录会过期，平台也可能临时要求验证，长时间无人值守还没验收。
+> **0.16.0 alpha。** YouTube、抖音、Instagram、X 都已真实发布并读回过，B站也用 bili-cli 上传并核验过（部分来自更早的版本），详见[验证记录](docs/VALIDATION.md)。它仍是 alpha：登录会过期，平台也可能临时要求验证，长时间无人值守还没验收。
 
 ## 🚀 一句话开始
 

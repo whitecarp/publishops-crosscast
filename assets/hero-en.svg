@@ -43,7 +43,7 @@
     <text x="662" y="215.5" font-size="16" font-weight="700" fill="#17213a">Bilibili</text>
     <rect x="772" y="203.0" width="22.4" height="14" rx="2" fill="none" stroke="#5f6a83" stroke-width="1.5"/>
     <text x="802.4" y="215" font-size="15" fill="#4b566e">16:10</text>
-    <text x="862" y="215" font-size="15" fill="#4b566e">Chinese</text>
+    <text x="862" y="215" font-size="15" fill="#4b566e">ZH</text>
     <rect x="1029.4" y="198.0" width="90.6" height="24" rx="6" fill="#ddf3e8" stroke="#6cc19c" stroke-width="1.5"/>
       <circle cx="1041.9" cy="210" r="4.5" fill="none" stroke="#0a6847" stroke-width="1.5"/>
       <circle cx="1041.9" cy="210" r="4.5" fill="#0a6847"/>
@@ -53,7 +53,7 @@
     <text x="662" y="267.5" font-size="16" font-weight="700" fill="#17213a">YouTube</text>
     <rect x="772" y="255.0" width="24.9" height="14" rx="2" fill="none" stroke="#5f6a83" stroke-width="1.5"/>
     <text x="804.9" y="267" font-size="15" fill="#4b566e">16:9</text>
-    <text x="862" y="267" font-size="15" fill="#4b566e">English</text>
+    <text x="862" y="267" font-size="15" fill="#4b566e">ZH + EN</text>
     <rect x="1029.4" y="250.0" width="90.6" height="24" rx="6" fill="#ddf3e8" stroke="#6cc19c" stroke-width="1.5"/>
       <circle cx="1041.9" cy="262" r="4.5" fill="none" stroke="#0a6847" stroke-width="1.5"/>
       <circle cx="1041.9" cy="262" r="4.5" fill="#0a6847"/>
@@ -63,7 +63,7 @@
     <text x="662" y="319.5" font-size="16" font-weight="700" fill="#17213a">Douyin</text>
     <rect x="772" y="307.0" width="10.5" height="14" rx="2" fill="none" stroke="#5f6a83" stroke-width="1.5"/>
     <text x="790.5" y="319" font-size="15" fill="#4b566e">3:4</text>
-    <text x="862" y="319" font-size="15" fill="#4b566e">Chinese</text>
+    <text x="862" y="319" font-size="15" fill="#4b566e">ZH</text>
     <rect x="935.8" y="302.0" width="184.2" height="24" rx="6" fill="#fff1d6" stroke="#e3a94f" stroke-width="1.5"/>
       <circle cx="948.3" cy="314" r="4.5" fill="none" stroke="#8a4f00" stroke-width="1.5"/>
       <path d="M948.3 309.5 A4.5 4.5 0 0 0 948.3 318.5 Z" fill="#8a4f00"/>
@@ -73,7 +73,7 @@
     <text x="662" y="371.5" font-size="16" font-weight="700" fill="#17213a">Instagram</text>
     <rect x="772" y="359.0" width="7.9" height="14" rx="2" fill="none" stroke="#5f6a83" stroke-width="1.5"/>
     <text x="787.9" y="371" font-size="15" fill="#4b566e">9:16</text>
-    <text x="862" y="371" font-size="15" fill="#4b566e">English</text>
+    <text x="862" y="371" font-size="15" fill="#4b566e">ZH + EN</text>
     <rect x="1015.0" y="354.0" width="105.0" height="24" rx="6" fill="#e7edff" stroke="#7f9ceb" stroke-width="1.5"/>
       <circle cx="1027.5" cy="366" r="4.5" fill="none" stroke="#1d47c4" stroke-width="1.5"/>
       <path d="M1027.5 366 L1027.5 361.5 A4.5 4.5 0 0 1 1032.0 366 Z" fill="#1d47c4"/>
@@ -83,7 +83,7 @@
     <text x="662" y="423.5" font-size="16" font-weight="700" fill="#17213a">X</text>
     <rect x="772" y="411.0" width="24.9" height="14" rx="2" fill="none" stroke="#5f6a83" stroke-width="1.5"/>
     <text x="804.9" y="423" font-size="15" fill="#4b566e">16:9</text>
-    <text x="862" y="423" font-size="15" fill="#4b566e">English</text>
+    <text x="862" y="423" font-size="15" fill="#4b566e">ZH + EN</text>
     <rect x="1043.8" y="406.0" width="76.2" height="24" rx="6" fill="#eef1f6" stroke="#8e99ae" stroke-width="1.5" stroke-dasharray="4 3"/>
       <circle cx="1056.3" cy="418" r="4.5" fill="none" stroke="#3f4a5f" stroke-width="1.5" stroke-dasharray="1.6 1.6"/>
       <text x="1067.8" y="422.3" font-size="12" font-weight="700" fill="#3f4a5f">Queued</text>
