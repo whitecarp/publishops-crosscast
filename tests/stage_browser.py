@@ -55,6 +55,7 @@ class SharedBrowser(unittest.TestCase):
         self.addCleanup(self.loop.run_until_complete, self.close_context())
         self.page = self.loop.run_until_complete(self.context.new_page())
         self.page.set_default_timeout(5000)
+        self.page.set_default_navigation_timeout(20000)  # GitHub's machines have taken more than five seconds to load even a small copy of a page.
         waiting = patch.object(self.page, "wait_for_timeout", side_effect=self.no_wait)
         waiting.start()
         self.addCleanup(waiting.stop)

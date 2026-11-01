@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from .categories import STUDIO_CATEGORIES
 from .core import VpubError, douyin_caption, stop_check
-from .browser_runtime import risk_check, unique_visible, visible
+from .browser_runtime import look_until, risk_check, unique_visible, visible
 from .progress import stage
 from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style,
                                upload_file, wait_until, work_url, works, verify, verify_scheduled_x, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
@@ -28,6 +28,7 @@ YT_PLAYLIST_ROWS = """boxes => boxes.map(box => {
 
 X_MEDIA_PAGE = re.compile(r'https://studio\.x\.com/library/\d+_\d+/')
 X_OPEN_SECONDS = 15
+X_FRESH_SECONDS = 90
 X_CHANGE_THUMBNAIL = re.compile(r'^\s*Change thumbnail\s*$')
 
 
@@ -120,30 +121,82 @@ def x_file_link(filename):
 def x_media_form(page, filename):
     """This file's own form, because filling another file's and composing from it could post the wrong video. A field check found the form holds a download link carrying the file's exact name, with Library's Upload Media button and tiles further out.
     It is the outermost element with that link and Change thumbnail, without that button, and without another file's link. Reviews showed counting the name across the page proves nothing, and that a wider element can hold this file's link beside another file's form. The classes on this page are generated."""
-    return (page.locator('div').filter(has=page.locator(x_file_link(filename))).filter(has=page.locator('button').filter(has_text=X_CHANGE_THUMBNAIL))
+    # Only what shows counts: a review found a hidden copy of the form could stand in front of the real one for the whole wait.
+    return (page.locator('div:visible').filter(has=page.locator(x_file_link(filename) + ':visible')).filter(has=page.locator('button:visible').filter(has_text=X_CHANGE_THUMBNAIL))
             .filter(has_not=page.locator('button').filter(has_text=re.compile(r'^\s*Upload Media\s*$')))
             .filter(has_not=page.locator(f'a[download]:not({x_file_link(filename)})'))).first
+
+
+async def x_form_shows(page, form, filename):
+    """This file's form shows, and only one does. Each has its own download link, so two showing means the right one can't be told."""
+    return await form.count() == 1 and await page.locator(x_file_link(filename) + ':visible').count() == 1
+
+
+async def x_names_showing(name):
+    return [item for item in await name.all() if await item.is_visible()]
+
+
+async def x_fresh_look(page, filename):
+    """A field run waited ten minutes on the page it uploaded from, and then a fresh page opened the same file with one click. So this looks in a tab of its own, which leaves an upload still going on this page alone.
+    The answer is the file's address, and only if its form shows there with its download link, which a file still uploading can't have."""
+    from patchright.async_api import Error as BrowserError
+    side = await page.context.new_page()
+    try:
+        await side.goto('https://studio.x.com/library', wait_until='domcontentloaded', timeout=60000)
+        await risk_check(side)
+        name = side.get_by_text(filename, exact=True)
+
+        async def one_name():
+            showing = await x_names_showing(name)
+            return showing[0] if len(showing) == 1 else None
+        item = await look_until(side, one_name, 10000)
+        if not item:
+            return None
+        await item.click(timeout=X_OPEN_SECONDS * 1000)
+        form = x_media_form(side, filename)
+        ready = await look_until(side, lambda: x_form_shows(side, form, filename), X_OPEN_SECONDS * 1000)
+        await risk_check(side)
+        return x_media_address(side.url).get('media_url') if ready else None
+    except BrowserError:
+        return None
+    finally:
+        await side.close()
 
 
 async def x_open_media(page, name, form, filename):
     """Field runs clicked the uploaded file's name as soon as it showed, and the address didn't change in 30 seconds, while 15 seconds on the name showed twice. A click two minutes after an upload opened the form at once.
     So the file is open once its own form shows, and the address is not waited for. A click changes nothing, and comes again only while the name shows once and no form has come."""
     from patchright.async_api import Error as BrowserError
-    clicked = None
+    clicked, looked = None, time.monotonic()
+    seen = {'clicks': 0, 'fresh_looks': 0}
 
     async def opened():
-        nonlocal clicked
-        if await visible(form.locator(x_file_link(filename))) and await visible(form.locator('button').filter(has_text=X_CHANGE_THUMBNAIL)):
+        nonlocal clicked, looked
+        if await x_form_shows(page, form, filename):
             return True
-        showing = await name.count()
-        if showing == 1 and (clicked is None or time.monotonic() - clicked >= X_OPEN_SECONDS):
+        showing = await x_names_showing(name)
+        seen.update(names=await name.count(), names_showing=len(showing), links_showing=await page.locator(x_file_link(filename) + ':visible').count())
+        if len(showing) == 1 and (clicked is None or time.monotonic() - clicked >= X_OPEN_SECONDS):
             clicked = time.monotonic()
+            seen['clicks'] += 1
             try:
-                await name.click(timeout=X_OPEN_SECONDS * 1000)
+                await showing[0].click(timeout=X_OPEN_SECONDS * 1000)
             except BrowserError:
                 pass  # The next look says what happened.
+        if time.monotonic() - looked >= X_FRESH_SECONDS:
+            seen['fresh_looks'] += 1
+            address = await x_fresh_look(page, filename)
+            looked = time.monotonic()
+            if address:
+                await page.goto(address, wait_until='domcontentloaded', timeout=60000)
         return False
-    await wait_until(page, opened, seconds=600, label="the uploaded file's form in Media Studio")
+    try:
+        await wait_until(page, opened, seconds=600, label="the uploaded file's form in Media Studio")
+    except VpubError as failure:
+        if failure.code != 'processing_timeout':
+            raise
+        # A field run ended here with nothing to say which of several things had happened. These are counts, with no words from the page.
+        raise VpubError(failure.code, f"{failure.message} Last look: {seen}.", failure.hint) from None
 
 
 async def publish_x(page, tx):
@@ -171,11 +224,9 @@ async def publish_x(page, tx):
         tx.save(phase='uploading')
     filename = tx.receipt['upload_filename']
     form = x_media_form(page, filename)
-    change = form.locator('button').filter(has_text=X_CHANGE_THUMBNAIL)
+    change = form.locator('button:visible').filter(has_text=X_CHANGE_THUMBNAIL)
     if not tx.receipt.get('media_url'):
-        item = page.get_by_text(filename, exact=True)
-        await item.wait_for(state='visible', timeout=600000)
-        await x_open_media(page, item, form, filename)
+        await x_open_media(page, page.get_by_text(filename, exact=True), form, filename)
         tx.save(phase='opening_media', **x_media_address(page.url))
     await change.wait_for(state='visible', timeout=300000)
     tx.save(phase='media_ready', **x_media_address(page.url))
@@ -191,16 +242,16 @@ async def publish_x(page, tx):
         await choose.wait_for(state='hidden', timeout=30000)
         await page.wait_for_timeout(2000)
         tx.save(phase='cover_selected', cover={'source':'production_artwork', 'state':'UI_ACCEPTED', 'remote_pixels_verified':False})
-    media_title = form.get_by_placeholder('Title', exact=True)
-    details = bool(await visible(media_title))
+    details = bool(await visible(form.get_by_placeholder('Title', exact=True)))
     tx.save(media_details_filled=details)
     if details:
+        media_title = await unique_visible(form.get_by_placeholder('Title', exact=True), 'X media title')
         if len(tx.options['title']) > 70:
             raise VpubError('title_too_long', 'X Studio title must fit 70 characters; do not silently truncate.')
         await media_title.fill(tx.options['title'])
         await media_title.press('Tab')
-        description = form.get_by_placeholder('Type a brief description here', exact=True)
         if len(tx.options['description']) <= 200:
+            description = await unique_visible(form.get_by_placeholder('Type a brief description here', exact=True), 'X media description')
             await description.fill(tx.options['description'])
             await description.press('Tab')
         await page.wait_for_timeout(1500)

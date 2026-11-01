@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -86,12 +87,69 @@ class OpeningMediaTests(ChromeCase):
             path = urlsplit(route.request.url).path
             if path == "/never.png":
                 return  # Never answered, so the page never finishes loading.
-            await route.fulfill(status=200, content_type="text/html; charset=utf-8", body=self.MEDIA if path.endswith("/edit") else self.LIBRARY)
-        await self.page.route("**/*", answer)
+            self.libraries_read += not path.endswith("/edit")
+            library = self.FRESH_LIBRARY if self.FRESH_LIBRARY and self.libraries_read > 1 else self.LIBRARY
+            await route.fulfill(status=200, content_type="text/html; charset=utf-8", body=self.MEDIA if path.endswith("/edit") else library)
+        self.FRESH_LIBRARY, self.libraries_read = None, 0
+        await self.page.context.route("**/*", answer)
 
     async def asyncTearDown(self):
         await self.browser.close()
         await self.pw.stop()
+
+    async def test_a_hidden_copy_of_the_name_does_not_stop_the_click(self):
+        """From a review: two copies of the name, one hidden, and no click at all in ten minutes."""
+        self.LIBRARY = self.LIBRARY.replace("<p onclick", '<span hidden>clip.mp4</span><p onclick')
+        tx = self.Tx()
+        self.assertEqual("PREVIEW_READY", (await browser_forms.publish_x(self.page, tx))["state"])
+        self.assertEqual("https://studio.x.com/library/13_77/edit", tx.receipt["media_url"])
+
+    async def test_a_hidden_copy_of_the_form_does_not_stand_in_front_of_the_one_showing(self):
+        """From a review: the first match was hidden, so the form showing behind it never counted."""
+        hidden = re.sub(r'<textarea id="words".*?</textarea>', "", self.FORM.replace('<div class="form">', '<div class="form" hidden>'))
+        self.LIBRARY = self.library_that_opens_in_place(hidden + self.FORM)
+        tx = self.Tx()
+        self.assertEqual("PREVIEW_READY", (await browser_forms.publish_x(self.page, tx))["state"])
+        self.assertEqual("Title", await self.page.locator('div.form:visible').get_by_placeholder("Title", exact=True).input_value())
+
+    async def test_two_forms_showing_for_one_file_are_not_filled(self):
+        await self.stops_without_filling(self.library_that_opens_in_place(self.FORM + self.FORM))
+
+    async def test_two_names_showing_are_not_clicked_and_the_timeout_says_so(self):
+        self.LIBRARY = self.LIBRARY.replace("<p onclick", "<p>clip.mp4</p><p onclick")
+        message = await self.stops_without_filling(self.LIBRARY)
+        self.assertIn("'clicks': 0", message)
+        self.assertIn("'names_showing': 2", message)
+        self.assertEqual("https://studio.x.com/library", self.page.url)
+
+    async def test_a_fresh_look_takes_over_when_this_page_stays_stuck(self):
+        """From a field run: ten minutes on the page it uploaded from, and then a fresh page opened the same file with one click."""
+        self.FRESH_LIBRARY = self.LIBRARY
+        self.LIBRARY = self.LIBRARY.replace("<p onclick", "<p>clip.mp4</p><p onclick")
+        tx = self.Tx()
+        with patch.object(browser_forms, "X_FRESH_SECONDS", 1):
+            self.assertEqual("PREVIEW_READY", (await browser_forms.publish_x(self.page, tx))["state"])
+        self.assertEqual("https://studio.x.com/library/13_77/edit", tx.receipt["media_url"])
+        self.assertEqual([self.page], self.page.context.pages)
+
+    async def test_a_fresh_look_at_a_file_not_ready_leaves_this_page_alone(self):
+        """A file still uploading has no download link, and leaving this page would stop the upload."""
+        self.FRESH_LIBRARY = self.LIBRARY
+        self.LIBRARY = self.LIBRARY.replace("<p onclick", "<p>clip.mp4</p><p onclick")
+        self.MEDIA = self.MEDIA.replace('<a download="clip.mp4" href="#">Download</a>', "")
+        with patch.object(browser_forms, "X_FRESH_SECONDS", 1), patch.object(browser_forms, "X_OPEN_SECONDS", 1):
+            message = await self.stops_without_filling(self.LIBRARY, seconds=4)
+        self.assertEqual("https://studio.x.com/library", self.page.url)
+        self.assertEqual([self.page], self.page.context.pages)
+        self.assertNotIn("'fresh_looks': 0", message)
+
+    async def test_a_warning_in_the_fresh_look_stops_everything(self):
+        self.FRESH_LIBRARY = '<!doctype html><body><div role="alert">Verify your identity</div>'
+        self.LIBRARY = self.LIBRARY.replace("<p onclick", "<p>clip.mp4</p><p onclick")
+        with patch.object(browser_forms, "X_FRESH_SECONDS", 1), self.assertRaises(VpubError) as caught:
+            await browser_forms.publish_x(self.page, self.Tx())
+        self.assertEqual("human_verification_required", caught.exception.code)
+        self.assertEqual([self.page], self.page.context.pages)
 
     async def test_a_click_that_does_nothing_at_first_comes_again_while_the_name_is_on_the_tile_alone(self):
         self.LIBRARY = self.LIBRARY.replace("location.href=", "if (++window.clicks > 2) location.href=") + "<script>window.clicks = 0</script>"
@@ -105,17 +163,21 @@ class OpeningMediaTests(ChromeCase):
           <p onclick="if (window.clicks) return; window.clicks = 1; setTimeout(() => {{ document.getElementById('spot').innerHTML = document.getElementById('held').innerHTML; }}, {delay})">clip.mp4</p>
           <template id="held">{held}</template>"""
 
-    async def stops_without_filling(self, library):
+    async def stops_without_filling(self, library, seconds=3):
         self.LIBRARY = library
         real = browser_forms.wait_until
 
-        async def soon(page, predicate, *, seconds=120, label="page state"):
-            return await real(page, predicate, seconds=3, label=label)
-        with patch.object(browser_forms, "wait_until", soon), self.assertRaises(VpubError) as caught:
+        async def soon(page, predicate, *, seconds=seconds, label="page state"):
+            return await real(page, predicate, seconds=seconds, label=label)
+
+        async def limited(page, predicate, *, label="page state", **_):
+            return await real(page, predicate, seconds=seconds, label=label)
+        with patch.object(browser_forms, "wait_until", limited), self.assertRaises(VpubError) as caught:
             await browser_forms.publish_x(self.page, self.Tx())
         self.assertEqual("processing_timeout", caught.exception.code)
         for box in await self.page.get_by_placeholder("Title", exact=True).all():
             self.assertEqual("original", await box.input_value())
+        return caught.exception.message
 
     async def test_a_form_that_opens_with_the_address_unchanged_counts_and_is_never_clicked_again(self):
         """From a field run: 15 seconds after the click the address was unchanged and the name showed twice, and a second click stopped on the two matches."""

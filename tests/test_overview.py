@@ -334,7 +334,7 @@ class OperatorCommandTests(OverviewFixture):
         self.assertEqual((0, True, True), (code, answer["ok"], answer["data"]["ready"]))
 
     def test_the_installer_says_where_the_command_is_even_when_the_check_finds_something(self):
-        source = (Path(cli.__file__).parents[2] / "install.ps1").read_text(encoding="utf-8")
+        source = (Path(__file__).resolve().parents[1] / "install.ps1").read_text(encoding="utf-8")
         self.assertLess(source.index("Write-Output ('Command: '"), source.index("found something to fix"))
 
     def test_doctor_reports_an_active_stop(self):
