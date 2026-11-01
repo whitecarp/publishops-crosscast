@@ -1,6 +1,6 @@
 """Like/unlike the exact visible Instagram/X comment, never a nearby video, and delete your own on Instagram."""
 from . import x_pages
-from .browser_runtime import unique_visible, risk_check
+from .browser_runtime import acknowledged, risk_check, unique_visible, write_answers
 from .operations_browser import open_work, comments
 from .core import VpubError, atomic_json, read_json, stop_check
 
@@ -37,14 +37,23 @@ async def instagram_delete(page, identity, payload, comment):
         await choices.first.wait_for(state='visible', timeout=10000)
     except Exception:
         raise VpubError('layout_changed', 'Instagram did not offer Delete for this comment; nothing changed.') from None
-    await press_once(page, 'instagram', payload, await unique_visible(choices, 'comment Delete'))
-    # Whether it left this page after the one press, which says more than a later read of a list that only loads in part.
-    gone = False
-    for _ in range(10):
-        gone = not await page.locator(f'[data-crosscast-comment-row="{comment["ui_index"]}"]').count() and not await page.get_by_text(comment['text'], exact=True).count()
-        if gone: break
-        await page.wait_for_timeout(500)
-    return {'state': 'COMMENT_UNVERIFIED', 'platform_writes': 1, 'gone_from_page': gone}
+    requests = []
+
+    def heard(request):
+        requests.append(request)
+    page.on('request', heard)
+    try:
+        await press_once(page, 'instagram', payload, await unique_visible(choices, 'comment Delete'))
+        # Whether it left this page after the one press, which says more than a later read of a list that only loads in part.
+        gone = False
+        for _ in range(10):
+            gone = not await page.locator(f'[data-crosscast-comment-row="{comment["ui_index"]}"]').count() and not await page.get_by_text(comment['text'], exact=True).count()
+            if gone: break
+            await page.wait_for_timeout(500)
+    finally:
+        page.remove_listener('request', heard)
+    answers = await write_answers(requests, comment['id'])
+    return {'state': 'COMMENT_UNVERIFIED', 'platform_writes': 1, 'gone_from_page': gone, 'write_answers': answers, 'acknowledged': acknowledged(answers)}
 
 
 async def execute(page, platform, identity, payload):

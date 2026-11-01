@@ -4,7 +4,7 @@ import re
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from .browser_backends import normalize, studio_visibility, work_url
-from .browser_runtime import risk_check, unique_visible, visible
+from .browser_runtime import acknowledged, risk_check, unique_visible, visible, write_answers
 from .core import VpubError, atomic_json, file_sha, home, now, read_json, stop_check
 from .operations_api import metric
 
@@ -112,18 +112,18 @@ async def appears(page, target, seconds):
 
 async def act_and_settle(page, act, least=0):
     """Do something, then stay until the page has finished its own requests, and for at least `least` half-seconds.
-    Whether it worked is for the read-back to say. Returns the addresses of the requests it saw, without their queries.
+    Whether it worked is for the read-back to say. Returns the requests it saw.
 
     On a real channel Studio greyed Save out at once and sent the change about 6 seconds later, after its own checks.
     A delete was answered at once, then sent again after those checks. Leaving at either point cancelled the change.
     """
-    busy = {"open": 0, "seen": 0, "paths": set()}
+    busy = {"open": 0, "seen": 0, "requests": []}
 
     def sent(request):
         if PAGE_REQUESTS in request.url:
             busy["open"] += 1
             busy["seen"] += 1
-            busy["paths"].add(urlsplit(request.url).path)
+            busy["requests"].append(request)
 
     def ended(request):
         if PAGE_REQUESTS in request.url:
@@ -141,7 +141,7 @@ async def act_and_settle(page, act, least=0):
             last = busy["seen"]
             if quiet >= QUIET_TICKS and tick >= least:
                 break
-        return sorted(busy["paths"])
+        return busy["requests"]
     finally:
         for event, listener in listeners:
             page.remove_listener(event, listener)
@@ -747,10 +747,10 @@ async def comment_action(page, identity, payload):
             await studio_confirm(page, needed=kind == "pin" and request["desired"])
 
         requests = await act_and_settle(page, choose, PIN_TICKS if kind == "pin" else 0)
-        result = sent()
-        if kind == "pin":
-            result["page_requests"] = requests
-        else:
+        # By address and shape only, in case the read-back disagrees.
+        result = {**sent(), "page_requests": sorted({urlsplit(item.url).path for item in requests}), "write_answers": await write_answers(requests, target["id"])}
+        if kind != "pin":
+            result["acknowledged"] = acknowledged(result["write_answers"])
             # Whether it left this page after the one press, which says more than a later read of a list that only loads in part.
             for _ in range(10):
                 result["gone_from_page"] = not await row.count()

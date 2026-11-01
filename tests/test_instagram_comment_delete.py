@@ -27,7 +27,7 @@ for (const menu of document.querySelectorAll('.options')) menu.onclick = () => {
   for (const word of [...menu.dataset.choices.split(','), 'Cancel']) {
     const button = document.createElement('button');
     button.textContent = word;
-    if (word === 'Delete') button.onclick = () => { fetch('/write', {method: 'POST', body: menu.closest('.holder').innerText}); window_.remove(); if (menu.dataset.stays !== 'true') menu.closest('.holder').remove(); };
+    if (word === 'Delete') button.onclick = () => { fetch('/api/v1/web/comments/1/delete/' + (100 + Number(menu.closest('.holder').querySelector('[data-crosscast-comment-row]').dataset.crosscastCommentRow)) + '/', {method: 'POST', body: menu.closest('.holder').innerText}); window_.remove(); if (menu.dataset.stays !== 'true') menu.closest('.holder').remove(); };
     window_.append(button);
   }
   document.body.append(window_);
@@ -49,6 +49,7 @@ class Base(unittest.IsolatedAsyncioTestCase):
         self.page.set_default_timeout(5000)
         self.writes = []
         self.seen_at_send = None
+        self.answer = "{}"
         self.html = PAGE % (row(0, "Mine") + row(1, "Theirs"))
         self.receipt = str(Path(temp.name) / "receipt.json")
         atomic_json(self.receipt, {"state": "COMMENT_READY"})
@@ -62,7 +63,7 @@ class Base(unittest.IsolatedAsyncioTestCase):
         if route.request.method == "POST":
             self.writes.append(route.request.post_data)
             self.seen_at_send = read_json(self.receipt)["state"]
-            return await route.fulfill(status=200, content_type="application/json", body="{}")
+            return await route.fulfill(status=200, content_type="application/json", body=self.answer)
         await route.fulfill(status=200, content_type="text/html; charset=utf-8", body=self.html)
 
     def comment(self, number=0, text="Mine", mine=True):
@@ -85,7 +86,8 @@ class DeleteTests(Base):
 
     async def test_it_records_the_attempt_then_presses_delete_once(self):
         result = await self.run_it()
-        self.assertEqual(("COMMENT_UNVERIFIED", 1, True), (result["state"], result["platform_writes"], result["gone_from_page"]))
+        self.assertEqual(("COMMENT_UNVERIFIED", 1, True, True), (result["state"], result["platform_writes"], result["gone_from_page"], result["acknowledged"]))
+        self.assertEqual(("/api/v1/web/comments/1/delete/100/", True, 200), tuple(result["write_answers"][0][key] for key in ("path", "names_target", "http")))
         self.assertEqual(1, len(self.writes))
         self.assertIn("Mine", self.writes[0])
         self.assertEqual("COMMENT_SUBMITTING", self.seen_at_send)
@@ -112,6 +114,15 @@ class DeleteTests(Base):
         self.assertEqual("layout_changed", caught.exception.code)
         self.assertEqual([], self.writes)
         self.assertEqual("COMMENT_READY", read_json(self.receipt)["state"])
+
+    async def test_an_answer_that_refuses_is_not_acknowledged_even_though_the_row_went(self):
+        self.answer = '{"status": "fail", "message": "No."}'
+        result = await self.run_it()
+        self.assertEqual((True, False), (result["gone_from_page"], result["acknowledged"]))
+
+    async def test_a_comment_with_no_real_id_can_not_be_acknowledged(self):
+        result = await self.run_it(comment={**self.comment(), "id": "ui-abc"}, shown=[{**self.comment(), "id": "ui-abc"}])
+        self.assertIs(False, result["acknowledged"])
 
     async def test_a_comment_still_on_the_page_after_the_press_is_not_called_gone(self):
         self.html = PAGE % (row(0, "Mine", stays=True) + row(1, "Theirs"))
@@ -156,22 +167,28 @@ class CommandTests(unittest.TestCase):
 
     ABSENT = {"identity": OWNER, "text": None, "deleted": None, "absent_from_loaded_list": True}
 
-    def test_gone_from_the_page_after_the_press_and_from_a_fresh_read_settles_it(self):
+    WENT = {"gone_from_page": True, "acknowledged": True}
+
+    def test_answered_gone_from_the_page_and_left_out_of_a_fresh_read_settles_it(self):
         self.snapshot(True)
-        result = self.delete({"gone_from_page": True}, self.ABSENT)
+        result = self.delete(self.WENT, self.ABSENT)
         self.assertEqual(("COMMENT_VERIFIED", True), (result["state"], result["after"]["deleted"]))
 
     def test_a_fresh_read_that_leaves_it_out_proves_nothing_alone(self):
         self.snapshot(True)
-        self.assertEqual("COMMENT_UNVERIFIED", self.delete({"gone_from_page": False}, self.ABSENT)["state"])
+        self.assertEqual("COMMENT_UNVERIFIED", self.delete({"gone_from_page": False, "acknowledged": True}, self.ABSENT)["state"])
+
+    def test_a_row_that_vanished_with_no_answer_from_the_platform_proves_nothing(self):
+        self.snapshot(True)
+        self.assertEqual("COMMENT_UNVERIFIED", self.delete({"gone_from_page": True, "acknowledged": False}, self.ABSENT)["state"])
 
     def test_still_in_a_fresh_read_is_not_deleted_whatever_the_page_did(self):
         self.snapshot(True)
-        self.assertEqual("COMMENT_UNVERIFIED", self.delete({"gone_from_page": True}, {"identity": OWNER, "text": "Mine", "deleted": False})["state"])
+        self.assertEqual("COMMENT_UNVERIFIED", self.delete(self.WENT, {"identity": OWNER, "text": "Mine", "deleted": False})["state"])
 
     def test_verifying_later_uses_what_the_press_saw(self):
         self.snapshot(True)
-        result = self.delete({"gone_from_page": True}, {"identity": OWNER, "text": "Mine", "deleted": False})
+        result = self.delete(self.WENT, {"identity": OWNER, "text": "Mine", "deleted": False})
         with patch.object(comment_actions, "dispatch", return_value=self.ABSENT):
             self.assertEqual("COMMENT_VERIFIED", comment_actions.verify(result["key"])["state"])
 

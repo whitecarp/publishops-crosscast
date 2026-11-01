@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from contextlib import contextmanager
 import os
 from pathlib import Path
 import re
 import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from .core import VpubError, account_name, atomic_json, config, home, now, read_json
 
@@ -44,8 +45,9 @@ SOMEONES_WORDS = """(e, others) => {
 CONTROL_SHAPES = """es => es.map(e => ({tag: e.tagName, type: e.getAttribute('type'), name: e.getAttribute('name'), id: e.id, role: e.getAttribute('role'), testid: e.getAttribute('data-testid'),
                                        test_id: e.getAttribute('test-id'), placeholder: e.getAttribute('placeholder'), label: e.getAttribute('aria-label'), disabled: e.hasAttribute('disabled')}))"""
 FORM_FIELDS = "input,textarea,select,[contenteditable=true]"
-# Words a command was looking for, which can be a viewer's or a person's own. The step and the kind of control are what a failure needs.
-LOOKED_FOR = re.compile(r"""(get_by_(?:text|label|placeholder|title|alt_text)\(|\b(?:has_text|has_not_text|name)=|:has-text\(|internal:\w+=)(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|re\.compile\([^)]*\))""")
+# A command's quoted arguments can hold a viewer's or a person's own words. Only a selector made of nothing but page structure stays.
+QUOTED = re.compile(r""""(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'""")
+PLAIN_SELECTOR = re.compile(r"[\w\s#.>:,*()\[\]-]*")
 # The page's words with its form fields taken out first, so even a record a person asked for holds nothing typed into one.
 PAGE_WORDS = """() => { const copy = document.body.cloneNode(true); copy.querySelectorAll('input,textarea,select,script,style,[contenteditable=true]').forEach(e => e.remove()); return copy.textContent; }"""
 SITES = {"x": ("x.com", "twitter.com"), "instagram": ("instagram.com",), "douyin": ("douyin.com", "bytedance.com"), "youtube": ("youtube.com", "google.com")}
@@ -298,12 +300,72 @@ async def failure_record(page, exc, path, picture=None, **fields):
 
 
 def failure_message(exc):
-    """Which step failed and on which control, for whoever diagnoses it: the error's own first lines, without page text or query strings."""
+    """Which step failed and on what kind of control, for whoever diagnoses it: the error's own first lines, without page text, query strings or the words it was looking for."""
     lines = str(exc).splitlines()
     step = [lines[0].strip()] if lines else []
     step += [line.strip(" -") for line in lines[1:] if "waiting for" in line][:1]
-    note = LOOKED_FOR.sub(r"\1…", re.sub(r"(https?://[^\s?#'\"]+)[^\s'\"]*", r"\1", " ".join(step)))[:240]
+    note = re.sub(r"(https?://[^\s?#'\"]+)[^\s'\"]*", r"\1", " ".join(step))
+
+    def kept(found):
+        return found[0] if note[:found.start()].endswith("locator(") and PLAIN_SELECTOR.fullmatch(found[0][1:-1]) else "…"
+    note = QUOTED.sub(kept, note)[:240]
     return f"Browser command failed ({type(exc).__name__})" + (f": {note}" if note else ".")
+
+
+def names_target(request, target):
+    """Whether a request names this target, plainly or inside one of the encoded tokens a site sends. Only compared; nothing in the request is kept."""
+    try:
+        text = f"{request.url} {request.post_data or ''}"
+    except Exception:
+        text = request.url
+    if target in text:
+        return True
+    for token in re.findall(r"[A-Za-z0-9_%=+/-]{16,}", text):
+        try:
+            if target.encode() in base64.urlsafe_b64decode(unquote(token) + "==="):
+                return True
+        except ValueError:
+            pass
+    return False
+
+
+def objected(value, depth=0):
+    """Whether a site's answer says it refused, in the ways sites say so: an error field, or a status that says it failed."""
+    if depth >= 4:
+        return False
+    if isinstance(value, list):
+        return any(objected(item, depth + 1) for item in value)
+    if not isinstance(value, dict):
+        return False
+    status = value.get("status")
+    if value.get("error") or value.get("errors") or (isinstance(status, str) and re.search("fail|error|denied|reject", status, re.I)):
+        return True
+    return any(objected(item, depth + 1) for item in value.values())
+
+
+async def write_answers(requests, target):
+    """How a page's own POST requests were answered, by shape only: where each went, whether it named this target, and whether its answer objected."""
+    answers = []
+    for request in requests:
+        if request.method != "POST":
+            continue
+        answer = {"path": urlsplit(request.url).path, "names_target": names_target(request, target), "http": None, "fields": [], "objected": False}
+        try:
+            response = await asyncio.wait_for(request.response(), 5)
+            answer["http"] = response.status
+            body = await asyncio.wait_for(response.json(), 5)
+            answer["fields"] = sorted(key for key in body if re.fullmatch(r"[A-Za-z_]\w{0,40}", key))[:12] if isinstance(body, dict) else []
+            answer["objected"] = objected(body)
+        except Exception:
+            pass  # No answer, or one that isn't JSON. The status, if any, is all it says.
+        answers.append(answer)
+    return answers
+
+
+def acknowledged(answers):
+    """The page's requests named this target, and every one of them was answered without objection."""
+    named = [answer for answer in answers if answer["names_target"]]
+    return bool(named) and all(answer["http"] and 200 <= answer["http"] < 300 and not answer["objected"] for answer in named)
 
 
 async def save_session(context, platform, account):

@@ -43,7 +43,7 @@ class ChangeTests(Base):
 
     def test_a_delete_that_read_back_drops_the_row(self):
         after = {"identity": OWNER, "text": None, "deleted": None, "absent_from_loaded_list": True}
-        self.change("delete", "c2", True, {"identity": OWNER, "text": "Mine"}, {"state": "COMMENT_UNVERIFIED", "platform_writes": 1, "gone_from_page": True}, after)
+        self.change("delete", "c2", True, {"identity": OWNER, "text": "Mine"}, {"state": "COMMENT_UNVERIFIED", "platform_writes": 1, "gone_from_page": True, "acknowledged": True}, after)
         self.assertNotIn("c2", self.rows())
         self.assertIn("c1", self.rows())
 

@@ -529,7 +529,25 @@ class CommentTests(Browser):
 
     async def test_deleting_says_whether_the_comment_left_the_page(self):
         result = await yt.comment_action(self.page, CHANNEL, self.payload("delete", "c2", text="Mine", receipt=self.receipt_file()))
-        self.assertIs(True, result["gone_from_page"])
+        self.assertEqual((True, True), (result["gone_from_page"], result["acknowledged"]))
+        self.assertEqual(("/youtubei/v1/comment/perform_comment_action", True, 200), tuple(result["write_answers"][0][key] for key in ("path", "names_target", "http")))
+
+    async def answered(self, status, body):
+        original = self.site.write
+
+        async def refuse(route, parts, data):
+            self.site.writes.append((parts[0], parts[1]))
+            await route.fulfill(status=status, content_type="application/json", body=body)
+        self.site.write = refuse
+        self.addCleanup(setattr, self.site, "write", original)
+        return await yt.comment_action(self.page, CHANNEL, self.payload("delete", "c2", text="Mine", receipt=self.receipt_file()))
+
+    async def test_a_row_that_vanishes_while_the_platform_refuses_is_not_acknowledged(self):
+        result = await self.answered(200, '{"error": {"code": 409}}')
+        self.assertEqual((True, False), (result["gone_from_page"], result["acknowledged"]))
+
+    async def test_a_failed_request_is_not_acknowledged(self):
+        self.assertIs(False, (await self.answered(500, "{}"))["acknowledged"])
 
     async def test_a_comment_still_on_the_page_after_the_press_is_not_called_gone(self):
         self.site.keep_row = True

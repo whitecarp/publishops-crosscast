@@ -27,9 +27,10 @@ def target(platform, work, comment_id):
 
 
 def gone_for_certain(saved, after):
-    """A list that loads in part proves little by leaving a comment out. A comment that also vanished from the page right after this one press has gone."""
-    if after.get('absent_from_loaded_list') and saved.get('gone_from_page'):
-        return {**after, 'deleted': True, 'source': 'vanished_after_this_press'}
+    """A list that loads in part proves little by leaving a comment out, and a page can drop a row before the platform has agreed.
+    Together they settle it: a fresh read leaves it out, it vanished right after this one press, and the platform answered that press about this comment without objecting."""
+    if after.get('absent_from_loaded_list') and saved.get('gone_from_page') and saved.get('acknowledged'):
+        return {**after, 'deleted': True, 'source': 'answered_and_vanished_after_this_press'}
     return after
 
 

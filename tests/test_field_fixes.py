@@ -70,11 +70,17 @@ class FailureMessageTests(unittest.TestCase):
 
     def test_the_words_it_was_looking_for_are_not_kept(self):
         for looking in ('get_by_text("PRIVATE-WORDS")', "get_by_label('PRIVATE-WORDS')", 'locator("article").filter(has_text="PRIVATE-WORDS")', 'get_by_role("button", name="PRIVATE-WORDS")',
-                        "filter(has_text=re.compile('PRIVATE-WORDS'))", 'locator(\'div:has-text("PRIVATE-WORDS")\')', "locator('internal:text=\"PRIVATE-WORDS\"')"):
+                        "filter(has_text=re.compile('PRIVATE-WORDS'))", 'locator(\'div:has-text("PRIVATE-WORDS")\')', "locator('internal:text=\"PRIVATE-WORDS\"')",
+                        'get_by_text( "PRIVATE-WORDS")', 'get_by_role("button", name = "PRIVATE-WORDS")', 'locator("text=PRIVATE-WORDS")', "locator('[aria-label=\"PRIVATE-WORDS\"]')",
+                        '.filter(has_text = "PRIVATE-WORDS")', 'locator("PRIVATE-WORDS=1")', "get_by_text(r'PRIVATE-WORDS')"):
             with self.subTest(looking=looking):
                 note = rt.failure_message(TimeoutError(f"Locator.click: Timeout 5000ms exceeded.\nCall log:\n  - waiting for {looking}"))
                 self.assertNotIn("PRIVATE-WORDS", note)
                 self.assertIn("waiting for", note)
+
+    def test_a_plain_selector_stays_because_it_says_which_control(self):
+        note = rt.failure_message(TimeoutError("Locator.click: Timeout.\nCall log:\n  - waiting for locator('ytcp-comment #action-menu-button').first"))
+        self.assertIn("locator('ytcp-comment #action-menu-button').first", note)
 
     def test_addresses_lose_their_query_strings(self):
         message = rt.failure_message(RuntimeError("Page.goto: net::ERR_FAILED at https://x.com/a/b?token=secret&x=1 now"))
