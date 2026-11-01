@@ -4,8 +4,12 @@ Starting the automation driver and Chrome takes about two seconds, which every p
 from ChromeCase runs all its tests on one loop that lives as long as the process, and the async_playwright here hands each test
 a window of the one Chrome. A window is a context of its own, so cookies, storage, routes and permissions stay as separate as
 they were in a Chrome per test. Closing the browser a test was given closes only that test's windows.
+
+The copies of the sites in these tests answer at once or never, while the code under test waits as long as a slow real site might need.
+So every wait the driver is asked for is cut to LONGEST_WAIT, and a class can ask for quick_pauses (see ChromeCase).
 """
 import asyncio
+from asyncio import sleep
 import atexit
 import inspect
 import unittest
@@ -121,7 +125,7 @@ def pause_when_quiet():
                     quiet_since = now
                 if now >= end or (quiet_since is not None and now - quiet_since >= QUIET):
                     return
-                await asyncio.sleep(0.02)
+                await sleep(0.02)  # Kept apart from asyncio.sleep, which a test may replace.
         except Exception:  # The page is changing or gone: wait the rest as asked.
             if end - clock() > 0:
                 await asked(self, (end - clock()) * 1000)
