@@ -195,8 +195,8 @@ async def douyin_card_status(card):
 
 
 def douyin_card_words(text):
-    """What was written, by its letters and digits. A field check found a real card's title node holds more than the title, the caption and spacing, and that the right card was missed because of it."""
-    return ''.join(c for c in unicodedata.normalize('NFKC', text or '') if c.isalnum())
+    """What was written. Spacing and invisible marks are the page's own, and punctuation is part of the words: a review showed 1.2 and 12 must not read the same."""
+    return ''.join(c for c in unicodedata.normalize('NFC', text or '') if not c.isspace() and unicodedata.category(c) != 'Cf')
 
 
 async def douyin_cards_titled(page, title, caption=''):

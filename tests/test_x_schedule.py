@@ -50,7 +50,7 @@ def page_html(keep_clock=True):
 
 
 class OpeningMediaTests(ChromeCase):
-    """From a field run: the uploaded file's page opened and had not finished loading after the 30 seconds this step waited, so the upload stopped there with its address not kept."""
+    """The address of the uploaded file's page is kept once it changes, whether or not the page has finished loading."""
     LIBRARY = f"""<!doctype html><body><a href="https://analytics.twitter.com/user/{OWNER}/home">Analytics</a><button>Upload Media</button>
       <p onclick="location.href='/library/13_77/edit'">clip.mp4</p>"""
     MEDIA = """<!doctype html><body><img src="/never.png"><button>Change thumbnail</button>

@@ -271,12 +271,20 @@ class ScheduledCardTests(Base):
         await self.show(self.card_with_caption("CC test. Private test. 五秒测试。"))
         self.assertIs(True, await browser_backends.douyin_scheduled_card(self.page, self.receipt_with_caption()))
 
-    async def test_marks_a_card_adds_are_no_part_of_what_was_written(self):
-        """From a field check: a real card's title node held one character more than the title, the caption and spacing, and the right card was missed. Which character was not kept."""
-        for mark in ("\ufeff", "\u200d", "｜", "…", "🎬"):
+    async def test_invisible_marks_are_no_part_of_what_was_written(self):
+        for mark in ("\ufeff", "\u200b", "\u200d"):
             with self.subTest(mark=mark):
                 await self.show(self.card_with_caption(f"{mark}CC test. Private test. 五秒测试。{mark}"))
                 self.assertIs(True, await browser_backends.douyin_scheduled_card(self.page, self.receipt_with_caption()))
+
+    async def test_punctuation_and_symbols_are_part_of_what_was_written(self):
+        """From a review: with only letters and digits compared, each of these read as the same words."""
+        for wanted, shown in (("Version 1.2", "Version 12"), ("-20%", "+20%"), ("C++", "C#"), ("Done ✅", "Done ❌")):
+            with self.subTest(wanted=wanted):
+                await self.show(self.card_with_caption(shown))
+                self.assertIs(False, await browser_backends.douyin_scheduled_card(self.page, {**self.receipt(), "expected_caption": wanted}))
+                await self.show(self.card_with_caption(wanted))
+                self.assertIs(True, await browser_backends.douyin_scheduled_card(self.page, {**self.receipt(), "expected_caption": wanted}))
 
     async def test_starting_with_the_title_is_not_enough(self):
         for cards in ((self.card_with_caption("Other words."),), (self.card_with_caption("CC test. Private test. 五秒测试。 and more"),), (self.card(TITLE + " more"),), (self.card(TITLE + " 2"),),

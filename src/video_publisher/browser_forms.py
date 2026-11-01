@@ -128,7 +128,7 @@ async def publish_x(page, tx):
         item = page.get_by_text(tx.receipt['upload_filename'], exact=True)
         await item.wait_for(state='visible', timeout=600000)
         await item.click()
-        # A field run saw this page not finish loading in 30 seconds. Its address is what has to be kept, and the next step waits for the controls.
+        # Its address is what has to be kept, and the next step waits for the page's controls.
         await page.wait_for_url(re.compile(r'https://studio\.x\.com/library/\d+_\d+/edit'), wait_until='commit', timeout=30000)
         tx.save(phase='opening_media', media_url=page.url)
     change = page.locator('button').filter(has_text=re.compile(r'^\s*Change thumbnail\s*$'))
