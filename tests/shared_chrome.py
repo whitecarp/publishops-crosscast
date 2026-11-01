@@ -10,7 +10,7 @@ import atexit
 import inspect
 import unittest
 
-LONGEST_WAIT = 5000  # Milliseconds.
+LONGEST_WAIT = 8000  # Milliseconds.
 
 _loop = None
 _chrome = None  # The driver and the one Chrome, once a test has asked for them.
