@@ -1,6 +1,7 @@
 """Bounded official-page discovery and fresh per-work management proof."""
 import re
 from urllib.parse import urlsplit
+from . import x_pages
 from .core import VpubError, stop_check
 from .browser_runtime import risk_check, unique_visible
 from .browser_backends import MANAGE, links, work_url
@@ -77,8 +78,8 @@ async def execute(page,platform,identity,payload):
         from .operations_browser import open_work, x_root
         await open_work(page,platform,identity,work)
         if platform=='x':
-            root=await x_root(page,identity,work)
-            if not await root.locator(f'[data-testid="User-Name"] a[href="/{identity}"]').count():
+            post=await x_pages.post_fields(await x_root(page,identity,work))
+            if not post or post['id']!=work or post['author'].casefold()!=identity.casefold():
                 raise VpubError('owner_unverified','Exact post author was not verified.')
             evidence='exact_post_permalink_and_author'
         else:

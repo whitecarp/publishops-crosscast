@@ -1,17 +1,18 @@
-"""X's bookmark folders, driven in a real browser against a small copy of its rebuilt site.
+"""X's bookmark folders, driven in a real browser against small copies of its two sites.
 
-The copy follows the page code X publishes: the folder window at /i/bookmarks/add/<post>, the address-opened create and
-edit windows, and the answers they get. Nothing here contacts X, and it has not been tried on a real account yet.
+The rebuilt site's copy follows the page code X publishes: the folder window at /i/bookmarks/add/<post>, the address-opened
+create and edit windows, and the answers they get. A signed-in account on 2026-10-31 still got the earlier site, where that
+address does not exist. Nothing here contacts X, and the rebuilt-site paths have not been tried on a real account yet.
 """
 import json
 import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlsplit
-from video_publisher import browser_runtime as rt, collections as c
-from video_publisher.collections_browser import execute
+from video_publisher import browser_runtime as rt, collections as c, x_pages
+from video_publisher.collections_browser import execute, root
 from video_publisher.core import VpubError, atomic_json, digest, read_json
 
 OWNER = 'owner'
@@ -119,6 +120,9 @@ class FolderTests(unittest.IsolatedAsyncioTestCase):
         self.page.set_default_timeout(3000)
         self.x = FakeX(self.page)
         await self.page.route('**/*', self.x.handle)
+        site = patch.object(x_pages, 'rebuilt', new=AsyncMock(return_value=True))
+        site.start()
+        self.addCleanup(site.stop)
 
     async def asyncTearDown(self):
         await self.browser.close()
@@ -141,6 +145,7 @@ class FolderTests(unittest.IsolatedAsyncioTestCase):
         result = await self.run_op('list')
         self.assertEqual([{'id': '111', 'title': 'Recipes'}, {'id': '222', 'title': 'Music'}], result['items'])
         self.assertTrue(result['complete'])
+        self.assertEqual('rebuilt', result['site'])
         self.assertEqual([], self.x.writes)
 
     async def test_the_window_says_whether_the_post_is_in_a_folder(self):
@@ -227,6 +232,164 @@ class FolderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('333', result['collection_id'])
         self.assertEqual('333', read_json(c.receipt_path(key))['collection_id'])
         self.assertEqual([('bookmarksCreateFolderModalMutation', 'Cooking')], self.x.writes)
+
+
+EARLIER_HISTORY = '''<a data-testid="AppTabBar_Profile_Link" href="/owner">Profile</a>
+<button role="tab" id="tab">Bookmarks</button><script>
+document.getElementById('tab').onclick = () => {
+  fetch('/i/api/graphql/abc/BookmarkFoldersSlice', {method: 'POST', body: '{}'});
+  const make = document.createElement('button');
+  make.setAttribute('aria-label', 'Create Folder');
+  make.onclick = () => {
+    const form = document.createElement('div');
+    form.setAttribute('role', 'dialog');
+    form.innerHTML = '<input aria-label="Folder Name" id="name"><button id="go">Create</button>';
+    document.body.append(form);
+    document.getElementById('go').onclick = () => { fetch('/i/api/graphql/abc/createBookmarkFolder?name=' + encodeURIComponent(document.getElementById('name').value), {method: 'POST', body: '{}'}); form.remove(); };
+  };
+  document.body.append(make);
+};
+</script>'''
+EARLIER_FOLDER = '''<a data-testid="AppTabBar_Profile_Link" href="/owner">Profile</a>
+<button role="tab" id="tab">%s</button><script>
+document.getElementById('tab').onclick = () => {
+  const menu = document.createElement('div');
+  menu.setAttribute('role', 'menu');
+  menu.innerHTML = '<button aria-label="More" id="more">More</button>';
+  document.body.append(menu);
+  document.getElementById('more').onclick = () => {
+    const items = document.createElement('div');
+    items.innerHTML = '<div role="menuitem" id="edit">Edit</div><div role="menuitem" id="del">Delete</div>';
+    document.body.append(items);
+    document.getElementById('edit').onclick = () => {
+      const form = document.createElement('div');
+      form.innerHTML = '<input name="Folder Name" id="name"><button id="save">Save</button>';
+      document.body.append(form);
+      document.getElementById('save').onclick = () => { fetch('/i/api/graphql/abc/EditBookmarkFolder?name=' + encodeURIComponent(document.getElementById('name').value), {method: 'POST', body: '{}'}); form.remove(); };
+    };
+    document.getElementById('del').onclick = () => {
+      const sure = document.createElement('div');
+      sure.innerHTML = '<p>Delete Folder?</p><button data-testid="confirmationSheetConfirm" id="yes">Delete</button>';
+      document.body.append(sure);
+      document.getElementById('yes').onclick = () => { fetch('/i/api/graphql/abc/DeleteBookmarkFolder', {method: 'POST', body: '{}'}); sure.remove(); };
+    };
+  };
+};
+</script>'''
+
+
+class EarlierSiteTests(unittest.IsolatedAsyncioTestCase):
+    """The site a signed-in account still got on 2026-10-31. Its flows are the ones earlier live tests used."""
+
+    async def asyncSetUp(self):
+        from patchright.async_api import async_playwright
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        env = patch.dict(os.environ, {'VPUB_HOME': str(Path(temp.name) / 'runtime')})
+        env.start()
+        self.addCleanup(env.stop)
+        self.pw = await async_playwright().start()
+        self.browser = await self.pw.chromium.launch(channel='chrome', headless=True)
+        self.page = await self.browser.new_page()
+        self.page.set_default_timeout(5000)
+        self.folders = {'111': 'Recipes'}
+        self.writes = []
+        await self.page.route('**/*', self.handle)
+        await self.page.goto('https://x.com/home')
+
+    async def asyncTearDown(self):
+        await self.browser.close()
+        await self.pw.stop()
+
+    async def handle(self, route):
+        url = urlsplit(route.request.url)
+        if url.hostname != 'x.com':
+            return await route.abort()
+        name = url.path.rsplit('/', 1)[1]
+        if route.request.method == 'POST':
+            query = parse_qs(url.query)
+            data = {}
+            if name == 'BookmarkFoldersSlice':
+                items = [{'id': key, 'name': title} for key, title in self.folders.items()]
+                data = {'viewer': {'user_results': {'result': {'bookmark_collections_slice': {'items': items, 'slice_info': {}}}}}}
+            else:
+                self.writes.append((name, query.get('name', [None])[0]))
+                if name == 'createBookmarkFolder':
+                    data = {'bookmark_collection_create': {'id': '333', 'name': query['name'][0]}}
+            return await route.fulfill(status=200, content_type='application/json', body=json.dumps({'data': data}))
+        if url.path == '/i/history':
+            return await route.fulfill(status=200, content_type='text/html', body='<!doctype html><body>' + EARLIER_HISTORY)
+        if url.path.startswith('/i/history/bookmarks/'):
+            return await route.fulfill(status=200, content_type='text/html', body='<!doctype html><body>' + EARLIER_FOLDER % self.folders.get(name, ''))
+        await route.fulfill(status=200, content_type='text/html', body='<!doctype html><body><a data-testid="AppTabBar_Profile_Link" href="/owner">Profile</a>')
+
+    def receipt(self, action, collection='111', title=None, **extra):
+        key = digest([action, collection, title])
+        atomic_json(c.receipt_path(key), {'key': key, 'platform': 'x', 'identity': OWNER, 'action': action, 'collection_id': collection,
+                                          'title': title, 'state': 'READY', 'intent': {}, **extra})
+        return key
+
+    async def run_op(self, operation, **payload):
+        return await execute(self.page, 'x', OWNER, {'platform': 'x', 'operation': operation, **payload})
+
+    async def test_the_site_is_told_apart_by_the_older_label(self):
+        self.assertFalse(await x_pages.rebuilt(self.page))
+        await self.page.set_content('<nav><a href="/owner">Profile</a></nav>')
+        self.assertTrue(await x_pages.rebuilt(self.page))
+
+    async def test_the_list_opens_the_bookmarks_tab_and_reads_its_answer(self):
+        result = await self.run_op('list')
+        self.assertEqual(([{'id': '111', 'title': 'Recipes'}], True), (result['items'], result['complete']))
+        self.assertEqual('earlier', result['site'])
+        self.assertEqual([], self.writes)
+
+    async def test_create_uses_the_create_folder_button(self):
+        key = self.receipt('create', None, 'Cooking', before_ids=['111'])
+        result = await self.run_op('create', collection_id=None, title='Cooking', receipt_key=key)
+        self.assertEqual('333', result['collection_id'])
+        self.assertEqual([('createBookmarkFolder', 'Cooking')], self.writes)
+
+    async def test_rename_goes_through_the_folder_menu(self):
+        key = self.receipt('rename', title='Cooking')
+        await self.run_op('rename', collection_id='111', title='Cooking', receipt_key=key)
+        self.assertEqual([('EditBookmarkFolder', 'Cooking')], self.writes)
+
+    async def test_delete_goes_through_the_confirmation_sheet(self):
+        key = self.receipt('delete')
+        await self.run_op('delete', collection_id='111', receipt_key=key)
+        self.assertEqual([('DeleteBookmarkFolder', None)], self.writes)
+
+    async def test_adding_a_post_says_it_is_not_available_here_and_changes_nothing(self):
+        key = self.receipt('add', work_id=POST, before_members=[])
+        with self.assertRaises(VpubError) as caught:
+            await self.run_op('add', collection_id='111', work_id=POST, before_members=[], receipt_key=key)
+        self.assertEqual('unverified_feature', caught.exception.code)
+        self.assertEqual('READY', read_json(c.receipt_path(key))['state'])
+        with self.assertRaises(VpubError):
+            await self.run_op('items', collection_id='111', work_id=POST)
+        self.assertEqual([], self.writes)
+
+    async def test_an_unhydrated_tab_retries_only_opening_the_menu(self):
+        await self.page.route('**/*', lambda route: route.abort())
+        await self.page.set_content('''<button role="tab" id="tab">Bookmarks</button><script>
+        document.getElementById('tab').onclick=()=>{
+            window.t=(window.t||0)+1;
+            document.body.dataset.clicks=String(window.t);
+            if(window.t===2){const b=document.createElement('button');b.setAttribute('aria-label','Create Folder');
+                b.textContent='Create';b.onclick=()=>{document.body.dataset.writes='1'};document.body.append(b);}
+        };</script>''')
+        with patch.object(self.page, 'goto', new=AsyncMock()):
+            await root(self.page, 'x', OWNER)
+        self.assertEqual('2', await self.page.locator('body').get_attribute('data-clicks'))
+        self.assertIsNone(await self.page.locator('body').get_attribute('data-writes'))
+
+    async def test_an_open_menu_is_not_toggled_closed(self):
+        await self.page.route('**/*', lambda route: route.abort())
+        await self.page.set_content('''<button role="tab" onclick="document.body.dataset.clicks='1'">Bookmarks</button><button aria-label="Create Folder" onclick="document.body.dataset.writes='1'">Create</button>''')
+        with patch.object(self.page, 'goto', new=AsyncMock()):
+            await root(self.page, 'x', OWNER)
+        self.assertIsNone(await self.page.locator('body').get_attribute('data-clicks'))
+        self.assertIsNone(await self.page.locator('body').get_attribute('data-writes'))
 
 
 class AccountTests(unittest.IsolatedAsyncioTestCase):

@@ -2,6 +2,7 @@
 from pathlib import Path
 import re
 from urllib.parse import urlsplit
+from . import x_pages
 from .core import VpubError, atomic_json, file_sha, now
 from .browser_runtime import risk_check, unique_visible, visible
 from .browser_backends import normalize, work_url
@@ -60,19 +61,23 @@ async def execute(page, platform, identity, payload):
     if platform=='x':
         url=work_url('x',identity,work_id)
         await page.goto(url,wait_until='domcontentloaded',timeout=60000)
-        post=page.locator('article').filter(has=page.locator(f'a[href="/{identity}/status/{work_id}"]'))
+        post=x_pages.post_row(page,work_id)
         await post.first.wait_for(state='visible',timeout=60000)
         if payload.get('verify_only'):
             matched=normalize(patch['post_text']) in normalize(await post.first.inner_text())
             return save(state='EDIT_VERIFIED' if matched else 'EDIT_SUBMITTED_UNVERIFIED',url=url,platform_writes=0)
-        await (await unique_visible(post.get_by_role('button',name='More',exact=True),'post More')).click()
-        edit=await visible(page.get_by_role('menuitem',name=re.compile(r'^Edit( post)?$')))
+        await (await unique_visible(post.locator('button[aria-label="More"], '+x_pages.MORE),'post More')).click()
+        edit=await visible(page.get_by_role('menuitem',name=x_pages.EDIT_POST))
         if edit is None:
             return save(state='EDIT_UNAVAILABLE',url=url,reason='The original post menu has no Edit action; no deletion/repost/reply was attempted.')
         await edit.click()
-        editor=page.get_by_role('textbox',name='Post text',exact=True)
-        await editor.fill(patch['post_text'])
-        update=page.get_by_role('button',name='Update',exact=True)
+        from .operations_browser import fill_x_text
+        windows=page.locator(x_pages.COMPOSER)
+        await windows.first.wait_for(state='visible',timeout=15000)
+        window=await unique_visible(windows,'post edit window')
+        editor=await unique_visible(window.locator(x_pages.TEXT_BOX),'post text')
+        await fill_x_text(page,editor,patch['post_text'])
+        update=await unique_visible(window.get_by_role('button',name=x_pages.UPDATE_POST),'post Update')
         if not await update.is_enabled(): raise VpubError('edit_not_ready','X cannot save this text; inspect its account/length constraints.')
         await submit(update)
         await editor.wait_for(state='hidden',timeout=30000)

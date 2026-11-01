@@ -1,4 +1,5 @@
 """Like/unlike the exact visible Instagram/X comment, never a nearby video."""
+from . import x_pages
 from .browser_runtime import unique_visible, risk_check
 from .operations_browser import open_work, comments
 from .core import VpubError, atomic_json, read_json, stop_check
@@ -23,8 +24,8 @@ async def execute(page, platform, identity, payload):
     if len(found) != 1: raise VpubError('comment_changed', 'Exact comment is absent or changed.')
     c = found[0]
     if platform == 'x':
-        row = await unique_visible(page.locator('main article').filter(has=page.locator(f'a[href="/{c["author"]}/status/{c["id"]}"]').filter(has=page.locator('time'))), 'comment article')
-        on = row.locator('[data-testid="unlike"]'); off = row.locator('[data-testid="like"]')
+        row = await unique_visible(x_pages.post_row(page, c['id']), 'comment article')
+        on = row.locator(x_pages.LIKE_ON); off = row.locator(x_pages.LIKE_OFF)
     else:
         row = page.locator(f'[data-crosscast-comment-row="{c["ui_index"]}"]')
         # The collected text column and its heart are sibling DOM nodes. Climb

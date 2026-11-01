@@ -1,25 +1,24 @@
 """Read-only signal sources, with independently reported coverage limits."""
-import re
+from . import x_pages
 from .core import VpubError, stop_check
 from .browser_runtime import risk_check
 
 
 async def x_mentions(page, identity, limit):
-    await page.locator('[data-testid="AppTabBar_Notifications_Link"]').click(timeout=20000)
-    await page.get_by_role('tab',name='Mentions',exact=True).click(timeout=15000)
-    await page.wait_for_timeout(1200);await risk_check(page)
+    await page.goto('https://x.com/notifications/mentions',wait_until='domcontentloaded',timeout=60000)
+    for _ in range(20):
+        await risk_check(page)
+        if await page.locator('main article').count():break
+        await page.wait_for_timeout(500)
     if not page.url.startswith('https://x.com/notifications/mentions'):
         raise VpubError('wrong_surface','Expected the official Mentions tab.')
     rows=[]
     for article in await page.locator('main article').all():
-        anchor=article.locator('a[href*="/status/"]').filter(has=page.locator('time'))
-        if await anchor.count()!=1:continue
-        href=await anchor.get_attribute('href');m=re.fullmatch(r'/([A-Za-z0-9_]+)/status/(\d+)',href or '')
-        body=article.locator('[data-testid="tweetText"]')
-        if not m or await body.count()!=1:continue
-        rows.append({'id':m[2],'author':m[1],'text':await body.inner_text(),'url':'https://x.com'+href,
-                     'is_owner':m[1].casefold()==identity.casefold(),
-                     'published_at':await anchor.locator('time').get_attribute('datetime')})
+        post=await x_pages.post_fields(article)
+        if not post or not post['text'] or post['is_ad']:continue
+        rows.append({'id':post['id'],'author':post['author'],'text':post['text'],'url':'https://x.com'+post['href'],
+                     'is_owner':post['author'].casefold()==identity.casefold(),
+                     'published_at':post['published_at']})
         if len(rows)>=limit:break
     if not rows:
         text=await page.locator('main').inner_text()

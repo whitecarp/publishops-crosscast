@@ -13,8 +13,13 @@ MESSAGE_ROWS = '''(root, identity) => [...root.querySelectorAll('[data-dm-messag
 }).filter(x=>x.text)'''
 
 
+async def open_chat(page):
+    # By address: the main menu's link has no label on X's rebuilt site. Chat itself is a separate application.
+    await page.goto('https://x.com/i/chat',wait_until='domcontentloaded',timeout=60000)
+
+
 async def inbox(page):
-    await page.locator('a[data-testid="AppTabBar_DirectMessage_Link"]').click()
+    await open_chat(page)
     for _ in range(60):
         if '/pin/' in page.url or await page.locator('input[aria-label="Digit 1 of 4"]').count():
             raise VpubError('chat_unlock_required','X Chat requires user verification.','Run vpub dm unlock x and enter the PIN only in the official page; never share/reset it for this command.')
@@ -26,7 +31,7 @@ async def inbox(page):
 async def unlock(page,identity):
     """User explicitly opens this interactive window; no PIN is inspected or entered."""
     import time
-    await page.locator('a[data-testid="AppTabBar_DirectMessage_Link"]').click()
+    await open_chat(page)
     deadline=time.monotonic()+300
     while time.monotonic()<deadline:
         if page.is_closed():raise VpubError('chat_unlock_cancelled','X Chat window was closed.')

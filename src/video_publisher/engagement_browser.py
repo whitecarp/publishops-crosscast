@@ -2,6 +2,7 @@
 import asyncio
 import re
 from urllib.parse import urlsplit
+from . import x_pages
 from .browser_runtime import risk_check, unique_visible
 from .core import VpubError, stop_check
 
@@ -44,9 +45,9 @@ def douyin_detail_state(data,work):
 
 async def controls(page,platform,work):
     if platform=='x':
-        root=await unique_visible(page.locator('article').filter(has=page.locator(f'a[href$="/status/{work}"] time')),'target post')
-        liked,like=await pair(root,'button[data-testid="like"]','button[data-testid="unlike"]','post Like')
-        saved,save=await pair(root,'button[data-testid="bookmark"]','button[data-testid="removeBookmark"]','post Bookmark')
+        root=await unique_visible(x_pages.post_row(page,work),'target post')
+        liked,like=await pair(root,x_pages.LIKE_OFF,x_pages.LIKE_ON,'post Like')
+        saved,save=await pair(root,x_pages.SAVE_OFF,x_pages.SAVE_ON,'post Bookmark')
     elif platform=='instagram':
         # The post action section excludes like icons attached to comments.
         toolbar='section:has(svg[aria-label="Comment"]):has(svg[aria-label="Save"],svg[aria-label="Remove"])'

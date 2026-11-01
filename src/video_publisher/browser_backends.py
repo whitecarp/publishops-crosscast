@@ -306,7 +306,7 @@ async def verify(page, platform, identity, receipt):
         await page.goto(url, wait_until="domcontentloaded", timeout=60000)
         if platform == 'x':
             try:
-                await page.locator('[data-testid="tweetText"]').filter(has_text=receipt.get('title','')).first.wait_for(timeout=20000)
+                await page.locator('article').filter(has_text=receipt.get('title','')).first.wait_for(timeout=20000)
             except Exception:
                 pass
         else:

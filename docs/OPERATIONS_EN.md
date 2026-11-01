@@ -79,7 +79,7 @@ Codex chooses its progress wording. The skill has its own name, but an exact sen
 |---|---|---|
 | Instagram | List, items, create, rename, add, remove, delete | Add requires the work to already appear in the loaded Saved picker. Incomplete member reads block changes. |
 | Douyin | List, items, create with cover, rename, add, remove, delete | Account eligibility and platform review still apply. Ineligible works are rejected. A collection is distinct from a private favorite folder. |
-| X | List, create, rename, delete, add, remove; bounded items | Folders need X Premium. Add and remove use X's own folder window, which says whether that one post is in the folder. An error page is never treated as an empty folder. Rebuilt for X's new site from its public page code; not yet tried on a real account. |
+| X | List, create, rename, delete, add, remove; bounded items | Folders need X Premium. X serves two versions of its website, and CrossCast detects which one the account gets. Earlier site (what a signed-in test account gets so far): list, create, rename and delete use its Bookmarks tab; add, remove and asking about one post stop with `unverified_feature` and change nothing. Rebuilt site: add and remove use X's own folder window, which says whether that one post is in the folder; built from its public page code and not yet tried on a signed-in account. An error page is never treated as an empty folder. |
 | Bilibili | List, items, create with cover, rename, add, remove, delete | Runs through the included bili-cli, and Bilibili reviews collections, so a change can take time to show; `verify` reads it again. Rename uses bili-cli's request helpers in a separate process and has not been tried on a real account. |
 
 ```sh
@@ -448,6 +448,8 @@ vpub auth status all
 ```
 
 Each first login opens CrossCast's own official Chrome window. Choose QR, password or another option offered by the site and complete any SMS/identity check yourself. Later commands run headlessly with the same local profile. This profile is separate from Codex's browser; no host cookies are exported. Sessions may expire or require verification again.
+
+On Windows, an AI app installed as a package (most Microsoft Store apps are) gets its own private copy of `%LOCALAPPDATA%`, so a sign-in made through one such app doesn't appear in another: both see the same path, with separate contents. If a sign-in seems to be gone after switching apps, it probably hasn't expired. Sign in again from the new app, or set `VPUB_HOME` so both apps use a normal folder, such as `C:\Users\you\CrossCast-data`, and sign in once there.
 
 `onboard` can start only the selected platforms. Existing manifests are not migrated automatically: set `method: browser` for Douyin/Instagram/X and `method: api` for YouTube; `init` now supplies those defaults. `method: native` is the explicit host-agent fallback.
 
