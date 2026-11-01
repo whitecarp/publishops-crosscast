@@ -28,6 +28,7 @@ YT_PLAYLIST_ROWS = """boxes => boxes.map(box => {
 
 X_MEDIA_PAGE = re.compile(r'https://studio\.x\.com/library/\d+_\d+/')
 X_OPEN_SECONDS = 15
+X_CHANGE_THUMBNAIL = re.compile(r'^\s*Change thumbnail\s*$')
 
 
 async def enabled(locator):
@@ -112,17 +113,28 @@ def x_media_address(address):
     return {'media_url': found[0] + 'edit'} if found else {}
 
 
-async def x_open_media(page, name, form):
-    """Field runs clicked the uploaded file's name as soon as it showed, and the address didn't change in 30 seconds. In one, 15 seconds on, the name showed twice, which is how it looks with the file's form open: on its tile and in the form.
-    So the file is open once its form shows with its name in it, or the address names it. A click changes nothing, and comes again only while the name is on the tile alone."""
+def x_file_link(filename):
+    return 'a[download="' + filename.replace('\\', '\\\\').replace('"', '\\"') + '"]'
+
+
+def x_media_form(page, filename):
+    """This file's own form, because filling another file's and composing from it could post the wrong video. A field check found the form holds a download link carrying the file's exact name, with Library's Upload Media button and tiles further out.
+    It is the outermost element with that link and Change thumbnail, and without that button. A review showed counting the name across the page proves nothing, and the classes on this page are generated."""
+    return (page.locator('div').filter(has=page.locator(x_file_link(filename))).filter(has=page.locator('button').filter(has_text=X_CHANGE_THUMBNAIL))
+            .filter(has_not=page.locator('button').filter(has_text=re.compile(r'^\s*Upload Media\s*$')))).first
+
+
+async def x_open_media(page, name, form, filename):
+    """Field runs clicked the uploaded file's name as soon as it showed, and the address didn't change in 30 seconds, while 15 seconds on the name showed twice. A click two minutes after an upload opened the form at once.
+    So the file is open once its own form shows, and the address is not waited for. A click changes nothing, and comes again only while the name shows once and no form has come."""
     from patchright.async_api import Error as BrowserError
     clicked = None
 
     async def opened():
         nonlocal clicked
+        if await visible(form.locator(x_file_link(filename))) and await visible(form.locator('button').filter(has_text=X_CHANGE_THUMBNAIL)):
+            return True
         showing = await name.count()
-        if await visible(form):
-            return showing > 1 or bool(X_MEDIA_PAGE.search(page.url))
         if showing == 1 and (clicked is None or time.monotonic() - clicked >= X_OPEN_SECONDS):
             clicked = time.monotonic()
             try:
@@ -152,15 +164,17 @@ async def publish_x(page, tx):
         if not re.fullmatch(r'https://studio\.x\.com/library/\d+_\d+/edit', tx.receipt['media_url']):
             raise VpubError('invalid_media_url', 'Resume requires the original Media Studio asset URL.')
         await page.goto(tx.receipt['media_url'], wait_until='domcontentloaded', timeout=60000)
-    change = page.locator('button').filter(has_text=re.compile(r'^\s*Change thumbnail\s*$'))
+    elif not tx.receipt['media_selected']:
+        media = tx.media()
+        await upload_file(page, media, accept='video/')
+        tx.save(phase='uploading')
+    filename = tx.receipt['upload_filename']
+    form = x_media_form(page, filename)
+    change = form.locator('button').filter(has_text=X_CHANGE_THUMBNAIL)
     if not tx.receipt.get('media_url'):
-        if not tx.receipt['media_selected']:
-            media = tx.media()
-            await upload_file(page, media, accept='video/')
-            tx.save(phase='uploading')
-        item = page.get_by_text(tx.receipt['upload_filename'], exact=True)
+        item = page.get_by_text(filename, exact=True)
         await item.wait_for(state='visible', timeout=600000)
-        await x_open_media(page, item, change)
+        await x_open_media(page, item, form, filename)
         tx.save(phase='opening_media', **x_media_address(page.url))
     await change.wait_for(state='visible', timeout=300000)
     tx.save(phase='media_ready', **x_media_address(page.url))
@@ -176,19 +190,21 @@ async def publish_x(page, tx):
         await choose.wait_for(state='hidden', timeout=30000)
         await page.wait_for_timeout(2000)
         tx.save(phase='cover_selected', cover={'source':'production_artwork', 'state':'UI_ACCEPTED', 'remote_pixels_verified':False})
-    media_title = page.get_by_placeholder('Title', exact=True)
-    if await visible(media_title):
+    media_title = form.get_by_placeholder('Title', exact=True)
+    details = bool(await visible(media_title))
+    tx.save(media_details_filled=details)
+    if details:
         if len(tx.options['title']) > 70:
             raise VpubError('title_too_long', 'X Studio title must fit 70 characters; do not silently truncate.')
         await media_title.fill(tx.options['title'])
         await media_title.press('Tab')
-        description = page.get_by_placeholder('Type a brief description here', exact=True)
+        description = form.get_by_placeholder('Type a brief description here', exact=True)
         if len(tx.options['description']) <= 200:
             await description.fill(tx.options['description'])
             await description.press('Tab')
         await page.wait_for_timeout(1500)
     # The non-icon detail Post button opens the composer; it does not publish.
-    compose = await unique_visible(page.locator('button[type="button"]').filter(has_text=re.compile('^Post$')), 'Studio compose button')
+    compose = await unique_visible(form.locator('button[type="button"]').filter(has_text=re.compile('^Post$')), 'Studio compose button')
     await compose.click()
     caption = page.get_by_placeholder("What's happening?", exact=True)
     await caption.wait_for(timeout=20000)

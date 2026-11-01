@@ -53,9 +53,14 @@ class OpeningMediaTests(ChromeCase):
     """The address of the uploaded file's page is kept once it changes, whether or not the page has finished loading."""
     LIBRARY = f"""<!doctype html><body><a href="https://analytics.twitter.com/user/{OWNER}/home">Analytics</a><button>Upload Media</button>
       <p onclick="location.href='/library/13_77/edit'">clip.mp4</p>"""
-    FORM = """<p>clip.mp4</p><button>Change thumbnail</button>
-      <button type="button" onclick="document.getElementById('words').hidden = false">Post</button><textarea id="words" placeholder="What's happening?" hidden></textarea>"""
-    MEDIA = "<!doctype html><body><img src=\"/never.png\"><p>clip.mp4</p>" + FORM
+    @staticmethod
+    def form_for(filename):
+        return f"""<div class="form"><div><a download="{filename}" href="#">Download</a><div>{filename}</div><button>Change thumbnail</button>
+          <button type="button" onclick="document.getElementById('words').hidden = false">Post</button></div>
+          <input placeholder="Title" value="original"><textarea placeholder="Type a brief description here">original</textarea><textarea id="words" placeholder="What's happening?" hidden></textarea></div>"""
+
+    FORM = form_for.__func__("clip.mp4")
+    MEDIA = f"<!doctype html><body><img src=\"/never.png\"><div id=\"everything\"><button>Upload Media</button><p>clip.mp4</p>{FORM}</div>"
 
     class Tx:
         identity = OWNER
@@ -95,30 +100,45 @@ class OpeningMediaTests(ChromeCase):
             self.assertEqual("PREVIEW_READY", (await browser_forms.publish_x(self.page, tx))["state"])
         self.assertEqual("https://studio.x.com/library/13_77/edit", tx.receipt["media_url"])
 
-    def library_that_opens_the_form_in_place(self, delay=0):
+    def library_that_opens_in_place(self, held, delay=0):
         return f"""<!doctype html><body><a href="https://analytics.twitter.com/user/{OWNER}/home">Analytics</a><button>Upload Media</button><div id="spot"></div>
-          <p onclick="window.clicks = (window.clicks || 0) + 1; setTimeout(() => {{ document.getElementById('spot').innerHTML = document.getElementById('held').innerHTML; }}, {delay})">clip.mp4</p>
-          <template id="held">{self.FORM}</template>"""
+          <p onclick="if (window.clicks) return; window.clicks = 1; setTimeout(() => {{ document.getElementById('spot').innerHTML = document.getElementById('held').innerHTML; }}, {delay})">clip.mp4</p>
+          <template id="held">{held}</template>"""
 
-    async def test_a_form_that_opens_with_the_address_unchanged_counts_and_is_never_clicked_again(self):
-        """From a field run: 15 seconds after the click the address was unchanged and the name showed twice, and a second click stopped on the two matches."""
-        self.LIBRARY = self.library_that_opens_the_form_in_place(1500)
-        tx = self.Tx()
-        with patch.object(browser_forms, "X_OPEN_SECONDS", 1):
-            self.assertEqual("PREVIEW_READY", (await browser_forms.publish_x(self.page, tx))["state"])
-        self.assertLessEqual(await self.page.evaluate("window.clicks", isolated_context=False), 2)
-        self.assertNotIn("media_url", tx.receipt)
-
-    async def test_a_form_without_this_files_name_or_address_is_not_taken_for_its_form(self):
-        self.LIBRARY = self.LIBRARY.replace("location.href=", "window.ignored=") + "<button>Change thumbnail</button>"
-        tx = self.Tx()
+    async def stops_without_filling(self, library):
+        self.LIBRARY = library
         real = browser_forms.wait_until
 
         async def soon(page, predicate, *, seconds=120, label="page state"):
-            return await real(page, predicate, seconds=2, label=label)
+            return await real(page, predicate, seconds=3, label=label)
         with patch.object(browser_forms, "wait_until", soon), self.assertRaises(VpubError) as caught:
-            await browser_forms.publish_x(self.page, tx)
+            await browser_forms.publish_x(self.page, self.Tx())
         self.assertEqual("processing_timeout", caught.exception.code)
+        for box in await self.page.get_by_placeholder("Title", exact=True).all():
+            self.assertEqual("original", await box.input_value())
+
+    async def test_a_form_that_opens_with_the_address_unchanged_counts_and_is_never_clicked_again(self):
+        """From a field run: 15 seconds after the click the address was unchanged and the name showed twice, and a second click stopped on the two matches."""
+        self.LIBRARY = self.library_that_opens_in_place(self.FORM, 1500)
+        tx = self.Tx()
+        with patch.object(browser_forms, "X_OPEN_SECONDS", 1):
+            self.assertEqual("PREVIEW_READY", (await browser_forms.publish_x(self.page, tx))["state"])
+        self.assertNotIn("media_url", tx.receipt)
+        self.assertEqual("Title", await self.page.get_by_placeholder("Title", exact=True).input_value())
+
+    async def test_another_files_form_is_never_filled(self):
+        """From a review: one click on this file's tile, another file's form opening, and this file's name elsewhere on the page. Its form got filled, and composing from it could post the wrong video."""
+        other = self.form_for("other.mp4")
+        for name, held in (("name hidden elsewhere", f"<p hidden>clip.mp4</p>{other}"), ("name visible elsewhere", f"<p>clip.mp4</p>{other}"), ("no name elsewhere", other),
+                           ("a form with no link at all", self.FORM.replace('<a download="clip.mp4" href="#">Download</a>', ""))):
+            with self.subTest(name):
+                await self.stops_without_filling(self.library_that_opens_in_place(held))
+
+    async def test_a_form_beside_this_files_link_is_not_its_form(self):
+        await self.stops_without_filling(self.library_that_opens_in_place('<a download="clip.mp4" href="#">Download</a><div><button>Upload Media</button>' + self.form_for("other.mp4") + "</div>"))
+
+    def test_a_file_name_with_quotes_is_still_one_name(self):
+        self.assertEqual('a[download="a\\"b\\\\c.mp4"]', browser_forms.x_file_link('a"b\\c.mp4'))
 
     async def test_a_file_that_never_opens_stops_and_leaves_it_for_a_resume(self):
         self.LIBRARY = self.LIBRARY.replace("location.href=", "window.ignored=")
@@ -142,6 +162,7 @@ class OpeningMediaTests(ChromeCase):
     async def test_a_media_page_still_loading_does_not_stop_the_upload_and_its_address_is_kept(self):
         tx = self.Tx()
         self.assertEqual("PREVIEW_READY", (await browser_forms.publish_x(self.page, tx))["state"])
+        self.assertIs(True, tx.receipt["media_details_filled"])
         self.assertEqual("https://studio.x.com/library/13_77/edit", tx.receipt["media_url"])
         self.assertEqual("Words", await self.page.get_by_placeholder("What's happening?", exact=True).input_value())
 

@@ -250,6 +250,13 @@ class CaptionTypingTests(Base):
         self.assertEqual(["One line.", "第二行。", "#Tag"], [data for kind, data in seen if kind == "insertText"])
         self.assertEqual(browser_backends.douyin_card_words("One line.\n\n第二行。\n\n#Tag"), browser_backends.douyin_card_words(await box.inner_text()))
 
+    def test_only_invisible_marks_and_how_much_spacing_there_is_are_left_out(self):
+        words = browser_backends.douyin_card_words
+        self.assertEqual(words("One.\n\nTwo."), words("One.\u200b\n\u200b\nTwo.\u200b"))
+        self.assertNotEqual(words("We are now here."), words("We are nowhere."))
+        self.assertNotEqual(words("One. Two."), words("One. *Two."))
+        self.assertNotEqual(words("Version 1.2"), words("Version 12"))
+
     async def test_what_was_there_goes_first(self):
         box, _ = await self.type_it("New.")
         self.assertEqual("New.", (await box.inner_text()).strip())
@@ -306,7 +313,8 @@ class ScheduledCardTests(Base):
 
     async def test_a_star_stands_only_for_a_new_paragraph(self):
         for caption, node, same in (("One. Two.", f"{TITLE} One. *Two.", False), ("One.\n\nTwo.", f"{TITLE} One. *Two. *", False), ("One.\n\nTwo.", f"{TITLE} One. Two.", True),
-                                    ("2*3 is six", f"{TITLE} 2*3 is six", True), ("2*3 is six", f"{TITLE} 23 is six", False), ("One.\nTwo.", f"{TITLE} One. *Two.", True)):
+                                    ("2*3 is six", f"{TITLE} 2*3 is six", True), ("2*3 is six", f"{TITLE} 23 is six", False), ("One.\nTwo.", f"{TITLE} One. *Two.", True),
+                                    ("We are now here.", f"{TITLE} We are nowhere.", False), ("Words", f"{TITLE}Words", False)):
             with self.subTest(caption=caption, node=node):
                 await self.show(self.card(title=node))
                 self.assertIs(same, await browser_backends.douyin_scheduled_card(self.page, {**self.receipt(), "expected_caption": caption}))

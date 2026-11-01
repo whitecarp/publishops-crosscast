@@ -195,8 +195,8 @@ async def douyin_card_status(card):
 
 
 def douyin_card_words(text):
-    """What was written. Spacing and invisible marks are the page's own, and punctuation is part of the words: a review showed 1.2 and 12 must not read the same."""
-    return ''.join(c for c in unicodedata.normalize('NFC', text or '') if not c.isspace() and unicodedata.category(c) != 'Cf')
+    """What was written. Invisible marks and how much spacing there is are the page's own. Punctuation and where a space falls are part of the words: reviews showed 1.2 and 12, and now here and nowhere, must not read the same."""
+    return normalize(''.join(c for c in unicodedata.normalize('NFC', text or '') if unicodedata.category(c) != 'Cf'))
 
 
 async def douyin_type_caption(page, editor, caption):
@@ -213,7 +213,7 @@ async def douyin_type_caption(page, editor, caption):
 
 async def douyin_cards_titled(page, title, caption=''):
     """The Creator Center cards with exactly this title, or exactly this title and then this caption, which a field check found a card's title node holds, with a star where each new paragraph begins. A longer title or another caption is another work."""
-    wanted = {douyin_card_words(title), douyin_card_words(title + caption), douyin_card_words(title + re.sub(r'\s*\n\s*', '*', caption.strip()))}
+    wanted = {douyin_card_words(title), douyin_card_words(title + ' ' + caption), douyin_card_words(title + ' ' + re.sub(r'\s*\n\s*', ' *', caption.strip()))}
     cards = []
     for card in await page.locator(DOUYIN_CARD).all():
         names = card.locator('[class^="info-title-text-"]')
