@@ -20,6 +20,8 @@ TITLE = "My title"
 
 def form(keep_time=True, shows_box=True, collections=("Recipes", "Recipes more")):
     options = "".join(f'<div class="semi-select-option collection-option"><span class="option-title-a1">{name}</span></div>' for name in collections)
+    show = "document.getElementById('when').hidden = false;" if shows_box else ""
+    reset = "" if keep_time else """document.querySelector('[placeholder="日期和时间"]').addEventListener('keydown', e => { if (e.key === 'Enter') e.target.value = '2026-01-01 00:00'; });"""
     return f"""<!doctype html><meta charset="utf-8"><style>label span {{ pointer-events: none; }}</style><body>
       <input class="semi-input" placeholder="填写作品标题，为作品获得更多流量" value="{TITLE}">
       <div contenteditable="true" class="zone-container editor-kit-container">Words</div>
@@ -33,10 +35,10 @@ def form(keep_time=True, shows_box=True, collections=("Recipes", "Recipes more")
       <button class="button-dhlUZE cancel-btn-zy_rHA" id="keep">暂存离开</button>
       <script>
       const send = word => fetch('/write', {{method: 'POST', body: JSON.stringify({{word, later: document.getElementById('later').dataset.checked, when: document.querySelector('[placeholder="日期和时间"]').value, picked: document.getElementById('picked').innerText}})}});
-      document.getElementById('later').onclick = () => {{ document.getElementById('later').dataset.checked = 'true'; {"document.getElementById('when').hidden = false;" if shows_box else ""} }};
+      document.getElementById('later').onclick = () => {{ document.getElementById('later').dataset.checked = 'true'; {show} }};
       document.getElementById('post').onclick = () => send('publish').then(() => {{ location.href = '/creator-micro/content/manage'; }});
       document.getElementById('keep').onclick = () => send('keep');
-      {"" if keep_time else "document.querySelector('[placeholder=\"日期和时间\"]').addEventListener('keydown', e => { if (e.key === 'Enter') e.target.value = '2026-01-01 00:00'; });"}
+      {reset}
       document.getElementById('picked').onclick = () => {{ document.getElementById('list').hidden = false; }};
       for (const row of document.querySelectorAll('.collection-option')) row.onclick = () => {{ document.getElementById('picked').innerHTML = '<span class="semi-select-selection-text">' + row.innerText + '</span>'; document.getElementById('list').hidden = true; }};
       </script>"""
