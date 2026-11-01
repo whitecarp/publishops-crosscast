@@ -449,6 +449,16 @@ class WatchPageTests(unittest.TestCase):
     def test_a_page_with_no_address_still_says_so(self):
         self.assertIn("left the exact requested video", self.leave_for("about:blank"))
 
+    def test_a_handle_or_an_unknown_address_is_never_named(self):
+        """From a review: the first part of an address can be someone's handle."""
+        for address, shown in (("https://www.youtube.com/@SOMEONE", "www.youtube.com/<other>"), ("https://www.youtube.com/SOMEWHERE?token=SECRET", "www.youtube.com/<other>"),
+                               ("https://elsewhere.example/signin/SOMEONE", "another site/signin"), ("https://SOMEONE.example/", "another site/")):
+            with self.subTest(address=address):
+                message = self.leave_for(address)
+                self.assertIn(shown, message)
+                for private in ("SOMEONE", "SOMEWHERE", "SECRET", "elsewhere"):
+                    self.assertNotIn(private, message)
+
 
 class RouteTests(Temporary):
     def setUp(self):

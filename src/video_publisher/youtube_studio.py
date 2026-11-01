@@ -115,6 +115,10 @@ def studio_metrics(blocks):
     return metrics
 
 
+WATCH_EXIT_SITES = {"www.youtube.com", "m.youtube.com", "studio.youtube.com", "accounts.google.com", "accounts.youtube.com", "consent.youtube.com", "consent.google.com", "www.google.com"}
+WATCH_EXIT_PARTS = {"", "watch", "channel", "signin", "v3", "ServiceLogin", "InteractiveLogin", "SetSID", "CheckCookie", "oops", "sorry", "feed", "account", "premium", "verify_age", "m", "video"}
+
+
 async def appears(page, target, seconds):
     for _ in range(seconds * 2):
         await risk_check(page)
@@ -330,6 +334,13 @@ async def pressed(button):
     return {"true": True, "false": False}.get(await button.get_attribute("aria-pressed") if button else None)
 
 
+def where_it_went(address):
+    """A field run left a video once and passed either side of it, so this says where it went. Only the site's own names are given, because the first part of an address can be someone's handle."""
+    site = address.hostname if address.hostname in WATCH_EXIT_SITES else "another site"
+    part = (address.path.split("/") + [""])[1]
+    return f"{site}/{part if part in WATCH_EXIT_PARTS else '<other>'}"
+
+
 async def open_watch_page(page, work):
     await page.goto(f"https://www.youtube.com/watch?v={work}", wait_until="domcontentloaded", timeout=60000)
     # A fresh browser can pass through Google's sign-in addresses first, so the address gets a moment to settle.
@@ -342,8 +353,7 @@ async def open_watch_page(page, work):
     await appears(page, buttons, 25)
     address = urlsplit(page.url)
     if address.path != "/watch" or parse_qs(address.query).get("v") != [work]:
-        # A field run stopped here once and passed either side of it. The site and the address's first part say where it went, and nothing private.
-        raise VpubError("wrong_work", f"The page left the exact requested video, for {address.hostname}/{address.path.split('/')[1] if address.path.count('/') else ''}.")
+        raise VpubError("wrong_work", f"The page left the exact requested video, for {where_it_went(address)}.")
     # The button shows before its state does.
     for _ in range(20):
         button = await visible(buttons)
