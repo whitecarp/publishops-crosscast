@@ -207,6 +207,9 @@ def stop_check(platform=None, signing_in=False):
             # A platform's check is passed in its own sign-in window, so that window is the one thing its warning still allows.
             if index == 0 and signing_in and isinstance(signal, dict) and signal.get("source") == "safety" and signal.get("platform") == platform:
                 continue
+            if index == 0 and isinstance(signal, dict) and signal.get("source") == "safety":
+                raise VpubError("stopped", f"CrossCast is stopped because {signal.get('platform')} objected ({signal.get('code')}), and a platform's objection stops every platform. Stop file: {path}",
+                                f"{signal.get('platform')}'s own sign-in window still opens with vpub auth login. vpub status says more. Only a person clears the stop.")
             raise VpubError("stopped", f"Publication stop file exists: {path}",
                             "Inspect the stop reason. Only the operator may clear it.")
 

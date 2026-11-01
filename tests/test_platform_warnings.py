@@ -159,6 +159,33 @@ class SignInDuringAStopTests(Home):
     def stop(self, **values):
         atomic_json(self.stop_file(), values)
 
+    def test_bilibilis_own_sign_in_still_opens_and_nothing_else_of_bilibilis_does(self):
+        """From a review: the sign-in passed the first check and was refused by a second one inside the call to bili-cli."""
+        self.stop(platform="bilibili", code="captcha_required", source="safety")
+        done = MagicMock(stdout='{"ok": true, "data": {"logged_in": true}}')
+        with patch.object(adapters.subprocess, "run", return_value=done) as run:
+            self.assertEqual({"logged_in": True}, adapters.auth_login("bilibili", "default", method="cli"))
+            run.assert_called_once()
+            with self.assertRaises(VpubError):
+                adapters.bili(["auth", "status"])
+            run.assert_called_once()
+        self.assertTrue(self.stop_file().exists())
+
+    def test_another_platforms_sign_in_stays_refused(self):
+        self.stop(platform="x", code="human_verification_required", source="safety")
+        with patch.object(adapters.subprocess, "run") as run, self.assertRaises(VpubError):
+            adapters.auth_login("bilibili", "default", method="cli")
+        run.assert_not_called()
+
+    def test_a_stop_says_which_platform_objected_and_that_it_stops_them_all(self):
+        self.stop(platform="x", code="human_verification_required", source="safety")
+        with self.assertRaises(VpubError) as caught:
+            stop_check("douyin")
+        self.assertEqual("stopped", caught.exception.code)
+        self.assertIn("x objected (human_verification_required)", caught.exception.message)
+        self.assertIn("every platform", caught.exception.message)
+        self.assertIn("Only a person clears", caught.exception.hint)
+
     def test_the_platforms_own_sign_in_window_still_opens(self):
         self.stop(platform="x", code="human_verification_required", source="safety")
         stop_check("x", signing_in=True)
@@ -269,6 +296,36 @@ class WhoIsAskingTests(Home, ChromeCase):
         self.body = body
         await self.page.goto(address)
         return await rt.challenge_shown(self.page)
+
+    async def test_a_reply_being_written_that_quotes_a_warning_is_not_the_platform_asking(self):
+        """From a review: a person's own reply saying the page asked to verify their identity stopped every platform."""
+        for body in ('<div role="dialog"><div contenteditable="true" data-testid="tweetTextarea_0"><span>The page said Verify your identity yesterday.</span></div><button>Reply</button></div>',
+                     '<div contenteditable="plaintext-only">Confirm it\'s you</div>'):
+            with self.subTest(body=body):
+                self.assertFalse(await self.shown(body))
+
+    async def test_a_real_warning_beside_that_box_or_in_a_box_that_cannot_be_typed_in_still_stops(self):
+        for body in ('<div role="dialog"><div contenteditable="true">My words</div><div role="alert">Verify your identity</div></div>',
+                     '<div role="dialog"><div contenteditable="true">My words</div><div>Verify your identity</div></div>',
+                     '<div contenteditable="false">Verify your identity</div>', '<div contenteditable="true"><div role="alert">Verify your identity</div></div>'):
+            with self.subTest(body=body):
+                self.assertTrue(await self.shown(body))
+
+    async def test_a_stop_says_what_it_saw_and_nothing_else_on_the_page(self):
+        with self.assertRaises(VpubError):
+            self.body = '<main><p>Someone private said hello</p></main><aside><div>Please Verify your identity to keep going, Someone</div></aside>'
+            await self.page.goto("https://x.com/home")
+            await rt.risk_check(self.page)
+        saved = read_json(self.stop_file())
+        self.assertEqual({"sign": "words", "phrase": "Verify your identity", "place": "aside"}, saved["seen"])
+        self.assertNotIn("Someone", str(saved))
+
+    async def test_a_stop_at_a_check_address_says_so(self):
+        self.body = ""
+        await self.page.goto("https://x.com/account/access")
+        with self.assertRaises(VpubError):
+            await rt.risk_check(self.page)
+        self.assertEqual({"sign": "address"}, read_json(self.stop_file())["seen"])
 
     async def test_a_viewer_writing_the_words_is_not_the_platform_asking(self):
         for body in ('<article><span>Confirm it\'s you</span></article>',

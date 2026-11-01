@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 sys.path.insert(0, str(Path(__file__).parent))
 from stage_browser import SharedBrowser
 
-from video_publisher import adapters, browser_forms, cli
+from video_publisher import adapters, browser_backends, browser_forms, cli
 from video_publisher.browser_backends import Transaction
 from video_publisher.core import VpubError, atomic_json, file_sha, home, load_plan, read_json
 
@@ -100,6 +100,49 @@ class Form(SharedBrowser):
             await self.publish()
         self.assertEqual("attempt_exists", caught.exception.code)
         self.assertEqual(1, len(self.final))
+
+
+class FileGoingUpTests(SharedBrowser):
+    """From a review: Media Studio's page was checked for nothing between loading and choosing the file, so a warning, or a stop from another command, did not hold it back."""
+    PAGE = """<input type="file" accept="video/mp4" onchange="document.body.dataset.chosen = this.files.length">"""
+
+    def prepare(self):
+        self.body = self.PAGE
+        self.clip = self.root / "clip.mp4"
+        self.clip.write_bytes(b"clip")
+
+    async def handle(self, route):
+        await self.page_at(route, self.body)
+
+    async def choose(self):
+        await self.page.goto("https://studio.x.com/library")
+        return await browser_backends.upload_file(self.page, self.clip, accept="video/")
+
+    async def chosen(self):
+        return await self.page.locator("body").get_attribute("data-chosen")
+
+    async def test_with_nothing_wrong_the_file_is_chosen(self):
+        await self.choose()
+        self.assertEqual("1", await self.chosen())
+
+    async def test_a_warning_on_the_page_holds_it_back_and_stops_everything(self):
+        self.body = self.PAGE + '<div role="alert">Verify your identity</div>'
+        with self.assertRaises(VpubError) as caught:
+            await self.choose()
+        self.assertEqual("human_verification_required", caught.exception.code)
+        self.assertIsNone(await self.chosen())
+        self.assertTrue((home() / "STOP.json").exists())
+
+    async def test_a_stop_from_another_command_holds_it_back(self):
+        self.stop()
+        with self.assertRaises(VpubError) as caught:
+            await self.choose()
+        self.assertEqual("stopped", caught.exception.code)
+        self.assertIsNone(await self.chosen())
+
+    async def test_youtubes_form_checks_at_the_same_moment(self):
+        source = Path(browser_forms.__file__).read_text(encoding="utf-8")
+        self.assertIn("await before_a_file_goes_up(page)\n    await picker.first.set_input_files", source.replace("\r\n", "\n"))
 
 
 class XFormTests(Form):

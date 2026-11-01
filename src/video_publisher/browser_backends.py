@@ -10,7 +10,7 @@ import unicodedata
 from urllib.parse import urlsplit
 
 from .core import VpubError, atomic_json, file_sha, home, now, read_json, snapshot_file, stop_check
-from .browser_runtime import failure_message, failure_record, look_until, plain_address, risk_check, unique_visible, visible
+from .browser_runtime import failure_message, failure_record, look_until, plain_address, platform_at, risk_check, unique_visible, visible
 from .progress import stage
 from .x_pages import own_posts
 
@@ -68,7 +68,14 @@ async def wait_until(page, predicate, *, seconds=120, label="page state"):
     raise VpubError("processing_timeout", f"Timed out waiting for {label}; existing upload retained.")
 
 
+async def before_a_file_goes_up(page):
+    """Choosing the file is what starts an upload. From a review: a warning can show while the page loads, and another command can stop everything after this one began, and both reached this point unchecked."""
+    await risk_check(page)
+    stop_check(platform_at(page.url))
+
+
 async def upload_file(page, path, trigger=None, accept=None):
+    await before_a_file_goes_up(page)
     inputs = page.locator('input[type="file"]')
     candidates = []
     for item in await inputs.all():

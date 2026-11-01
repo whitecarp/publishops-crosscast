@@ -43,6 +43,7 @@ OTHER_PEOPLES_WORDS = ('article, [role="article"], [data-testid="cellInnerDiv"],
 # A small row with an author's link and a time is someone's post or comment, however the site builds it. A window is the edge of the search.
 SOMEONES_WORDS = """(e, others) => {
   if (e.closest('[role="alert"],[role="alertdialog"]')) return false;
+  if (e.closest('[contenteditable]:not([contenteditable="false"])')) return true;  // A box a person types into holds their words, and a reply can quote a warning.
   const place = e.closest(others), dialog = e.closest('[role="dialog"]');
   if (place && !(dialog && place.contains(dialog))) return true;
   for (let row = e, depth = 0; row && depth < 9 && row !== document.body && !row.matches('[role="dialog"],main'); row = row.parentElement, depth++) {
@@ -127,21 +128,40 @@ def challenge_address(address):
     return any(on_site(parts.hostname or "", site) and re.match(path, parts.path) for site, path in CHALLENGE_ADDRESSES.items())
 
 
-async def challenge_shown(page):
-    """Whether the platform itself is asking for a check or an account recovery on this page."""
-    if challenge_address(page.url) or await visible(page.locator('iframe[src*="/verifycenter/captcha/"]')):
-        return True
+async def platform_words(page):
+    """The first thing on the page that asks for a check in the platform's own voice."""
     for item in await page.get_by_text(HUMAN_LABELS).all():
         if await item.is_visible() and not await item.evaluate(SOMEONES_WORDS, OTHER_PEOPLES_WORDS):
-            return True
-    return False
+            return item
+    return None
+
+
+async def challenge_shown(page):
+    """Whether the platform itself is asking for a check or an account recovery on this page."""
+    return bool(challenge_address(page.url) or await visible(page.locator('iframe[src*="/verifycenter/captcha/"]')) or await platform_words(page))
+
+
+async def what_asked(page):
+    """For the stop's record, so a false alarm can be told from a real check. A field run stopped on X, and the next sign-in saw no check, with nothing to say why. It holds which sign it was, and for words only the phrase that matched and the part of the page, never anything else on the page."""
+    try:
+        if challenge_address(page.url):
+            return {"sign": "address"}
+        item = await platform_words(page)
+        if not item:
+            return {"sign": "check frame"}
+        phrase = HUMAN_LABELS.search(await item.inner_text())
+        place = await item.evaluate("""e => { const found = e.closest('[role="alert"],[role="alertdialog"],[role="dialog"],aside,nav,header,footer,main,[data-testid]');
+          if (!found) return 'page'; const name = found.getAttribute('data-testid') || found.getAttribute('role') || found.tagName.toLowerCase(); return /^[A-Za-z_]{1,40}$/.test(name) ? name : 'other'; }""")
+        return {"sign": "words", "phrase": phrase[0] if phrase else None, "place": place}
+    except Exception:
+        return None
 
 
 async def risk_check(page):
     if await challenge_shown(page):
         from .safety import pushed_back
         # Recorded where it is seen: a batch or a multi-step read catches the error below so it can report its other steps.
-        pushed_back(platform_at(page.url), "human_verification_required")
+        pushed_back(platform_at(page.url), "human_verification_required", await what_asked(page))
         raise VpubError("human_verification_required", "The platform requires human verification.", "Run auth login for this platform and complete the official verification, then vpub stop --clear; inspect any existing draft before retrying.")
 
 

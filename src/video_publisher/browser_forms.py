@@ -11,7 +11,7 @@ from .categories import STUDIO_CATEGORIES
 from .core import VpubError, douyin_caption, stop_check
 from .browser_runtime import risk_check, unique_visible, visible
 from .progress import stage
-from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, normalize, studio_offsets, studio_read, studio_style,
+from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, before_a_file_goes_up, normalize, studio_offsets, studio_read, studio_style,
                                upload_file, wait_until, work_url, works, verify, verify_scheduled_x, douyin_card_stamp, douyin_card_status, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
 
 X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
@@ -644,6 +644,7 @@ async def publish_youtube(page, tx):
     await page.goto(f'https://studio.youtube.com/channel/{tx.identity}/videos/upload?d=ud', wait_until='domcontentloaded', timeout=60000)
     picker = page.locator('ytcp-uploads-file-picker input[type="file"]')
     await wait_until(page, picker.count, seconds=60, label='YouTube upload dialog')
+    await before_a_file_goes_up(page)
     await picker.first.set_input_files(str(tx.media()), timeout=60000)
     tx.save(phase='uploading')
     title_box = page.locator(f'{YT_DIALOG} #title-textarea #textbox')

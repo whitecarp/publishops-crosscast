@@ -294,13 +294,13 @@ def reclaim(path, saved):
         atomic_json(path, saved)
 
 
-def pushed_back(platform, code):
+def pushed_back(platform, code, seen=None):
     """A platform that objects stops everything until a person has looked. Returns whether it did."""
     if code not in PUSHBACK:
         return False
     path = home() / "STOP.json"
     if not path.exists():
-        atomic_json(path, {"platform": platform, "code": code, "at": now(), "source": "safety",
+        atomic_json(path, {"platform": platform, "code": code, "at": now(), "source": "safety", **({"seen": seen} if seen else {}),
                            "hint": "Pass the platform's check (vpub auth login for this platform still opens its window), then run vpub stop --clear."})
     return True
 

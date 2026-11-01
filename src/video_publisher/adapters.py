@@ -16,9 +16,9 @@ ROUTES = {"bilibili": {"cli"}, "douyin": {"browser"}, "youtube": {"browser", "ap
 BILI_MAIN = "from bili_cli.main import main; main()"
 
 
-def bili(args, timeout=210, program=BILI_MAIN):
+def bili(args, timeout=210, program=BILI_MAIN, signing_in=False):
     # bili-cli stops a stuck command after 180 s and says why, so give it time to report that.
-    stop_check("bilibili")
+    stop_check("bilibili", signing_in=signing_in)
     env = dict(os.environ, PYTHONIOENCODING="utf-8")
     # The existing local wrapper applies this HTTPX compatibility fix too.
     for key in ("NO_PROXY", "no_proxy"):
@@ -228,7 +228,7 @@ def auth_login(platform, account, client_json=None, method=None):
     if method not in ROUTES[platform]:
         raise VpubError("invalid_method", "This login method is unavailable on the selected platform.")
     if platform == "bilibili":
-        return bili(["auth", "login"])
+        return bili(["auth", "login"], signing_in=True)
     if platform == "youtube" and method == "api":
         return youtube_api().login(account, client_json)
     if method == "api":
