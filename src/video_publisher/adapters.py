@@ -117,9 +117,10 @@ def default_method(platform):
 
 
 def browser_timeout(action):
+    from .browser_broker import SIGN_IN_SECONDS
     from .browser_worker import action_timeout
-    # Leaves room for the sign-in check, so a slow page is not reported as an interrupted command.
-    return action_timeout(action) + 120
+    # Leaves room for the sign-in check and saving the session, so a slow page is not reported as an interrupted command.
+    return action_timeout(action) + SIGN_IN_SECONDS + 30
 
 
 def hidden_desktop_call(payload, timeout):

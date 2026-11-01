@@ -10,6 +10,7 @@ from .collections import before_submit
 FOLDER_PAGE=100
 LIST_WAIT=25
 FOLDER_SCROLLS=20
+QUIET_LOOKS,EMPTY_LOOKS=2,5  # A page that has shown nothing yet takes longer to believe than one that has shown posts.
 X_ANSWER_SECONDS=20
 # A column's own words, without its posts, which can say anything.
 NOT_POSTS="""column => { const copy = column.cloneNode(true); copy.querySelectorAll('article').forEach(e => e.remove()); return copy.textContent; }"""
@@ -256,9 +257,10 @@ async def x_folder_posts(page,cid,title):
         await x_folder_failed(page)
         posts=[await x_pages.post_fields(row) for row in await page.locator('main article').all()]
         found={post['id'] for post in posts if post}
-        still=still+1 if found<=seen else 0
+        # While its spinner shows the page has not finished, however little it holds so far.
+        still=0 if await page.locator('main [role="progressbar"]').count() or not found<=seen else still+1
         seen|=found
-        if still>=2:return seen,True
+        if still>=(QUIET_LOOKS if seen else EMPTY_LOOKS):return seen,True
         await page.mouse.wheel(0,2400)
     return seen,False
 

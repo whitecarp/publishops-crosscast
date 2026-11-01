@@ -501,5 +501,16 @@ with patch("patchright.async_api.async_playwright", return_value=pw), patch.obje
             start.assert_called_once()
 
 
+class ClientWaitTests(unittest.TestCase):
+    def test_the_client_waits_longer_than_a_session_can_take(self):
+        """A session's sign-in check, the command and saving the session all have their own limits. A client giving up sooner calls a slow command interrupted while it still runs."""
+        from video_publisher.browser_broker import SIGN_IN_SECONDS
+        from video_publisher.browser_runtime import CLOSE_SECONDS
+        from video_publisher.browser_worker import action_timeout
+        for action in ("operations", "direct_messages", "engagement", "comment_management", "collections"):
+            with self.subTest(action=action):
+                self.assertGreaterEqual(adapters.browser_timeout(action), action_timeout(action) + SIGN_IN_SECONDS + CLOSE_SECONDS)
+
+
 if __name__ == "__main__":
     unittest.main()

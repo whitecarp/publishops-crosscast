@@ -366,6 +366,7 @@ class EarlierSiteTests(ChromeCase):
         self.post_words = ''
         self.write_answer = {'done': 'Done'}
         self.offers_removal = True
+        self.folder_extra = ''
         self.writes = []
         await self.page.route('**/*', self.handle)
         await self.page.goto('https://x.com/home')
@@ -403,7 +404,7 @@ class EarlierSiteTests(ChromeCase):
         if url.path.startswith('/i/history/bookmarks/'):
             rows = ''.join(EARLIER_POST % {'post': post, 'extra': self.post_words + '<button aria-label="Share post" id="share">s</button>'} for post in sorted(self.inside.get(name, ())))
             rows += EARLIER_FOLDER_MENU % ('<div role="menuitem" id="out">Remove from Folder</div>' if self.offers_removal else '')
-            return await route.fulfill(status=200, content_type='text/html', body='<!doctype html><body>' + EARLIER_FOLDER % self.folders.get(name, '') + '<main><div data-testid="primaryColumn">' + ('Something went wrong.' if self.folder_error == 'column' else '') + rows + '</div><div data-testid="sidebarColumn">' + ('Something went wrong. Try reloading.' if self.folder_error == 'side' else '') + '</div></main>')
+            return await route.fulfill(status=200, content_type='text/html', body='<!doctype html><body>' + EARLIER_FOLDER % self.folders.get(name, '') + '<main><div data-testid="primaryColumn">' + ('Something went wrong.' if self.folder_error == 'column' else '') + rows + self.folder_extra + '</div><div data-testid="sidebarColumn">' + ('Something went wrong. Try reloading.' if self.folder_error == 'side' else '') + '</div></main>')
         if url.path == f'/{OWNER}/status/{POST}':
             item = '<div role="menuitem" id="folder">Bookmark to Folder</div>' if self.offers_folder else ''
             return await route.fulfill(status=200, content_type='text/html', body=EARLIER_POST_PAGE % (EARLIER_POST % {'post': POST, 'extra': '<button aria-label="Share post" id="share">s</button>'}, item))
@@ -500,6 +501,23 @@ class EarlierSiteTests(ChromeCase):
         self.inside['111'].add(POST)
         self.post_words = 'Something went wrong with my recipe'
         self.assertEqual([{'id': POST}], (await self.run_op('items', collection_id='111', work_id=POST))['items'])
+
+    async def test_a_page_with_its_spinner_showing_is_not_called_an_empty_folder(self):
+        self.folder_extra = '<div role="progressbar">Loading</div>'
+        with patch('video_publisher.collections_browser.FOLDER_SCROLLS', 8):
+            result = await self.run_op('items', collection_id='111', work_id=POST)
+        self.assertIs(False, result['complete'])
+
+    async def test_a_post_that_shows_after_a_slow_start_is_still_found(self):
+        """Two quick looks at a slow page used to report the post as not in the folder, which would have let an add go ahead."""
+        late = json.dumps(EARLIER_POST % {'post': POST, 'extra': '<button aria-label="Share post" id="share">s</button>'})
+        self.folder_extra = """<script>window.pending = (window.pending || 0) + 1;
+            setTimeout(() => { document.querySelector('[data-testid=primaryColumn]').insertAdjacentHTML('beforeend', %s); window.pending -= 1; }, 4500);</script>""" % late
+        self.assertEqual([{'id': POST}], (await self.run_op('items', collection_id='111', work_id=POST))['items'])
+
+    async def test_an_empty_folder_is_still_called_complete_once_the_page_has_settled(self):
+        result = await self.run_op('items', collection_id='111', work_id=POST)
+        self.assertEqual(([], True), (result['items'], result['complete']))
 
     async def test_a_folder_that_never_stops_loading_does_not_count_as_complete(self):
         with patch('video_publisher.collections_browser.FOLDER_SCROLLS', 1):
