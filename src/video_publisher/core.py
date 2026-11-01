@@ -28,6 +28,12 @@ def never_sent(exc):
     return isinstance(exc, VpubError) and exc.code == HELD_BACK
 
 
+def reply_still_open(saved):
+    """A reply's last check before its click. A command killed part way can still be running in the shared background browser, with a second attempt queued behind it."""
+    if saved.get("state") in {"REPLY_SUBMITTING", "REPLY_UNVERIFIED", "REPLY_VERIFIED", "REPLY_REJECTED"}:
+        raise VpubError("attempt_exists", "An earlier attempt at this reply got there first, so nothing more was sent.", "Use comments verify-reply; never send again.")
+
+
 def error_fields(exc, name="error"):
     """For a receipt: the code, and the words saying which step failed."""
     if isinstance(exc, VpubError):

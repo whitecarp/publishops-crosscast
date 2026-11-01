@@ -5,7 +5,7 @@ import re
 from urllib.parse import urlsplit
 
 from . import x_pages
-from .core import VpubError, atomic_json, digest, read_json, stop_check
+from .core import VpubError, atomic_json, digest, read_json, reply_still_open, stop_check
 from .browser_runtime import risk_check, unique_visible
 from .operations_api import metric
 from .browser_backends import normalize
@@ -320,7 +320,7 @@ async def execute(page,platform,identity,payload):
             button=await unique_visible(page.get_by_text('发送' if platform=='douyin' else 'Post',exact=True),'reply submit')
     await risk_check(page);stop_check(platform)
     if not await button.is_enabled(): raise VpubError('reply_not_ready','The platform has not enabled reply submission.')
-    path=Path(payload['reply_receipt_path']);saved=read_json(path)
+    path=Path(payload['reply_receipt_path']);saved=read_json(path);reply_still_open(saved)
     saved['before_reply_ids']=[c['id'] for c in current['items']]
     saved['submitted_text']=await editor.input_value() if await editor.evaluate('e=>e.tagName')=='TEXTAREA' else await editor.inner_text()
     await button.click(trial=True,timeout=10000)

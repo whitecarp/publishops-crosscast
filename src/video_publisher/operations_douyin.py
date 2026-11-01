@@ -2,7 +2,7 @@
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from .core import VpubError, atomic_json, read_json, stop_check
+from .core import VpubError, atomic_json, read_json, reply_still_open, stop_check
 from .browser_runtime import risk_check, unique_visible
 from .browser_backends import normalize
 
@@ -78,7 +78,7 @@ async def reply(page, identity, payload):
     button=await unique_visible(row.get_by_role('button',name='发送',exact=True),'target reply send')
     await risk_check(page);stop_check('douyin')
     await button.click(trial=True,timeout=10000)
-    path=Path(payload['reply_receipt_path']);saved=read_json(path)
+    path=Path(payload['reply_receipt_path']);saved=read_json(path);reply_still_open(saved)
     saved.update(state='REPLY_SUBMITTING',submitted_text=request['text'],
                  before_reply_ids=[str(c['cid']) for c in data.get('comments',[])],send_surface='creator_center')
     atomic_json(path,saved)

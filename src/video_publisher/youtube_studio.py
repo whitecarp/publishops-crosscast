@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from .browser_backends import normalize, studio_visibility, work_url
 from .browser_runtime import risk_check, unique_visible, visible
-from .core import VpubError, atomic_json, file_sha, home, now, read_json, stop_check
+from .core import VpubError, atomic_json, file_sha, home, now, read_json, reply_still_open, stop_check
 from .operations_api import metric
 
 STUDIO = "https://studio.youtube.com"
@@ -293,6 +293,7 @@ async def operations(page, identity, payload):
         raise VpubError("reply_not_ready", "YouTube has not enabled reply submission.")
     path = Path(payload["reply_receipt_path"])
     saved = read_json(path)
+    reply_still_open(saved)
     saved.update(before_reply_ids=[c["id"] for c in current], submitted_text=request["text"], state="REPLY_SUBMITTING")
     atomic_json(path, saved)
     await act_and_settle(page, lambda: button.click(timeout=20000))
