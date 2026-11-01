@@ -8,12 +8,12 @@ COMMENT_OPTIONS = '[role="button"]:has(svg[aria-label="Comment Options"]), [role
 # The request a real delete sent, from a field check, and the field its answer came back in. That check saw the field and not the type
 # inside it, which is what says whether it worked, so no answer counts as acknowledged until a real delete has shown that type.
 DELETE_REQUEST = '/api/graphql'
-DELETE_FIELD = 'data.xig_comment_delete.__typename'
+DELETE_FIELD = 'data.xig_comment_delete'
 DELETE_TYPES = frozenset()
 
 
 def delete_answered(answer):
-    return DELETE_FIELD in answer['shape'] and bool(DELETE_TYPES) and set(answer['types']) <= DELETE_TYPES and bool(answer['types'])
+    return answer['types'].get(DELETE_FIELD) in DELETE_TYPES
 
 
 async def press_once(page, platform, payload, control):

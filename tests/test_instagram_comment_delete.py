@@ -119,7 +119,8 @@ class DeleteTests(Base):
         self.assertEqual("COMMENT_READY", read_json(self.receipt)["state"])
 
     async def test_an_answer_that_refuses_is_not_acknowledged_even_though_the_row_went(self):
-        for answer in ('{"data": {"xig_comment_delete": null}, "errors": [{"message": "No."}]}', '{"data": {"xig_comment_delete": {"__typename": "XIGNotAllowed"}}}', '{"data": {"other": {"__typename": "XIGDeleted"}}}', "<html>Sorry</html>"):
+        for answer in ('{"data": {"xig_comment_delete": null}, "errors": [{"message": "No."}]}', '{"data": {"xig_comment_delete": {"__typename": "XIGNotAllowed"}}}', '{"data": {"other": {"__typename": "XIGDeleted"}}}',
+                       '{"data": {"xig_comment_delete": {"__typename": "XIGNotAllowed"}, "other": {"__typename": "XIGDeleted"}}}', "<html>Sorry</html>"):
             with self.subTest(answer=answer):
                 self.writes.clear()
                 atomic_json(self.receipt, {"state": "COMMENT_READY"})
