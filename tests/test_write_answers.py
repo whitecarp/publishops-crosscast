@@ -59,7 +59,7 @@ class AnswerTests(unittest.IsolatedAsyncioTestCase):
     async def test_it_keeps_the_shape_and_nothing_the_request_or_answer_held(self):
         answers = await self.answers(FakeRequest(body=json.dumps({"actions": [TARGET], "words": "PRIVATE-WORDS"}), answer={"actionResults": [{"status": "STATUS_SUCCEEDED", "text": "PRIVATE-WORDS"}]}))
         self.assertEqual([{"path": "/youtubei/v1/comment/perform_comment_action", "names_target": True, "http": 200, "fields": ["actionResults"],
-                           "shape": ["actionResults", "actionResults.status", "actionResults.text"], "statuses": ["STATUS_SUCCEEDED"], "types": {}, "objected": False}], answers)
+                           "shape": ["actionResults", "actionResults.status", "actionResults.text"], "statuses": {"actionResults.status": "STATUS_SUCCEEDED"}, "types": {}, "objected": False}], answers)
         self.assertNotIn("SECRET", json.dumps(answers))
 
     async def test_a_field_name_that_looks_like_someones_words_is_left_out(self):
@@ -68,7 +68,7 @@ class AnswerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_status_that_is_not_one_of_the_sites_own_words_is_left_out(self):
         answers = await self.answers(FakeRequest(body=TARGET, answer={"status": "ok", "item": {"status": "a viewer's words here"}}))
-        self.assertEqual(["ok"], answers[0]["statuses"])
+        self.assertEqual({"status": "ok"}, answers[0]["statuses"])
 
     async def test_its_shape_names_nested_fields_but_nothing_they_hold(self):
         real = {"responseContext": {"visitorData": "SECRET-VISITOR"}, "actions": [{"removeCommentAction": {"commentId": "PRIVATE-ID", "words": {"text": "PRIVATE-WORDS"}}}, {"other": 1}]}
@@ -83,11 +83,11 @@ class AnswerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_status_deep_inside_an_action_is_seen(self):
         answer = (await self.answers(FakeRequest(body=TARGET, answer={"actions": [{"removeCommentAction": {"actionResult": {"status": "STATUS_FAILED"}}}]})))[0]
-        self.assertEqual((["STATUS_FAILED"], True), (answer["statuses"], answer["objected"]))
+        self.assertEqual(({"actions.removeCommentAction.actionResult.status": "STATUS_FAILED"}, True), (answer["statuses"], answer["objected"]))
 
     async def test_the_part_about_the_page_says_nothing_about_the_change(self):
         answer = (await self.answers(FakeRequest(body=TARGET, answer={"responseContext": {"status": "fail"}, "actions": []})))[0]
-        self.assertEqual(([], False), (answer["statuses"], answer["objected"]))
+        self.assertEqual(({}, False), (answer["statuses"], answer["objected"]))
 
     async def test_it_keeps_the_type_names_an_answer_gives_and_nothing_else_in_it(self):
         answer = (await self.answers(FakeRequest(body=TARGET, answer={"__typename": "Query", "data": {"xig_comment_delete": {"__typename": "XIGDeleted", "text": "PRIVATE-WORDS"}, "viewer": {"__typename": "XIGUser"}}, "extensions": {"is_final": True}})))[0]
@@ -121,15 +121,15 @@ class AnswerTests(unittest.IsolatedAsyncioTestCase):
 
 class AcknowledgedTests(unittest.TestCase):
     def answer(self, **fields):
-        return {"path": "/change", "names_target": True, "http": 200, "statuses": ["ok"], "objected": False, **fields}
+        return {"path": "/change", "names_target": True, "http": 200, "statuses": {"done.status": "ok"}, "objected": False, **fields}
 
     def acknowledged(self, *answers):
-        return rt.acknowledged(list(answers), "/change", lambda answer: set(answer["statuses"]) == {"ok"})
+        return rt.acknowledged(list(answers), "/change", lambda answer: answer["statuses"].get("done.status") == "ok")
 
     def test_it_takes_the_intended_request_naming_the_target_answered_with_the_success_word(self):
         self.assertTrue(self.acknowledged(self.answer()))
         self.assertTrue(self.acknowledged(self.answer(), self.answer(names_target=False, http=500)))
-        self.assertTrue(self.acknowledged(self.answer(), self.answer(path="/log", statuses=[])))
+        self.assertTrue(self.acknowledged(self.answer(), self.answer(path="/log", statuses={})))
 
     def test_nothing_naming_the_target_acknowledges_nothing(self):
         self.assertFalse(self.acknowledged())
@@ -139,9 +139,11 @@ class AcknowledgedTests(unittest.TestCase):
         self.assertFalse(self.acknowledged(self.answer(path="/log")))
 
     def test_an_answer_with_no_status_or_another_status_proves_nothing(self):
-        self.assertFalse(self.acknowledged(self.answer(statuses=[])))
-        self.assertFalse(self.acknowledged(self.answer(statuses=["pending"])))
-        self.assertFalse(self.acknowledged(self.answer(statuses=["ok", "pending"])))
+        self.assertFalse(self.acknowledged(self.answer(statuses={})))
+        self.assertFalse(self.acknowledged(self.answer(statuses={"done.status": "pending"})))
+
+    def test_success_from_another_action_does_not_count(self):
+        self.assertFalse(self.acknowledged(self.answer(statuses={"other.status": "ok"})))
 
     def test_one_objection_is_enough_even_if_another_request_succeeded(self):
         self.assertFalse(self.acknowledged(self.answer(), self.answer(objected=True)))

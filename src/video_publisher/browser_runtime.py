@@ -353,16 +353,19 @@ def objected(value, depth=0):
     return any(objected(item, depth + 1) for key, item in value.items() if key not in ABOUT_THE_PAGE)
 
 
-def status_words(value, depth=0):
-    """The status words in a site's answer, at any of its levels. These are the site's own fixed words."""
+def status_words(value, path="", depth=0):
+    """Which status word a site's answer gives at which of its fields. These are the site's own fixed words."""
     if depth >= ANSWER_DEPTH:
-        return []
+        return {}
     if isinstance(value, list):
-        return [word for item in value for word in status_words(item, depth + 1)]
+        return {field: word for item in value for field, word in status_words(item, path, depth + 1).items()}
     if not isinstance(value, dict):
-        return []
-    own = [value["status"]] if isinstance(value.get("status"), str) and re.fullmatch(r"[\w-]{1,40}", value["status"]) else []
-    return own + [word for key, item in value.items() if key not in ABOUT_THE_PAGE for word in status_words(item, depth + 1)]
+        return {}
+    found = {f"{path}.status" if path else "status": value["status"]} if isinstance(value.get("status"), str) and re.fullmatch(r"[\w-]{1,40}", value["status"]) else {}
+    for key, item in value.items():
+        if key not in ABOUT_THE_PAGE and FIELD_NAME.fullmatch(key):
+            found.update(status_words(item, f"{path}.{key}" if path else key, depth + 1))
+    return found
 
 
 def type_names(value, path="", depth=0):
@@ -403,14 +406,14 @@ async def write_answers(requests, target):
     for request in requests:
         if request.method != "POST":
             continue
-        answer = {"path": urlsplit(request.url).path, "names_target": names_target(request, target), "http": None, "fields": [], "shape": [], "statuses": [], "types": {}, "objected": False}
+        answer = {"path": urlsplit(request.url).path, "names_target": names_target(request, target), "http": None, "fields": [], "shape": [], "statuses": {}, "types": {}, "objected": False}
         try:
             response = await asyncio.wait_for(request.response(), 5)
             answer["http"] = response.status
             body = await asyncio.wait_for(response.json(), 5)
             answer["fields"] = sorted(key for key in body if FIELD_NAME.fullmatch(key))[:12] if isinstance(body, dict) else []
             answer["shape"] = answer_shape(body)[:60]
-            answer["statuses"] = status_words(body)[:8]
+            answer["statuses"] = dict(sorted(status_words(body).items())[:8])
             answer["types"] = dict(sorted(type_names(body).items())[:8])
             answer["objected"] = objected(body)
         except Exception:

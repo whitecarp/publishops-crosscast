@@ -240,7 +240,7 @@ class Browser(unittest.IsolatedAsyncioTestCase):
         self.page.set_default_timeout(8000)
         self.site = FakeYouTube()
         await self.page.route("**/*", self.site.handle)
-        for target in (patch.object(yt, "appears", side_effect=self.fast_appears), patch.object(yt, "QUIET_TICKS", 6), patch.object(yt, "PIN_TICKS", 6), patch.object(yt, "BOX_TICKS", 10)):
+        for target in (patch.object(yt, "appears", side_effect=self.fast_appears), patch.object(yt, "QUIET_TICKS", 6), patch.object(yt, "PIN_TICKS", 6), patch.object(yt, "BOX_TICKS", 10), patch.object(yt, "DELETE_RESULTS", frozenset({"actionResults.status"}))):
             target.start()
             self.addCleanup(target.stop)
 
@@ -550,7 +550,7 @@ class CommentTests(Browser):
         self.assertIs(False, (await self.answered(500, "{}"))["acknowledged"])
 
     async def test_an_answer_that_can_not_be_read_or_says_nothing_is_not_acknowledged(self):
-        for body in ("<html>Sorry</html>", "{}", '{"actionResults": [{"status": "STATUS_PENDING"}]}'):
+        for body in ("<html>Sorry</html>", "{}", '{"actionResults": [{"status": "STATUS_PENDING"}]}', '{"actions": [{"pinCommentAction": {"actionResult": {"status": "STATUS_SUCCEEDED"}}}]}'):
             with self.subTest(body=body):
                 self.site.comments = [{"id": "c1", "text": "Nice", "own": False, "liked": False}, {"id": "c2", "text": "Mine", "own": True, "liked": False}]
                 self.assertIs(False, (await self.answered(200, body))["acknowledged"])
