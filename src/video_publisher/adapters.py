@@ -1,6 +1,7 @@
 """Real platform adapters; no platform write occurs during plan/doctor."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import importlib
 import importlib.util
 import json
@@ -9,7 +10,7 @@ import subprocess
 import sys
 
 from . import safety
-from .core import VpubError, stop_check, platform_check
+from .core import HELD_BACK, VpubError, stop_check, platform_check
 
 ROUTES = {"bilibili": {"cli"}, "douyin": {"browser"}, "youtube": {"browser", "api"}, "x": {"browser", "api"}, "instagram": {"browser", "api"}}
 BILI_MAIN = "from bili_cli.main import main; main()"
@@ -34,6 +35,9 @@ def bili(args, timeout=210, program=BILI_MAIN):
         raise VpubError("backend_error", "bili-cli did not return valid JSON.", "Run bili schema to diagnose; do not repeat a submission.")
     if not result.get("ok"):
         e = result.get("error", {})
+        # bili-cli's own spacing between writes says when to try again. Bilibili never saw the request, so it has not objected.
+        if e.get("code") == "rate_limited" and (e.get("detail") or {}).get("limit"):
+            raise VpubError(HELD_BACK, e.get("message", "bili-cli held this write back."), e.get("hint", ""))
         safety.pushed_back("bilibili", e.get("code"))
         raise VpubError(e.get("code", "backend_error"), e.get("message", "bili-cli failed"), e.get("hint", ""))
     return result.get("data", {})
@@ -256,7 +260,9 @@ def publish_bilibili(plan, options, checkpoint):
     if not bvid:
         return {"state": "SUBMITTED_UNVERIFIED", "reason": "Backend returned no BV identifier."}
     receipt = {"state": "SUBMITTED", "id": bvid, "url": f"https://www.bilibili.com/video/{bvid}",
-               "expected_ai_declare": options["ai_generated"]}
+               "expected_ai_declare": options["ai_generated"], "expected_private": options["visibility"] == "private"}
+    if options.get("schedule"):
+        receipt["expected_schedule"] = options["schedule"]
     if options.get("season_id"):
         # The upload stands even if adding it to the collection failed; the receipt says so.
         receipt["season"] = {"id": options["season_id"], "added": v.get("season_added") is True, "error": v.get("season_error")}
@@ -264,6 +270,23 @@ def publish_bilibili(plan, options, checkpoint):
         receipt.update(pending_chapters=options["chapters"], chapters_state="PENDING")
     checkpoint(receipt)
     return verify("bilibili", options["account"], receipt, checkpoint)
+
+
+def moment(text):
+    return datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+
+
+def bilibili_differences(receipt, info):
+    """What Bilibili's own record says against what this upload asked for. Only something it reports can differ, so an older receipt says nothing."""
+    differs = []
+    for name, expected, actual in (("ai_declaration", receipt.get("expected_ai_declare"), info.get("ai_declare")), ("visibility", receipt.get("expected_private"), info.get("private"))):
+        if isinstance(expected, bool) and isinstance(actual, bool) and actual != expected:
+            differs.append(name)
+    # Before its time, only the time on record proves it was scheduled rather than gone out already.
+    when = receipt.get("expected_schedule")
+    if when and datetime.now(timezone.utc) < moment(when) and not (info.get("scheduled_time") and abs((moment(info["scheduled_time"]) - moment(when)).total_seconds()) < 60):
+        differs.append("schedule")
+    return differs
 
 
 def publish(platform, plan, options, checkpoint):
@@ -302,11 +325,13 @@ def verify(platform, account, receipt, checkpoint=None):
         info = bili(["upload", "status", video_id])
         result = {**receipt, "state": "SUBMISSION_VERIFIED", "platform_status": info,
                   "note": "Creator record read back; review/public visibility may still be pending."}
-        # bili-cli's status reports the recorded AI-content declaration; it must match the plan.
-        expected = receipt.get("expected_ai_declare")
-        actual = info.get("ai_declare") if isinstance(info, dict) else None
-        if isinstance(expected, bool) and isinstance(actual, bool) and actual != expected:
-            result.update(state="SUBMITTED_UNVERIFIED", declaration_mismatch=True,
+        differs = bilibili_differences(receipt, info if isinstance(info, dict) else {})
+        if differs:
+            result.update(state="SUBMITTED_UNVERIFIED", readback_differs=differs,
+                          note="Bilibili recorded something other than the plan asked for (see readback_differs). Correct it on this existing work "
+                               "(bili upload edit); do not upload again.")
+        if "ai_declaration" in differs:
+            result.update(declaration_mismatch=True,
                           note="Bilibili recorded a different AI-content declaration. Correct it on this existing work "
                                "(bili upload edit with --ai-declare or --no-ai-declare); do not upload again.")
         from .edits_bilibili import finish_chapters

@@ -3,7 +3,7 @@ from pathlib import Path
 import re
 from urllib.parse import urlsplit
 from . import x_pages
-from .core import VpubError, atomic_json, file_sha, now
+from .core import VpubError, atomic_json, file_sha, now, stop_check
 from .browser_runtime import risk_check, unique_visible, visible
 from .browser_backends import normalize, work_url
 
@@ -38,6 +38,7 @@ async def execute(page, platform, identity, payload):
         atomic_json(output,result);return result
     async def submit(button):
         await risk_check(page)
+        stop_check(platform)
         save(state='EDIT_SUBMITTING')
         await button.click(timeout=20000)
     if platform=='instagram':

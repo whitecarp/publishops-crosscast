@@ -2,7 +2,7 @@
 import re
 import uuid
 from . import adapters, operations, safety
-from .core import VpubError, atomic_json, digest, error_fields, home, now, publication_lock, read_json, stop_check
+from .core import VpubError, atomic_json, digest, error_fields, home, never_sent, now, publication_lock, read_json, stop_check
 
 PENDING={'ACTION_SUBMITTING','ACTION_UNVERIFIED'}
 
@@ -36,9 +36,17 @@ def collections(platform,cursor=None):
     return dispatch(platform,'collections',cursor=cursor)
 
 
+def signed_in_as(platform):
+    """The account this browser profile was signed in to, when there is a record of it. A page showing anyone else stops a like before it is pressed."""
+    if platform=='bilibili' or (platform=='youtube' and adapters.addon_installed()):return None
+    from .browser_runtime import identity_path
+    path=identity_path(platform,'default')
+    return read_json(path).get('identity') if path.exists() else None
+
+
 def status(platform,work,collection=None,expected_identity=None):
     validate(platform,work,collection)
-    result=dispatch(platform,'status',work,collection=collection,expected_identity=expected_identity)
+    result=dispatch(platform,'status',work,collection=collection,expected_identity=expected_identity or signed_in_as(platform))
     return {**result,'platform':platform,'work_id':work,'observed_at':now(),'platform_writes':0}
 
 
@@ -79,7 +87,7 @@ def set_action(platform,work,kind,desired=True,collection=None,dry_run=False,tes
                 return {**prior,'platform_writes':0,'reused':True,'hint':'Use engage verify KEY; unresolved attempts are never toggled or automatically resent.'}
             if prior['state']=='ACTION_READY':safety.reclaim(prior_path,prior)
         if current is desired:return {'state':'NO_CHANGE','platform_writes':0,'platform':platform,'work_id':work,'kind':kind,'desired':desired,'observed':before}
-        counted=desired and not test_id
+        counted=desired
         if dry_run:
             if counted:safety.admit('like',platform,before['identity'],reserve=False)
             return {'state':'DRY_RUN','platform_writes':0,'platform':platform,'work_id':work,'kind':kind,'desired':desired,'observed':before}
@@ -99,7 +107,7 @@ def set_action(platform,work,kind,desired=True,collection=None,dry_run=False,tes
             atomic_json(path,saved)
         except Exception as exc:
             saved=read_json(path)
-            saved['state']='ACTION_UNVERIFIED' if saved['state'] in PENDING else 'ACTION_FAILED'
+            saved['state']='ACTION_UNVERIFIED' if saved['state'] in PENDING and not never_sent(exc) else 'ACTION_FAILED'
             saved.update(error_fields(exc,'error_code'))
             saved['platform_writes']=None if saved['state']=='ACTION_UNVERIFIED' else 0
             atomic_json(path,saved)

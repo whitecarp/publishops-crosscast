@@ -5,20 +5,24 @@ from copy import deepcopy
 import importlib.util
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 
 from . import __version__, adapters
-from .core import Ledger, PLATFORMS, VpubError, atomic_json, config, file_sha, home, load_plan, now, publication_lock, read_json, snapshot_file, stop_check, platform_check
+from .core import Ledger, PLATFORMS, VpubError, atomic_json, config, file_sha, home, load_plan, never_sent, now, part_left_undone, publication_lock, read_json, snapshot_file, stop_check, platform_check
 from .overview import DRAFTS
 from .safety import pushed_back
 
 # The command finished, but the work it was asked to do did not.
 UNFINISHED_STATES = {"INCOMPLETE", "INTERRUPTED", "UPLOAD_PAUSED", "UPLOAD_INITIATING", "UPLOAD_SESSION_CHECK", "UPLOADING", "UPLOAD_INTERRUPTED", "UPLOAD_EXPIRED", "UPLOAD_UNVERIFIED",
-                     "DM_READY", "DM_SUBMITTING", "DM_UNVERIFIED", "DM_FAILED", "COMMENT_READY", "COMMENT_SUBMITTING", "COMMENT_UNVERIFIED", "COMMENT_FAILED",
+                     "DM_READY", "DM_REPLACED", "DM_SUBMITTING", "DM_UNVERIFIED", "DM_FAILED", "COMMENT_READY", "COMMENT_SUBMITTING", "COMMENT_UNVERIFIED", "COMMENT_FAILED",
                      "ACTION_READY", "ACTION_SUBMITTING", "ACTION_UNVERIFIED", "ACTION_FAILED", "PARTIAL", "WAITING_FOR_USER", "PREPARATION_INCOMPLETE", "SUBMITTED_UNVERIFIED", "UNKNOWN",
                      "EDIT_SUBMITTING", "EDIT_SUBMITTED_UNVERIFIED", "EDIT_UNAVAILABLE", "REPLY_READY", "REPLY_PENDING", "REPLY_SUBMITTING", "REPLY_UNVERIFIED", "REPLY_REJECTED",
-                     "TEST_SEED_UNVERIFIED", "TEST_REPLY_UNVERIFIED", "TEST_COMMENT_NOT_VISIBLE", "FAILED_BEFORE_SUBMIT", "UNVERIFIED", "EDIT_FAILED", "EDIT_MISMATCH"}
+                     "TEST_SEED_UNVERIFIED", "TEST_REPLY_UNVERIFIED", "TEST_COMMENT_NOT_VISIBLE", "FAILED_BEFORE_SUBMIT", "UNVERIFIED", "EDIT_FAILED", "EDIT_MISMATCH",
+                     "READY", "SUBMITTING", "PLATFORM_REJECTED", "BROWSER_VERIFICATION_REQUIRED", "TEST_READY", "TEST_SEED_SUBMITTING"}
+# Marks JSON leaves as they are that can still end a line, act on a terminal or reorder what a reader sees. A viewer can type any of them.
+UNSAFE_OUTPUT = re.compile("[\x7f-\x9f؜​‎‏ -‮⁠-⁩\ud800-\udfff﻿]")
 # Commands whose --out saves the JSON result. For the others, --out names the file the command produces.
 SAVES_RESULT = {"dm", "read-all", "collection", "playlist", "messages", "engage", "ops", "comments", "stats", "report", "works", "status", "cleanup"}
 
@@ -117,8 +121,9 @@ def publish_plan(plan, confirm):
                     results[platform] = {"key": key, **receipt}
                 except Exception as e:
                     code = e.code if isinstance(e, VpubError) else "backend_error"
-                    if code == "browser_busy" and not record.get("receipt"):
-                        # The worker was refused the profile lock before it opened a page.
+                    if never_sent(e) or (code in {"browser_busy", "stopped"} and not record.get("receipt")):
+                        # The worker was refused the profile lock before it opened a page, a stop landed before its first step, or bili-cli held the upload back to keep its spacing.
+                        ledger.save(key, "IN_PROGRESS", record)
                         ledger.forget(key)
                         results[platform] = {"state": "NOT_STARTED", "code": code, "message": e.message, "hint": e.hint}
                         continue
@@ -960,17 +965,30 @@ def capabilities():
             "interaction_rule": "Login/setup does not authorize comments, messages, likes or publication."}
 
 
+def one_line(value):
+    """One line of JSON, whatever a viewer wrote inside it. These marks only ever sit inside a string, where the escaped form reads back the same."""
+    return UNSAFE_OUTPUT.sub(lambda found: f"\\u{ord(found[0]):04x}", json.dumps(value, ensure_ascii=False))
+
+
+def finished(value):
+    if not isinstance(value, dict):
+        return True
+    results = value.get("results")
+    parts = [part for part in results.values() if isinstance(part, dict)] if isinstance(results, dict) else []
+    return not (value.get("all_submissions_verified") is False or value.get("all_drafts_ready") is False or value.get("state") in UNFINISHED_STATES or part_left_undone(value) or any(part_left_undone(part) for part in parts))
+
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     try:
         args = parser().parse_args()
         value = execute(args)
-        ok = not (isinstance(value, dict) and (value.get("all_submissions_verified") is False or value.get("all_drafts_ready") is False or value.get("state") in UNFINISHED_STATES))
-        print(json.dumps({"ok": ok, "data": value}, ensure_ascii=False))
+        ok = finished(value)
+        print(one_line({"ok": ok, "data": value}))
         raise SystemExit(0 if ok else 4)
     except VpubError as e:
-        print(json.dumps({"ok": False, "error": {"code": e.code, "message": e.message, "hint": e.hint}}, ensure_ascii=False))
+        print(one_line({"ok": False, "error": {"code": e.code, "message": e.message, "hint": e.hint}}))
         raise SystemExit(2)
     except FileNotFoundError as e:
         print(json.dumps({"ok": False, "error": {"code": "file_not_found", "message": f"File not found: {e.filename}",

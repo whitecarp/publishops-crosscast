@@ -14,12 +14,30 @@ import time
 from datetime import datetime, timezone
 
 PLATFORMS = ("bilibili", "youtube", "douyin", "instagram", "x")
+HELD_BACK = "write_spacing"
 
 
 class VpubError(Exception):
     def __init__(self, code, message, hint=""):
         super().__init__(message)
         self.code, self.message, self.hint = code, message, hint
+
+
+def never_sent(exc):
+    """bili-cli held this write back to keep its own spacing, so nothing reached the platform, whatever the receipt said just before."""
+    return isinstance(exc, VpubError) and exc.code == HELD_BACK
+
+
+def part_left_undone(receipt):
+    """Chapters or a collection chosen at upload that did not land, on a work that did."""
+    season = receipt.get("season")
+    return receipt.get("chapters_state") not in {None, "VERIFIED"} or (isinstance(season, dict) and season.get("added") is False)
+
+
+def reply_still_open(saved):
+    """A reply's last check before its click. A command killed part way can still be running in the shared background browser, with a second attempt queued behind it."""
+    if saved.get("state") in {"REPLY_SUBMITTING", "REPLY_UNVERIFIED", "REPLY_VERIFIED", "REPLY_REJECTED"}:
+        raise VpubError("attempt_exists", "An earlier attempt at this reply got there first, so nothing more was sent.", "Use comments verify-reply; never send again.")
 
 
 def error_fields(exc, name="error"):
@@ -50,7 +68,8 @@ def atomic_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, name = tempfile.mkstemp(prefix=".vpub-", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+        # A viewer's text can hold half an emoji, which still reads back the same from JSON's escaped form.
+        with os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace", newline="\n") as f:
             json.dump(value, f, ensure_ascii=False, indent=2)
             f.write("\n")
             f.flush()
@@ -63,7 +82,7 @@ def atomic_json(path, value):
 
 def digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
-                                     separators=(",", ":")).encode()).hexdigest()
+                                     separators=(",", ":")).encode("utf-8", "surrogatepass")).hexdigest()
 
 
 def file_sha(path):

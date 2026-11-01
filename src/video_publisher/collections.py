@@ -2,7 +2,7 @@
 import re
 from pathlib import Path
 from . import adapters
-from .core import VpubError, atomic_json, digest, error_fields, home, now, publication_lock, read_json, stop_check
+from .core import VpubError, atomic_json, digest, error_fields, home, never_sent, now, publication_lock, read_json, stop_check
 from .direct_messages import identity
 
 PLATFORMS = ('instagram', 'x', 'douyin', 'bilibili', 'youtube')
@@ -40,6 +40,12 @@ def members(platform, owner, collection, work):
 def listing(platform, collection=None):
     validate(platform, collection)
     return call(platform, 'items' if collection else 'list', identity(platform), collection_id=collection)
+
+
+def not_finished(r, exc):
+    if never_sent(exc):r['platform_writes']=0
+    r.update(state='UNVERIFIED' if r.get('platform_writes') else 'FAILED_BEFORE_SUBMIT',**error_fields(exc))
+    return r
 
 
 def checked_result(r, observed):
@@ -137,8 +143,7 @@ def change(platform, action, collection=None, title=None, request_id=None, cover
                     r['collection_id']=result['collection_id'];atomic_json(path,r)
                 r=checked_result(r,call(platform,'list',owner))
         except Exception as exc:
-            r=read_json(path)
-            r.update(state='UNVERIFIED' if r.get('platform_writes') else 'FAILED_BEFORE_SUBMIT',**error_fields(exc))
+            r=not_finished(read_json(path),exc)
         atomic_json(path,r)
         return r
 
@@ -184,5 +189,5 @@ def membership(platform, action, collection, work, request_id):
                 call(platform,action,owner,collection_id=collection,work_id=work,receipt_key=key,before_members=ids)
                 r=read_json(path);r=checked_result(r,members(platform,owner,collection,work))
         except Exception as exc:
-            r=read_json(path);r.update(state='UNVERIFIED' if r.get('platform_writes') else 'FAILED_BEFORE_SUBMIT',**error_fields(exc))
+            r=not_finished(read_json(path),exc)
         atomic_json(path,r);return r

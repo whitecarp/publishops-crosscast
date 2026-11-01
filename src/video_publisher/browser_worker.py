@@ -102,7 +102,7 @@ def main():
     # On a hidden desktop there is no console to answer on.
     if payload.get("result_path"):
         atomic_json(payload["result_path"], out)
-    print(json.dumps(out, ensure_ascii=False))
+    print(json.dumps(out, ensure_ascii=False).encode("utf-8", "backslashreplace").decode("utf-8"))
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from .browser_backends import normalize, studio_visibility, work_url
 from .browser_runtime import acknowledged, risk_check, unique_visible, visible, write_answers
-from .core import VpubError, atomic_json, file_sha, home, now, read_json, stop_check
+from .core import VpubError, atomic_json, file_sha, home, now, read_json, reply_still_open, stop_check
 from .operations_api import metric
 
 STUDIO = "https://studio.youtube.com"
@@ -303,6 +303,7 @@ async def operations(page, identity, payload):
         raise VpubError("reply_not_ready", "YouTube has not enabled reply submission.")
     path = Path(payload["reply_receipt_path"])
     saved = read_json(path)
+    reply_still_open(saved)
     saved.update(before_reply_ids=[c["id"] for c in current], submitted_text=request["text"], state="REPLY_SUBMITTING")
     atomic_json(path, saved)
     await act_and_settle(page, lambda: button.click(timeout=20000))
@@ -535,7 +536,7 @@ async def ensure_playlists(page, identity, titles):
         raise VpubError("read_incomplete", "Studio's playlist list could not be read to its end, so a missing playlist is not proven; nothing was uploaded.")
     made = []
     for title in missing:
-        result = await create_playlist(page, identity, {"title": title, "privacy": "private"}, lambda *_: None, known=[row["id"] for row in rows])
+        result = await create_playlist(page, identity, {"title": title, "privacy": "private"}, lambda *_: stop_check("youtube"), known=[row["id"] for row in rows])
         if not result.get("collection_id"):
             raise VpubError("playlist_unverified", f'Studio did not show the new playlist "{title}"; nothing was uploaded.')
         made.append({"id": result["collection_id"], "title": title})

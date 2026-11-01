@@ -6,7 +6,7 @@ from .core import Ledger, VpubError, atomic_json, digest, douyin_caption, file_s
 from .language_policy import route
 
 
-def validate_patch(platform, value, verifying=False):
+def validate_patch(platform, value, verifying=False, ai_generated=True):
     allowed={'expected_identity','title','description','tags','content_language','metadata_language','metadata_mode','portrait','chapters','duration_seconds','cover'}
     if not isinstance(value,dict) or set(value)-allowed or not isinstance(value.get('expected_identity'),str) or not value['expected_identity']:
         raise VpubError('invalid_edit','Provide expected_identity and supported correction fields only; privacy/media replacement/deletion are forbidden.')
@@ -18,7 +18,7 @@ def validate_patch(platform, value, verifying=False):
     if 'tags' in p and (not metadata or platform not in {'bilibili','douyin'}):
         raise VpubError('unsupported_edit','Tags can be edited with the title and description on Bilibili and Douyin.')
     if metadata:
-        if not isinstance(p.get('title'),str) or not 1<=len(p['title'])<=100 or '\n' in p['title']:
+        if not isinstance(p.get('title'),str) or not 1<=len(p['title'])<=100 or any(c in p['title'] for c in '\r\n\x00'):
             raise VpubError('invalid_title','An edit requires a one-line title of at most 100 characters.')
         if platform in {'bilibili','douyin'} and len(p['title'])>title_limit(platform):
             raise VpubError('invalid_title',f'{platform} titles allow at most {title_limit(platform)} characters.')
@@ -33,7 +33,7 @@ def validate_patch(platform, value, verifying=False):
         if platform=='youtube' and len(p['description'].encode())>5000:
             raise VpubError('description_too_long','YouTube description exceeds the local 5000-byte budget.')
         if platform in {'instagram','x'}:
-            p['post_text']=p['title']+'\n\n'+p['description']+('\n\nAI-generated' if p.get('ai_generated', True) else '')
+            p['post_text']=p['title']+'\n\n'+p['description']+('\n\nAI-generated' if ai_generated else '')
             if platform=='instagram' and len(p['post_text'])>2200:
                 raise VpubError('description_too_long','Instagram caption exceeds 2200 characters; preserve both languages when shortening.')
         if 'tags' in p and (not isinstance(p['tags'],list) or not all(isinstance(t,str) and t.strip() and not any(c in t for c in ',\r\n\x00') for t in p['tags'])
@@ -74,11 +74,13 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only):
     stop_check(platform)
     edit_id=digest([key,patch]);path=home()/'edits'/(edit_id+'.json')
     if dry_run: return {'key':key,'id':work_id,'patch':patch,'platform_writes':0,'edit_id':edit_id}
+    tried=False
     if path.exists():
         saved=read_json(path)
         # A prior success is history, not current platform state. The backend
         # reads the existing work and skips saving only when it still matches.
-        if saved.get('state') in {'EDIT_SUBMITTING','EDIT_SUBMITTED_UNVERIFIED'} and not verify_only:
+        tried=saved.get('state') in {'EDIT_SUBMITTING','EDIT_SUBMITTED_UNVERIFIED'}
+        if tried and not verify_only:
             raise VpubError('inspect_existing_edit','A save was already attempted; inspect the existing work before any retry.')
     def checkpoint(data): atomic_json(path,{'key':key,'edit_id':edit_id,'at':now(),**data})
     if not verify_only: checkpoint({'state':'EDIT_PREPARING','id':work_id})
@@ -92,6 +94,8 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only):
     else:
         result=adapters.browser_call(platform,'edit',account,expected_identity=actual,
             receipt=receipt,patch=patch,edit_receipt_path=str(path),verify_only=verify_only)
+    # A check changes nothing, so it must not leave what reads as a save that was tried and block the real one.
+    if verify_only and not tried and result.get('state')=='EDIT_SUBMITTED_UNVERIFIED': result={**result,'state':'EDIT_MISMATCH'}
     checkpoint(result)
     return result
 
@@ -121,7 +125,7 @@ def run(key, patch_path, dry_run=False, verify_only=False):
             if not row: raise VpubError('receipt_required','Use the key of an existing recorded publication.')
             record=row['data'];receipt=record.get('receipt',{});work_id=receipt.get('id')
             if not work_id: raise VpubError('work_id_required','Verify the existing work ID first; never infer an ID from a title or upload again.')
-            patch=validate_patch(row['platform'],read_json(patch_path),verify_only)
+            patch=validate_patch(row['platform'],read_json(patch_path),verify_only,record.get('options',{}).get('ai_generated',True))
             actual=record.get('identity',{}).get('identity') or receipt.get('identity')
             result=send(row['platform'],row['account'],actual,receipt,key,patch,dry_run,verify_only)
             if dry_run: return result

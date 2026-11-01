@@ -3,7 +3,7 @@ import json
 import os
 import subprocess
 import sys
-from . import adapters
+from . import adapters, safety
 from .core import VpubError, stop_check
 
 
@@ -18,13 +18,17 @@ async def body():
     return {"folders": await _folders(video.credential, video)}
 run(body)
 '''
+    stop_check('bilibili')
     env=dict(os.environ,PYTHONIOENCODING='utf-8')
     for k in ('NO_PROXY','no_proxy'):
         if k in env:env[k]=','.join(x for x in env[k].split(',') if ':' not in x)
     cp=subprocess.run([sys.executable,'-c',code,work],env=env,capture_output=True,text=True,encoding='utf-8',timeout=90)
     try:data=json.loads(cp.stdout)
     except ValueError:raise VpubError('upstream_schema_changed','bili-cli folder membership could not be read.') from None
-    if not data.get('ok'):raise VpubError(data.get('error',{}).get('code','upstream_error'),'bili-cli folder read failed.')
+    if not data.get('ok'):
+        failed=data.get('error',{}).get('code','upstream_error')
+        safety.pushed_back('bilibili',failed)
+        raise VpubError(failed,'bili-cli folder read failed.')
     return data['data']['folders']
 
 

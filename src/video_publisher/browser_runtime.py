@@ -17,8 +17,10 @@ BROWSER_PLATFORMS = {"douyin", "instagram", "x", "youtube"}
 URLS = {"douyin": "https://creator.douyin.com/creator-micro/home",
         "instagram": "https://www.instagram.com/", "x": "https://x.com/home",
         "youtube": "https://studio.youtube.com/"}
-HUMAN_LABELS = re.compile(r"安全验证|請完成驗證|请完成验证|滑块验证|滑塊驗證|操作频繁|操作頻繁|验证是你本人|驗證是你本人|确认是你本人|確認是你本人|验证你的身份|驗證你的身分|确认你的身份|確認你的身分"
+HUMAN_LABELS = re.compile(r"安全验证|請完成驗證|请完成验证|滑块验证|滑塊驗證|验证是你本人|驗證是你本人|确认是你本人|確認是你本人|验证你的身份|驗證你的身分|确认你的身份|確認你的身分"
                           r"|Confirm it's you|Verify it's you|Verify your identity|Authenticate your account|Confirm your identity|Unusual activity"
+                          # A platform saying too much, too fast.
+                          r"|(?:操作|评论|評論|回复|回覆|私信|发送|發送)(?:过于|過於|太)?[频頻]繁|Action Blocked|We limit how often|We restrict certain activity|Rate limit exceeded|over the daily limit|temporarily (?:blocked|restricted|limited)"
                           # A locked account's recovery page. A person answers it; CrossCast never presses anything on it.
                           r"|Choose a way to recover|Get help from friends|选择恢复方式|選擇復原方式|向好友求助|向朋友求助", re.I)
 # Addresses that only ever mean the platform is asking for a check, whatever the page says.
@@ -30,7 +32,9 @@ CHALLENGE_ADDRESSES = {"instagram.com": r"/(challenge|checkpoint|auth_platform|a
 # not generic lists, which a real check can use too. A place missing here means a stop a person clears, never a missed check.
 OTHER_PEOPLES_WORDS = ('article, [role="article"], [data-testid="cellInnerDiv"], [data-testid="tweetText"], [data-dm-message-row], [data-testid^="dm-conversation-item-"], [data-testid="dm-message-list"], '
                        '[data-pagelet^="IGD"], [aria-roledescription="message"], [data-crosscast-comment-row], [data-crosscast-mentions-panel], '
-                       '[data-e2e="comment-list"], li[role="list-item"], [class*="comment" i], '
+                       '[data-e2e="comment-list"], [data-e2e="listDlgTest-container"], [data-stack-layer="chat"], li[role="list-item"], [class*="comment" i], '
+                       # A message opens from the other person's profile, which holds their name and their own words.
+                       'main > header, main header section, [data-e2e="user-info"], '
                        'ytcp-comment-thread, ytcp-comment, ytd-comment-thread-renderer, ytd-comment-view-model, ytcp-video-row, ytd-watch-metadata')
 # A small row with an author's link and a time is someone's post or comment, however the site builds it. A window is the edge of the search.
 SOMEONES_WORDS = """(e, others) => {

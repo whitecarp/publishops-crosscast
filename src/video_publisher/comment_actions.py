@@ -2,7 +2,7 @@
 import re
 import uuid
 from . import adapters, operations as ops, safety
-from .core import VpubError, atomic_json, digest, error_fields, home, now, publication_lock, read_json, stop_check
+from .core import VpubError, atomic_json, digest, error_fields, home, never_sent, now, publication_lock, read_json, stop_check
 
 SUPPORTED = {'bilibili': {'like', 'pin', 'delete', 'remove'}, 'instagram': {'like', 'delete'}, 'x': {'like', 'hide', 'delete'}, 'youtube': {'like', 'pin', 'edit', 'delete', 'remove', 'moderate'}, 'douyin': {'like', 'delete'}}
 PENDING = {'COMMENT_SUBMITTING', 'COMMENT_UNVERIFIED'}
@@ -84,6 +84,7 @@ def mutate(platform, work, comment_id, kind, desired=True, dry_run=False, test_i
     elif kind == 'edit':
         if not isinstance(desired, str) or not desired.strip() or len(desired) > 2000 or '\x00' in desired:
             raise VpubError('invalid_text', 'Supply nonempty comment text of at most 2000 characters.')
+        safety.check_text(desired, True)
     elif type(desired) is not bool or (kind in {'delete', 'remove'} and not desired):
         raise VpubError('invalid_action', 'Invalid target state.')
     if test_id and not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', test_id): raise VpubError('invalid_test_id', 'Use a short test label.')
@@ -114,7 +115,7 @@ def mutate(platform, work, comment_id, kind, desired=True, dry_run=False, test_i
             raise VpubError('state_unavailable','Exact moderation status is unavailable; no write attempted.')
         if before.get('text') != request['comment']['text']:
             raise VpubError('comment_changed', 'The comment text changed; read it again before changing it.')
-        counted = kind == 'like' and desired is True and not test_id
+        counted = kind == 'like' and desired is True
         if dry_run:
             if counted: safety.admit('like', platform, request['identity'], reserve=False)
             return {'state': 'DRY_RUN', 'request': request, 'observed': before, 'platform_writes': 0}
@@ -134,7 +135,7 @@ def mutate(platform, work, comment_id, kind, desired=True, dry_run=False, test_i
             if state == 'COMMENT_VERIFIED': refresh_snapshot(request)
         except Exception as exc:
             saved = read_json(path)
-            saved.update(state='COMMENT_UNVERIFIED' if saved['state'] in PENDING else 'COMMENT_FAILED', **error_fields(exc, 'error_code'))
+            saved.update(state='COMMENT_UNVERIFIED' if saved['state'] in PENDING and not never_sent(exc) else 'COMMENT_FAILED', **error_fields(exc, 'error_code'))
             saved['platform_writes'] = None if saved['state'] == 'COMMENT_UNVERIFIED' else 0
             if saved['state'] == 'COMMENT_FAILED': safety.release(ticket)
         atomic_json(path, saved)
