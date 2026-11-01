@@ -1,12 +1,15 @@
 """Reads the other tests leave out: whose account a page shows, adopting old works, Instagram and Douyin notifications and conversation lists, and Instagram's figures. Small page copies in an invisible browser; nothing is contacted."""
+import os
 from pathlib import Path
 import sys
+import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 from stage_browser import SharedBrowser
 
-from video_publisher import browser_runtime as rt, direct_messages_browser, mentions_browser, operations_browser, work_discovery_browser as discovery
+from video_publisher import adapters, browser_runtime as rt, direct_messages_browser, mentions_browser, operations as ops, operations_browser, operations_sync, work_discovery_browser as discovery
 from video_publisher.core import VpubError
 
 OWNER = "owner"
@@ -193,6 +196,68 @@ class InstagramFiguresTests(Pages):
 
 
 del Pages
+
+
+class BilibiliReadTests(unittest.TestCase):
+    """What the included bili-cli answers, as the customer's agent gets it. A fake bili-cli; nothing is contacted."""
+
+    WORK = "BV1xx411c7mD"
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        env = patch.dict(os.environ, {"VPUB_HOME": str(Path(temp.name) / "runtime")})
+        env.start()
+        self.addCleanup(env.stop)
+        self.owner = 42
+        self.stats = {"stat": {"view": 1000, "like": 5}, "completion_percent": None}
+        self.comments = {"items": [{"rpid": 7, "content": "Hi", "user": {"mid": 99, "name": "V"}, "root": None, "replies_preview": [], "reply_count": 0}], "total": 1}
+        self.videos = {"items": [{"bvid": self.WORK, "title": "Out", "published": True}, {"bvid": "BV1xx411c7mE", "title": "In review", "published": False}], "counts": {"published": 1}}
+        self.calls = []
+        for target in (patch.object(adapters, "bili", self.bili), patch.object(adapters, "auth_status", return_value={"identity": "42"})):
+            target.start()
+            self.addCleanup(target.stop)
+
+    def bili(self, args, timeout=210, program=None):
+        self.calls.append(list(args))
+        if args[:2] == ["video", "info"]:
+            return {"owner": {"mid": self.owner}, "title": "Out", "url": "https://www.bilibili.com/video/" + self.WORK}
+        if args[:2] == ["upload", "stats"]:
+            return self.stats
+        if args[:2] == ["comment", "list"]:
+            return self.comments
+        if args[:2] == ["upload", "list"]:
+            return self.videos
+        raise AssertionError(args)
+
+    def test_a_figure_bilibili_gave_is_read_and_a_missing_one_stays_missing(self):
+        metrics = ops.observe("bilibili", self.WORK, "stats")["metrics"]
+        self.assertEqual((1000, "observed"), (metrics["views"]["value"], metrics["views"]["availability"]))
+        self.assertEqual((None, "unavailable"), (metrics["coins"]["value"], metrics["coins"]["availability"]))
+        self.assertIsNone(metrics["completion_percent"]["value"])
+
+    def test_someone_elses_work_is_refused_for_figures_and_for_comments(self):
+        self.owner = 99
+        for action in ("stats", "comments"):
+            with self.subTest(action=action), self.assertRaises(VpubError) as caught:
+                ops.observe("bilibili", self.WORK, action)
+            self.assertEqual("wrong_work", caught.exception.code)
+
+    def test_a_read_only_ever_asks_for_reads(self):
+        ops.observe("bilibili", self.WORK, "stats")
+        ops.observe("bilibili", self.WORK, "comments")
+        operations_sync.works("bilibili")
+        self.assertEqual({("video", "info"), ("upload", "stats"), ("comment", "list"), ("upload", "list")}, {tuple(call[:2]) for call in self.calls})
+
+    def test_comments_say_whose_they_are(self):
+        self.comments["items"].append({"rpid": 8, "content": "Mine", "user": {"mid": 42, "name": "Me"}, "root": None, "replies_preview": [], "reply_count": 0})
+        rows = ops.observe("bilibili", self.WORK, "comments")["items"]
+        self.assertEqual([("7", False, "99"), ("8", True, "42")], [(row["id"], row["is_owner"], row["author_id"]) for row in rows])
+
+    def test_the_works_list_holds_only_what_is_out_and_says_it_is_one_page(self):
+        result = operations_sync.works("bilibili", limit=1)
+        self.assertEqual([self.WORK], [row["id"] for row in result["items"]])
+        self.assertEqual((0, "42"), (result["platform_writes"], result["identity"]))
 
 
 if __name__ == "__main__":

@@ -62,6 +62,111 @@ class LastMomentTests(SharedBrowser):
         self.assertEqual(1, len(self.saves))
 
 
+class DouyinPageTests(SharedBrowser):
+    """A Douyin work's cover and chapters, each saved on its own page and read back from a fresh load."""
+
+    WORK = "7300000000000000001"
+    CHAPTERS = [{"start_seconds": 0, "title": "开场"}, {"start_seconds": 90, "title": "正片"}]
+
+    def prepare(self):
+        self.saves = []
+        self.title = "Old title"
+        self.saved_chapters = []
+        self.keeps_chapter_titles = True
+        self.portrait = self.root / "portrait.jpg"
+        self.portrait.write_bytes(b"synthetic")
+        self.path = self.root / "edit.json"
+
+    async def handle(self, route):
+        url = urlsplit(route.request.url)
+        if route.request.method == "POST":
+            # What the receipt said at the moment the save arrived.
+            self.saves.append((url.path, read_json(self.path).get("state") if self.path.exists() else None))
+            if url.path == "/chapters":
+                self.saved_chapters = json.loads(route.request.post_data)
+            return await self.json_at(route, {})
+        if url.path == "/creator-micro/content/post/video":
+            return await self.cover_page(route)
+        if url.path == "/creator-micro/content/manage":
+            return await self.manage_page(route)
+        await self.page_at(route, "elsewhere")
+
+    async def cover_page(self, route):
+        await self.page_at(route, f"""<input placeholder="填写作品标题，为作品获得更多流量" value="{self.title}">
+          <div class="coverControl-a"><span>竖封面3:4</span><div class="cover-a" onclick="document.getElementById('picker').hidden = false">cover</div></div>
+          <div role="dialog" id="picker" hidden><div class="semi-upload">点击上传文件或拖拽文件到这里<input class="semi-upload-hidden-input" type="file"></div><button onclick="document.getElementById('picker').hidden = true">完成</button></div>
+          <button onclick="fetch('/cover', {{method: 'POST', body: '{{}}'}}).then(() => location.href = '/creator-micro/content/manage')">保存</button>""")
+
+    async def manage_page(self, route):
+        rows = "".join(f"<p>{int(row['start_seconds']) // 60:02d}:{int(row['start_seconds']) % 60:02d} {row['title']}</p>" for row in self.saved_chapters)
+        keep = "name" if self.keeps_chapter_titles else "'不是这个'"
+        await self.page_at(route, f"""<a href="https://creator.douyin.com/creator-micro/content/post/video?mid={self.WORK}">Old title</a>
+          <div class="video-card-content-a">Old title<span onmouseenter="document.getElementById('menu').hidden = false">编辑作品</span><div id="menu" hidden><span onclick="document.getElementById('editor').hidden = false">添加章节</span></div></div>
+          <div id="editor" hidden><video width="10" height="10"></video><button onclick="document.getElementById('name').hidden = false; document.getElementById('name').focus()">手动添加</button>
+            <input id="name" placeholder="输入章节名" hidden><span onclick="addChapter()">确定</span><input type="checkbox" id="bar" {'checked' if self.saved_chapters else ''}>
+            <div id="list">{rows}</div><p id="count">章节数：{len(self.saved_chapters)}</p><button id="save" onclick="sendChapters()">保存</button></div>
+          <script>let chosen = [], times = {json.dumps([row['start_seconds'] for row in self.CHAPTERS])};
+            function addChapter() {{ const box = document.getElementById('name'); const name = box.value; box.value = ''; box.hidden = true; const start = times[chosen.length]; chosen.push({{start_seconds: start, title: {keep}}});
+              document.getElementById('list').innerHTML += '<p>' + String(Math.floor(start / 60)).padStart(2, '0') + ':' + String(start % 60).padStart(2, '0') + ' ' + chosen[chosen.length - 1].title + '</p>'; document.getElementById('count').textContent = '章节数：' + chosen.length; }}
+            function sendChapters() {{ fetch('/chapters', {{method: 'POST', body: JSON.stringify(chosen)}}); document.getElementById('save').hidden = true; }}</script>""")
+
+    async def cover(self, **extra):
+        checked = edits.validate_patch("douyin", {"expected_identity": OWNER, "portrait": str(self.portrait)})
+        return await browser_edits.execute(self.page, "douyin", OWNER, {"patch": checked, "receipt": {"id": self.WORK, "title": "Old title"}, "edit_receipt_path": str(self.path), **extra})
+
+    async def chapters(self, **extra):
+        checked = edits.validate_patch("douyin", {"expected_identity": OWNER, "chapters": self.CHAPTERS, "duration_seconds": 300})
+        return await browser_edits.execute(self.page, "douyin", OWNER, {"patch": checked, "receipt": {"id": self.WORK, "title": "Old title", "identity": OWNER}, "edit_receipt_path": str(self.path), **extra})
+
+    async def test_a_cover_is_saved_once_and_stays_unconfirmed_until_a_person_looks(self):
+        result = await self.cover()
+        self.assertEqual("EDIT_SUBMITTED_UNVERIFIED", result["state"])
+        self.assertEqual([("/cover", "EDIT_SUBMITTING")], self.saves)
+
+    async def test_a_cover_is_not_put_on_a_work_whose_title_differs(self):
+        self.title = "Someone else's title"
+        with self.assertRaises(VpubError) as caught:
+            await self.cover()
+        self.assertEqual("wrong_work", caught.exception.code)
+        self.assertEqual([], self.saves)
+
+    async def test_a_cover_file_that_changed_since_the_check_is_not_sent(self):
+        checked = edits.validate_patch("douyin", {"expected_identity": OWNER, "portrait": str(self.portrait)})
+        self.portrait.write_bytes(b"changed")
+        with self.assertRaises(VpubError) as caught:
+            await browser_edits.execute(self.page, "douyin", OWNER, {"patch": checked, "receipt": {"id": self.WORK, "title": "Old title"}, "edit_receipt_path": str(self.path)})
+        self.assertEqual("source_changed", caught.exception.code)
+        self.assertEqual([], self.saves)
+
+    async def test_checking_a_cover_saves_nothing(self):
+        await self.cover(verify_only=True)
+        self.assertEqual([], self.saves)
+
+    async def test_chapters_are_saved_once_and_read_back(self):
+        result = await self.chapters()
+        self.assertEqual(("EDIT_VERIFIED", True), (result["state"], result["timing_readback"]))
+        self.assertEqual([("/chapters", "EDIT_SUBMITTING")], self.saves)
+
+    async def test_chapters_the_page_did_not_keep_stop_before_the_save(self):
+        self.keeps_chapter_titles = False
+        with self.assertRaises(VpubError) as caught:
+            await self.chapters()
+        self.assertEqual("chapters_mismatch", caught.exception.code)
+        self.assertEqual([], self.saves)
+
+    async def test_checking_chapters_saves_nothing(self):
+        result = await self.chapters(verify_only=True)
+        self.assertEqual("EDIT_SUBMITTED_UNVERIFIED", result["state"])
+        self.assertEqual([], self.saves)
+
+    async def test_a_stop_holds_the_chapters_at_the_last_moment(self):
+        self.stop()
+        with self.assertRaises(VpubError) as caught:
+            await self.chapters()
+        self.assertEqual("stopped", caught.exception.code)
+        self.assertEqual([], self.saves)
+
+
 class CheckingTests(Temporary):
     def run_send(self, answer, verify_only):
         patch_value = edits.validate_patch("x", TEXT)

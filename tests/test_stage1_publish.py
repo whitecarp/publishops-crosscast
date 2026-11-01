@@ -14,7 +14,7 @@ from stage_browser import SharedBrowser
 
 from video_publisher import adapters, browser_forms, cli
 from video_publisher.browser_backends import Transaction
-from video_publisher.core import VpubError, file_sha, home, read_json
+from video_publisher.core import VpubError, atomic_json, file_sha, home, load_plan, read_json
 
 OWNER = "owner"
 POST = "2115117485020135559"
@@ -207,6 +207,35 @@ class InstagramFormTests(Form):
 
 
 del Form
+
+
+class SchedulePlanTests(unittest.TestCase):
+    """A time the platform would not take is refused before anything starts."""
+
+    def plan(self, platform, hours, **options):
+        when = (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "clip.mp4").write_bytes(b"synthetic")
+            atomic_json(root / "publish.json", {"schema_version": 1, "video": "clip.mp4", "title": "T", "description": "", "tags": ["a"], "content_language": "en",
+                                                "platforms": {platform: {"account": "default", "ai_generated": True, "schedule": when, **options}}})
+            return load_plan(root / "publish.json")["platforms"][platform]
+
+    def refused(self, code, *args, **options):
+        with self.assertRaises(VpubError) as caught:
+            self.plan(*args, **options)
+        self.assertEqual(code, caught.exception.code)
+
+    def test_instagram_has_no_schedule_and_says_so(self):
+        self.refused("unsupported_schedule", "instagram", 24, method="browser", visibility="account")
+
+    def test_bilibili_takes_a_time_from_two_hours_to_fifteen_days_ahead(self):
+        for hours in (3, 24 * 14):
+            with self.subTest(hours=hours):
+                self.assertTrue(self.plan("bilibili", hours, method="cli", visibility="public")["schedule"])
+        for hours in (-1, 1, 24 * 16):
+            with self.subTest(hours=hours):
+                self.refused("invalid_schedule", "bilibili", hours, method="cli", visibility="public")
 
 
 class StopBeforeAnythingTests(unittest.TestCase):
