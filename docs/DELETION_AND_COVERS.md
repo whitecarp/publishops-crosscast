@@ -48,5 +48,5 @@ vpub browser begin KEY --identity OBSERVED_ACCOUNT
 
 ## 刪除評論而不是作品
 
-評論用它們自己的指令刪除，不走這個交接流程：刪除自己的評論用 `vpub comments delete PLATFORM WORK COMMENT_ID`，移除觀眾的評論用 `vpub comments remove PLATFORM WORK COMMENT_ID`。兩者都不可復原，所以只能針對使用者指名的那一則，並且先用 `vpub comments list` 讀過它。刪除或移除只有在確實證明該評論已不在時，才會回報為完成（`COMMENT_VERIFIED`）。只載入一部分的清單，不能因為少了某則評論就當作已刪除，所以回執會維持 `COMMENT_UNVERIFIED`，直到 `vpub comments verify-action RECEIPT_KEY` 或到平台上確認它已消失。回執不確定時，絕不要再按一次刪除。各平台提供的證明見[操作指南](OPERATIONS.md#管理單條評論)。
+評論用它們自己的指令刪除，不走這個交接流程：刪除自己的評論用 `vpub comments delete PLATFORM WORK COMMENT_ID`，移除觀眾的評論用 `vpub comments remove PLATFORM WORK COMMENT_ID`。兩者都不可復原，所以只能針對使用者指名的那一則，並且先用 `vpub comments list` 讀過它。刪除或移除只有在確實證明該評論已不在時，才會回報為完成（`COMMENT_VERIFIED`）。在 YouTube 與 Instagram 上，這表示重新讀取時沒有它、按下那一次之後它馬上消失，而且平台對那次按下的回覆指名了它並帶有固定的成功字樣；頁面可能在平台同意之前就把那一列拿掉，只載入一部分的清單也不能因為少了某則評論就當作已刪除。這個成功字樣還沒用真實的刪除核對過，所以真實的刪除目前可能仍停在 `COMMENT_UNVERIFIED`，直到 `vpub comments verify-action RECEIPT_KEY` 或到平台上確認它已消失。回執不確定時，絕不要再按一次刪除。各平台提供的證明見[操作指南](OPERATIONS.md#管理單條評論)。
 
