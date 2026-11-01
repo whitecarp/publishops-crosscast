@@ -48,6 +48,8 @@ FORM_FIELDS = "input,textarea,select,[contenteditable=true]"
 # A command's quoted arguments can hold a viewer's or a person's own words. Only a selector made of nothing but page structure stays.
 QUOTED = re.compile(r""""(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'""")
 PLAIN_SELECTOR = re.compile(r"[\w\s#.>:,*()\[\]-]*")
+# Why a press was refused, in Playwright's own fixed words.
+REFUSED_PRESS = re.compile(r"element is not \w+|element is outside of the viewport|element was detached|intercepts pointer events")
 # The page's words with its form fields taken out first, so even a record a person asked for holds nothing typed into one.
 PAGE_WORDS = """() => { const copy = document.body.cloneNode(true); copy.querySelectorAll('input,textarea,select,script,style,[contenteditable=true]').forEach(e => e.remove()); return copy.textContent; }"""
 SITES = {"x": ("x.com", "twitter.com"), "instagram": ("instagram.com",), "douyin": ("douyin.com", "bytedance.com"), "youtube": ("youtube.com", "google.com")}
@@ -304,6 +306,10 @@ def failure_message(exc):
     lines = str(exc).splitlines()
     step = [lines[0].strip()] if lines else []
     step += [line.strip(" -") for line in lines[1:] if "waiting for" in line][:1]
+    # What got in the way is named by its tag alone, because the rest of that line can quote the page.
+    in_the_way = {tag for line in lines[1:] if "intercepts pointer events" in line for tag in re.findall(r"^[\s-]*<([a-z][\w-]*)", line)}
+    reasons = sorted({reason for line in lines[1:] for reason in REFUSED_PRESS.findall(line)} | {f"in the way: {tag}" for tag in in_the_way})
+    step += [f"[{', '.join(reasons)}]"] if reasons else []
     note = re.sub(r"(https?://[^\s?#'\"]+)[^\s'\"]*", r"\1", " ".join(step))
 
     def kept(found):

@@ -337,7 +337,7 @@ vpub comments verify-action ACTION_KEY
 
 X 僅對自己原帖下、其他作者的確切回覆提供隱藏／恢復；已實測一條使用者提供的留言，完成「顯示 → 隱藏 → 恢復」並讀回選單狀態。CLI 處理首次隱藏確認，並從原帖選單進入隱藏回覆頁；不以消失、刪除或封鎖代替驗證。隱藏的回覆仍可從 X 的隱藏回覆入口查看。[官方說明](https://help.x.com/en/using-x/mentions-and-replies)。
 
-待核驗時先執行 `comments verify-action ACTION_KEY`，只讀取、不重送。若已查明仍為原狀態，可明確執行 `comments resume-action ACTION_KEY`；只支援待核驗的隱藏／審核回執，重新核對帳號、正文、原狀態及目前回執後才重試一次。狀態未知、舊回執、刪除或編輯不接受此恢復命令。它不是巡檢中的自動重試。
+待核驗時先執行 `comments verify-action ACTION_KEY`，只讀取、不重送。若已查明仍為原狀態，可明確執行 `comments resume-action ACTION_KEY`；只支援待核驗的按讚／置頂／隱藏／審核回執，重新核對帳號、正文、原狀態及目前回執後才重試一次。狀態未知、舊回執、刪除或編輯不接受此恢復命令。它不是巡檢中的自動重試。
 
 ## 持久評論收件匣與減少瀏覽器啟動
 

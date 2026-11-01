@@ -78,6 +78,14 @@ class FailureMessageTests(unittest.TestCase):
                 self.assertNotIn("PRIVATE-WORDS", note)
                 self.assertIn("waiting for", note)
 
+    def test_why_a_press_was_refused_stays_without_the_page_words_in_that_line(self):
+        note = rt.failure_message(TimeoutError("Locator.click: Timeout.\nCall log:\n  - waiting for locator('#go')\n  - element is not visible\n  - retrying click action\n"
+                                               '  - <div class="x">PRIVATE-WORDS</div> from <tp-yt-iron-overlay-backdrop> subtree intercepts pointer events'))
+        self.assertIn("element is not visible", note)
+        self.assertIn("intercepts pointer events", note)
+        self.assertIn("in the way: div", note)
+        self.assertNotIn("PRIVATE-WORDS", note)
+
     def test_a_plain_selector_stays_because_it_says_which_control(self):
         note = rt.failure_message(TimeoutError("Locator.click: Timeout.\nCall log:\n  - waiting for locator('ytcp-comment #action-menu-button').first"))
         self.assertIn("locator('ytcp-comment #action-menu-button').first", note)

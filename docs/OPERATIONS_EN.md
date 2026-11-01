@@ -337,7 +337,7 @@ Omit `--dry-run` to submit the explicitly selected action directly. YouTube uses
 
 X hides/unhides an exact other-author reply under an owned post. One user-supplied comment completed visible → hidden → restored, verified through the exact reply menu. The CLI handles first-use confirmation and the original post's hidden-replies menu entry; disappearance, deletion and blocking are not verification substitutes. Hidden replies remain accessible through X's hidden-replies entry. [Official explanation](https://help.x.com/en/using-x/mentions-and-replies).
 
-For a pending action, first run `comments verify-action ACTION_KEY`; it only reads. If the exact original state is confirmed, explicitly use `comments resume-action ACTION_KEY` to retry once. Only pending hide/moderation receipts qualify, after checking the account, text, original state and current receipt. Unknown states, stale receipts, deletion and editing are rejected. Collection never retries writes automatically.
+For a pending action, first run `comments verify-action ACTION_KEY`; it only reads. If the exact original state is confirmed, explicitly use `comments resume-action ACTION_KEY` to retry once. Only pending like, pin, hide and moderation receipts qualify, after checking the account, text, original state and current receipt. Unknown states, stale receipts, deletion and editing are rejected. Collection never retries writes automatically.
 
 ## Persistent comment inbox and fewer browser starts
 

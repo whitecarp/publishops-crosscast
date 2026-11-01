@@ -15,6 +15,7 @@ from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, normalize, studio_off
 X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
 YT_DIALOG = 'ytcp-uploads-dialog'
 YT_PLAYLISTS = 'ytcp-playlist-dialog'
+YT_TICK_MS = 5000
 # Each playlist row's checkbox, its own lines of text and whether it is ticked.
 YT_PLAYLIST_ROWS = """boxes => boxes.map(box => {
     const row = box.closest('li, label, ytcp-ve') || box.parentElement;
@@ -436,6 +437,15 @@ async def yt_category(page, category_id):
         raise VpubError('category_unverified', 'The YouTube category was not confirmed. The upload is kept as a draft; nothing was published.')
 
 
+async def yt_tick(page, box):
+    """One playlist box. On a real channel the first box refused a click for 15 seconds while its picker was open, so the keyboard takes over, as it would for a person."""
+    try:
+        await box.click(timeout=YT_TICK_MS)
+    except Exception:
+        await box.focus(timeout=YT_TICK_MS)
+        await page.keyboard.press('Space')
+
+
 async def yt_playlists(page, titles):
     """Tick exactly the planned playlists by their titles; Studio's picker shows no IDs."""
     trigger = await unique_visible(page.locator(f'{YT_DIALOG} ytcp-video-metadata-playlists ytcp-dropdown-trigger'), 'YouTube playlist list')
@@ -456,7 +466,7 @@ async def yt_playlists(page, titles):
                             'Use the exact title of one of this channel\'s playlists, and give playlists different titles.')
     for i, row in enumerate(rows):
         if row['checked'] != bool(wanted & set(row['lines'])):
-            await boxes.nth(i).click(timeout=15000)
+            await yt_tick(page, boxes.nth(i))
     rows = await boxes.evaluate_all(YT_PLAYLIST_ROWS)
     if any(row['checked'] != bool(wanted & set(row['lines'])) for row in rows):
         raise VpubError('playlist_unverified', 'The YouTube playlists could not be ticked. The upload is kept as a draft; nothing was published.')

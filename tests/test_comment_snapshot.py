@@ -60,6 +60,71 @@ class ChangeTests(Base):
         self.assertIn("comments list", caught.exception.hint)
 
 
+class TryingAgainTests(Base):
+    UNPINNED = {"identity": OWNER, "text": "Mine", "pinned": False}
+    PINNED = {"identity": OWNER, "text": "Mine", "pinned": True}
+
+    def stuck(self, kind="pin", before=None, desired=True):
+        before = before or self.UNPINNED
+        with patch.object(comment_actions, "dispatch", side_effect=[before, {"state": "COMMENT_UNVERIFIED", "platform_writes": 1}, before]):
+            result = comment_actions.mutate("youtube", WORK, "c2", kind, desired)
+        self.assertEqual("COMMENT_UNVERIFIED", result["state"])
+        return result["key"]
+
+    def test_a_pin_that_did_not_go_through_blocks_a_repeat_and_says_how_to_try_again(self):
+        key = self.stuck()
+        with patch.object(comment_actions, "dispatch") as sent:
+            result = comment_actions.mutate("youtube", WORK, "c2", "pin")
+        sent.assert_not_called()
+        self.assertEqual((key, True), (result["key"], result["reused"]))
+        self.assertIn("resume-action", result["hint"])
+
+    def test_trying_again_reads_first_then_presses_once(self):
+        key = self.stuck()
+        with patch.object(comment_actions, "dispatch", side_effect=[self.UNPINNED, {"state": "COMMENT_UNVERIFIED", "platform_writes": 1}, self.PINNED]) as sent:
+            result = comment_actions.resume(key)
+        self.assertEqual("COMMENT_VERIFIED", result["state"])
+        self.assertEqual(3, sent.call_count)
+        self.assertEqual("set", sent.call_args_list[1].args[1])
+
+    def test_if_it_went_through_after_all_nothing_is_pressed(self):
+        key = self.stuck()
+        with patch.object(comment_actions, "dispatch", return_value=self.PINNED) as sent:
+            result = comment_actions.resume(key)
+        self.assertEqual(("COMMENT_VERIFIED", 1), (result["state"], sent.call_count))
+
+    def test_a_comment_that_changed_is_left_alone(self):
+        key = self.stuck()
+        with patch.object(comment_actions, "dispatch", return_value={**self.UNPINNED, "text": "Edited"}) as sent, self.assertRaises(VpubError) as caught:
+            comment_actions.resume(key)
+        self.assertEqual("state_unavailable", caught.exception.code)
+        self.assertEqual(1, sent.call_count)
+
+    def test_a_pin_state_it_cannot_read_is_left_alone(self):
+        key = self.stuck()
+        with patch.object(comment_actions, "dispatch", return_value={**self.UNPINNED, "pinned": None}) as sent, self.assertRaises(VpubError) as caught:
+            comment_actions.resume(key)
+        self.assertEqual("state_unavailable", caught.exception.code)
+        self.assertEqual(1, sent.call_count)
+
+    def test_a_like_can_be_tried_again_too(self):
+        before = {"identity": OWNER, "text": "Mine", "liked": False}
+        key = self.stuck("like", before)
+        with patch.object(comment_actions, "dispatch", side_effect=[before, {"state": "COMMENT_UNVERIFIED", "platform_writes": 1}, {**before, "liked": True}]):
+            self.assertEqual("COMMENT_VERIFIED", comment_actions.resume(key)["state"])
+
+    def test_deleting_and_editing_are_looked_at_on_the_site_instead(self):
+        for kind, desired in (("delete", True), ("edit", "New")):
+            with self.subTest(kind=kind):
+                before = {"identity": OWNER, "text": "Mine", "deleted": False}
+                key = self.stuck(kind, before, desired)
+                with patch.object(comment_actions, "dispatch") as sent, self.assertRaises(VpubError) as caught:
+                    comment_actions.resume(key)
+                self.assertEqual("resume_unavailable", caught.exception.code)
+                sent.assert_not_called()
+                (home() / "operations/comment-targets" / (digest(["youtube", OWNER, WORK, "c2"]) + ".json")).unlink()
+
+
 class ReplyTests(Base):
     def reply(self, answer):
         with patch.object(operations, "backend", return_value=answer):

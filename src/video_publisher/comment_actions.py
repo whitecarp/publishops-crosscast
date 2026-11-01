@@ -6,6 +6,9 @@ from .core import VpubError, atomic_json, digest, error_fields, home, now, publi
 
 SUPPORTED = {'bilibili': {'like', 'pin', 'delete', 'remove'}, 'instagram': {'like', 'delete'}, 'x': {'like', 'hide', 'delete'}, 'youtube': {'like', 'pin', 'edit', 'delete', 'remove', 'moderate'}, 'douyin': {'like', 'delete'}}
 PENDING = {'COMMENT_SUBMITTING', 'COMMENT_UNVERIFIED'}
+STATE_FIELD = {'like': 'liked', 'pin': 'pinned', 'hide': 'hidden', 'moderate': 'moderation_status', 'edit': 'text', 'delete': 'deleted', 'remove': 'deleted'}
+# State setters that can be undone. A person can have one of these pressed again; deleting and editing are looked at on the site itself.
+RESUMABLE = {'like', 'pin', 'hide', 'moderate'}
 # YouTube's API cannot do these, so they use Studio's own page on every route.
 STUDIO_ONLY = {'like', 'pin', 'remove'}
 
@@ -69,7 +72,7 @@ def submitting(path):
 
 def matches(request, observed):
     if observed.get('identity') != request['identity']: return False
-    key = {'like': 'liked', 'pin': 'pinned', 'hide':'hidden', 'moderate':'moderation_status', 'edit': 'text', 'delete': 'deleted', 'remove': 'deleted'}[request['kind']]
+    key = STATE_FIELD[request['kind']]
     return observed.get(key) == request['desired'] and (key in {'text','moderation_status'} or type(observed.get(key)) is bool)
 
 
@@ -97,7 +100,8 @@ def mutate(platform, work, comment_id, kind, desired=True, dry_run=False, test_i
             prior_path = home() / 'operations/comment-actions' / (read_json(index)['key'] + '.json')
             prior = read_json(prior_path)
             if prior['state'] in PENDING:
-                return {**prior, 'platform_writes': 0, 'reused': True, 'hint': 'Use comments verify-action KEY; no automatic resend or reversal.'}
+                again = ' If it is unchanged, comments resume-action KEY tries once more.' if prior['request']['kind'] in RESUMABLE else ' If it is unchanged, look at it on the site.'
+                return {**prior, 'platform_writes': 0, 'reused': True, 'hint': 'Use comments verify-action KEY; no automatic resend or reversal.' + again}
             if prior['state'] == 'COMMENT_READY': safety.reclaim(prior_path, prior)
         before = dispatch(request)
         if matches(request, before): return {'state': 'NO_CHANGE', 'platform_writes': 0, 'observed': before}
@@ -161,8 +165,8 @@ def resume(key):
     if not path.exists():raise VpubError('receipt_required','Comment action receipt not found.')
     with publication_lock():
         saved=read_json(path);r=saved['request']
-        if r['kind'] not in {'hide','moderate'} or saved['state'] not in PENDING:
-            raise VpubError('resume_unavailable','Only a pending hide/moderation state change can be explicitly resumed.')
+        if r['kind'] not in RESUMABLE or saved['state'] not in PENDING:
+            raise VpubError('resume_unavailable','Only a pending like, pin, hide or moderation change can be explicitly resumed.')
         index=home()/'operations/comment-targets'/(digest([r['platform'],r['identity'],r['work_id'],r['comment']['id']])+'.json')
         if not index.exists() or read_json(index)['key']!=key:
             raise VpubError('stale_receipt','This is no longer the current action for the comment.')
@@ -170,7 +174,7 @@ def resume(key):
         if matches(r,current):
             saved.update(state='COMMENT_VERIFIED',after=current,verified_at=now());atomic_json(path,saved)
             return {**saved,'platform_writes':0}
-        field='hidden' if r['kind']=='hide' else 'moderation_status'
+        field=STATE_FIELD[r['kind']]
         if (current.get('identity')!=r['identity'] or current.get('text')!=r['comment']['text']
             or current.get(field) is None or current.get(field)!=saved['before'].get(field)):
             raise VpubError('state_unavailable','Cannot establish the exact original state; no retry was made.')

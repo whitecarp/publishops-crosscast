@@ -258,7 +258,7 @@ def parser():
         if action=='edit':
             body=q.add_mutually_exclusive_group(required=True);body.add_argument('--text');body.add_argument('--file')
     q=c.add_parser('verify-action');q.add_argument('key');q.add_argument('--out')
-    q=c.add_parser('resume-action',help='Explicitly retry a pending hide/moderation receipt only after confirming its unchanged original state.');q.add_argument('key');q.add_argument('--out')
+    q=c.add_parser('resume-action',help='Explicitly retry a pending like, pin, hide or moderation receipt only after confirming its unchanged original state.');q.add_argument('key');q.add_argument('--out')
     d=sub.add_parser('dm',help='Explicit single-recipient private messages; no automatic or bulk sends.').add_subparsers(dest='action',required=True)
     q=d.add_parser('unlock',help='Open the official X Chat window for user-entered PIN; sends nothing.')
     q.add_argument('platform',choices=['x']);q.add_argument('--out')
