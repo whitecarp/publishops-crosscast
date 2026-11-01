@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from video_publisher import adapters, cli, collections as c, comment_actions, engagement, safety, youtube_playlists as free, youtube_studio as yt
 from video_publisher.core import VpubError, atomic_json, digest, home, read_json
+from shared_chrome import ChromeCase, async_playwright
 
 CHANNEL = "UC" + "a" * 22
 VIDEO = "dQw4w9WgXcQ"
@@ -213,9 +214,8 @@ class FakeYouTube:
             </script>"""
 
 
-class Browser(unittest.IsolatedAsyncioTestCase):
+class Browser(ChromeCase):
     async def asyncSetUp(self):
-        from patchright.async_api import async_playwright
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         env = patch.dict(os.environ, {"VPUB_HOME": str(Path(temp.name) / "runtime")})

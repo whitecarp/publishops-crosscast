@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from video_publisher import browser_edits, browser_runtime as rt, comment_actions_browser, comment_actions_x, direct_messages_x, engagement, engagement_browser, message_sources, operations_browser as ops, work_discovery_browser as discovery, x_pages
 from video_publisher.core import VpubError, atomic_json, read_json
+from shared_chrome import ChromeCase, async_playwright
 
 OWNER = "owner"
 POST = "2115117485020135559"
@@ -192,11 +193,10 @@ class FakeEarlierX(FakeX):
                 .replace(">隐藏回复<", ">Hide reply<").replace('<form onsubmit="return false">', '<div role="dialog"><form onsubmit="return false">').replace("</form>", "</form></div>"))
 
 
-class Site(unittest.IsolatedAsyncioTestCase):
+class Site(ChromeCase):
     site = FakeX
 
     async def asyncSetUp(self):
-        from patchright.async_api import async_playwright
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)

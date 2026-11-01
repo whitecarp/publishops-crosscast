@@ -2,10 +2,10 @@ import unittest
 from unittest.mock import AsyncMock, patch
 from video_publisher.comment_actions_browser import execute
 from video_publisher.core import VpubError
+from shared_chrome import ChromeCase, async_playwright
 
-class CommentDOMTests(unittest.IsolatedAsyncioTestCase):
+class CommentDOMTests(ChromeCase):
     async def asyncSetUp(self):
-        from patchright.async_api import async_playwright
         self.pw=await async_playwright().start()
         self.browser=await self.pw.chromium.launch(channel='chrome',headless=True)
         self.page=await self.browser.new_page();await self.page.route('**/*',lambda route:route.abort())

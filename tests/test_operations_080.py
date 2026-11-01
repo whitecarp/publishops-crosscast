@@ -7,6 +7,7 @@ from video_publisher.direct_messages_browser import new_outgoing, MESSAGE_ROWS
 from video_publisher.comment_actions_douyin import observed
 from video_publisher.core import VpubError, home
 from video_publisher import cli, operations
+from shared_chrome import ChromeCase, async_playwright
 
 
 class MessageTests(unittest.TestCase):
@@ -97,9 +98,8 @@ class DouyinStateTests(unittest.TestCase):
         self.assertIsNone(observed({'status_code':0,'comments':[c]},self.r,'owner')['liked'])
 
 
-class MessageDOMTests(unittest.IsolatedAsyncioTestCase):
+class MessageDOMTests(ChromeCase):
     async def test_sender_is_scoped_to_one_message_not_adjacent_message(self):
-        from patchright.async_api import async_playwright
         async with async_playwright() as pw:
             browser=await pw.chromium.launch(channel='chrome',headless=True)
             try:
@@ -155,9 +155,8 @@ class PinAndRecipientTests(unittest.TestCase):
         with self.assertRaises(SystemExit):parser.parse_args(['dm','unlock','instagram'])
 
 
-class AdditionalMessageDOMTests(unittest.IsolatedAsyncioTestCase):
+class AdditionalMessageDOMTests(ChromeCase):
     async def test_platform_ownership_and_sent_status(self):
-        from patchright.async_api import async_playwright
         from video_publisher.direct_messages_browser import INBOX_SUMMARIES
         from video_publisher.direct_messages_x import MESSAGE_ROWS as X_ROWS
         from video_publisher.direct_messages_douyin import MESSAGE_ROWS as DY_ROWS

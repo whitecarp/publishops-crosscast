@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 from video_publisher import comment_actions
 from video_publisher.comment_actions_browser import execute
 from video_publisher.core import VpubError, atomic_json, digest, home, read_json
+from shared_chrome import ChromeCase, async_playwright
 
 OWNER = "owner"
 WORK = "AbC_12"
@@ -35,9 +36,8 @@ for (const menu of document.querySelectorAll('.options')) menu.onclick = () => {
 </script>"""
 
 
-class Base(unittest.IsolatedAsyncioTestCase):
+class Base(ChromeCase):
     async def asyncSetUp(self):
-        from patchright.async_api import async_playwright
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         env = patch.dict(os.environ, {"VPUB_HOME": temp.name})

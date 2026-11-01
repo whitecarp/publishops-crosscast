@@ -6,11 +6,11 @@ from unittest.mock import patch
 
 from video_publisher import work_discovery_browser as discovery
 from video_publisher.core import VpubError
+from shared_chrome import ChromeCase, async_playwright
 
 
-class WaitTests(unittest.IsolatedAsyncioTestCase):
+class WaitTests(ChromeCase):
     async def asyncSetUp(self):
-        from patchright.async_api import async_playwright
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         env = patch.dict(os.environ, {"VPUB_HOME": temp.name})
