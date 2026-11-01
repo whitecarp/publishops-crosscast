@@ -6,12 +6,22 @@ from . import browser_runtime as rt
 from .core import VpubError, now
 from .collections import before_submit
 
+# X's page asks for this many folders at once.
+FOLDER_PAGE=100
+LIST_WAIT=25
+
+
+def folder_section(data):
+    viewer=data['data'].get('viewer_v2') or data['data']['viewer']
+    return viewer['user_results']['result']['bookmark_collections_slice']
+
 
 def folder_response(data):
     """Fail closed if X changes its official page response shape."""
-    try:section=data['data']['viewer']['user_results']['result']['bookmark_collections_slice']
-    except (KeyError,TypeError):raise VpubError('layout_changed','Bookmark folder response schema changed.')
-    if not isinstance(section,dict) or not isinstance(section.get('items'),list) or not isinstance(section.get('slice_info'),dict):
+    try:section=folder_section(data)
+    except (KeyError,TypeError,AttributeError):raise VpubError('layout_changed','Bookmark folder response schema changed.')
+    info=section.get('slice_info') if isinstance(section,dict) else None
+    if not isinstance(section,dict) or not isinstance(section.get('items'),list) or not isinstance(info,(dict,type(None))):
         raise VpubError('layout_changed','Bookmark folder page is incomplete.')
     rows=[]
     for item in section['items']:
@@ -19,7 +29,22 @@ def folder_response(data):
             raise VpubError('layout_changed','Unexpected bookmark folder identity.')
         rows.append({'id':str(item['id']),'title':item['name']})
     if len({x['id'] for x in rows})!=len(rows):raise VpubError('layout_changed','Duplicate folder IDs in response.')
-    return rows,section['slice_info']=={}
+    return rows,(info=={} if info is not None else len(rows)<FOLDER_PAGE)
+
+
+def folders_in(data):
+    """The page makes many requests; only the one carrying the folder list counts."""
+    try:folder_section(data)
+    except (KeyError,TypeError,AttributeError):return None
+    return folder_response(data)
+
+
+def folder_write_done(data):
+    """X answers a folder change with one word and treats anything else as an error."""
+    done=(data.get('data') or {}).get('done') if isinstance(data,dict) else None
+    if done is None:return None
+    if done!='Done':raise VpubError('platform_rejected','X did not accept the folder change.')
+    return True
 
 
 def created_id(platform,data,title):
@@ -48,12 +73,16 @@ def instagram_response(data):
     return rows,not section['page_info']['has_next_page']
 
 
+def official_response(response,platform):
+    parsed=urlsplit(response.url)
+    if platform=='x':return (parsed.hostname=='x.com' or (parsed.hostname or '').endswith('.x.com')) and '/graphql' in parsed.path
+    return parsed.hostname=='www.instagram.com' and parsed.path=='/api/graphql' and response.request.method=='POST'
+
+
 def response_capture(page,platform,extract):
     future=asyncio.get_running_loop().create_future()
     async def capture(response):
-        parsed=urlsplit(response.url)
-        match=(platform=='x' and parsed.hostname=='x.com' and parsed.path.endswith('/createBookmarkFolder')) or (platform=='instagram' and parsed.hostname=='www.instagram.com' and parsed.path=='/api/graphql')
-        if not match or response.request.method!='POST' or response.status!=200:return
+        if response.status!=200 or not official_response(response,platform):return
         try:
             value=extract(await response.json())
             if value is not None and not future.done():future.set_result(value)
@@ -69,20 +98,19 @@ async def click(locator):
     await (await rt.unique_visible(locator,'collection control')).click()
 
 
+async def fill_until_enabled(box,button,text):
+    """A page still starting up can drop typing, and its button stays disabled until the text registers."""
+    for _ in range(4):
+        await box.fill(text)
+        await box.page.wait_for_timeout(700)
+        if await button.is_enabled():return
+    raise VpubError('layout_changed','X did not accept the folder name; nothing changed.')
+
+
 async def root(page, platform, owner):
     if platform=='x':
+        # Its folder windows open from the address alone, so the menu holding "Clear all Bookmarks" is never opened.
         await page.goto('https://x.com/i/history',wait_until='domcontentloaded')
-        trigger=page.get_by_role('tab',name='Bookmarks',exact=True)
-        marker=page.get_by_role('button',name='Create Folder',exact=True)
-        # The tab may render before its click handler is hydrated. Only retry
-        # opening this read-only menu, never a create/delete confirmation.
-        for _ in range(3):
-            if await rt.visible(marker):break
-            await click(trigger)
-            try:await marker.wait_for(state='visible',timeout=2500);break
-            except Exception:
-                await rt.risk_check(page)
-        if not await rt.visible(marker):raise VpubError('collection_menu_unavailable','X bookmark folder controls did not become ready.')
     elif platform=='instagram':
         if not re.fullmatch(r'[A-Za-z0-9_.]+',owner):raise VpubError('invalid_identity','Invalid Instagram handle.')
         await page.goto(f'https://www.instagram.com/{owner}/saved/',wait_until='domcontentloaded')
@@ -100,10 +128,12 @@ async def read_list(page, platform, owner):
         return await listing(page,owner)
     if platform=='x':
         # Read only the response generated by the official page. Never replay a private API request.
-        async with page.expect_response(lambda r:urlsplit(r.url).hostname=='x.com' and urlsplit(r.url).path.endswith('/BookmarkFoldersSlice') and r.status==200,timeout=25000) as result:
+        future,capture=response_capture(page,platform,folders_in)
+        try:
             await root(page,platform,owner)
-        data=await (await result.value).json()
-        rows,complete=folder_response(data)
+            try:rows,complete=await asyncio.wait_for(future,LIST_WAIT)
+            except asyncio.TimeoutError:raise VpubError('collection_list_unavailable','X did not show a bookmark folder list.','X only offers bookmark folders with Premium. Check the account before retrying; nothing changed.') from None
+        finally:page.remove_listener('response',capture)
         return {'platform':platform,'identity':owner,'items':rows,'complete':complete,
                 'scope':'private_saved_collections','coverage':'official_page_response','platform_writes':0,'observed_at':now()}
     if platform=='instagram':
@@ -139,6 +169,45 @@ async def read_list(page, platform, owner):
             'coverage':'visible_page','observed_at':now(),'platform_writes':0}
 
 
+async def x_folder_row(page,owner,cid,work):
+    """X's own folder window for one post. It lists every folder and marks the ones holding this post."""
+    folders=await read_list(page,'x',owner)
+    found=[x for x in folders['items'] if x['id']==cid]
+    if len(found)!=1:raise VpubError('collection_not_visible','Exact folder ID is not visible; no changes made.')
+    rows=page.get_by_role('dialog').locator('button[aria-pressed]')
+    await page.goto(f'https://x.com/i/bookmarks/add/{work}',wait_until='domcontentloaded')
+    try:await rows.first.wait_for(state='visible',timeout=25000)
+    except Exception:
+        await rt.risk_check(page)
+        if urlsplit(page.url).path.startswith('/i/premium'):raise VpubError('premium_required','X only offers bookmark folders with Premium; nothing changed.') from None
+        raise VpubError('layout_changed','X did not show its folder window; nothing changed.') from None
+    await rt.risk_check(page)
+    if urlsplit(page.url).path!=f'/i/bookmarks/add/{work}':raise VpubError('wrong_work','X left the requested post; nothing changed.')
+    await page.wait_for_timeout(900)
+    return await rt.unique_visible(rows.filter(has_text=re.compile(r'^\s*'+re.escape(found[0]['title'])+r'\s*$')),'folder row')
+
+
+async def x_member(page,owner,payload):
+    op,cid,work=payload['operation'],payload['collection_id'],payload['work_id']
+    row=await x_folder_row(page,owner,cid,work)
+    inside=await row.get_attribute('aria-pressed')=='true'
+    if op=='items':
+        return {'identity':owner,'collection_id':cid,'items':[{'id':work}] if inside else [],'complete':True,
+                'scope':'one_post','coverage':'official_folder_window','platform_writes':0}
+    if payload['before_members']!=([work] if inside else []):
+        raise VpubError('collection_changed','This post moved since the last check; nothing changed.')
+    await row.click(trial=True,timeout=10000)
+    future,capture=response_capture(page,'x',folder_write_done)
+    before_submit(payload,owner)
+    try:
+        # The window closes as soon as the row is clicked, so X's own answer is what shows the request finished.
+        await row.click(timeout=15000)
+        await asyncio.wait_for(future,20)
+    finally:page.remove_listener('response',capture)
+    await rt.risk_check(page)
+    return {'identity':owner,'submitted':True,'collection_id':cid}
+
+
 async def execute(page,platform,owner,payload):
     op=payload['operation']
     if platform=='douyin':
@@ -148,16 +217,18 @@ async def execute(page,platform,owner,payload):
         from .collections_instagram import execute as instagram_execute
         return await instagram_execute(page,owner,payload)
     if op=='list':return await read_list(page,platform,owner)
+    if platform=='x' and (op in {'add','remove'} or (op=='items' and payload.get('work_id'))):
+        return await x_member(page,owner,payload)
     if op in {'items','rename','delete'} and platform=='x':
         current=await read_list(page,platform,owner)
         matches=[x for x in current['items'] if x['id']==payload['collection_id']]
         if len(matches)!=1:raise VpubError('collection_not_visible','Exact folder ID is not visible; no changes made.')
-        await page.goto('https://x.com/i/history/bookmarks/'+payload['collection_id'],wait_until='domcontentloaded')
-        tab=page.get_by_role('tab',name=matches[0]['title'],exact=True)
-        await tab.wait_for(state='visible');await rt.risk_check(page)
-        if urlsplit(page.url).path!='/i/history/bookmarks/'+payload['collection_id']:
-            raise VpubError('wrong_collection','X redirected away from the requested folder.')
+        folder='https://x.com/i/history/bookmarks/'+payload['collection_id']
         if op=='items':
+            await page.goto(folder,wait_until='domcontentloaded')
+            await page.get_by_role('tab',name=matches[0]['title'],exact=True).wait_for(state='visible');await rt.risk_check(page)
+            if urlsplit(page.url).path!='/i/history/bookmarks/'+payload['collection_id']:
+                raise VpubError('wrong_collection','X redirected away from the requested folder.')
             await page.wait_for_timeout(1500)
             links=await page.locator('article a[href]').evaluate_all('es=>es.map(e=>e.getAttribute("href"))')
             ids=sorted({m[1] for href in links if (m:=re.fullmatch(r'/[^/]+/status/(\d+)',href))})
@@ -165,15 +236,19 @@ async def execute(page,platform,owner,payload):
             if 'Something went wrong' in text:raise VpubError('read_failed','X did not load the bookmark folder.')
             return {'identity':owner,'collection_id':payload['collection_id'],'items':[{'id':i} for i in ids],
                     'complete':not ids and 'Save posts for later' in text,'coverage':'visible_page','platform_writes':0}
-        await click(tab)
-        await click(page.get_by_role('menu').get_by_role('button',name='More',exact=True))
-        await click(page.get_by_role('menuitem',name='Edit' if op=='rename' else 'Delete',exact=True))
+        await page.goto(folder+'?edit=true',wait_until='domcontentloaded')
+        dialog=page.get_by_role('dialog');box=dialog.get_by_role('textbox')
+        await box.wait_for(state='visible',timeout=20000);await rt.risk_check(page)
+        if urlsplit(page.url).path!='/i/history/bookmarks/'+payload['collection_id']:
+            raise VpubError('wrong_collection','X redirected away from the requested folder.')
+        await page.wait_for_timeout(900)
         if op=='rename':
-            await page.locator('input[name="Folder Name"]').fill(payload['title'])
-            final=page.get_by_role('button',name='Save',exact=True)
+            final=dialog.get_by_role('button',name='Save',exact=True)
+            await fill_until_enabled(box,final,payload['title'])
         else:
+            await click(dialog.get_by_role('button',name='Delete Folder',exact=True))
             await page.get_by_text('Delete Folder?',exact=True).wait_for(state='visible')
-            final=page.locator('[data-testid="confirmationSheetConfirm"]').filter(has_text=re.compile('^Delete$'))
+            final=page.get_by_role('button',name='Delete',exact=True)
         final=await rt.unique_visible(final,'folder confirmation')
         before_submit(payload,owner);await final.click()
         await final.wait_for(state='hidden',timeout=20000)
@@ -203,13 +278,15 @@ async def execute(page,platform,owner,payload):
         await final.wait_for(state='hidden',timeout=20000)
         return {'identity':owner,'submitted':True}
     if op=='create':
-        await root(page,platform,owner)
         if platform=='x':
-            await click(page.get_by_role('button',name='Create Folder',exact=True))
-            dialog=page.get_by_role('dialog')
-            await dialog.get_by_role('textbox').fill(payload['title'])
+            await page.goto('https://x.com/i/history?create_folder=true',wait_until='domcontentloaded')
+            dialog=page.get_by_role('dialog');box=dialog.get_by_role('textbox')
+            await box.wait_for(state='visible',timeout=20000);await rt.risk_check(page)
+            await page.wait_for_timeout(900)
             final=dialog.get_by_role('button',name='Create',exact=True)
+            await fill_until_enabled(box,final,payload['title'])
         elif platform=='instagram':
+            await root(page,platform,owner)
             await click(page.get_by_role('button',name='+ New Collection',exact=True))
             await page.get_by_placeholder('Collection name',exact=True).fill(payload['title'])
             await click(page.get_by_role('button',name='Next',exact=True))

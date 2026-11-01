@@ -54,7 +54,8 @@ async def risk_check(page):
 async def identity(page, platform):
     """Read the signed-in account from its own navigation, not arbitrary links."""
     if platform == "x":
-        link = await visible(page.locator('a[data-testid="AppTabBar_Profile_Link"]'))
+        # X's rebuilt site dropped the test label; its main menu still links to the account's own page.
+        link = await visible(page.locator('a[data-testid="AppTabBar_Profile_Link"]')) or await visible(page.locator("nav").get_by_role("link", name=re.compile(r"^(Profile|个人资料|個人資料)$", re.I)))
         if link:
             path = urlsplit(await link.get_attribute("href") or "").path.strip("/")
             if re.fullmatch(r"[A-Za-z0-9_]{1,15}", path):

@@ -73,13 +73,14 @@ Codex chooses its progress wording. The skill has its own name, but an exact sen
 
 ## Private collections and platform differences
 
-`vpub collection` manages exact-ID collections with durable receipts. Instagram Saved and X bookmark folders are private; Douyin work collections group published works and may enter platform review. YouTube uses `playlist`; Bilibili uses upstream bili-cli.
+`vpub collection` manages exact-ID collections with durable receipts. Instagram Saved and X bookmark folders are private; Douyin and Bilibili work collections group published works and may enter platform review. YouTube uses `playlist`.
 
 | Platform | Available | Limits |
 |---|---|---|
 | Instagram | List, items, create, rename, add, remove, delete | Add requires the work to already appear in the loaded Saved picker. Incomplete member reads block changes. |
 | Douyin | List, items, create with cover, rename, add, remove, delete | Account eligibility and platform review still apply. Ineligible works are rejected. A collection is distinct from a private favorite folder. |
-| X | List, create, rename, delete; bounded items | Named-folder membership is still unavailable. An error page is never treated as an empty folder. |
+| X | List, create, rename, delete, add, remove; bounded items | Folders need X Premium. Add and remove use X's own folder window, which says whether that one post is in the folder. An error page is never treated as an empty folder. Rebuilt for X's new site from its public page code; not yet tried on a real account. |
+| Bilibili | List, items, create with cover, rename, add, remove, delete | Runs through the included bili-cli, and Bilibili reviews collections, so a change can take time to show; `verify` reads it again. Rename uses bili-cli's request helpers in a separate process and has not been tried on a real account. |
 
 ```sh
 vpub collection list instagram
@@ -91,10 +92,14 @@ vpub collection create douyin --title "Series" --cover collection.jpg --descript
 vpub collection add douyin COLLECTION_ID WORK_ID --request-id add-02
 vpub collection remove douyin COLLECTION_ID WORK_ID --request-id remove-02
 vpub collection delete douyin COLLECTION_ID --request-id delete-01
+vpub collection add x FOLDER_ID POST_ID --request-id add-03
+vpub collection remove x FOLDER_ID POST_ID --request-id remove-03
+vpub collection rename bilibili COLLECTION_ID --title "Series" --request-id rename-02
+vpub collection add bilibili COLLECTION_ID BV_ID --request-id add-04
 vpub collection verify RECEIPT_KEY
 ```
 
-Use IDs returned by CLI reads, not names or guessed URLs. Each new intent gets a new request ID; repeating it returns the existing receipt without resubmitting. Verification reads independently. Member changes require a complete baseline and must preserve every other member. Use read-all for supported collection pagination; member moves remain pending. Bounded reads do not prove absence.
+Use IDs returned by CLI reads, not names or guessed URLs. Each new intent gets a new request ID; repeating it returns the existing receipt without resubmitting. Verification reads independently. Member changes require a complete baseline and must preserve every other member; X's folder window answers for the one post instead, so it needs no whole-folder read. Use read-all for supported collection pagination; member moves remain pending. Bounded reads do not prove absence.
 
 Deleting a collection does not delete its videos or clear Saved/All Bookmarks. Instagram renaming and membership use the official page's own collection client because its edit dialog stalled in testing; the CLI does not export session cookies or hardcode/replay private request templates. Douyin uses official controls and observes their responses. These are background browser operations, not standalone public APIs. [Live results](VALIDATION_EN.md).
 
@@ -475,6 +480,14 @@ vpub covers prepare localized.json --source production/cover.jpg --portrait prod
 
 Landscape roles prefer platform-specific artwork, then the production cover, using contain fitting. Douyin and Instagram portrait roles require one dedicated composition: explicit `--portrait` first, otherwise the manifest's Douyin/Instagram portrait. Both outputs preserve identical image bytes and SHA-256. Landscape padding is no longer a portrait fallback. Missing artwork prompts preparation rather than replacing originals.
 
+No portrait artwork and no image generator? `vpub covers portrait` builds one with no AI, from parts of an image that the agent picks by looking at it:
+
+```sh
+vpub covers portrait production/cover.jpg --box 800,200,800,300 --box 0,0,800,900 --out production/portrait.jpg
+```
+
+Each `--box` is `x,y,width,height` in the source's pixels, top to bottom, up to three. The parts are enlarged and stacked in the central 3:4 area of a 1080×1920 cover, so Instagram's full frame and Douyin's crop both keep them, over a blurred copy of the source. It refuses a layout that would only fill a band across the cover (`would_letterbox`), never overwrites a file, and lists in `soft_parts` any part enlarged more than 2.5 times. Look at the result before passing it to `covers prepare --portrait`.
+
 | Platform | Working canvas and application |
 |---|---|
 | Bilibili | 1600×1000; upstream CLI or native browser |
@@ -512,7 +525,7 @@ vpub browser cover RECEIPT_KEY --file landscape.jpg --portrait portrait.jpg --id
 
 ## Playlists, categories and chapters
 
-YouTube accepts `playlist_titles` (the free background route or native, ticked by exact title) or `playlist_ids` (paid API). The API checks membership before inserting and never blindly retries uncertain writes. The required management permission is included in first-time OAuth. Studio creation of a private list and selection for the existing work were verified; the API route remains mock-tested. Bilibili collections remain upstream functionality rather than a unified collection-management command.
+YouTube accepts `playlist_titles` (the free background route or native, ticked by exact title) or `playlist_ids` (paid API). The API checks membership before inserting and never blindly retries uncertain writes. The required management permission is included in first-time OAuth. Studio creation of a private list and selection for the existing work were verified; the API route remains mock-tested. Bilibili collections use `vpub collection`.
 
 New YouTube plans require an explicit `category_id`, selected from content and official choices rather than defaulting to People & Blogs. The host model can supply it via `metadata request/apply`; explicit selections are preserved.
 

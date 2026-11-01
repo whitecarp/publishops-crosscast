@@ -88,7 +88,7 @@ Simplified Chinese for Bilibili and Douyin, English for YouTube, Instagram and X
 
 ### 🖼️ Covers fitted to each platform's canvas, automatically
 
-A separate cover is saved for each platform's canvas with the whole image kept: no cropping, stretching or overwriting the original. Bilibili gets 16:10, YouTube 16:9, and X a landscape cover set through Media Studio. For Douyin and Instagram, the AI assistant (such as Codex) generates one dedicated portrait image that both share, instead of padding a landscape image with black bars. The video itself is never converted to portrait and keeps its original ratio. The Instagram cover is changed on your phone.
+A separate cover is saved for each platform's canvas with the whole image kept: no cropping, stretching or overwriting the original. Bilibili gets 16:10, YouTube 16:9, and X a landscape cover set through Media Studio. For Douyin and Instagram, the AI assistant (such as Codex) generates one dedicated portrait image that both share, instead of padding a landscape image with black bars. With no image generator, `vpub covers portrait` lays chosen parts of the cover into that portrait with no AI. The video itself is never converted to portrait and keeps its original ratio. The Instagram cover is changed on your phone.
 
 ### 🧾 A plan before anything moves
 
@@ -140,7 +140,7 @@ See the [validation record](docs/VALIDATION_EN.md) for details. Bilibili uploads
 **Know before you post**
 
 - **YouTube**: the free route can also read your works, stats and comments, reply to comments, like videos, and change titles, descriptions and thumbnails in the background; replies, likes and edits have not been tried on a real account yet. Playlist management, saving to playlists, comment likes and moderation need the paid API add-on for now, as do the official API routes. The free background route adds the video to playlists by their titles and can schedule it (in the time zone Studio shows, otherwise this computer's); both are read back before the final Save, and neither has been tried on a real account yet. While the project is in testing mode, add the signing-in account under "Test users" first. Under Google's rules, videos uploaded by an API project created after July 28, 2020 that has not passed Google's audit are locked to private.
-- **X**: Media Studio only. The account must be subscribed and able to open Media Studio; accounts without it are limited to 140-second, 512 MB videos, which this tool does not support.
+- **X**: Media Studio only. The account must be subscribed and able to open Media Studio; accounts without it are limited to 140-second, 512 MB videos, which this tool does not support. X rebuilt its website, and CrossCast's X route was made for the earlier one. If your account gets the new site, X commands stop with an error and send nothing until the route is updated. Only bookmark folders and account recognition have been rebuilt so far, from X's public page code, and neither has been tried on a real account.
 - **Instagram**: the video keeps its original ratio, and the cover must be changed on your phone: open the work's "Edit cover → Add from camera roll", pick the portrait image shared with Douyin, then check how the profile grid crops it.
 - **Douyin**: long-term sign-in stability is still being validated, and an interrupted web upload cannot resume, so check existing drafts first.
 - **Not available yet**: TikTok (suspended), YouTube cards and clickable end screens, automatic or bulk messages and likes, and full history export.

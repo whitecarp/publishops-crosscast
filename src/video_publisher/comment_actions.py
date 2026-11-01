@@ -69,9 +69,11 @@ def mutate(platform, work, comment_id, kind, desired=True, dry_run=False, test_i
     with publication_lock():
         index = home() / 'operations/comment-targets' / (digest([platform, request['identity'], work, comment_id]) + '.json')
         if index.exists():
-            prior = read_json(home() / 'operations/comment-actions' / (read_json(index)['key'] + '.json'))
+            prior_path = home() / 'operations/comment-actions' / (read_json(index)['key'] + '.json')
+            prior = read_json(prior_path)
             if prior['state'] in PENDING:
                 return {**prior, 'platform_writes': 0, 'reused': True, 'hint': 'Use comments verify-action KEY; no automatic resend or reversal.'}
+            if prior['state'] == 'COMMENT_READY': safety.reclaim(prior_path, prior)
         before = dispatch(request)
         if matches(request, before): return {'state': 'NO_CHANGE', 'platform_writes': 0, 'observed': before}
         if before.get('deleted'): raise VpubError('comment_missing', 'The comment is no longer present.')
@@ -88,7 +90,7 @@ def mutate(platform, work, comment_id, kind, desired=True, dry_run=False, test_i
         ticket = safety.admit('like', platform, request['identity']) if counted else None
         key = uuid.uuid4().hex; path = home() / 'operations/comment-actions' / (key + '.json')
         saved = {'key': key, 'state': 'COMMENT_READY', 'request': request, 'before': before, 'at': now(),
-                 'test': bool(test_id), 'test_id': test_id, 'platform_writes': 0}
+                 'test': bool(test_id), 'test_id': test_id, 'platform_writes': 0, 'safety_ticket': ticket}
         atomic_json(path, saved); atomic_json(index, {'key': key})
         try:
             result = dispatch(request, 'set', path)

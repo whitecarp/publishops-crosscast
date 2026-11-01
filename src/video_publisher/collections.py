@@ -5,12 +5,13 @@ from . import adapters
 from .core import VpubError, atomic_json, digest, home, now, publication_lock, read_json, stop_check
 from .direct_messages import identity
 
-PLATFORMS = ('instagram', 'x', 'douyin')
+PLATFORMS = ('instagram', 'x', 'douyin', 'bilibili')
+NEEDS_COVER = {'douyin', 'bilibili'}
 
 
 def validate(platform, collection=None):
     if platform not in PLATFORMS:
-        raise VpubError('unsupported_platform', 'Use instagram, x or douyin; YouTube uses playlist commands.')
+        raise VpubError('unsupported_platform', 'Use instagram, x, douyin or bilibili; YouTube uses playlist commands.')
     if collection is not None and (not isinstance(collection,str) or not re.fullmatch(r'[0-9]{1,40}', collection)):
         raise VpubError('invalid_collection', 'Use the exact numeric ID returned by collection list.')
     stop_check(platform)
@@ -23,7 +24,15 @@ def receipt_path(key):
 
 
 def call(platform, operation, owner, **kw):
+    if platform == 'bilibili':
+        from .collections_bilibili import call as bilibili
+        return bilibili(operation, owner, **kw)
     return adapters.browser_call(platform, 'collections', 'default', operation=operation, expected_identity=owner, **kw)
+
+
+def members(platform, owner, collection, work):
+    """X's folder window answers for one post, so X never has to read a whole folder."""
+    return call(platform, 'items', owner, collection_id=collection, **({'work_id': work} if platform == 'x' else {}))
 
 
 def listing(platform, collection=None):
@@ -58,7 +67,7 @@ def verify(key):
         if identity(r['platform'])!=r['identity']:raise VpubError('wrong_account', 'Reconnect the original account.')
         if r['state'] in {'READY','FAILED_BEFORE_SUBMIT'}:
             return {**r, 'platform_writes':0, 'hint':'No submit was recorded. Verify the platform before creating a new request.'}
-        try:r=checked_result(r,call(r['platform'],'items',r['identity'],collection_id=r['collection_id']) if r['action'] in {'add','remove'} else call(r['platform'],'list',r['identity']))
+        try:r=checked_result(r,members(r['platform'],r['identity'],r['collection_id'],r['work_id']) if r['action'] in {'add','remove'} else call(r['platform'],'list',r['identity']))
         except Exception as exc:r.update(state='UNVERIFIED',error=exc.code if isinstance(exc,VpubError) else type(exc).__name__)
         atomic_json(path,r)
         return {**r,'platform_writes':0}
@@ -71,26 +80,26 @@ def change(platform, action, collection=None, title=None, request_id=None, cover
     if action=='create' and collection is not None:raise VpubError('invalid_collection','Create does not take an existing ID.')
     if not request_id or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',request_id):
         raise VpubError('request_id_required','Use --request-id once per intended change; reuse after interruption.')
-    if action in {'create','rename'} and (not isinstance(title,str) or not title.strip() or title!=title.strip() or len(title)>({'x':25,'douyin':20,'instagram':100}[platform]) or any(ord(c)<32 for c in title)):
-        raise VpubError('invalid_title','Use a nonempty title without surrounding whitespace/control characters; maximum X 25, Douyin 20, Instagram 100.')
+    if action in {'create','rename'} and (not isinstance(title,str) or not title.strip() or title!=title.strip() or len(title)>({'x':25,'douyin':20,'instagram':100,'bilibili':80}[platform]) or any(ord(c)<32 for c in title)):
+        raise VpubError('invalid_title','Use a nonempty title without surrounding whitespace/control characters; maximum X 25, Douyin 20, Instagram 100, Bilibili 80.')
     intent=dict(action=action,collection=collection,title=title)
     extra={}
-    if platform=='douyin' and action=='create':
+    if platform in NEEDS_COVER and action=='create':
         from .core import file_sha
         path=Path(cover or '')
         if not cover or not path.is_file() or path.suffix.lower() not in {'.jpg','.jpeg','.png'} or path.stat().st_size>5*1024*1024:
-            raise VpubError('cover_required','Douyin requires --cover, a local JPG/PNG up to 5 MB. A square production cover is recommended.')
+            raise VpubError('cover_required','Douyin and Bilibili require --cover, a local JPG/PNG up to 5 MB. A square production cover is recommended.')
         from PIL import Image
         try:
             with Image.open(path) as image:
                 if image.format not in {'JPEG','PNG'}:raise ValueError('image format')
                 image.verify()
         except Exception:raise VpubError('invalid_cover','The collection cover is not a readable JPEG or PNG.')
-        if description is not None and (not isinstance(description,str) or len(description)>200):raise VpubError('invalid_description','Douyin description maximum is 200 characters.')
+        if description is not None and (not isinstance(description,str) or len(description)>200):raise VpubError('invalid_description','The description maximum is 200 characters.')
         extra={'cover':str(path.resolve()),'description':description or ''}
         intent.update(cover_sha256=file_sha(path),description=description or '')
     elif cover is not None or description is not None:
-        raise VpubError('invalid_options','Cover and description are only accepted when creating a Douyin collection.')
+        raise VpubError('invalid_options','Cover and description are only accepted when creating a Douyin or Bilibili collection.')
     with publication_lock():
         owner=identity(platform);key=digest([platform,owner,request_id]);path=receipt_path(key)
         if path.exists():
@@ -134,7 +143,7 @@ def before_submit(payload, owner):
     if expected!=actual or r['state']!='READY':raise VpubError('receipt_conflict','Receipt does not permit this action.')
     if r['action'] in {'add','remove'} and (payload.get('work_id')!=r.get('work_id') or payload.get('before_members')!=r.get('before_members')):
         raise VpubError('receipt_conflict','Wrong collection member or baseline.')
-    if r['platform']=='douyin' and r['action']=='create':
+    if r['platform'] in NEEDS_COVER and r['action']=='create':
         from .core import file_sha
         if payload.get('description')!=r['intent']['description'] or file_sha(Path(payload.get('cover','')))!=r['intent']['cover_sha256']:
             raise VpubError('receipt_conflict','The collection cover or description changed after preparation.')
@@ -146,7 +155,6 @@ def membership(platform, action, collection, work, request_id):
     from .operations import work_id
     validate(platform,collection);work_id(platform,work)
     if action not in {'add','remove'}:raise VpubError('invalid_action','Use add or remove.')
-    if platform not in {'douyin','instagram'}:raise VpubError('unverified_feature','Named-folder membership is not yet accepted on this platform.')
     if not request_id or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',request_id):raise VpubError('request_id_required','Use a stable --request-id.')
     intent={'action':action,'collection':collection,'work':work}
     with publication_lock():
@@ -155,7 +163,7 @@ def membership(platform, action, collection, work, request_id):
             r=read_json(path)
             if r['intent']!=intent:raise VpubError('request_conflict','Request ID already describes another change.')
             return {**r,'reused':True,'platform_writes':0}
-        before=call(platform,'items',owner,collection_id=collection)
+        before=members(platform,owner,collection,work)
         if before.get('identity')!=owner or before.get('collection_id')!=collection:raise VpubError('wrong_collection','Unexpected collection identity.')
         if before.get('complete') is not True:raise VpubError('read_incomplete','Complete membership is required before editing; no write attempted.')
         ids=[x['id'] for x in before['items']]
@@ -166,7 +174,7 @@ def membership(platform, action, collection, work, request_id):
             if (work in ids)==(action=='add'):r=checked_result(r,before)
             else:
                 call(platform,action,owner,collection_id=collection,work_id=work,receipt_key=key,before_members=ids)
-                r=read_json(path);r=checked_result(r,call(platform,'items',owner,collection_id=collection))
+                r=read_json(path);r=checked_result(r,members(platform,owner,collection,work))
         except Exception as exc:
             r=read_json(path);r.update(state='UNVERIFIED' if r.get('platform_writes') else 'FAILED_BEFORE_SUBMIT',error=exc.code if isinstance(exc,VpubError) else type(exc).__name__)
         atomic_json(path,r);return r

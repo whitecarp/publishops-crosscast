@@ -61,6 +61,55 @@ class MembershipTests(unittest.TestCase):
         r=c.membership('douyin','add','123','23456789','a');self.member_calls.clear()
         self.assertEqual(c.verify(r['key'])['state'],'CONFIRMED');self.assertFalse(self.member_calls)
 
+    def x_window(self,p,op,owner,**kw):
+        """X's folder window answers for the one post it was asked about."""
+        self.assertEqual('x',p)
+        if op=='items':
+            self.asked.append(kw['work_id'])
+            return {'identity':owner,'collection_id':kw['collection_id'],'items':[{'id':kw['work_id']}] if kw['work_id'] in self.saved else [],'complete':True}
+        c.before_submit(dict(platform=p,operation=op,**kw),owner);self.member_calls.append(op)
+        if self.applied:
+            self.saved.append(kw['work_id']) if op=='add' else self.saved.remove(kw['work_id'])
+        return {}
+
+    def use_x_window(self):
+        self.asked=[];self.applied=True;self.saved=['99999999'];self.mock.side_effect=self.x_window
+
+    def test_x_asks_about_the_one_post_and_keeps_the_rest_out_of_it(self):
+        self.use_x_window()
+        r=c.membership('x','add','123','1234567890','a')
+        self.assertEqual(r['state'],'CONFIRMED');self.assertEqual(['add'],self.member_calls)
+        self.assertEqual(['1234567890','1234567890'],self.asked);self.assertEqual([],r['before_members'])
+
+    def test_x_remove_is_confirmed_when_the_post_has_left(self):
+        self.use_x_window();self.saved.append('1234567890')
+        r=c.membership('x','remove','123','1234567890','r')
+        self.assertEqual(r['state'],'CONFIRMED');self.assertEqual(['remove'],self.member_calls)
+        self.assertEqual(['1234567890'],r['before_members'])
+
+    def test_x_post_already_there_sends_nothing(self):
+        self.use_x_window();self.saved.append('1234567890')
+        r=c.membership('x','add','123','1234567890','a')
+        self.assertEqual(r['platform_writes'],0);self.assertEqual([],self.member_calls)
+
+    def test_x_change_that_does_not_show_stays_unverified_and_is_never_sent_again(self):
+        self.use_x_window();self.applied=False
+        r=c.membership('x','add','123','1234567890','a')
+        self.assertEqual(r['state'],'UNVERIFIED')
+        self.assertTrue(c.membership('x','add','123','1234567890','a')['reused'])
+        self.assertEqual(c.verify(r['key'])['state'],'UNVERIFIED')
+        self.assertEqual(['add'],self.member_calls)
+
+    def test_x_verify_asks_about_the_same_post(self):
+        self.use_x_window()
+        r=c.membership('x','add','123','1234567890','a');self.asked.clear()
+        self.assertEqual(c.verify(r['key'])['state'],'CONFIRMED');self.assertEqual(['1234567890'],self.asked)
+
+    def test_x_post_id_must_be_exact(self):
+        self.use_x_window()
+        with self.assertRaises(VpubError):c.membership('x','add','123','https://x.com/a/status/1','a')
+        self.assertEqual([],self.asked)
+
 
 class CollectionSchemaTests(unittest.TestCase):
     def ig(self,edges,more=False):return {'data':{'fetch__MediaCollection':{'id':'123','media':{'edges':edges,'page_info':{'has_next_page':more}}}}}

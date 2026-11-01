@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from video_publisher import collections as c
-from video_publisher.collections_browser import folder_response, created_id, instagram_response
+from video_publisher.collections_browser import folder_response, folder_write_done, folders_in, created_id, instagram_response
 from video_publisher.core import VpubError, read_json
 
 
@@ -133,6 +133,27 @@ class CollectionTests(unittest.TestCase):
 
     def test_response_explicit_empty_page(self):
         self.assertEqual(folder_response(self.response([],{})),([],True))
+
+    def rebuilt(self,items):
+        return {'data':{'viewer_v2':{'user_results':{'result':{'__typename':'User','id':'u','bookmark_collections_slice':{'items':items}}}}}}
+
+    def test_rebuilt_site_response_is_read_and_a_full_page_is_not_complete(self):
+        self.assertEqual(folder_response(self.rebuilt([{'id':'123','name':'Test'}])),([{'id':'123','title':'Test'}],True))
+        rows=[{'id':str(1000+n),'name':str(n)} for n in range(100)]
+        self.assertFalse(folder_response(self.rebuilt(rows))[1])
+
+    def test_only_the_response_with_the_folder_list_counts(self):
+        self.assertIsNone(folders_in({'data':{'viewer_v2':{'user_results':{'result':{'id':'u'}}}}}))
+        self.assertIsNone(folders_in({'data':{'home':{}}}))
+        self.assertIsNone(folders_in({'data':None}))
+        self.assertEqual(folders_in(self.rebuilt([])),([],True))
+        with self.assertRaises(VpubError):folders_in(self.rebuilt([{'id':'../1','name':'Bad'}]))
+
+    def test_a_folder_change_is_done_only_when_x_says_so(self):
+        self.assertTrue(folder_write_done({'data':{'done':'Done'}}))
+        for other in ({'data':{'home':{}}},{'data':None},{},None):
+            self.assertIsNone(folder_write_done(other))
+        with self.assertRaises(VpubError):folder_write_done({'data':{'done':'Failed'}})
 
     def test_create_id_comes_from_specific_mutation_response(self):
         self.assertEqual(created_id('x',{'data':{'bookmark_collection_create':{'id':'123','name':'Test'}}},'Test'),'123')

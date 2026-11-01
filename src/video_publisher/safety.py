@@ -6,7 +6,7 @@ before anything is sent, so a crash or a restart cannot reset them. Viewer text 
 from datetime import date, datetime, timedelta, timezone
 import re
 
-from .core import VpubError, atomic_json, config, digest, home, now, read_json
+from .core import VpubError, atomic_json, config, digest, home, now, read_json, stop_check
 
 DEFAULTS = {"replies_per_day": 50, "messages_per_day": 20, "likes_per_day": 50, "per_person_per_day": 3, "repeat_days": 30}
 LOWEST = {"replies_per_day": 0, "messages_per_day": 0, "likes_per_day": 0, "per_person_per_day": 1, "repeat_days": 1}
@@ -175,6 +175,7 @@ def check_text(text, allow_contact):
 
 def admit(kind, platform, identity, text=None, person=None, incoming=None, name=None, allow_contact=False, person_approved=False, reserve=True):
     """Every send asks here first. Returns a ticket; nothing was counted if it raises or reserve is off."""
+    stop_check(platform)
     limits = settings()
     if text is not None:
         check_text(text, allow_contact)
@@ -233,6 +234,14 @@ def release(ticket):
         rows = data["people"].get(ticket["person"], [])
         data["people"][ticket["person"]] = [row for row in rows if row["at"] != ticket.get("at")]
     save_usage(data)
+
+
+def reclaim(path, saved):
+    """A saved attempt that never reached the platform gives its count back, once."""
+    ticket = saved.pop("safety_ticket", None)
+    if ticket:
+        release(ticket)
+        atomic_json(path, saved)
 
 
 def pushed_back(platform, code):

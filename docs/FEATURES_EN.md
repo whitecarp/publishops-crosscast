@@ -36,7 +36,7 @@ The current table and [latest validation](VALIDATION_EN.md) define scope; versio
 
 ## 0.16.0 — paid API add-on, included bili-cli, status and cleanup
 
-Official API routes for X, Instagram and YouTube move to a separate paid add-on; every other route stays free and MIT licensed. The operations report, complete reads and email reminders move to the add-on too. YouTube gets a free background browser route through Studio, with playlists by title and scheduling. bili-cli 1.2.1 ships inside this package with the `bili` command. New: `vpub status`, `vpub cleanup`, and Bilibili @ mentions and conversation previews in `vpub messages sync`. Removed: `inbox` (use `messages`), `--manage-playlists` and `--bilingual`. [Upgrade notes](OPERATIONS_EN.md#0160-what-changes-when-you-upgrade).
+Official API routes for X, Instagram and YouTube move to a separate paid add-on; every other route stays free and MIT licensed. The operations report, complete reads and email reminders move to the add-on too. YouTube gets a free background browser route through Studio, with playlists by title and scheduling. `vpub collection` now covers Bilibili collections, including rename, and adding and removing posts in X bookmark folders; `vpub covers portrait` builds a portrait cover with no AI. Safety limits protect every reply, message and like. bili-cli 1.2.1 ships inside this package with the `bili` command. New: `vpub status`, `vpub cleanup`, and Bilibili @ mentions and conversation previews in `vpub messages sync`. Removed: `inbox` (use `messages`), `--manage-playlists` and `--bilingual`. [Upgrade notes](OPERATIONS_EN.md#0160-what-changes-when-you-upgrade).
 
 ## 0.15.0 — recovery and complete reads
 
@@ -94,7 +94,7 @@ Five-platform work listing; Bilibili/YouTube pagination and reply-page reads; ac
 | Language | Bilibili/Douyin → Simplified Chinese; YouTube/Instagram/X → English; bilingual opt-in |
 | Covers | Production artwork → platform canvases; no cropping; immutable snapshots and read-back per variant |
 | Existing-work edits | Metadata/cover changes retain the original work ID; privacy reduction preserved after actual read-back |
-| Playlists | YouTube upload-form selection by title (free background route or native) and optional API membership operations; Bilibili collections remain upstream |
+| Playlists | YouTube upload-form selection by title (free background route or native) and optional API membership operations; Bilibili collections through `vpub collection` |
 | Email | Off by default; host Gmail/Outlook send-tool handoff, claims and durable results; no SMS |
 | Chapters | Native handoff; Douyin chapters submitted and mobile visibility user-confirmed |
 

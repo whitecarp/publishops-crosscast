@@ -67,14 +67,16 @@ def set_action(platform,work,kind,desired=True,collection=None,dry_run=False,tes
         if not isinstance(current,bool):raise VpubError('state_unavailable','The exact current state is unavailable; nothing changed.')
         index=home()/'engagement/targets'/(digest([platform,before['identity'],work,kind,selected])+'.json')
         if index.exists():
-            prior=read_json(home()/'engagement/receipts'/(read_json(index)['key']+'.json'))
+            prior_path=home()/'engagement/receipts'/(read_json(index)['key']+'.json')
+            prior=read_json(prior_path)
             if prior['state'] in PENDING:
                 if prior['desired']==desired and current is desired:
                     final=finish(prior,before)
-                    atomic_json(home()/'engagement/receipts'/(prior['key']+'.json'),final)
+                    atomic_json(prior_path,final)
                     operations.record('engagement',platform,work,final)
                     return {**final,'platform_writes':0,'reused':True}
                 return {**prior,'platform_writes':0,'reused':True,'hint':'Use engage verify KEY; unresolved attempts are never toggled or automatically resent.'}
+            if prior['state']=='ACTION_READY':safety.reclaim(prior_path,prior)
         if current is desired:return {'state':'NO_CHANGE','platform_writes':0,'platform':platform,'work_id':work,'kind':kind,'desired':desired,'observed':before}
         counted=desired and not test_id
         if dry_run:
@@ -83,7 +85,7 @@ def set_action(platform,work,kind,desired=True,collection=None,dry_run=False,tes
         ticket=safety.admit('like',platform,before['identity']) if counted else None
         key=uuid.uuid4().hex;path=home()/'engagement/receipts'/(key+'.json')
         saved={'key':key,'state':'ACTION_READY','platform':platform,'work_id':work,'identity':before['identity'],
-               'kind':kind,'desired':desired,'collection':selected,'before':before,'at':now(),'test':bool(test_id),'test_id':test_id}
+               'kind':kind,'desired':desired,'collection':selected,'before':before,'at':now(),'test':bool(test_id),'test_id':test_id,'safety_ticket':ticket}
         atomic_json(path,saved);atomic_json(index,{'key':key})
         try:
             result=dispatch(platform,'set',work,kind=kind,desired=desired,collection=selected,

@@ -12,9 +12,10 @@ from . import safety
 from .core import VpubError, stop_check, platform_check
 
 ROUTES = {"bilibili": {"cli"}, "douyin": {"browser"}, "youtube": {"browser", "api"}, "x": {"browser", "api"}, "instagram": {"browser", "api"}}
+BILI_MAIN = "from bili_cli.main import main; main()"
 
 
-def bili(args, timeout=210):
+def bili(args, timeout=210, program=BILI_MAIN):
     # bili-cli stops a stuck command after 180 s and says why, so give it time to report that.
     stop_check("bilibili")
     env = dict(os.environ, PYTHONIOENCODING="utf-8")
@@ -23,7 +24,7 @@ def bili(args, timeout=210):
         if key in env:
             env[key] = ",".join(x for x in env[key].split(",") if ":" not in x)
     try:
-        cp = subprocess.run([sys.executable, "-c", "from bili_cli.main import main; main()", *args],
+        cp = subprocess.run([sys.executable, "-c", program, *args],
                             capture_output=True, text=True, encoding="utf-8", env=env, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise VpubError("backend_timeout", "bili-cli did not finish in time.", "Inspect the original work before any retry; do not repeat a submission.") from None

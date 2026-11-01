@@ -73,13 +73,14 @@ vpub read-all status RUN_ID
 
 ## 私人收藏集與平台差異
 
-`vpub collection` 使用確切 ID 與持久回執管理集合。Instagram Saved 與 X 書籤夾屬於私人收藏；抖音作品合集整理已發布作品，可能進入平台審核。YouTube 使用 `playlist`；B站沿用上游 bili-cli。
+`vpub collection` 使用確切 ID 與持久回執管理集合。Instagram Saved 與 X 書籤夾屬於私人收藏；抖音與 B站作品合集整理已發布作品，可能進入平台審核。YouTube 使用 `playlist`。
 
 | 平台 | 已提供 | 限制 |
 |---|---|---|
 | Instagram | 列出、項目、建立、更名、加入、移除、刪除 | 加入前作品須已收藏，且出現在本次載入的 Saved 選擇器；成員讀取不完整時不修改。 |
 | 抖音 | 列出、項目、帶封面建立、更名、加入、移除、刪除 | 仍受帳號資格及平台審核限制；不可加入的作品直接回報。作品合集不等於私人收藏夾。 |
-| X | 列出、建立、更名、刪除及有界項目讀取 | 指定書籤夾成員增刪尚未開放；不把錯誤頁當空清單。 |
+| X | 列出、建立、更名、刪除、加入、移除及有界項目讀取 | 書籤夾需要 X Premium。加入與移除使用 X 自己的書籤夾視窗，它會標明這則貼文是否在該書籤夾中。不把錯誤頁當空清單。依 X 公開的網頁程式碼為新版網站重做，尚未在真實帳號上試過。 |
+| B站 | 列出、項目、帶封面建立、更名、加入、移除、刪除 | 透過內含的 bili-cli 執行；B站會審核合集，變更可能稍後才顯示，`verify` 會重新讀取。更名在獨立程序中使用 bili-cli 的請求輔助函式，尚未在真實帳號上試過。 |
 
 ```sh
 vpub collection list instagram
@@ -91,10 +92,14 @@ vpub collection create douyin --title "系列" --cover collection.jpg --descript
 vpub collection add douyin COLLECTION_ID WORK_ID --request-id add-02
 vpub collection remove douyin COLLECTION_ID WORK_ID --request-id remove-02
 vpub collection delete douyin COLLECTION_ID --request-id delete-01
+vpub collection add x FOLDER_ID POST_ID --request-id add-03
+vpub collection remove x FOLDER_ID POST_ID --request-id remove-03
+vpub collection rename bilibili COLLECTION_ID --title "系列" --request-id rename-02
+vpub collection add bilibili COLLECTION_ID BV_ID --request-id add-04
 vpub collection verify RECEIPT_KEY
 ```
 
-使用 CLI 讀回的 ID，不填名稱或猜測網址。新意圖使用新的 request ID；重複原請求只回傳既有回執，不重送。核驗另行讀取；成員變更要求完整基線，且其他成員必須全部保留。支援的合集分頁使用 read-all；成員搬移仍待補齊。有界讀取不能證明某項不存在。
+使用 CLI 讀回的 ID，不填名稱或猜測網址。新意圖使用新的 request ID；重複原請求只回傳既有回執，不重送。核驗另行讀取；成員變更要求完整基線，且其他成員必須全部保留；X 的書籤夾視窗只回答這一則貼文，因此不必讀取整個書籤夾。支援的合集分頁使用 read-all；成員搬移仍待補齊。有界讀取不能證明某項不存在。
 
 刪除集合不刪原影片，也不清空 Saved／All Bookmarks。Instagram 編輯視窗在實測中卡住，因此更名與成員操作使用官方頁面本身的集合用戶端；CLI 不匯出登入 Cookie、不硬編碼重放私人請求。抖音使用官方控制項並觀察回應。這些仍是背景瀏覽器操作，不是獨立公開 API。[實測結果](VALIDATION.md)。
 
@@ -475,6 +480,14 @@ vpub covers prepare localized.json --source production/cover.jpg --portrait prod
 
 橫式角色優先使用方案的專用圖，再用製作封面，縮放補邊保留全圖。抖音與 Instagram 的直式角色必須使用同一張專用構圖：`--portrait` 優先，其次取方案的抖音／Instagram 直圖。兩站輸出保留完全相同的圖片位元組與 SHA-256，不再把橫圖補邊冒充直式封面。缺少直圖時提示準備素材；不覆蓋原圖。
 
+沒有直式素材，也沒有 AI 繪圖工具？`vpub covers portrait` 不用 AI 就能製作一張，用的是 AI 助手看過圖片後選定的部分：
+
+```sh
+vpub covers portrait production/cover.jpg --box 800,200,800,300 --box 0,0,800,900 --out production/portrait.jpg
+```
+
+每個 `--box` 是來源圖的像素 `x,y,寬,高`，由上到下，最多三個。這些部分會放大並堆疊在 1080×1920 封面中央的 3:4 區域，底下襯著模糊的來源圖，因此 Instagram 的完整畫面與抖音的裁切都能保留。若版面只能填滿封面中間的一條（`would_letterbox`）就會拒絕，也不會覆蓋既有檔案；放大超過 2.5 倍的部分會列在 `soft_parts`。把結果交給 `covers prepare --portrait` 之前，請先看過。
+
 | 平台 | 工作畫布與套用方式 |
 |---|---|
 | Bilibili | 1600×1000；上游 CLI 或內置瀏覽器 |
@@ -514,7 +527,7 @@ vpub browser cover RECEIPT_KEY --file landscape.jpg --portrait portrait.jpg --id
 
 ## 播放列表、類別與章節
 
-YouTube 可設定 `playlist_titles`（免費背景路徑或內置瀏覽器，依確切標題勾選）或 `playlist_ids`（付費 API）。API 先查成員避免重複加入，不盲目重試結果不明的寫入。所需管理權限已納入首次 OAuth 授權。Studio 新建私密清單並選入既有影片已驗證，API 路徑仍為模擬測試；B站合集沿用上游能力，尚無統一合集管理命令。
+YouTube 可設定 `playlist_titles`（免費背景路徑或內置瀏覽器，依確切標題勾選）或 `playlist_ids`（付費 API）。API 先查成員避免重複加入，不盲目重試結果不明的寫入。所需管理權限已納入首次 OAuth 授權。Studio 新建私密清單並選入既有影片已驗證，API 路徑仍為模擬測試；B站合集使用 `vpub collection`。
 
 新 YouTube 方案必須明確填寫 `category_id`，由宿主依影片內容與官方選項選擇，不再固定為「人物和博客」。`metadata request/apply` 可提供類別，已指定值會保留。
 

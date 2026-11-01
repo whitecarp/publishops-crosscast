@@ -175,10 +175,11 @@ def reply(platform, work, comment_id, text, language='auto', dry_run=False, _tes
             if previous.get('state')!='REPLY_READY':
                 return {**previous,'reused':True,'platform_writes':0,
                         'hint':'An existing attempt is retained. Use comments verify-reply; never send again on a timeout.'}
+            safety.reclaim(path,previous)
         ticket=None if _test_key else safety.admit(**limits)
         # Durable before any backend can submit; even a lost response prevents duplicates.
         attempt={'state':'REPLY_READY','reply_key':key,'platform':platform,'work_id':work,
-                 'identity':snapshot['identity'],'request':request,'at':now(),'test':bool(_test_key)}
+                 'identity':snapshot['identity'],'request':request,'at':now(),'test':bool(_test_key),'safety_ticket':ticket}
         if ticket and ticket['possible_same_person']: attempt['possible_same_person']=ticket['possible_same_person']
         # An explicitly prepared repair must retain earlier failed attempts.
         for field in ('recovery_history','recovery_reason','creator_repair_prepared'):
@@ -190,7 +191,7 @@ def reply(platform, work, comment_id, text, language='auto', dry_run=False, _tes
             durable=read_json(path)
             if durable.get('state')=='REPLY_SUBMITTING':
                 durable['state']='REPLY_UNVERIFIED';atomic_json(path,durable)
-            elif durable.get('state')=='REPLY_READY': safety.release(ticket)
+            elif durable.get('state')=='REPLY_READY': safety.reclaim(path,durable)
             record('reply',platform,work,{'state':durable.get('state'),'reply_key':key,'test':bool(_test_key),
                                         'code':e.code if isinstance(e,VpubError) else type(e).__name__})
             raise

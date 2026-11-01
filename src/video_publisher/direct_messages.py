@@ -67,9 +67,11 @@ def send(platform, who, text, language, dry_run=False, test_id=None, written_by=
         canonical=who.casefold() if platform in {'instagram','x'} else who
         target_path = home() / 'operations/dm-targets' / (digest([platform, expected, canonical]) + '.json')
         if target_path.exists():
-            prior = read_json(home() / 'operations/dm-actions' / (read_json(target_path)['key'] + '.json'))
+            prior_path = home() / 'operations/dm-actions' / (read_json(target_path)['key'] + '.json')
+            prior = read_json(prior_path)
             if prior['state'] in PENDING or (safety.comparable(prior['request']['text']) == safety.comparable(text) and prior['state'] == 'DM_VISIBLE'):
                 return {**prior, 'reused': True, 'platform_writes': 0, 'hint': 'Use dm verify KEY; no automatic resend.'}
+            if prior['state'] == 'DM_READY': safety.reclaim(prior_path, prior)
         request = {'platform': platform, 'identity': expected, 'recipient': who, 'text': text, 'language': language}
         before = dispatch(platform, 'read', expected, recipient=who, limit=20)
         if before.get('identity') != expected or before.get('recipient') != who:
@@ -83,7 +85,7 @@ def send(platform, who, text, language, dry_run=False, test_id=None, written_by=
         ticket = None if test_id else safety.admit(**limits)
         key = uuid.uuid4().hex; path = home() / 'operations/dm-actions' / (key + '.json')
         saved = {'key': key, 'state': 'DM_READY', 'request': request, 'at': now(), 'test': bool(test_id),
-                 'test_id': test_id, 'platform_writes': 0, 'before': before}
+                 'test_id': test_id, 'platform_writes': 0, 'before': before, 'safety_ticket': ticket}
         atomic_json(path, saved); atomic_json(target_path, {'key': key})
         try:
             result = dispatch(platform, 'send', expected, recipient=who, text=text, receipt_path=str(path), limit=20)
