@@ -68,6 +68,14 @@ class FailureMessageTests(unittest.TestCase):
         error = TimeoutError("Locator.wait_for: Timeout 45000ms exceeded.\nCall log:\n  - waiting for locator('article').first to be visible\n  - other line")
         self.assertEqual("Browser command failed (TimeoutError): Locator.wait_for: Timeout 45000ms exceeded. waiting for locator('article').first to be visible", rt.failure_message(error))
 
+    def test_the_words_it_was_looking_for_are_not_kept(self):
+        for looking in ('get_by_text("PRIVATE-WORDS")', "get_by_label('PRIVATE-WORDS')", 'locator("article").filter(has_text="PRIVATE-WORDS")', 'get_by_role("button", name="PRIVATE-WORDS")',
+                        "filter(has_text=re.compile('PRIVATE-WORDS'))", 'locator(\'div:has-text("PRIVATE-WORDS")\')', "locator('internal:text=\"PRIVATE-WORDS\"')"):
+            with self.subTest(looking=looking):
+                note = rt.failure_message(TimeoutError(f"Locator.click: Timeout 5000ms exceeded.\nCall log:\n  - waiting for {looking}"))
+                self.assertNotIn("PRIVATE-WORDS", note)
+                self.assertIn("waiting for", note)
+
     def test_addresses_lose_their_query_strings(self):
         message = rt.failure_message(RuntimeError("Page.goto: net::ERR_FAILED at https://x.com/a/b?token=secret&x=1 now"))
         self.assertIn("https://x.com/a/b", message)

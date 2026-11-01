@@ -65,8 +65,9 @@ class FailureRecordTests(Base):
         saved = read_json(path)
         self.assertEqual(("comments", "https://x.com/some/path"), (saved["operation"], saved["url"]))
         self.assertIn("waiting for locator('#go')", saved["error"])
-        self.assertEqual({"Password", "Send", None}, {control["label"] for control in saved["controls"]})
         self.assertTrue(any(control["testid"] == "box" for control in saved["controls"]))
+        self.assertTrue(any(control["id"] == "go" for control in saved["controls"]))
+        self.assertFalse(any("label" in control or "placeholder" in control for control in saved["controls"]))
         self.assertNotIn("text", saved)
 
     async def test_a_failed_edit_keeps_no_picture(self):
@@ -96,6 +97,14 @@ class FailureRecordTests(Base):
         for secret in ("FIELD-VALUE-SECRET", "EDITOR-WORDS", "QUERY-VALUE-SECRET", "FRAGMENT-SECRET"):
             self.assertNotIn(secret, saved)
         self.assertTrue(receipt.with_suffix(".error.png").exists())
+        self.assertIn("Password", saved)
+
+    async def test_the_picture_has_form_fields_covered_in_every_frame(self):
+        atomic_json(home() / "config.json", {"page_diagnostics": True})
+        receipt = self.root / "edit.json"
+        with patch.object(self.page, "screenshot", new=AsyncMock()) as picture:
+            await self.fail("edit", edit_receipt_path=str(receipt))
+        self.assertEqual(len(self.page.frames), len(picture.await_args.kwargs["mask"]))
 
     async def test_only_a_real_yes_turns_them_on(self):
         atomic_json(home() / "config.json", {"page_diagnostics": "yes"})

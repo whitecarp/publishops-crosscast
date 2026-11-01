@@ -38,8 +38,13 @@ async def instagram_delete(page, identity, payload, comment):
     except Exception:
         raise VpubError('layout_changed', 'Instagram did not offer Delete for this comment; nothing changed.') from None
     await press_once(page, 'instagram', payload, await unique_visible(choices, 'comment Delete'))
-    await page.wait_for_timeout(2000)
-    return {'state': 'COMMENT_UNVERIFIED', 'platform_writes': 1}
+    # Whether it left this page after the one press, which says more than a later read of a list that only loads in part.
+    gone = False
+    for _ in range(10):
+        gone = not await page.locator(f'[data-crosscast-comment-row="{comment["ui_index"]}"]').count() and not await page.get_by_text(comment['text'], exact=True).count()
+        if gone: break
+        await page.wait_for_timeout(500)
+    return {'state': 'COMMENT_UNVERIFIED', 'platform_writes': 1, 'gone_from_page': gone}
 
 
 async def execute(page, platform, identity, payload):
@@ -62,9 +67,9 @@ async def execute(page, platform, identity, payload):
     data = await comments(page, platform, identity, work, 100)
     found = [c for c in data['items'] if c['id'] == target['id'] and c['text'] == target['text']]
     deleting = platform == 'instagram' and r.get('kind') == 'delete'
-    # Absence means something only when the whole short list was read, and only about the comment itself.
-    if deleting and not [c for c in data['items'] if c['id'] == target['id']] and len(data['items']) < 100:
-        return {'identity': identity, 'text': None, 'liked': None, 'deleted': True, 'source': 'instagram_comment_list'}
+    # The page loads only part of the list, so absence alone proves nothing about this comment.
+    if deleting and not [c for c in data['items'] if c['id'] == target['id']]:
+        return {'identity': identity, 'text': None, 'liked': None, 'deleted': None, 'absent_from_loaded_list': True, 'source': 'instagram_comment_list'}
     if len(found) != 1: raise VpubError('comment_changed', 'Exact comment is absent or changed.')
     c = found[0]
     if deleting: return await instagram_delete(page, identity, payload, c)

@@ -312,6 +312,7 @@ class EarlierSiteTests(unittest.IsolatedAsyncioTestCase):
         self.folders = {'111': 'Recipes'}
         self.inside = {'111': set()}
         self.offers_folder = True
+        self.folder_error = ''
         self.writes = []
         await self.page.route('**/*', self.handle)
         await self.page.goto('https://x.com/home')
@@ -344,12 +345,12 @@ class EarlierSiteTests(unittest.IsolatedAsyncioTestCase):
             return await route.fulfill(status=200, content_type='text/html', body='<!doctype html><body>' + EARLIER_HISTORY)
         if url.path.startswith('/i/history/bookmarks/'):
             rows = ''.join(EARLIER_POST % {'post': post, 'extra': ''} for post in sorted(self.inside.get(name, ())))
-            return await route.fulfill(status=200, content_type='text/html', body='<!doctype html><body>' + EARLIER_FOLDER % self.folders.get(name, '') + '<main>' + rows + '</main>')
+            return await route.fulfill(status=200, content_type='text/html', body='<!doctype html><body>' + EARLIER_FOLDER % self.folders.get(name, '') + '<main><div data-testid="primaryColumn">' + ('Something went wrong.' if self.folder_error == 'column' else '') + rows + '</div><div data-testid="sidebarColumn">' + ('Something went wrong. Try reloading.' if self.folder_error == 'side' else '') + '</div></main>')
         if url.path == f'/{OWNER}/status/{POST}':
             item = '<div role="menuitem" id="folder">Bookmark to Folder</div>' if self.offers_folder else ''
             return await route.fulfill(status=200, content_type='text/html', body=EARLIER_POST_PAGE % (EARLIER_POST % {'post': POST, 'extra': '<button aria-label="Share post" id="share">s</button>'}, item))
         if url.path == '/i/bookmarks/add':
-            rows = ''.join(f'<div class="row" data-folder="{key}"><div><span>{title}</span></div></div>' for key, title in self.folders.items())
+            rows = ''.join(f'<div data-testid="cellInnerDiv"><button role="button" class="row" data-folder="{key}"><div><span>{title}</span></div></button></div>' for key, title in self.folders.items())
             return await route.fulfill(status=200, content_type='text/html', body='<!doctype html><body>' + EARLIER_PICKER % rows)
         await route.fulfill(status=200, content_type='text/html', body='<!doctype html><body><a data-testid="AppTabBar_Profile_Link" href="/owner">Profile</a>')
 
@@ -409,6 +410,16 @@ class EarlierSiteTests(unittest.IsolatedAsyncioTestCase):
         result = await self.run_op('items', collection_id='111', work_id=POST)
         self.assertEqual(([{'id': POST}], True), (result['items'], result['complete']))
         self.assertEqual([], self.writes)
+
+    async def test_an_error_in_a_side_column_says_nothing_about_the_folder(self):
+        self.folder_error = 'side'
+        self.assertIs(True, (await self.run_op('items', collection_id='111', work_id=POST))['complete'])
+
+    async def test_an_error_in_the_folders_own_column_stops_it(self):
+        self.folder_error = 'column'
+        with self.assertRaises(VpubError) as caught:
+            await self.run_op('items', collection_id='111', work_id=POST)
+        self.assertEqual('read_failed', caught.exception.code)
 
     async def test_a_folder_that_never_stops_loading_does_not_count_as_complete(self):
         with patch('video_publisher.collections_browser.FOLDER_SCROLLS', 1):

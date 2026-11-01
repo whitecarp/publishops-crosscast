@@ -25,6 +25,7 @@ class FakeBili:
         self.keep = True
         self.fail = None
         self.shape = None
+        self.cid = 9
 
     def __call__(self, args, timeout=210, program=None):
         self.calls.append(list(args))
@@ -35,8 +36,8 @@ class FakeBili:
         if self.fail:
             raise VpubError(self.fail, "No.")
         if self.keep:
-            self.drafts.append({"title": json.loads(args[1])["title"]})
-        return {"draft": {"id": 5}}
+            self.drafts.append({"id": 500 + len(self.drafts), "cid": self.cid, "title": json.loads(args[1])["title"]})
+        return {"cid": 9}
 
     def sent(self):
         return [json.loads(call[1]) for call in self.calls if call[0] == "add"]
@@ -61,7 +62,7 @@ class Saving(unittest.TestCase):
 
     def test_it_saves_once_and_reads_the_draft_back(self):
         result = self.publish()
-        self.assertEqual(("DRAFT_SAVED", "draft", TITLE), (result["state"], result["phase"], result["draft_title"]))
+        self.assertEqual(("DRAFT_SAVED", "draft", TITLE, 500, 9), (result["state"], result["phase"], result["draft_title"], result["draft_id"], result["uploaded_cid"]))
         self.assertEqual(1, len(self.bili.sent()))
         self.assertEqual({"video": "v.mp4", "cover": "c.jpg", "title": TITLE, "description": "D", "tags": ["a"], "tid": None, "private": True, "ai_generated": True}, self.bili.sent()[0])
 
@@ -73,12 +74,23 @@ class Saving(unittest.TestCase):
         adapters.publish_bilibili({"video": "v.mp4"}, {"title": TITLE, "description": "D", "ai_generated": False, "tags": ["a"], "visibility": "public", "submission_mode": "draft_only"}, mark)
         self.assertEqual(("UNKNOWN", 0), seen[0])
 
-    def test_another_draft_with_the_same_title_does_not_count_as_this_one(self):
-        self.bili.drafts = [{"title": TITLE}]
+    def test_an_older_draft_with_the_same_title_and_video_does_not_count_as_this_one(self):
+        self.bili.drafts = [{"id": 1, "cid": 9, "title": TITLE}]
         self.bili.keep = False
         self.assertEqual("SUBMITTED_UNVERIFIED", self.publish()["state"])
-        self.bili.drafts.append({"title": TITLE})
-        self.assertEqual("DRAFT_SAVED", adapters.verify("bilibili", "default", self.marks[-1])["state"])
+        self.bili.drafts.append({"id": 2, "cid": 9, "title": TITLE})
+        self.assertEqual(("DRAFT_SAVED", 2), tuple(adapters.verify("bilibili", "default", self.marks[-1])[key] for key in ("state", "draft_id")))
+
+    def test_a_new_draft_with_another_video_is_only_a_candidate(self):
+        self.bili.cid = 8
+        result = self.publish()
+        self.assertEqual(("SUBMITTED_UNVERIFIED", 500), (result["state"], result["candidate_id"]))
+
+    def test_with_no_upload_number_a_new_draft_is_only_a_candidate(self):
+        receipt = {"state": "UNKNOWN", "draft_title": TITLE, "drafts_before": []}
+        self.bili.drafts = [{"id": 7, "cid": 9, "title": TITLE}]
+        result = adapters.verify("bilibili", "default", receipt)
+        self.assertEqual(("SUBMITTED_UNVERIFIED", 7), (result["state"], result["candidate_id"]))
 
     def test_a_list_in_a_shape_it_does_not_know_stays_unconfirmed(self):
         self.bili.shape = {"something": "else"}
@@ -108,9 +120,9 @@ class Saving(unittest.TestCase):
     def test_the_verify_command_finds_a_draft_receipt(self):
         ledger = Ledger()
         key = ledger.claim("bilibili", "default", "a" * 64, {})
-        ledger.save(key, "SUBMITTED_UNVERIFIED", {"receipt": {"state": "SUBMITTED_UNVERIFIED", "draft_title": TITLE, "same_title_before": 0}})
+        ledger.save(key, "SUBMITTED_UNVERIFIED", {"receipt": {"state": "SUBMITTED_UNVERIFIED", "draft_title": TITLE, "drafts_before": [], "uploaded_cid": 9}})
         ledger.close()
-        self.bili.drafts = [{"title": TITLE}]
+        self.bili.drafts = [{"id": 1, "cid": 9, "title": TITLE}]
         self.assertEqual("DRAFT_SAVED", cli.run_command(cli.parser().parse_args(["verify", key]))["state"])
 
 
@@ -170,7 +182,7 @@ class Call:
         async def answer():
             print("SENT " + json.dumps({"url": self.url, "method": self.method, "json": self.options.get("json_body"), "csrf_in_query": "csrf" in self.params,
                                         "body": {k: v for k, v in self.sent.items() if k != "csrf"}}, ensure_ascii=False), file=sys.stderr)
-            return [{"title": "One"}] if self.url.endswith("/list") else {"id": 5}
+            return [{"title": "One"}] if self.url.endswith("/list") else None
         return answer()
 
 
@@ -201,7 +213,7 @@ Picture.from_file = staticmethod(lambda path: path)
     def test_saving_uploads_the_clip_then_sends_one_draft(self):
         answer, sent, log = self.run_helper("add", json.dumps(self.DRAFT))
         self.assertTrue(answer["ok"], answer)
-        self.assertEqual({"id": 5}, answer["data"]["draft"])
+        self.assertEqual({"cid": 9}, answer["data"])
         self.assertEqual(1, len(sent))
         self.assertEqual(("https://member.bilibili.com/x/vupre/web/draft/add", "POST", True, True), (sent[0]["url"], sent[0]["method"], sent[0]["json"], sent[0]["csrf_in_query"]))
         body = sent[0]["body"]

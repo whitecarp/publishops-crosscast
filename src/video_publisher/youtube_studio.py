@@ -677,8 +677,8 @@ async def comment_action(page, identity, payload):
     current = (await read_comments(page, identity, request["work_id"], 100))["items"]
     found = [c for c in current if c["id"] == target["id"]]
     if len(found) != 1:
-        # Absence means something only when the whole short list was read.
-        return {"identity": identity, "text": None, "liked": None, "deleted": True if len(current) < 100 else None, "source": "studio_comment_list"}
+        # The loaded page is not the whole list, so absence alone proves nothing about this comment.
+        return {"identity": identity, "text": None, "liked": None, "deleted": None, "absent_from_loaded_list": True, "source": "studio_comment_list"}
     row = page.locator(f'ytcp-comment[comment-id="{target["id"]}"]').first
     like = row.locator("ytcp-comment-toggle-button#like-button").first
     liked = await like.evaluate("e => e.isToggled", isolated_context=False) if await like.count() else None
@@ -738,7 +738,15 @@ async def comment_action(page, identity, payload):
             await studio_confirm(page)
 
         await act_and_settle(page, choose)
-        return sent()
+        result = sent()
+        if kind != "pin":
+            # Whether it left this page after the one press, which says more than a later read of a list that only loads in part.
+            for _ in range(10):
+                result["gone_from_page"] = not await row.count()
+                if result["gone_from_page"]:
+                    break
+                await page.wait_for_timeout(500)
+        return result
     raise VpubError("paid_feature_required", "This comment action needs the paid CrossCast add-on for now.", "Comment likes and pins, removing a viewer's comment, and editing or deleting the channel's own, are free.")
 
 

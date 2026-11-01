@@ -43,6 +43,9 @@ SOMEONES_WORDS = """(e, others) => {
 # What a failure record says about a control: what it is, never what it holds.
 CONTROL_SHAPES = """es => es.map(e => ({tag: e.tagName, type: e.getAttribute('type'), name: e.getAttribute('name'), id: e.id, role: e.getAttribute('role'), testid: e.getAttribute('data-testid'),
                                        test_id: e.getAttribute('test-id'), placeholder: e.getAttribute('placeholder'), label: e.getAttribute('aria-label'), disabled: e.hasAttribute('disabled')}))"""
+FORM_FIELDS = "input,textarea,select,[contenteditable=true]"
+# Words a command was looking for, which can be a viewer's or a person's own. The step and the kind of control are what a failure needs.
+LOOKED_FOR = re.compile(r"""(get_by_(?:text|label|placeholder|title|alt_text)\(|\b(?:has_text|has_not_text|name)=|:has-text\(|internal:\w+=)(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|re\.compile\([^)]*\))""")
 # The page's words with its form fields taken out first, so even a record a person asked for holds nothing typed into one.
 PAGE_WORDS = """() => { const copy = document.body.cloneNode(true); copy.querySelectorAll('input,textarea,select,script,style,[contenteditable=true]').forEach(e => e.remove()); return copy.textContent; }"""
 SITES = {"x": ("x.com", "twitter.com"), "instagram": ("instagram.com",), "douyin": ("douyin.com", "bytedance.com"), "youtube": ("youtube.com", "google.com")}
@@ -280,14 +283,17 @@ def plain_address(address):
 
 
 async def failure_record(page, exc, path, picture=None, **fields):
-    """Which step failed and which controls the page had. Page text and pictures can hold private messages, so they are kept
-    only with page_diagnostics turned on in config.json. Field contents are never kept."""
-    record = {"at": now(), **fields, "error": exc.message if isinstance(exc, VpubError) else failure_message(exc), "url": plain_address(page.url),
-              "controls": await page.locator("input,textarea,select,button,[role=button],[role=checkbox],[contenteditable=true],ytcp-button,ytcp-dropdown-trigger,tp-yt-paper-radio-button").evaluate_all(CONTROL_SHAPES)}
-    if config().get("page_diagnostics") is True:
+    """Which step failed and what kind of controls the page had. Page text, pictures and control labels can hold private messages or
+    name people, so they are kept only with page_diagnostics turned on in config.json. Field contents are never kept."""
+    wanted = config().get("page_diagnostics") is True
+    controls = await page.locator("input,textarea,select,button,[role=button],[role=checkbox],[contenteditable=true],ytcp-button,ytcp-dropdown-trigger,tp-yt-paper-radio-button").evaluate_all(CONTROL_SHAPES)
+    if not wanted:
+        controls = [{key: value for key, value in control.items() if key not in {"label", "placeholder"}} for control in controls]
+    record = {"at": now(), **fields, "error": exc.message if isinstance(exc, VpubError) else failure_message(exc), "url": plain_address(page.url), "controls": controls}
+    if wanted:
         record["text"] = (await page.evaluate(PAGE_WORDS))[:18000]
         if picture:
-            await page.screenshot(path=str(picture), timeout=3000)
+            await page.screenshot(path=str(picture), timeout=3000, mask=[frame.locator(FORM_FIELDS) for frame in page.frames])
     atomic_json(path, record)
 
 
@@ -296,7 +302,7 @@ def failure_message(exc):
     lines = str(exc).splitlines()
     step = [lines[0].strip()] if lines else []
     step += [line.strip(" -") for line in lines[1:] if "waiting for" in line][:1]
-    note = re.sub(r"(https?://[^\s?#'\"]+)[^\s'\"]*", r"\1", " ".join(step))[:240]
+    note = LOOKED_FOR.sub(r"\1…", re.sub(r"(https?://[^\s?#'\"]+)[^\s'\"]*", r"\1", " ".join(step)))[:240]
     return f"Browser command failed ({type(exc).__name__})" + (f": {note}" if note else ".")
 
 

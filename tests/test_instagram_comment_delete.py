@@ -14,8 +14,8 @@ OWNER = "owner"
 WORK = "AbC_12"
 
 
-def row(number, text, menu=True, choices="Delete"):
-    options = f'<div role="button" class="options" data-choices="{choices}"><svg width="20" height="20" aria-label="Comment Options"></svg></div>' if menu else ""
+def row(number, text, menu=True, choices="Delete", stays=False):
+    options = f'<div role="button" class="options" data-choices="{choices}" data-stays="{str(stays).lower()}"><svg width="20" height="20" aria-label="Comment Options"></svg></div>' if menu else ""
     return f'<div class="holder"><div data-crosscast-comment-row="{number}">{text}</div>{options}</div>'
 
 
@@ -27,7 +27,7 @@ for (const menu of document.querySelectorAll('.options')) menu.onclick = () => {
   for (const word of [...menu.dataset.choices.split(','), 'Cancel']) {
     const button = document.createElement('button');
     button.textContent = word;
-    if (word === 'Delete') button.onclick = () => { fetch('/write', {method: 'POST', body: menu.closest('.holder').innerText}); window_.remove(); menu.closest('.holder').remove(); };
+    if (word === 'Delete') button.onclick = () => { fetch('/write', {method: 'POST', body: menu.closest('.holder').innerText}); window_.remove(); if (menu.dataset.stays !== 'true') menu.closest('.holder').remove(); };
     window_.append(button);
   }
   document.body.append(window_);
@@ -85,7 +85,7 @@ class DeleteTests(Base):
 
     async def test_it_records_the_attempt_then_presses_delete_once(self):
         result = await self.run_it()
-        self.assertEqual(("COMMENT_UNVERIFIED", 1), (result["state"], result["platform_writes"]))
+        self.assertEqual(("COMMENT_UNVERIFIED", 1, True), (result["state"], result["platform_writes"], result["gone_from_page"]))
         self.assertEqual(1, len(self.writes))
         self.assertIn("Mine", self.writes[0])
         self.assertEqual("COMMENT_SUBMITTING", self.seen_at_send)
@@ -113,9 +113,15 @@ class DeleteTests(Base):
         self.assertEqual([], self.writes)
         self.assertEqual("COMMENT_READY", read_json(self.receipt)["state"])
 
-    async def test_a_comment_that_is_gone_reads_as_deleted(self):
+    async def test_a_comment_still_on_the_page_after_the_press_is_not_called_gone(self):
+        self.html = PAGE % (row(0, "Mine", stays=True) + row(1, "Theirs"))
+        result = await self.run_it()
+        self.assertIs(False, result["gone_from_page"])
+
+    async def test_a_comment_not_on_the_loaded_page_proves_nothing(self):
         result = await self.run_it("status", shown=[self.comment(1, "Theirs", False)])
-        self.assertIs(True, result["deleted"])
+        self.assertIsNone(result["deleted"])
+        self.assertIs(True, result["absent_from_loaded_list"])
 
     async def test_a_comment_whose_words_changed_stops_it(self):
         with self.assertRaises(VpubError) as caught:
@@ -143,12 +149,38 @@ class CommandTests(unittest.TestCase):
         atomic_json(home() / "operations/comments" / (digest(["instagram", WORK]) + ".json"),
                     {"identity": OWNER, "items": [{"id": "100", "text": "Mine", "is_owner": mine}]})
 
-    def test_deleting_your_own_goes_through_and_reads_back(self):
+    def delete(self, press, after):
+        before = {"identity": OWNER, "text": "Mine", "deleted": False}
+        with patch.object(comment_actions, "dispatch", side_effect=[before, {"state": "COMMENT_UNVERIFIED", "platform_writes": 1, **press}, after]):
+            return comment_actions.mutate("instagram", WORK, "100", "delete")
+
+    ABSENT = {"identity": OWNER, "text": None, "deleted": None, "absent_from_loaded_list": True}
+
+    def test_gone_from_the_page_after_the_press_and_from_a_fresh_read_settles_it(self):
         self.snapshot(True)
-        answers = [{"identity": OWNER, "text": "Mine", "deleted": False}, {"state": "COMMENT_UNVERIFIED", "platform_writes": 1}, {"identity": OWNER, "text": None, "deleted": True}]
-        with patch.object(comment_actions, "dispatch", side_effect=answers):
-            result = comment_actions.mutate("instagram", WORK, "100", "delete")
-        self.assertEqual("COMMENT_VERIFIED", result["state"])
+        result = self.delete({"gone_from_page": True}, self.ABSENT)
+        self.assertEqual(("COMMENT_VERIFIED", True), (result["state"], result["after"]["deleted"]))
+
+    def test_a_fresh_read_that_leaves_it_out_proves_nothing_alone(self):
+        self.snapshot(True)
+        self.assertEqual("COMMENT_UNVERIFIED", self.delete({"gone_from_page": False}, self.ABSENT)["state"])
+
+    def test_still_in_a_fresh_read_is_not_deleted_whatever_the_page_did(self):
+        self.snapshot(True)
+        self.assertEqual("COMMENT_UNVERIFIED", self.delete({"gone_from_page": True}, {"identity": OWNER, "text": "Mine", "deleted": False})["state"])
+
+    def test_verifying_later_uses_what_the_press_saw(self):
+        self.snapshot(True)
+        result = self.delete({"gone_from_page": True}, {"identity": OWNER, "text": "Mine", "deleted": False})
+        with patch.object(comment_actions, "dispatch", return_value=self.ABSENT):
+            self.assertEqual("COMMENT_VERIFIED", comment_actions.verify(result["key"])["state"])
+
+    def test_a_comment_not_on_the_loaded_page_is_left_alone(self):
+        self.snapshot(True)
+        with patch.object(comment_actions, "dispatch", return_value=self.ABSENT) as sent, self.assertRaises(VpubError) as caught:
+            comment_actions.mutate("instagram", WORK, "100", "delete")
+        self.assertEqual("comment_not_visible", caught.exception.code)
+        self.assertEqual(1, sent.call_count)
 
     def test_a_viewers_comment_is_refused_up_front(self):
         self.snapshot(False)

@@ -48,6 +48,7 @@ class FakeYouTube:
         self.boxes = 1
         self.box_button = True
         self.open_box = False
+        self.keep_row = False  # Whether a deleted comment stays on the open page.
         self.says_empty = True
 
     async def html(self, route, body):
@@ -188,12 +189,13 @@ class FakeYouTube:
         states = json.dumps({row["id"]: row["liked"] for row in self.comments})
         confirm = "document.getElementById('sure').hidden = false; document.getElementById('sure').dataset.comment = id" if self.confirm else "fetch('/youtubei/v1/comment/perform_comment_action?write=comment-delete/' + id, {method: 'POST', body: '{}'})"
         return f"""{rows}<div id="box"></div>
-            <ytcp-confirmation-dialog id="sure" hidden><button id="confirm-button" onclick="fetch('/youtubei/v1/comment/perform_comment_action?write=comment-delete/' + document.getElementById('sure').dataset.comment, {{method: 'POST', body: '{{}}'}}); document.getElementById('sure').hidden = true">Delete</button></ytcp-confirmation-dialog>
+            <ytcp-confirmation-dialog id="sure" hidden><button id="confirm-button" onclick="fetch('/youtubei/v1/comment/perform_comment_action?write=comment-delete/' + document.getElementById('sure').dataset.comment, {{method: 'POST', body: '{{}}'}}); document.getElementById('sure').hidden = true; leave(document.getElementById('sure').dataset.comment)">Delete</button></ytcp-confirmation-dialog>
             <script>{menu_script()}
             const states = {states};
             for (const button of document.querySelectorAll('#like-button')) button.isToggled = states[button.closest('ytcp-comment').getAttribute('comment-id')];
             function removing(id) {{ {confirm} }}
-            function act(write) {{ fetch('/youtubei/v1/comment/perform_comment_action?write=' + write, {{method: 'POST', body: '{{}}'}}); }}
+            function leave(id) {{ if ({json.dumps(not self.keep_row)}) document.querySelector('ytcp-comment[comment-id="' + id + '"]')?.closest('ytcp-comment-thread').remove(); }}
+            function act(write) {{ fetch('/youtubei/v1/comment/perform_comment_action?write=' + write, {{method: 'POST', body: '{{}}'}}); if (write.startsWith('comment-remove/')) leave(write.split('/')[1]); }}
             function openBox(row, word, send) {{
               const homes = {{comment: row, thread: row.closest('ytcp-comment-thread'), sibling: row.closest('ytcp-comment-thread').querySelector('.sibling'), page: document.getElementById('box')}};
               setTimeout(() => {{
@@ -508,9 +510,19 @@ class CommentTests(Browser):
             await yt.comment_action(self.page, CHANNEL, self.payload("edit", "c1", "New", receipt=path))
         self.assertEqual([], self.site.writes)
 
-    async def test_a_comment_that_is_gone_reads_as_deleted(self):
+    async def test_a_comment_not_on_the_loaded_page_proves_nothing(self):
         result = await yt.comment_action(self.page, CHANNEL, self.payload("delete", "gone", operation="status"))
-        self.assertIs(True, result["deleted"])
+        self.assertIsNone(result["deleted"])
+        self.assertIs(True, result["absent_from_loaded_list"])
+
+    async def test_deleting_says_whether_the_comment_left_the_page(self):
+        result = await yt.comment_action(self.page, CHANNEL, self.payload("delete", "c2", text="Mine", receipt=self.receipt_file()))
+        self.assertIs(True, result["gone_from_page"])
+
+    async def test_a_comment_still_on_the_page_after_the_press_is_not_called_gone(self):
+        self.site.keep_row = True
+        result = await yt.comment_action(self.page, CHANNEL, self.payload("delete", "c2", text="Mine", receipt=self.receipt_file()))
+        self.assertIs(False, result["gone_from_page"])
 
     async def test_another_account_stops_before_anything(self):
         with self.assertRaises(VpubError) as caught:
@@ -620,7 +632,8 @@ class CommentTests(Browser):
         result = await yt.comment_action(self.page, CHANNEL, self.payload("remove", receipt=path))
         self.assertEqual(("COMMENT_UNVERIFIED", 1), (result["state"], result["platform_writes"]))
         self.assertEqual([("comment-remove", "c1")], self.site.writes)
-        self.assertIs(True, (await yt.comment_action(self.page, CHANNEL, self.payload("remove", operation="status")))["deleted"])
+        self.assertIs(True, result["gone_from_page"])
+        self.assertIs(True, (await yt.comment_action(self.page, CHANNEL, self.payload("remove", operation="status")))["absent_from_loaded_list"])
 
     async def test_the_channels_own_comment_has_no_remove_to_choose(self):
         with self.assertRaises(VpubError):

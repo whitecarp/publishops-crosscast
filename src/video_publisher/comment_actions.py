@@ -22,8 +22,28 @@ def target(platform, work, comment_id):
         from .operations_inbox import find
         old = find(platform, snapshot['identity'], work, comment_id)
         if old: rows = [old]
-    if len(rows) != 1: raise VpubError('comment_not_observed', 'The exact comment was not observed.')
+    if len(rows) != 1: raise VpubError('comment_not_observed', 'The exact comment was not observed.', 'Run vpub comments list for this work again.')
     return {'platform': platform, 'work_id': work, 'identity': snapshot['identity'], 'comment': rows[0]}
+
+
+def gone_for_certain(saved, after):
+    """A list that loads in part proves little by leaving a comment out. A comment that also vanished from the page right after this one press has gone."""
+    if after.get('absent_from_loaded_list') and saved.get('gone_from_page'):
+        return {**after, 'deleted': True, 'source': 'vanished_after_this_press'}
+    return after
+
+
+def refresh_snapshot(request):
+    """The next command can then name this comment without listing them all again. It still checks the live page before changing anything."""
+    path = home() / 'operations/comments' / (digest([request['platform'], request['work_id']]) + '.json')
+    if not path.exists() or request['kind'] not in {'edit', 'delete', 'remove'}: return
+    saved = read_json(path); comment = request['comment']['id']
+    if request['kind'] == 'edit':
+        for row in saved.get('items', []):
+            if row['id'] == comment: row['text'] = request['desired']
+    else:
+        saved['items'] = [row for row in saved.get('items', []) if row['id'] != comment]
+    atomic_json(path, saved)
 
 
 def dispatch(request, operation='status', receipt_path=None):
@@ -81,6 +101,8 @@ def mutate(platform, work, comment_id, kind, desired=True, dry_run=False, test_i
         before = dispatch(request)
         if matches(request, before): return {'state': 'NO_CHANGE', 'platform_writes': 0, 'observed': before}
         if before.get('deleted'): raise VpubError('comment_missing', 'The comment is no longer present.')
+        if before.get('absent_from_loaded_list'):
+            raise VpubError('comment_not_visible', 'This comment is not on the page that loaded, so nothing changed.', 'Run vpub comments list for this work again.')
         if kind in {'like','pin','hide'} and type(before.get({'like':'liked','pin':'pinned','hide':'hidden'}[kind])) is not bool:
             raise VpubError('state_unavailable', 'Exact comment action state is unavailable.')
         if kind=='moderate' and before.get('moderation_status') not in {'published','heldForReview'}:
@@ -99,10 +121,12 @@ def mutate(platform, work, comment_id, kind, desired=True, dry_run=False, test_i
         try:
             result = dispatch(request, 'set', path)
             saved = {**read_json(path), **result}
-            after = dispatch({**request, 'verification': True})
+            atomic_json(path, saved)
+            after = gone_for_certain(saved, dispatch({**request, 'verification': True}))
             state = 'COMMENT_VERIFIED' if matches(request, after) else 'COMMENT_UNVERIFIED'
             if result.get('state') == 'NO_CHANGE' and state == 'COMMENT_VERIFIED': state = 'NO_CHANGE'
             saved.update(after=after, state=state)
+            if state == 'COMMENT_VERIFIED': refresh_snapshot(request)
         except Exception as exc:
             saved = read_json(path)
             saved.update(state='COMMENT_UNVERIFIED' if saved['state'] in PENDING else 'COMMENT_FAILED', **error_fields(exc, 'error_code'))
@@ -118,9 +142,10 @@ def verify(key):
     if not path.exists(): raise VpubError('receipt_required', 'Comment action receipt not found.')
     with publication_lock():
         saved = read_json(path); r = saved['request']
-        after = dispatch({**r, 'verification': True})
+        after = gone_for_certain(saved, dispatch({**r, 'verification': True}))
         if saved['state'] in PENDING | {'COMMENT_VERIFIED'}:
             saved['state'] = 'COMMENT_VERIFIED' if matches(r, after) else 'COMMENT_UNVERIFIED'
+            if saved['state'] == 'COMMENT_VERIFIED': refresh_snapshot(r)
         if saved['state']=='COMMENT_VERIFIED' and saved.get('error_code'):
             saved.setdefault('resolved_errors',[]).append({'code':saved.pop('error_code'),'resolved_at':now()});saved.pop('error_message',None)
         saved.update(after=after, verified_at=now()); atomic_json(path, saved)

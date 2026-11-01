@@ -197,7 +197,19 @@ def reply(platform, work, comment_id, text, language='auto', dry_run=False, _tes
             raise
         # Backends retain the exact request before and after submission.
         final={**read_json(path),**result};atomic_json(path,final)
+        remember_reply(final)
         return record('reply',platform,work,final)
+
+
+def remember_reply(saved):
+    """A verified reply joins the latest read, so the next command can name it without listing everything again. That command still checks the live page first."""
+    cache=home()/'operations/comments'/(digest([saved['platform'],saved['work_id']])+'.json')
+    if saved.get('state')!='REPLY_VERIFIED' or not saved.get('reply_id') or not cache.exists(): return
+    snapshot=read_json(cache)
+    if any(row['id']==saved['reply_id'] for row in snapshot.get('items',[])): return
+    parent=saved['request']['comment']
+    snapshot.setdefault('items',[]).append({'id':saved['reply_id'],'text':saved['request']['text'],'is_owner':True,'parent_id':parent.get('parent_id') or parent['id'],'source':'own_verified_reply'})
+    atomic_json(cache,snapshot)
 
 
 def verify_reply(key):
@@ -209,6 +221,7 @@ def verify_reply(key):
         result=backend(saved['platform'],'verify_reply',saved['work_id'],reply_request=saved['request'],
                        reply_receipt_path=str(path),existing_reply=saved)
         saved.update(result);atomic_json(path,saved)
+        remember_reply(saved)
         return record('reply_verify',saved['platform'],saved['work_id'],saved)
 
 

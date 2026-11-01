@@ -46,9 +46,9 @@ async def add(cred, draft):
             "videos": [{"filename": part["filename"], "cid": part["cid"], "title": draft["title"], "desc": ""}]}
     if predicted:
         meta["human_type2"] = predicted["zone"]
-    made = await request(cred, "add", "POST", json_body=True).update_data(**meta, csrf=cred.bili_jct).result
+    await request(cred, "add", "POST", json_body=True).update_data(**meta, csrf=cred.bili_jct).result
     guard.record("upload", {"draft": draft["title"]}, "ok")
-    return {"draft": made}
+    return {"cid": part["cid"]}
 
 
 async def body():
@@ -62,33 +62,32 @@ run(body, deadline=None)  # uploading a large video takes as long as it takes
 '''
 
 
-def same_titled(title):
-    """The account's drafts with exactly this title, or None if the list came back in a shape this does not know."""
+def drafts():
+    """The account's drafts, or None if the list came back in a shape this does not know."""
     rows = adapters.bili(["list"], program=HELPER).get("drafts")
-    if not isinstance(rows, list):
-        return None
-    return [row for row in rows if isinstance(row, dict) and row.get("title") == title]
+    return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else None
 
 
 def save(plan, options, checkpoint):
     """Saved once and read back. A refusal or an unclear ending goes up as it is, and the receipt blocks a repeat."""
-    title = options["title"]
-    before = same_titled(title)
-    receipt = {"state": "UNKNOWN", "phase": "saving_draft", "draft_title": title, "same_title_before": None if before is None else len(before), "platform": "bilibili", "at": now()}
+    before = drafts()
+    receipt = {"state": "UNKNOWN", "phase": "saving_draft", "draft_title": options["title"], "drafts_before": None if before is None else [row.get("id") for row in before], "platform": "bilibili", "at": now()}
     checkpoint(receipt)
-    draft = {"video": plan["video"], "cover": plan.get("cover"), "title": title, "description": options["description"], "tags": options["tags"], "tid": options.get("tid"),
+    draft = {"video": plan["video"], "cover": plan.get("cover"), "title": options["title"], "description": options["description"], "tags": options["tags"], "tid": options.get("tid"),
              "private": options["visibility"] == "private", "ai_generated": options["ai_generated"]}
-    adapters.bili(["add", json.dumps(draft, ensure_ascii=False)], timeout=3600, program=HELPER)
-    receipt.update(state="SUBMITTED_UNVERIFIED", phase="readback_pending")
+    made = adapters.bili(["add", json.dumps(draft, ensure_ascii=False)], timeout=3600, program=HELPER)
+    receipt.update(state="SUBMITTED_UNVERIFIED", phase="readback_pending", uploaded_cid=made.get("cid"))
     checkpoint(receipt)
     return verify(receipt)
 
 
 def verify(receipt):
-    """Reads only. One more draft with this title than before means this one was saved."""
-    rows = same_titled(receipt["draft_title"])
-    known = receipt.get("same_title_before")
-    if rows is not None and known is not None and len(rows) == known + 1:
-        return {**receipt, "state": "DRAFT_SAVED", "phase": "draft", "verified_at": now(), "verification_source": "bili_cli_draft_list",
+    """Reads only. A draft that was not there before, holding the video this upload was given, is this one. A title alone can't say that."""
+    rows, before = drafts(), receipt.get("drafts_before")
+    fresh = [] if rows is None or before is None else [row for row in rows if row.get("id") not in before and row.get("title") == receipt["draft_title"]]
+    found = [row for row in fresh if receipt.get("uploaded_cid") and row.get("cid") == receipt["uploaded_cid"]]
+    if len(found) == 1:
+        return {**receipt, "state": "DRAFT_SAVED", "phase": "draft", "draft_id": found[0].get("id"), "verified_at": now(), "verification_source": "bili_cli_draft_list",
                 "note": "Saved as a draft and read back; nothing was submitted. It is on the 草稿 page of Bilibili's upload manager, which is also where to remove it."}
-    return {**receipt, "state": "SUBMITTED_UNVERIFIED", "phase": "readback_pending", "note": "Not read back from Bilibili's draft list. Look on the 草稿 page of its upload manager; do not save it again."}
+    candidate = {"candidate_id": fresh[0].get("id")} if len(fresh) == 1 else {}
+    return {**receipt, **candidate, "state": "SUBMITTED_UNVERIFIED", "phase": "readback_pending", "note": "Not read back from Bilibili's draft list. Look on the 草稿 page of its upload manager; do not save it again."}

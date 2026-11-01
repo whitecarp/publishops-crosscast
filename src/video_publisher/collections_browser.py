@@ -221,6 +221,13 @@ async def x_member(page,owner,payload):
     return {'identity':owner,'submitted':True,'collection_id':cid}
 
 
+async def x_folder_failed(page):
+    """X's error message in the folder's own column. Its side columns fail by themselves and say nothing about the folder."""
+    column=page.locator('[data-testid="primaryColumn"]')
+    if 'Something went wrong' in await (column if await column.count() else page.locator('body')).first.inner_text():
+        raise VpubError('read_failed','X did not load the bookmark folder.')
+
+
 async def x_folder_posts(page,cid,title):
     """What one folder holds on the earlier site, from its own page. It loads as it scrolls, so it counts as complete only once nothing more appears."""
     folder='/i/history/bookmarks/'+cid
@@ -230,7 +237,7 @@ async def x_folder_posts(page,cid,title):
     seen,still=set(),0
     for _ in range(FOLDER_SCROLLS):
         await page.wait_for_timeout(1500)
-        if 'Something went wrong' in await page.locator('body').inner_text():raise VpubError('read_failed','X did not load the bookmark folder.')
+        await x_folder_failed(page)
         posts=[await x_pages.post_fields(row) for row in await page.locator('main article').all()]
         found={post['id'] for post in posts if post}
         still=still+1 if found<=seen else 0
@@ -318,7 +325,7 @@ async def execute(page,platform,owner,payload):
             links=await page.locator('article a[href]').evaluate_all('es=>es.map(e=>e.getAttribute("href"))')
             ids=sorted({m[1] for href in links if (m:=re.fullmatch(r'/[^/]+/status/(\d+)',href))})
             text=await page.locator('body').inner_text()
-            if 'Something went wrong' in text:raise VpubError('read_failed','X did not load the bookmark folder.')
+            await x_folder_failed(page)
             return {'identity':owner,'collection_id':payload['collection_id'],'items':[{'id':i} for i in ids],
                     'complete':not ids and 'Save posts for later' in text,'coverage':'visible_page','platform_writes':0}
         if rebuilt:

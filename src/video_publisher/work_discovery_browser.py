@@ -6,6 +6,8 @@ from .core import VpubError, stop_check
 from .browser_runtime import risk_check, unique_visible
 from .browser_backends import MANAGE, links, work_url
 
+EMPTY_LIST = re.compile(r'暂无作品|暂无内容|No posts yet|hasn.t posted', re.I)
+
 
 async def scan(page, platform, identity, limit, pages):
     if type(limit) is not int or not 1 <= limit <= 200 or type(pages) is not int or not 1 <= pages <= 10:
@@ -16,6 +18,11 @@ async def scan(page, platform, identity, limit, pages):
     for index in range(pages):
         stop_check(platform); await risk_check(page)
         await page.wait_for_timeout(2000 if index else 4000)
+        if platform=='douyin' and not index:
+            # The creator list fills in some time after the page shows.
+            for _ in range(20):
+                if await page.locator('[class^="info-title-text-"]').count() or EMPTY_LIST.search(await page.locator('body').inner_text()): break
+                await page.wait_for_timeout(1000)
         before=len(rows)
         # Scope link extraction to the authenticated account profile, not recommendation rails.
         found=await links(page,platform,identity)
@@ -56,7 +63,7 @@ async def scan(page, platform, identity, limit, pages):
         if not moved: reason='no_visible_continuation'; break
     if not rows:
         body=await page.locator('body').inner_text()
-        if not re.search(r'暂无作品|暂无内容|No posts yet|hasn.t posted',body,re.I):
+        if not EMPTY_LIST.search(body):
             raise VpubError('works_layout_unverified','No verified works or explicit empty state; discovery is incomplete.')
     return {'identity':identity,'items':list(rows.values())[:limit],'pages_read':index+1,
             'complete':False,'next_cursor':None,'stop_reason':reason,'omitted_cards':omitted,
