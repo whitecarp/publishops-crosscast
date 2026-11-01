@@ -241,7 +241,7 @@ async def serve(listener, handle, platform, *, idle=None, lifetime=MAX_LIFETIME_
                 out = {"ok": False, "error": {"code": exc.code if isinstance(exc, VpubError) else "browser_error",
                                               "message": exc.message if isinstance(exc, VpubError) else failure_message(exc),
                                               "hint": exc.hint if isinstance(exc, VpubError) else "Inspect the original work and receipt before retrying; no automatic resubmission."}}
-            conn.send_bytes(json.dumps(out, ensure_ascii=False).encode("utf-8"))
+            conn.send_bytes(json.dumps(out, ensure_ascii=False).encode("utf-8", "backslashreplace"))
             if failed or not usable():
                 return "error"  # the page state is unknown, so the next command starts clean
         except (OSError, EOFError, ValueError):

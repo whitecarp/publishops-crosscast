@@ -62,7 +62,8 @@ def atomic_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, name = tempfile.mkstemp(prefix=".vpub-", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+        # A viewer's text can hold half an emoji, which still reads back the same from JSON's escaped form.
+        with os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace", newline="\n") as f:
             json.dump(value, f, ensure_ascii=False, indent=2)
             f.write("\n")
             f.flush()
@@ -75,7 +76,7 @@ def atomic_json(path, value):
 
 def digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
-                                     separators=(",", ":")).encode()).hexdigest()
+                                     separators=(",", ":")).encode("utf-8", "surrogatepass")).hexdigest()
 
 
 def file_sha(path):
