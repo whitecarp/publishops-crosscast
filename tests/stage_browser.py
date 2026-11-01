@@ -13,11 +13,14 @@ from unittest.mock import patch
 
 from video_publisher.core import atomic_json, home
 
+MOST_SECONDS = float(os.environ.get("STAGE_TEST_SECONDS", 180))
+
 
 def blocking(test):
     @functools.wraps(test)
     def run(self):
-        return self.loop.run_until_complete(test(self))
+        # Pages under test have waits of up to ten minutes, and a test must not sit through one.
+        return self.loop.run_until_complete(asyncio.wait_for(test(self), MOST_SECONDS))
     return run
 
 
