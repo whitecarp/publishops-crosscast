@@ -22,7 +22,7 @@
 | 文字私信 | 上游委派（本輪未實測） | 無後端 | CLI 官方網頁 | CLI X Chat | CLI 官方網頁 |
 | 保存／移除 | 指定收藏夾 | 指定普通播放列表 | 預設收藏 | 私人書籤 | 預設 Saved |
 | @ 通知 | bili-cli；`vpub messages sync` | 未接入 | 可見提及預覽 | Mentions | 標註／提及；非空樣本待驗 |
-| 審核／隱藏 | 上游 | 觀眾留言待審／批准 | 未接入 | 他人回覆隱藏／恢復 | 未接入 |
+| 審核／隱藏 | 上游 | 觀眾留言待審／批准（付費附加元件） | 未接入 | 他人回覆隱藏／恢復 | 未接入 |
 
 YouTube 欄中其他 API 項目同樣需要付費附加元件；`vpub capabilities` 會顯示本機實際可用的路徑。
 
@@ -30,13 +30,13 @@ YouTube 欄中其他 API 項目同樣需要付費附加元件；`vpub capabiliti
 
 第二期真實上傳及開發限制見[驗證記錄](VALIDATION.md)。背景瀏覽器不是官方直連 API，也沒有速度保證；介面變更、登入過期及驗證可能需要介入。文案寫作／翻譯由宿主聊天模型透過 request/apply 完成，不會翻譯影片本身。
 
-內容語言與平台目標不同時保留原語言＋翻譯；中文的簡繁體在 B站／抖音統一簡體，不重複兩段。抖音自訂章節已接入 CLI 發布／驗證流程。`vpub edit` 支援 YouTube 資料、Instagram 配文、可用的 X 編輯入口及抖音封面／章節；native 交接仍保留。共用 v3 直圖已由使用者在兩站手機畫面確認底部文字可見；不能外推到所有手機版面。郵件僅支援 Gmail、預設關閉，使用者主動要求時才協助安裝／連接插件並開啟。Outlook、QQ、網易及 SMTP 均不支援。評論單語回覆與使用者語言匯報見 [README](OPERATIONS.md#評論作品數據與營運匯報)。TikTok、自動／批量私信及點讚、完整歷史匯出與 YouTube 卡片／可點擊片尾未實作。
+內容語言與平台目標不同時保留原語言＋翻譯；中文的簡繁體在 B站／抖音統一簡體，不重複兩段。抖音自訂章節已接入 CLI 發布／驗證流程。`vpub edit` 支援 B站與 YouTube 的標題、簡介、封面和章節，抖音的標題、簡介、封面和章節，Instagram 配文，以及可用的 X 編輯入口；native 交接仍保留。共用 v3 直圖已由使用者在兩站手機畫面確認底部文字可見；不能外推到所有手機版面。郵件僅支援 Gmail、預設關閉，使用者主動要求時才協助安裝／連接插件並開啟。Outlook、QQ、網易及 SMTP 均不支援。評論單語回覆與使用者語言匯報見 [README](OPERATIONS.md#評論作品數據與營運匯報)。TikTok、自動／批量私信及點讚、完整歷史匯出與 YouTube 卡片／可點擊片尾未實作。
 
 當前限制以本頁表格及[最新驗證](VALIDATION.md)為準；以下版本記錄不是新的待辦清單。
 
 ## 0.16.0 — 付費 API 附加元件、內含 bili-cli、status 與 cleanup
 
-X、Instagram 與 YouTube 的官方 API 路徑移至獨立的付費附加元件，其他路徑維持免費與 MIT 授權。營運匯報、完整讀取與郵件提醒也移至附加元件。YouTube 新增透過 Studio 的免費背景瀏覽器路徑，可依標題加入播放清單並排程發布。`vpub playlist`、YouTube 儲存與留言按讚也可透過 YouTube 自己的頁面免費使用。`vpub collection` 現在涵蓋 B站合集（包含更名），以及在 X 兩個版本的網站上把貼文加入書籤夾、在新版網站上將其移除；X 路徑現在同時支援舊版與重建後的新版網站；`vpub covers portrait` 不用 AI 就能製作直式封面。`vpub edit` 現在涵蓋 B站與抖音的標題和簡介、B站的封面和章節，以及 YouTube 的章節。上傳時可在 B站與 YouTube 加章節、加入 B站或抖音合集、建立缺少的 YouTube 播放清單，並可在 X 與抖音排程。`--draft-only` 現在適用於所有平台。留言新增 YouTube 的置頂與移除、B站的刪除與移除，以及 X 的刪除。安全限制保護每一則回覆、私信與按讚。套件內含 bili-cli 1.2.1 及 `bili` 指令。新增 `vpub status`、`vpub cleanup`，`vpub messages sync` 也可讀取 B站 @ 提及與私信會話預覽。移除 `inbox`（改用 `messages`）、`--manage-playlists` 與 `--bilingual`。[升級說明](OPERATIONS.md#0160升級時的變化)。
+X、Instagram 與 YouTube 的官方 API 路徑移至獨立的付費附加元件，其他路徑維持免費與 MIT 授權。營運匯報、完整讀取與郵件提醒也移至附加元件。YouTube 新增透過 Studio 的免費背景瀏覽器路徑，可依標題加入播放清單並排程發布。`vpub playlist`、YouTube 儲存與留言按讚也可透過 YouTube 自己的頁面免費使用。`vpub collection` 現在涵蓋 B站合集（包含更名），以及在 X 兩個版本的網站上把貼文加入書籤夾、也把它移出書籤夾；X 路徑現在同時支援舊版與重建後的新版網站；`vpub covers portrait` 不用 AI 就能製作直式封面。`vpub edit` 現在涵蓋 B站與抖音的標題和簡介、B站的封面和章節，以及 YouTube 的章節。上傳時可在 B站與 YouTube 加章節、加入 B站或抖音合集、建立缺少的 YouTube 播放清單，並可在 X 與抖音排程（Instagram 完全不能排程）。`--draft-only` 現在適用於所有平台（B站結果為 `DRAFT_SAVED`，其他為 `PREVIEW_READY`）。留言新增 YouTube 的置頂與移除、B站的刪除與移除，以及 X 與 Instagram 的刪除（自己的留言）；刪除只有在確實證明留言已不在時才算完成。安全限制保護每一則回覆、私信與按讚。套件內含 bili-cli 1.2.1 及 `bili` 指令。新增 `vpub status`、`vpub cleanup`，`vpub messages sync` 也可讀取 B站 @ 提及與私信會話預覽。移除 `inbox`（改用 `messages`）、`--manage-playlists` 與 `--bilingual`。[升級說明](OPERATIONS.md#0160升級時的變化)。
 
 ## 0.15.0 — 恢復與完整讀取
 

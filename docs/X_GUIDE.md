@@ -6,7 +6,7 @@
 
 原因是未訂閱帳號的影片上傳上限為 **140 秒、512 MB**，且無法使用本工具所依賴的 Media Studio 媒體管理與自訂封面流程。CrossCast 的 X 後端透過 Media Studio 上傳影片並設定製作封面，因此目前僅支援具備此權限的訂閱帳號。登入或付款本身不代表權限已開通，上傳前仍會核對媒體庫入口與所選帳號。[官方上傳限制](https://help.x.com/en/using-x/x-videos) · [Media Studio 權限](https://help.x.com/en/using-x/media-studio)。
 
-**0.3.1 alpha：** 首次 `vpub auth login x` 開啟官方登入視窗。之後 `publish` 在背景復用 CrossCast 專用會話：核對帳號 → 上傳 Media Studio → 套用製作封面 → 填入按原語言規則產生的完整帖文 → 提交一次 → 讀回原帖。這是程式操作官方網站，不是 X API 用戶端。
+**0.3.1 alpha：** 首次 `vpub auth login x` 開啟官方登入視窗。之後 `publish` 在背景復用 CrossCast 專用會話：核對帳號 → 上傳 Media Studio → 套用製作封面 → 填入按原語言規則產生的完整帖文 → 提交一次 → 讀回原帖。這是程式操作官方網站，不是 X API 用戶端。X 可能把 CrossCast 的專用瀏覽器當成新裝置，要求檢查或找回帳號：請你自己在 X 的頁面完成，CrossCast 不會代為回答。
 
 ```sh
 vpub auth login x
@@ -28,6 +28,13 @@ vpub works x
 本專案目前只適配具有實際 Media Studio 存取權的訂閱帳號，不以免費帳號的短片額度作為本後端的支援承諾。X 官方一般網頁上傳說明列出非訂閱帳號上限為 140 秒、512 MB；Media Studio 的自訂封面與媒體管理需要另外符合存取權限。[一般上傳限制](https://help.x.com/en/using-x/x-videos) · [Media Studio 權限](https://help.x.com/en/using-x/media-studio)。
 
 現行官方級別表的傳統 Basic 不含 Media Studio，Premium／Premium+ 包含；平台亦有其他新方案，最終以帳號實際權限為準，不保證所有付費方案都適用。[官方級別說明](https://help.x.com/en/using-x/x-premium)。核對日期：2026-10-30。
+
+## 排程、書籤夾與 X 的兩個網站
+
+- **排程。** 在方案的 X 項目裡填一個帶明確時區的未來時間 `schedule`。CrossCast 在 Media Studio 自己的日曆與時鐘上，依這台電腦的時區填入並讀回，只保存一次。Studio 的排程頁無法證明是哪一則貼文、它的時間或影片，所以回執會維持 `SUBMITTED_UNVERIFIED`，直到你親自查看。時間過後，`vpub verify` 只有在找到一則字句完全相同、時間相近，且影片與 Media Studio 編號相符的新貼文時才會確認；讀不到該編號時，會把貼文列為 `candidate_id` 供你查看。在唯一檢查過的真實貼文上，帶自訂封面的影片讀不到這個編號，所以這項核對只會列出候選，不會確認。排程還沒在真實帳號上試過，API 路徑也不能排程。
+- **兩個網站。** X 有兩個版本的網站，CrossCast 會判斷帳號使用哪一個；到目前為止，已登入的帳號使用的是舊版。兩種都對不上的頁面會報錯停下；請看那次嘗試的回執（`state`、`submitted_at` 和 `platform_writes`）確認有沒有東西已經送出。
+- **書籤夾** 需要 X Premium。在舊版上，列出、建立、更名、刪除書籤夾與把貼文加入書籤夾已在真實帳號上確認（第一次加入時 X 那邊已經加進去了，但 CrossCast 因為等不到 X 的回覆就放棄等待，回報為未確認；這個等待已經修好）。把貼文移出書籤夾要透過書籤夾頁面自己的分享選單；這手動做成功過。透過 CrossCast 試過兩次：第一次在背景瀏覽器裡逾時了，還沒記下任何東西；第二次按了一次，結果卻沒能確認，因為 CrossCast 去讀回結果時頁面上找不到書籤夾的控制項（多半是頁面重繪了一下；現在控制項會多給一點時間重新出現）。這個指令之後還沒重新試過。
+- **草稿。** `vpub init --draft-only` 停在發文編輯器的預覽，媒體已存進 Media Studio（`PREVIEW_READY`）；這不是已確認保存的草稿。
 
 ## 歷史 native 瀏覽器指南
 
@@ -57,7 +64,7 @@ vpub publish x-publish.json --confirm CURRENT_PLAN_HASH
 
 X 官方網頁上傳說明目前列出：未訂閱帳號最多 140 秒、512 MB；付費帳號有不同額度。這是查閱日期的參考，實際帳號介面仍須驗證。
 
-搜尋、作品清單、數據分析、評論與收件箱尚未接成統一 X 命令；不要將此交接流程宣傳為完整 X CLI。
+這個 native 交接流程本身不含搜尋、作品清單、數據分析、評論與收件箱；現在它們是各自獨立的命令（`vpub works x`、`vpub stats x`、`vpub comments`、`vpub messages` 和 `vpub dm`，見[功能範圍](FEATURES.md)）。不要將此交接流程本身宣傳為完整 X CLI。
 
 ## 自訂封面與訂閱
 
