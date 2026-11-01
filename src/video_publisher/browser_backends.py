@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 import re
 import time
 from pathlib import Path
@@ -274,9 +275,28 @@ async def verify_youtube(page, receipt):
             "note": "Title, description, visibility or schedule, and playlists read back from the channel's own Studio page; cover pixels and playback are separate." if present else "Expected work/text not yet verified; do not upload again."}
 
 
+async def verify_scheduled_x(page, identity, receipt):
+    """A scheduled post has no address until it goes out: Studio's schedule page before its time, the account's own posts after."""
+    if datetime.now(timezone.utc) >= datetime.fromisoformat(receipt["schedule"]["at"]):
+        found = await works(page, "x", identity)
+        matches = [v for k, v in found.items() if k not in receipt.get("before_ids", []) and normalize(receipt["title"]) in normalize(v["text"])]
+        if len(matches) == 1:
+            return await verify(page, "x", identity, {**receipt, "id": matches[0]["id"], "url": matches[0]["url"]})
+        return {**receipt, "state": "SUBMITTED_UNVERIFIED", "phase": "readback_pending", "note": "Its time has passed and no matching post was found on the first page. Inspect the account; do not post again."}
+    await page.goto("https://studio.x.com/schedule", wait_until="domcontentloaded", timeout=60000)
+    await page.wait_for_timeout(4000)
+    await risk_check(page)
+    listed = normalize(receipt["title"]) in normalize(await page.locator("body").inner_text())
+    return {**receipt, "state": "SUBMISSION_VERIFIED" if listed else "SUBMITTED_UNVERIFIED", "phase": "scheduled" if listed else "readback_pending", "visibility": "scheduled",
+            "verification_source": "studio_schedule_page", "verified_at": now(),
+            "note": "Listed on Studio's schedule page; X posts it at that time." if listed else "Not found on Studio's schedule page yet. Inspect it; do not post again."}
+
+
 async def verify(page, platform, identity, receipt):
     if receipt.get('identity') and receipt['identity'].casefold() != identity.casefold():
         raise VpubError('wrong_account', 'Original receipt belongs to another signed-in account.')
+    if platform == 'x' and receipt.get('schedule') and not receipt.get('id'):
+        return await verify_scheduled_x(page, identity, receipt)
     if not receipt.get('id') and receipt.get('final_submit_attempted') and 'before_ids' in receipt:
         found = await works(page, platform, identity)
         matches = [v for k,v in found.items() if k not in receipt['before_ids'] and

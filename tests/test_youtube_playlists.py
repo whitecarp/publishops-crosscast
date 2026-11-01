@@ -43,6 +43,7 @@ class FakeYouTube:
         self.keep = True
         self.dialog_title = None
         self.other_box = False
+        self.says_empty = True
 
     async def html(self, route, body):
         await route.fulfill(status=200, content_type="text/html; charset=utf-8", body="<!doctype html><title>t</title>" + STYLE + "<body>" + body)
@@ -127,6 +128,9 @@ class FakeYouTube:
 
     def videos_page(self, key):
         rows = "".join(f'<ytcp-video-row><a id="video-title" href="/video/{video}/edit">Title {video}</a></ytcp-video-row>' for video in self.playlists[key]["videos"])
+        if not rows:
+            # As Studio shows an empty playlist: no rows, no paging, and its own words saying so.
+            return '<div class="no-content style-scope ytcp-playlist-video-section-content" style="min-height:10px">Add videos</div>' if self.says_empty else "<p>Studio</p>"
         return f'{rows}<ytcp-icon-button id="navigate-after" aria-disabled="true"></ytcp-icon-button>'
 
     def edit_page(self, key):
@@ -139,7 +143,8 @@ class FakeYouTube:
             <script>{menu_script()}
             let chosen = '{row['visibility']}';
             function ready() {{ document.getElementById('save').removeAttribute('aria-disabled'); }}
-            function choose(item, name) {{ chosen = name; document.getElementById('shown').textContent = item.textContent; item.parentElement.hidden = true; ready(); }}
+            // The menu leaves its place beside the button once it has been used, as it does in Studio.
+            function choose(item, name) {{ chosen = name; document.getElementById('shown').textContent = item.textContent; item.parentElement.hidden = true; document.body.append(item.parentElement); ready(); }}
             // Save greys out at once and the change goes out later, as it does in Studio.
             function save() {{ const body = JSON.stringify({{title: document.querySelector('#title-textarea #textbox').innerText, description: document.querySelector('#description-textarea #textbox').innerText, visibility: chosen}});
               document.getElementById('save').setAttribute('aria-disabled', 'true'); setTimeout(() => fetch('/youtubei/v1/browse/edit_playlist?write=update/{key}', {{method: 'POST', body}}), 1500); }}
@@ -296,6 +301,16 @@ class PlaylistTests(Browser):
         result = await self.run_op("create", collection_id=None, title="Cooking", description="About food", privacy="private", receipt_key=key)
         self.assertEqual("PLnewnewnewnewnewnewnew", result["collection_id"])
         self.assertEqual(("private", "About food"), (self.site.playlists[result["collection_id"]]["visibility"], self.site.playlists[result["collection_id"]]["description"]))
+
+    async def test_an_empty_playlist_is_complete_only_when_the_page_says_it_is_empty(self):
+        self.assertEqual(([], True), (lambda r: (r["items"], r["complete"]))(await self.run_op("items", collection_id=SECOND)))
+        self.site.says_empty = False
+        self.assertEqual(([], False), (lambda r: (r["items"], r["complete"]))(await self.run_op("items", collection_id=SECOND)))
+
+    async def test_changing_visibility_saves_even_though_the_menu_moves_away(self):
+        key = self.receipt("rename", FIRST, "Recipes", before_ids=[FIRST, SECOND])
+        await self.run_op("rename", collection_id=FIRST, title="Recipes", description="New notes", privacy="unlisted", receipt_key=key)
+        self.assertEqual(("unlisted", "New notes"), (self.site.playlists[FIRST]["visibility"], self.site.playlists[FIRST]["description"]))
 
     async def test_before_an_upload_only_a_missing_playlist_is_made_and_private(self):
         made = await yt.ensure_playlists(self.page, CHANNEL, ["Recipes", "Cooking"])

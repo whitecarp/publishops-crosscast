@@ -453,7 +453,7 @@ vpub auth login douyin
 vpub auth status all
 ```
 
-首次登入開啟 CrossCast 專用的官方 Chrome 視窗，使用者自行選擇網站提供的掃碼、密碼等方式並完成簡訊或身份驗證。後續命令在背景復用同一本機會話。這與 Codex 內置瀏覽器分開，不搬移宿主 Cookie；登入可能過期或再次要求驗證。
+首次登入開啟 CrossCast 專用的官方 Chrome 視窗，使用者自行選擇網站提供的掃碼、密碼等方式並完成簡訊或身份驗證。後續命令在背景復用同一本機會話。這與 Codex 內置瀏覽器分開，不搬移宿主 Cookie；登入可能過期或再次要求驗證。平台可能把 CrossCast 的專用瀏覽器視為新裝置，首次登入時可能要求驗證或復原帳號，請在平台自己的頁面上親自完成；CrossCast 不會代為回答。
 
 在 Windows 上，以套件形式安裝的 AI 應用（多數 Microsoft Store 應用都是）會有自己私有的 `%LOCALAPPDATA%` 副本，因此透過其中一個應用完成的登入不會出現在另一個應用中：兩者看到的路徑相同，內容卻各自獨立。如果切換應用後登入像是消失了，多半不是過期。請在新應用中重新登入，或設定 `VPUB_HOME` 讓兩個應用都使用一般資料夾（例如 `C:\Users\you\CrossCast-data`），並在那裡登入一次。
 
@@ -542,6 +542,8 @@ vpub browser cover RECEIPT_KEY --file landscape.jpg --portrait portrait.jpg --id
 YouTube 可設定 `playlist_titles`（免費背景路徑或內置瀏覽器，依確切標題勾選）或 `playlist_ids`（付費 API）。API 先查成員避免重複加入，不盲目重試結果不明的寫入。所需管理權限已納入首次 OAuth 授權。Studio 新建私密清單並選入既有影片已驗證，API 路徑仍為模擬測試。免費路徑加上 `create_missing_playlists: true` 時，頻道缺少的標題會在上傳開始前建立為私人清單，已存在的不動。B站合集使用 `vpub collection`，上傳時也可用 `season_id` 加入合集，填 `vpub collection list bilibili` 回傳的確切 ID。即使 B站拒絕加入合集，上傳本身仍然有效，回執會寫明。
 
 新 YouTube 方案必須明確填寫 `category_id`，由宿主依影片內容與官方選項選擇，不再固定為「人物和博客」。`metadata request/apply` 可提供類別，已指定值會保留。
+
+X 的瀏覽器路徑也接受帶明確時區的未來時間 `schedule`：在 Media Studio 自己的日曆與時鐘上依這台電腦的時區填入並讀回，只保存一次，再到 Studio 的排程頁面確認；時間過後，`vpub verify` 會在帳號的貼文中尋找。尚未在真實帳號上試過。
 
 抖音 `method: browser` 可在發布流程中設定 `duration_seconds` 與 `chapters`：作品取得持久 ID 後，CLI 填入自訂章節、保存並逐項讀回；不把平台自動建議當成已完成。若作品仍審核中，回執記錄待辦，後續 `vpub verify`／`resume` 完成這個章節步驟，不重傳影片。B站／抖音／YouTube 的 native 交接仍保留。時間點來自同一支成片，自零開始、遞增且小於片長；標題跟隨平台文案語言。
 

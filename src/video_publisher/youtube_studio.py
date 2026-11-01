@@ -17,6 +17,7 @@ SAVE_ROWS = "yt-sheet-view-model toggleable-list-item-view-model"
 SAVE_TITLES = "rows => rows.map(row => (row.innerText || '').split('\\n').map(line => line.trim()).filter(Boolean)[0] || '')"
 CREATE_BUTTON = 'button[aria-label="Create"], button[aria-label="创建"], button[aria-label="建立"]'
 CONFIRM_BUTTON = "ytcp-confirmation-dialog #confirm-button, ytcp-dialog #confirm-button, tp-yt-paper-dialog #confirm-button"
+EMPTY_PLAYLIST = ".no-content.ytcp-playlist-video-section-content"
 PRIVACY = {"private": "PRIVATE", "unlisted": "UNLISTED", "public": "PUBLIC"}
 EDIT_ITEM = re.compile(r"^\s*(Edit|修改|編輯)\s*$")
 DELETE_ITEM = re.compile(r"^\s*(Delete|删除|刪除)\s*$")
@@ -477,7 +478,8 @@ async def rename_playlist(page, identity, payload, before_submit):
     if description is not None:
         await notes.fill(description)
     if privacy:
-        await set_privacy(page, visibility_trigger(page), privacy)
+        # The menu moves once it has opened, so the button is held on to rather than found through the menu again.
+        await set_privacy(page, await visibility_trigger(page).element_handle(timeout=15000), privacy)
     button = page.locator("ytcp-button#save").first
     if not await wait_ready(page, button):
         raise VpubError("edit_not_ready", "Studio did not enable Save; nothing was saved.")
@@ -601,6 +603,9 @@ async def playlists(page, identity, payload):
         if f"/playlist/{playlist}/" not in page.url:
             raise VpubError("owner_unverified", "Studio did not open this playlist for the signed-in channel.")
         items, complete = await studio_table(page, rows, VIDEO_LINKS, playlist_videos)
+        # An empty playlist says so on the page, and only that proves it: no rows could also mean a slow page.
+        if not items and await visible(page.locator(EMPTY_PLAYLIST)):
+            complete = True
         return {"identity": identity, "collection_id": playlist, "items": items, "complete": complete, "coverage": "studio_playlist_videos", "platform_writes": 0, "observed_at": now()}
     if operation in {"items", "add", "remove"}:
         title = await playlist_title(page, identity, playlist)

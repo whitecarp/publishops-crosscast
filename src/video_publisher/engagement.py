@@ -2,7 +2,7 @@
 import re
 import uuid
 from . import adapters, operations, safety
-from .core import VpubError, atomic_json, digest, home, now, publication_lock, read_json, stop_check
+from .core import VpubError, atomic_json, digest, error_fields, home, now, publication_lock, read_json, stop_check
 
 PENDING={'ACTION_SUBMITTING','ACTION_UNVERIFIED'}
 
@@ -100,7 +100,7 @@ def set_action(platform,work,kind,desired=True,collection=None,dry_run=False,tes
         except Exception as exc:
             saved=read_json(path)
             saved['state']='ACTION_UNVERIFIED' if saved['state'] in PENDING else 'ACTION_FAILED'
-            saved['error_code']=exc.code if isinstance(exc,VpubError) else type(exc).__name__
+            saved.update(error_fields(exc,'error_code'))
             saved['platform_writes']=None if saved['state']=='ACTION_UNVERIFIED' else 0
             atomic_json(path,saved)
             if saved['state']=='ACTION_FAILED':safety.release(ticket)
@@ -118,7 +118,7 @@ def verify(key):
         if saved['state'] in PENDING|{'ACTION_VERIFIED'}:saved=finish(saved,observed)
         else:saved['after']=observed
         if saved['state']=='ACTION_VERIFIED' and saved.get('error_code'):
-            saved.setdefault('resolved_errors',[]).append({'code':saved.pop('error_code'),'resolved_at':now()})
+            saved.setdefault('resolved_errors',[]).append({'code':saved.pop('error_code'),'resolved_at':now()});saved.pop('error_message',None)
         atomic_json(path,saved)
         operations.record('engagement',saved['platform'],saved['work_id'],saved)
         return {**saved,'platform_writes':0}

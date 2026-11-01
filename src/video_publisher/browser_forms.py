@@ -10,8 +10,9 @@ from .categories import STUDIO_CATEGORIES
 from .core import VpubError, douyin_caption
 from .browser_runtime import unique_visible, visible
 from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, normalize, studio_offsets, studio_read, studio_style,
-                               upload_file, wait_until, work_url, works, verify)
+                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x)
 
+X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
 YT_DIALOG = 'ytcp-uploads-dialog'
 YT_PLAYLISTS = 'ytcp-playlist-dialog'
 # Each playlist row's checkbox, its own lines of text and whether it is ticked.
@@ -48,6 +49,52 @@ async def finish(page, tx, before):
         await asyncio.sleep(5)
     return tx.save(state='SUBMITTED_UNVERIFIED', phase='readback_pending',
                    hint='The submit was clicked once. Verify this existing attempt; do not reupload.')
+
+
+async def x_schedule(page, when):
+    """Fill Studio's own calendar and clock and read them back. Nothing is saved here. Studio uses this computer's time zone."""
+    local = when.astimezone()
+    unconfirmed = 'The X schedule was not confirmed. Nothing was posted.'
+    opener = await unique_visible(page.locator('button[type="button"]').filter(has_text=re.compile(r'^\s*Schedule\s*$')), 'X Schedule')
+    await opener.click(timeout=15000)
+    month = page.locator('fieldset.CalendarNavigation-monthFormSelect select')
+    year = page.locator('fieldset.CalendarNavigation-yearFormSelect select')
+    try:
+        await month.wait_for(state='visible', timeout=15000)
+        await year.select_option(label=str(local.year), timeout=5000)
+        await month.select_option(value=str(local.month - 1), timeout=5000)
+    except Exception:
+        raise VpubError('schedule_unverified', 'X Studio did not offer this month. Nothing was posted.') from None
+    await page.wait_for_timeout(500)
+    # Days of the next month sit in the same grid with the same numbers, so only this month's count.
+    days = page.locator('.Calendar-day.is-selectable:not(.is-adjacentMonth)').filter(has=page.locator('.Calendar-dayText', has_text=re.compile(rf'^\s*{local.day}\s*$')))
+    if await days.count() != 1:
+        raise VpubError('schedule_unverified', 'X Studio did not offer this day. Nothing was posted.')
+    await days.first.click(timeout=15000)
+    # The clock has no label of its own; it is the one box showing a time.
+    clocks = [box for box in await page.locator('input[type="text"]').all() if await box.is_visible() and X_CLOCK.fullmatch((await box.input_value()).strip())]
+    if len(clocks) != 1:
+        raise VpubError('schedule_unverified', 'X Studio did not show one time to set. Nothing was posted.')
+    stamp = f"{local.hour % 12 or 12}:{local.minute:02d} {'AM' if local.hour < 12 else 'PM'}"
+    await clocks[0].fill(stamp)
+    await clocks[0].press('Tab')
+    await page.wait_for_timeout(500)
+    chosen = page.locator('.Calendar-day.is-rangeStart:not(.is-adjacentMonth) .Calendar-dayText')
+    if (await year.evaluate('e => e.options[e.selectedIndex].text') != str(local.year) or await month.input_value() != str(local.month - 1)
+            or await chosen.count() != 1 or (await chosen.inner_text()).strip() != str(local.day) or (await clocks[0].input_value()).strip() != stamp):
+        raise VpubError('schedule_unverified', unconfirmed)
+    return {'at': when.isoformat(), 'local': local.isoformat(), 'date': [local.year, local.month, local.day], 'time': [local.hour, local.minute], 'timezone_basis': 'computer'}
+
+
+async def x_send_scheduled(page, tx):
+    """With a time chosen the composer's final button becomes Save. One click, then Studio's schedule page says whether it is there."""
+    when = datetime.fromisoformat(tx.options['schedule'].replace('Z', '+00:00'))
+    tx.save(schedule=await x_schedule(page, when))
+    save = await unique_visible(page.locator('button[type="button"]').filter(has_text=re.compile(r'^\s*Save\s*$')), 'X schedule Save')
+    await wait_until(page, lambda: enabled(save), seconds=30, label='X schedule Save enabled')
+    await tx.submit(page, save)
+    await page.wait_for_timeout(3000)
+    return tx.save(**await verify_scheduled_x(page, tx.identity, tx.receipt))
 
 
 async def publish_x(page, tx):
@@ -116,6 +163,8 @@ async def publish_x(page, tx):
     tx.save(phase='preview', review_url=page.url, ai_disclosure='caption_text', metadata_readback=True)
     if tx.options.get('submission_mode') == 'draft_only':
         return tx.save(state='PREVIEW_READY', note='Media saved in Studio; composer preview is not a confirmed persistent post draft.')
+    if tx.options.get('schedule'):
+        return await x_send_scheduled(page, tx)
     post = await unique_visible(page.locator('button[type="button"]').filter(has_text=re.compile('^Post$')), 'final Post')
     await wait_until(page, lambda: enabled(post), seconds=90, label='X final Post enabled')
     await tx.submit(page, post)

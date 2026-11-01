@@ -22,6 +22,13 @@ class VpubError(Exception):
         self.code, self.message, self.hint = code, message, hint
 
 
+def error_fields(exc, name="error"):
+    """For a receipt: the code, and the words saying which step failed."""
+    if isinstance(exc, VpubError):
+        return {name: exc.code, "error_message": exc.message}
+    return {name: type(exc).__name__, "error_message": None}
+
+
 def now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -297,7 +304,7 @@ def load_plan(path, selected=None):
             raise VpubError("invalid_audience", "YouTube made_for_kids must be explicitly true/false.")
         schedule = v.get("schedule")
         if schedule:
-            if platform in {"douyin", "x", "instagram"} or v.get("method") == "native":
+            if platform in {"douyin", "instagram"} or v.get("method") == "native" or (platform == "x" and v.get("method") == "api"):
                 raise VpubError("unsupported_schedule", "This route supports immediate publication only.")
             try:
                 when = datetime.fromisoformat(schedule.replace("Z", "+00:00"))

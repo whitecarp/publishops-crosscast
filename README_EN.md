@@ -96,7 +96,7 @@ Every release starts with a plan that spells out platforms, accounts, visibility
 
 ### 📮 Sign in once, then publish in the background
 
-After the first sign-in, the CLI does the uploading itself: Bilibili through bili-cli, and YouTube, Douyin, Instagram and X through a dedicated Chrome the CLI runs in the background. The official API routes for YouTube, X and Instagram need the paid add-on. Bilibili and YouTube can both schedule.
+After the first sign-in, the CLI does the uploading itself: Bilibili through bili-cli, and YouTube, Douyin, Instagram and X through a dedicated Chrome the CLI runs in the background. The official API routes for YouTube, X and Instagram need the paid add-on. Bilibili, YouTube and X can schedule.
 
 ### 🔁 Pick up where it stopped
 

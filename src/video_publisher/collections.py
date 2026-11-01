@@ -2,7 +2,7 @@
 import re
 from pathlib import Path
 from . import adapters
-from .core import VpubError, atomic_json, digest, home, now, publication_lock, read_json, stop_check
+from .core import VpubError, atomic_json, digest, error_fields, home, now, publication_lock, read_json, stop_check
 from .direct_messages import identity
 
 PLATFORMS = ('instagram', 'x', 'douyin', 'bilibili', 'youtube')
@@ -71,8 +71,8 @@ def verify(key):
             return {**r, 'platform_writes':0, 'hint':'No submit was recorded. Verify the platform before creating a new request.'}
         try:
             r=checked_result(r,members(r['platform'],r['identity'],r['collection_id'],r['work_id']) if r['action'] in {'add','remove'} else call(r['platform'],'list',r['identity']))
-            if r['state']=='CONFIRMED':r.pop('error',None)
-        except Exception as exc:r.update(state='UNVERIFIED',error=exc.code if isinstance(exc,VpubError) else type(exc).__name__)
+            if r['state']=='CONFIRMED':r.pop('error',None);r.pop('error_message',None)
+        except Exception as exc:r.update(state='UNVERIFIED',**error_fields(exc))
         atomic_json(path,r)
         return {**r,'platform_writes':0}
 
@@ -138,8 +138,7 @@ def change(platform, action, collection=None, title=None, request_id=None, cover
                 r=checked_result(r,call(platform,'list',owner))
         except Exception as exc:
             r=read_json(path)
-            r.update(state='UNVERIFIED' if r.get('platform_writes') else 'FAILED_BEFORE_SUBMIT',
-                     error=exc.code if isinstance(exc,VpubError) else type(exc).__name__)
+            r.update(state='UNVERIFIED' if r.get('platform_writes') else 'FAILED_BEFORE_SUBMIT',**error_fields(exc))
         atomic_json(path,r)
         return r
 
@@ -185,5 +184,5 @@ def membership(platform, action, collection, work, request_id):
                 call(platform,action,owner,collection_id=collection,work_id=work,receipt_key=key,before_members=ids)
                 r=read_json(path);r=checked_result(r,members(platform,owner,collection,work))
         except Exception as exc:
-            r=read_json(path);r.update(state='UNVERIFIED' if r.get('platform_writes') else 'FAILED_BEFORE_SUBMIT',error=exc.code if isinstance(exc,VpubError) else type(exc).__name__)
+            r=read_json(path);r.update(state='UNVERIFIED' if r.get('platform_writes') else 'FAILED_BEFORE_SUBMIT',**error_fields(exc))
         atomic_json(path,r);return r

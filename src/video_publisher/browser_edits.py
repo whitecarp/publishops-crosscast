@@ -73,9 +73,10 @@ async def execute(page, platform, identity, payload):
         if payload.get('verify_only'):
             matched=normalize(patch['post_text']) in normalize(await post.first.inner_text())
             return save(state='EDIT_VERIFIED' if matched else 'EDIT_SUBMITTED_UNVERIFIED',url=url,platform_writes=0)
-        await (await unique_visible(post.locator('button[aria-label="More"], '+x_pages.MORE),'post More')).click()
+        await x_pages.open_menu(page,await unique_visible(post.locator('button[aria-label="More"], '+x_pages.MORE),'post More'))
         edit=await visible(page.get_by_role('menuitem',name=x_pages.EDIT_POST))
         if edit is None:
+            await page.keyboard.press('Escape')
             return save(state='EDIT_UNAVAILABLE',url=url,reason='The original post menu has no Edit action; no deletion/repost/reply was attempted.')
         await edit.click()
         from .operations_browser import fill_x_text

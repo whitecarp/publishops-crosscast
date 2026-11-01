@@ -2,7 +2,7 @@
 import re
 import uuid
 from . import adapters, operations as ops, safety
-from .core import VpubError, atomic_json, digest, home, now, publication_lock, read_json, stop_check
+from .core import VpubError, atomic_json, digest, error_fields, home, now, publication_lock, read_json, stop_check
 
 SUPPORTED = {'bilibili': {'like', 'pin', 'delete', 'remove'}, 'instagram': {'like'}, 'x': {'like', 'hide', 'delete'}, 'youtube': {'like', 'pin', 'edit', 'delete', 'remove', 'moderate'}, 'douyin': {'like', 'delete'}}
 PENDING = {'COMMENT_SUBMITTING', 'COMMENT_UNVERIFIED'}
@@ -105,8 +105,7 @@ def mutate(platform, work, comment_id, kind, desired=True, dry_run=False, test_i
             saved.update(after=after, state=state)
         except Exception as exc:
             saved = read_json(path)
-            saved.update(state='COMMENT_UNVERIFIED' if saved['state'] in PENDING else 'COMMENT_FAILED',
-                         error_code=exc.code if isinstance(exc, VpubError) else type(exc).__name__)
+            saved.update(state='COMMENT_UNVERIFIED' if saved['state'] in PENDING else 'COMMENT_FAILED', **error_fields(exc, 'error_code'))
             saved['platform_writes'] = None if saved['state'] == 'COMMENT_UNVERIFIED' else 0
             if saved['state'] == 'COMMENT_FAILED': safety.release(ticket)
         atomic_json(path, saved)
@@ -123,7 +122,7 @@ def verify(key):
         if saved['state'] in PENDING | {'COMMENT_VERIFIED'}:
             saved['state'] = 'COMMENT_VERIFIED' if matches(r, after) else 'COMMENT_UNVERIFIED'
         if saved['state']=='COMMENT_VERIFIED' and saved.get('error_code'):
-            saved.setdefault('resolved_errors',[]).append({'code':saved.pop('error_code'),'resolved_at':now()})
+            saved.setdefault('resolved_errors',[]).append({'code':saved.pop('error_code'),'resolved_at':now()});saved.pop('error_message',None)
         saved.update(after=after, verified_at=now()); atomic_json(path, saved)
         ops.record('comment_management', r['platform'], r['work_id'], saved)
         return {**saved, 'platform_writes': 0}
@@ -159,8 +158,7 @@ def resume(key):
             saved.update(after=after,state='COMMENT_VERIFIED' if matches(r,after) else 'COMMENT_UNVERIFIED')
         except Exception as exc:
             saved=read_json(path)
-            saved.update(state='COMMENT_UNVERIFIED' if saved['state'] in PENDING else 'COMMENT_FAILED',
-                         error_code=exc.code if isinstance(exc,VpubError) else type(exc).__name__)
+            saved.update(state='COMMENT_UNVERIFIED' if saved['state'] in PENDING else 'COMMENT_FAILED',**error_fields(exc,'error_code'))
             saved['platform_writes']=None if saved['state']=='COMMENT_UNVERIFIED' else 0
         atomic_json(path,saved)
         return ops.record('comment_management',r['platform'],r['work_id'],saved)

@@ -27,8 +27,7 @@ async def execute(page,identity,payload):
     row=await unique_visible(rows,'exact reply')
     post=await x_pages.post_fields(row)
     if not post or post['text']!=target['text']:raise VpubError('comment_changed','Reply text changed.')
-    await (await unique_visible(row.locator(x_pages.MORE),'reply menu button')).click()
-    menu=await unique_visible(page.get_by_role('menu'),'reply menu')
+    menu=await unique_visible(await x_pages.open_menu(page,await unique_visible(row.locator(x_pages.MORE),'reply menu button')),'reply menu')
     ons=[x for x in await menu.get_by_role('menuitem',name=x_pages.UNHIDE_REPLY).all() if await x.is_visible()]
     offs=[x for x in await menu.get_by_role('menuitem',name=x_pages.HIDE_REPLY).all() if await x.is_visible()]
     if len(ons)+len(offs)!=1:raise VpubError('hide_unavailable','The exact reply menu does not expose hide/unhide for this account.')
@@ -76,8 +75,7 @@ async def delete_own(page,identity,payload):
     if payload['operation']=='status':return observed
     if payload['operation']!='set':raise VpubError('unsupported_operation','Choose status or set.')
     if post['text']!=target['text']:raise VpubError('comment_changed','Reply text changed.')
-    await (await unique_visible(row.locator(x_pages.MORE),'reply menu button')).click()
-    menu=await unique_visible(page.get_by_role('menu'),'reply menu')
+    menu=await unique_visible(await x_pages.open_menu(page,await unique_visible(row.locator(x_pages.MORE),'reply menu button')),'reply menu')
     await (await unique_visible(menu.get_by_role('menuitem',name=x_pages.DELETE_POST),'reply Delete')).click()
     confirm=page.locator('[role="dialog"],[role="alertdialog"]').get_by_role('button',name=x_pages.DELETE_POST)
     try:await confirm.first.wait_for(state='visible',timeout=10000)

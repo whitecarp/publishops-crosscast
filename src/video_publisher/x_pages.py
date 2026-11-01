@@ -7,6 +7,8 @@ itself uses, which stay the same whatever language the account is in. Only the e
 from datetime import datetime, timezone
 import re
 
+from .core import VpubError
+
 LIKE_OFF = 'button[data-testid="like"], [role="group"] button[aria-pressed="false"]:has(use[href^="#icon-heart"])'
 LIKE_ON = 'button[data-testid="unlike"], [role="group"] button[aria-pressed="true"]:has(use[href^="#icon-heart"])'
 SAVE_OFF = 'button[data-testid="bookmark"], [role="group"] button[aria-pressed="false"]:has(use[href^="#icon-bookmark"])'
@@ -45,6 +47,20 @@ POST_FIELDS = r"""article => {
 async def rebuilt(page):
     """Which site this account gets, read from any signed-in page."""
     return not await page.locator('a[data-testid="AppTabBar_Profile_Link"]').count()
+
+
+async def open_menu(page, button):
+    """A post's own menu. On a signed-in account a click can open nothing while the keyboard does, so it gets both and then stops."""
+    await button.click()
+    menus = page.get_by_role("menu")
+    for attempt in range(2):
+        try:
+            await menus.first.wait_for(state="visible", timeout=3000)
+            return menus
+        except Exception:
+            if not attempt:
+                await button.press("Enter")
+    raise VpubError("layout_changed", "X did not open this post's menu; nothing changed.")
 
 
 def post_row(page, post):

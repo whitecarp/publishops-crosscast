@@ -453,7 +453,7 @@ vpub auth login douyin
 vpub auth status all
 ```
 
-Each first login opens CrossCast's own official Chrome window. Choose QR, password or another option offered by the site and complete any SMS/identity check yourself. Later commands run headlessly with the same local profile. This profile is separate from Codex's browser; no host cookies are exported. Sessions may expire or require verification again.
+Each first login opens CrossCast's own official Chrome window. Choose QR, password or another option offered by the site and complete any SMS/identity check yourself. Later commands run headlessly with the same local profile. This profile is separate from Codex's browser; no host cookies are exported. Sessions may expire or require verification again. A platform can treat CrossCast's own browser as a new device, so a first sign-in may bring a check or an account-recovery step. Finish it yourself on the platform's own page; CrossCast never answers it.
 
 On Windows, an AI app installed as a package (most Microsoft Store apps are) gets its own private copy of `%LOCALAPPDATA%`, so a sign-in made through one such app doesn't appear in another: both see the same path, with separate contents. If a sign-in seems to be gone after switching apps, it probably hasn't expired. Sign in again from the new app, or set `VPUB_HOME` so both apps use a normal folder, such as `C:\Users\you\CrossCast-data`, and sign in once there.
 
@@ -540,6 +540,8 @@ vpub browser cover RECEIPT_KEY --file landscape.jpg --portrait portrait.jpg --id
 YouTube accepts `playlist_titles` (the free background route or native, ticked by exact title) or `playlist_ids` (paid API). The API checks membership before inserting and never blindly retries uncertain writes. The required management permission is included in first-time OAuth. Studio creation of a private list and selection for the existing work were verified; the API route remains mock-tested. On the free route, `create_missing_playlists: true` makes any of those titles the channel lacks, private, before the upload starts; one that already exists is left alone. Bilibili collections use `vpub collection`, and a Bilibili upload can join one with `season_id`, the exact ID from `vpub collection list bilibili`. The upload stands even if Bilibili refuses the collection, and the receipt says so.
 
 New YouTube plans require an explicit `category_id`, selected from content and official choices rather than defaulting to People & Blogs. The host model can supply it via `metadata request/apply`; explicit selections are preserved.
+
+X's browser route takes a future `schedule` too, with an explicit time zone. It fills Media Studio's own calendar and clock in this computer's time zone, reads them back, saves once, and then looks for the post on Studio's schedule page; after its time, `vpub verify` looks for it among the account's posts. It has not been tried on a real account.
 
 Douyin `method: browser` accepts measured `duration_seconds` and `chapters` in the publication plan. Once a durable published work ID is available, the CLI applies custom chapters, saves and reads each pair back; platform-generated suggestions are not treated as completion. Review delays leave a pending step, completed by later `vpub verify`/`resume` without reuploading. Native Bilibili/Douyin/YouTube handoffs remain available. Starts must come from the same final video, begin at zero and increase within its duration. Translate titles without altering timing.
 
