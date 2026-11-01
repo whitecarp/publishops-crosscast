@@ -25,7 +25,7 @@ VIDEO = "dQw4w9WgXcQ"
 POST = "1234567890"
 # The whole of a browser for the commands below, shaped like the real package's own module.
 FAKE_BROWSER = r'''
-import ctypes, json, os, sys
+import asyncio, ctypes, json, os, sys
 
 STATE = os.environ["FAKE_BROWSER_STATE"]
 PRIVATE, OWNER, CHANNEL, VIDEO = "SECRET-VIEWER-WORDS", "SecretOwner", "UC" + "s" * 22, "dQw4w9WgXcQ"
@@ -110,6 +110,7 @@ class Page:
         return Element("verifycenter")
 
     async def goto(self, url, **options):
+        await asyncio.sleep(float(os.environ.get("FAKE_BROWSER_SLOW", 0)))
         self.url = url.rstrip("/") + f"/channel/{CHANNEL}" if url.rstrip("/") == "https://studio.youtube.com" else url
 
     async def wait_for_timeout(self, value):
@@ -480,10 +481,12 @@ class RealProcessTests(Temporary):
         for platform in ("x", "youtube"):
             broker.release(platform, "default")
 
-    def vpub(self, *arguments, idle=None):
+    def vpub(self, *arguments, idle=None, slow=None):
         env = dict(self.env)
         if idle is not None:
             env["VPUB_BROWSER_IDLE_SECONDS"] = str(idle)
+        if slow:
+            env["FAKE_BROWSER_SLOW"] = str(slow)
         return subprocess.run([sys.executable, "-m", "video_publisher", *arguments], capture_output=True, encoding="utf-8", env=env, timeout=240)
 
     def assert_one_answer(self, done):
@@ -532,6 +535,19 @@ class RealProcessTests(Temporary):
         self.assertNotIn("starting the browser", stages_of(second.stderr))
         self.assertIn("opening the page", stages_of(second.stderr))
         self.assertEqual(1, len(read_json(self.state)["desktops"]))
+
+    def test_the_lines_arrive_while_the_page_loads_not_all_at_the_end(self):
+        routes = [("x", 0), ("x", None)] + ([("youtube", 0), ("youtube", None)] if os.name == "nt" else [])
+        for platform, idle in routes:
+            with self.subTest(platform=platform, idle=idle):
+                done = self.vpub("works", platform, idle=idle, slow=1.5)
+                self.assert_one_answer(done)
+                seen = lines_of(done.stderr)
+                stages = [line["stage"] for line in seen]
+                last_open = len(stages) - 1 - stages[::-1].index("opening the page")
+                self.assertEqual("reading the page", stages[last_open + 1])
+                self.assertGreaterEqual(seen[last_open + 1]["elapsed_seconds"] - seen[last_open]["elapsed_seconds"], 1)
+                self.close_sessions()
 
     @unittest.skipUnless(os.name == "nt", "Windows desktops")
     def test_youtube_says_its_stages_from_the_hidden_desktop_which_stays_hidden(self):
