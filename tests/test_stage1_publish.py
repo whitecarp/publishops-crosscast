@@ -7,7 +7,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 sys.path.insert(0, str(Path(__file__).parent))
 from stage_browser import SharedBrowser
@@ -133,9 +133,10 @@ class XFormTests(Form):
         account = f'<a href="https://analytics.twitter.com/user/{self.studio_account}/home">account</a>'
         if path.endswith("/edit"):
             keep = "" if self.keeps_text else "this.value = '';"
-            return await self.page_at(route, f"""{account}{self.check}<button type="button">Change thumbnail</button><button type="button" id="compose" onclick="this.remove(); document.getElementById('box').hidden = false">Post</button>
+            name = parse_qs(urlsplit(route.request.url).query)["name"][0]
+            return await self.page_at(route, f"""{account}{self.check}<div><a download="{name}" href="#">Download</a><button type="button">Change thumbnail</button><button type="button" id="compose" onclick="this.remove(); document.getElementById('box').hidden = false">Post</button></div>
               <div id="box" hidden><textarea placeholder="What's happening?" oninput="{keep}"></textarea><button type="button" onclick="fetch('/post', {{method: 'POST', body: JSON.stringify({{text: document.querySelector('textarea').value}})}})">Post</button></div>""")
-        await self.page_at(route, f"""{account}<button>Upload Media</button><input type="file" accept="video/mp4" onchange="fetch('/upload', {{method: 'POST', body: '{{}}'}}); const row = document.createElement('div'); row.textContent = this.files[0].name; row.onclick = () => location.href = '/library/1_2/edit'; document.body.append(row)">""")
+        await self.page_at(route, f"""{account}<button>Upload Media</button><input type="file" accept="video/mp4" onchange="fetch('/upload', {{method: 'POST', body: '{{}}'}}); const row = document.createElement('div'); row.textContent = this.files[0].name; row.onclick = () => location.href = '/library/1_2/edit?name=' + encodeURIComponent(row.textContent); document.body.append(row)">""")
 
     async def test_a_studio_that_names_another_account_stops_before_any_upload(self):
         self.studio_account = "someone_else"
