@@ -106,7 +106,11 @@ def response_capture(page,platform,extract):
 
 
 async def click(locator):
-    await locator.first.wait_for(state='visible',timeout=20000)
+    # The page can redraw between showing a control and it being counted, as a field run found on a busy computer.
+    for _ in range(4):
+        await locator.first.wait_for(state='visible',timeout=20000)
+        if await rt.visible(locator):break
+        await asyncio.sleep(0.5)
     await (await rt.unique_visible(locator,'collection control')).click()
 
 

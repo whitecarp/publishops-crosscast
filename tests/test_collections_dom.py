@@ -13,7 +13,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlsplit
 from video_publisher import browser_runtime as rt, collections as c, x_pages
-from video_publisher.collections_browser import execute, root
+from video_publisher.collections_browser import click, execute, root
 from video_publisher.core import VpubError, atomic_json, digest, read_json
 
 OWNER = 'owner'
@@ -302,6 +302,46 @@ EARLIER_PICKER = '''<div role="dialog"><div role="dialog"><h2>Add to Folder</h2>
 <script>
 for (const row of document.querySelectorAll('[data-folder]')) row.onclick = () => fetch('/i/api/graphql/abc/bookmarkTweetToFolder?folder=' + row.dataset.folder, {method: 'POST', body: '{}'});
 </script>'''
+
+
+class RedrawTests(unittest.IsolatedAsyncioTestCase):
+    """A control seen a moment ago can be gone for an instant while the page redraws."""
+
+    class Control:
+        def __init__(self):
+            self.pressed = 0
+
+        async def is_visible(self):
+            return True
+
+        async def click(self, **options):
+            self.pressed += 1
+
+    class Controls:
+        def __init__(self, looks):
+            self.looks = list(looks)
+            self.first = self
+
+        async def wait_for(self, **options):
+            return None
+
+        async def all(self):
+            return self.looks.pop(0) if len(self.looks) > 1 else self.looks[0]
+
+    async def test_a_control_gone_for_an_instant_is_still_pressed_once(self):
+        control = self.Control()
+        await click(self.Controls([[], [], [control]]))
+        self.assertEqual(1, control.pressed)
+
+    async def test_a_control_that_stays_gone_stops_it(self):
+        with self.assertRaises(VpubError):
+            await click(self.Controls([[]]))
+
+    async def test_two_controls_never_pass_for_one(self):
+        controls = [self.Control(), self.Control()]
+        with self.assertRaises(VpubError):
+            await click(self.Controls([controls]))
+        self.assertEqual([0, 0], [control.pressed for control in controls])
 
 
 class EarlierSiteTests(unittest.IsolatedAsyncioTestCase):
