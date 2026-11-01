@@ -109,7 +109,7 @@ def mutate(platform, work, comment_id, kind, desired=True, dry_run=False, test_i
             raise VpubError('state_unavailable','Exact moderation status is unavailable; no write attempted.')
         if before.get('text') != request['comment']['text']:
             raise VpubError('comment_changed', 'The comment text changed; read it again before changing it.')
-        counted = kind == 'like' and desired is True and not test_id
+        counted = kind == 'like' and desired is True
         if dry_run:
             if counted: safety.admit('like', platform, request['identity'], reserve=False)
             return {'state': 'DRY_RUN', 'request': request, 'observed': before, 'platform_writes': 0}

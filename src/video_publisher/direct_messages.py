@@ -58,7 +58,7 @@ def last_incoming(before):
 def send(platform, who, text, language, dry_run=False, test_id=None, written_by='ai', allow_contact=False, person_approved=False):
     who = recipient(platform, who); validate_text(text, language)
     words = text
-    text = text if test_id else safety.labelled(text, language, written_by)
+    text = safety.labelled(text, language, written_by)
     validate_text(text, language)
     if test_id and not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', test_id):
         raise VpubError('invalid_test_id', 'Use a short test label.')
@@ -79,10 +79,10 @@ def send(platform, who, text, language, dry_run=False, test_id=None, written_by=
         limits = {'kind': 'message', 'platform': platform, 'identity': expected, 'text': words, 'person': who,
                   'incoming': last_incoming(before), 'allow_contact': allow_contact, 'person_approved': person_approved}
         if dry_run:
-            if not test_id: safety.admit(**limits, reserve=False)
+            safety.admit(**limits, reserve=False)
             return {'state': 'DRY_RUN', 'request': request, 'observed': before, 'platform_writes': 0}
         if not before.get('can_send'): raise VpubError('dm_send_unavailable', 'This recipient or platform currently has no verified send control.')
-        ticket = None if test_id else safety.admit(**limits)
+        ticket = safety.admit(**limits)
         key = uuid.uuid4().hex; path = home() / 'operations/dm-actions' / (key + '.json')
         saved = {'key': key, 'state': 'DM_READY', 'request': request, 'at': now(), 'test': bool(test_id),
                  'test_id': test_id, 'platform_writes': 0, 'before': before, 'safety_ticket': ticket}

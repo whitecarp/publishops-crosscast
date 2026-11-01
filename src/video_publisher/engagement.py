@@ -79,7 +79,7 @@ def set_action(platform,work,kind,desired=True,collection=None,dry_run=False,tes
                 return {**prior,'platform_writes':0,'reused':True,'hint':'Use engage verify KEY; unresolved attempts are never toggled or automatically resent.'}
             if prior['state']=='ACTION_READY':safety.reclaim(prior_path,prior)
         if current is desired:return {'state':'NO_CHANGE','platform_writes':0,'platform':platform,'work_id':work,'kind':kind,'desired':desired,'observed':before}
-        counted=desired and not test_id
+        counted=desired
         if dry_run:
             if counted:safety.admit('like',platform,before['identity'],reserve=False)
             return {'state':'DRY_RUN','platform_writes':0,'platform':platform,'work_id':work,'kind':kind,'desired':desired,'observed':before}
