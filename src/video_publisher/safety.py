@@ -59,10 +59,13 @@ INCOMING = {
 }
 NEVER_SEND = re.compile(
     r"\bsk-[A-Za-z0-9_-]{16,}|\bghp_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bAKIA[0-9A-Z]{16}\b|\bAIza[0-9A-Za-z_-]{30,}|\bxox[baprs]-[A-Za-z0-9-]{10,}|\bya29\.[A-Za-z0-9_-]{10,}"
-    r"|\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|\bSESSDATA\b|\bbili_jct\b|\bDedeUserID\b|\bsessionid\s*=|\bauth_token\s*=|\bclient_secret\b|\brefresh_token\b"
-    r"|Authorization:\s*Bearer|Set-Cookie:|\b(?:password|passwd|密码|密碼)\s*[:：=]\s*\S+|\b[A-Za-z]:\\Users\\|/home/[a-z_][\w-]*/|/Users/[A-Za-z][\w-]*/|WhiteCarpVideoPublisher", re.I)
+    r"|\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}|BEGIN [A-Z ]*PRIVATE KEY|\bSESSDATA\b|\bbili_jct\b|\bDedeUserID\b|\bsessionid\s*=|\bauth_token\s*=|\bclient_secret\b|\brefresh_token\b"
+    r"|Authorization:\s*Bearer|Set-Cookie:|(?:\b(?:password|passwd|passcode|pwd)|密码|密碼|口令)\s*(?:[:=]|\bis\b|是|为|為)\s*\S+|\b(?:api[ _-]?key|access[ _-]?key|secret[ _-]?key|token)\s*[:=]\s*\S+"
+    r"|\b[A-Za-z]:[\\/]\S|\\\\[\w.-]+\\|~[\\/]|%(?:APPDATA|LOCALAPPDATA|USERPROFILE|HOMEPATH|PROGRAMDATA|TEMP)%|/home/[a-z_][\w-]*/|/Users/[A-Za-z][\w-]*/|/(?:etc|root|var)/|\.ssh\b|WhiteCarpVideoPublisher", re.I)
 CONTACT = re.compile(
-    r"https?://|\bwww\.|\b[\w-]+\.(?:com|net|org|cn|io|co|me|ly|gg|tv|app|xyz|top|cc)\b(?:/\S*)?|[\w.+-]+@[\w-]+\.[\w.-]+|(?<!\d)1[3-9]\d{9}(?!\d)|(?<![\d.])\+\d{8,15}(?!\d)", re.I)
+    r"https?://|\bwww\.|\byoutu\.be\b|\b[\w-]+\.(?:com|net|org|cn|io|co|me|ly|gg|tv|app|xyz|top|cc|ai|ru|uk|jp|de|fr|kr|hk|tw|ca|au|br|eu|sg|info|link|site|shop|vip|club|live|online|store|fun|icu|pro|biz|cloud|dev|sh|im|fm|mobi|asia|tech|wang|ltd|xin)\b(?:/\S*)?"
+    r"|\b[a-z0-9-]+\s*(?:。|\sdot\s|点)\s*(?:com|net|org|cn)\b|[\w.+-]+@[\w-]+\.[\w.-]+|(?<!\d)1[3-9]\d{9}(?!\d)|(?<![\d.])\+\d{8,15}(?!\d)"
+    r"|(?:微信号?|加微|v信|vx|wechat|weixin|qq[号群]?|telegram|whatsapp|电报|電報)\s*:?\s*[A-Za-z0-9_-]{5,}", re.I)
 
 
 def today():
@@ -199,6 +202,7 @@ def sent_to(data, names):
 
 
 def check_text(text, allow_contact):
+    text = plain(text)
     # The reason is named, the text never is: this message may be printed or logged.
     if NEVER_SEND.search(text):
         raise VpubError("unsafe_reply", "This text looks like it contains a password, sign-in data or a private file path, so it was not sent.",

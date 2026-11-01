@@ -80,6 +80,7 @@ def mutate(platform, work, comment_id, kind, desired=True, dry_run=False, test_i
     elif kind == 'edit':
         if not isinstance(desired, str) or not desired.strip() or len(desired) > 2000 or '\x00' in desired:
             raise VpubError('invalid_text', 'Supply nonempty comment text of at most 2000 characters.')
+        safety.check_text(desired, True)
     elif type(desired) is not bool or (kind in {'delete', 'remove'} and not desired):
         raise VpubError('invalid_action', 'Invalid target state.')
     if test_id and not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', test_id): raise VpubError('invalid_test_id', 'Use a short test label.')

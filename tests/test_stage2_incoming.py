@@ -174,6 +174,30 @@ class WhatComesInTests(Temporary):
                 self.assertLess(time.perf_counter() - started, 20)
 
 
+class WhatGoesOutTests(Temporary):
+    def test_a_secret_written_in_a_hidden_or_roundabout_way_is_still_stopped(self):
+        for name, text in SECRETS_HIDDEN.items():
+            with self.subTest(name=name):
+                self.refused("unsafe_reply", safety.check_text, text, True)
+
+    def test_a_refusal_never_repeats_the_secret(self):
+        for name, text in SECRETS_HIDDEN.items():
+            with self.subTest(name=name):
+                error = self.refused("unsafe_reply", safety.check_text, text, True)
+                self.assertNotIn(text, error.message + error.hint)
+
+    def test_a_link_or_contact_written_in_a_hidden_or_roundabout_way_needs_a_person_too(self):
+        for name, text in LINKS_HIDDEN.items():
+            with self.subTest(name=name):
+                self.refused("contact_in_reply", safety.check_text, text, False)
+                safety.check_text(text, True)
+
+    def test_ordinary_replies_still_pass(self):
+        for text in PLAIN_REPLIES:
+            with self.subTest(text=text):
+                safety.check_text(text, False)
+
+
 class SameWordsTests(Temporary):
     def test_words_repeated_in_a_disguise_are_the_same_words(self):
         safety.admit("reply", "x", "me", text="Thanks for watching", person="viewer")
@@ -228,6 +252,25 @@ class EveryPlatformTests(Temporary):
         self.read("x")
         rows = messages.listing(platform="x")["items"]
         self.assertEqual(["instructions"], [flag for row in rows if row["text"] == self.HOSTILE for flag in row["needs_person"] if flag == "instructions"])
+
+
+class EditingYourOwnCommentTests(Temporary):
+    """An edit puts words in public just as a reply does."""
+
+    def setUp(self):
+        super().setUp()
+        atomic_json(home() / "operations/comments" / (digest(["youtube", WORK]) + ".json"), {"identity": "me", "items": [{"id": "own", "text": "Mine", "is_owner": True}]})
+
+    def test_a_secret_or_private_path_is_never_put_in_an_edit(self):
+        for text in ("password: hunter2", r"C:\Users\Someone\notes.txt", "SESSDATA"):
+            with self.subTest(text=text), patch.object(comment_actions, "dispatch", return_value={"identity": "me", "text": "Mine", "deleted": False}) as call:
+                self.refused("unsafe_reply", comment_actions.mutate, "youtube", WORK, "own", "edit", text)
+                self.refused("unsafe_reply", comment_actions.mutate, "youtube", WORK, "own", "edit", text, True)
+                call.assert_not_called()
+
+    def test_ordinary_words_still_go_through(self):
+        with patch.object(comment_actions, "dispatch", return_value={"identity": "me", "text": "Mine", "deleted": False}):
+            self.assertEqual("DRY_RUN", comment_actions.mutate("youtube", WORK, "own", "edit", "Better words", True)["state"])
 
 
 if __name__ == "__main__":
