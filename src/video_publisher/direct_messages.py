@@ -48,9 +48,10 @@ def validate_text(text, language):
 
 
 def last_incoming(before):
-    """The newest message from the other person, when the page says who wrote what."""
+    """The newest message from the other person, when the page says who wrote what. X, Instagram and Douyin name the account as the sender of its own."""
+    me = str(before.get('identity') or '').casefold()
     for row in reversed(before.get('items') or []):
-        if isinstance(row, dict) and row.get('text') and row.get('from') != 'me' and not row.get('outgoing') and not row.get('is_owner'):
+        if isinstance(row, dict) and row.get('text') and row.get('from') != 'me' and not row.get('outgoing') and not row.get('is_owner') and not (me and str(row.get('sender') or '').casefold() == me):
             return row['text']
     return None
 

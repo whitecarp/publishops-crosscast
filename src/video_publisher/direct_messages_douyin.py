@@ -33,7 +33,7 @@ async def execute(page, identity, payload):
     from .direct_messages_browser import outgoing_counts
     result={'identity':identity,'recipient':who,'recipient_name':title,'visible_text':body,
             'visible_outgoing_counts':outgoing_counts(items,identity),
-            'items':items[:payload.get('limit',20)],
+            'items':items[-payload.get('limit',20):],
             'can_send':await editor.is_visible(),'platform_writes':0,
             'scope':'Visible official conversation; opening may mark incoming messages read.'}
     if action=='read':return result
