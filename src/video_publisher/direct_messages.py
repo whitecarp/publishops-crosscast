@@ -72,7 +72,10 @@ def send(platform, who, text, language, dry_run=False, test_id=None, written_by=
             prior = read_json(prior_path)
             if prior['state'] in PENDING or (safety.comparable(prior['request']['text']) == safety.comparable(text) and prior['state'] == 'DM_VISIBLE'):
                 return {**prior, 'reused': True, 'platform_writes': 0, 'hint': 'Use dm verify KEY; no automatic resend.'}
-            if prior['state'] == 'DM_READY': safety.reclaim(prior_path, prior)
+            if prior['state'] == 'DM_READY':
+                # A command killed part way can still be running in the shared background browser, so this attempt closes before another opens.
+                prior['state'] = 'DM_REPLACED'; atomic_json(prior_path, prior)
+                safety.reclaim(prior_path, prior)
         request = {'platform': platform, 'identity': expected, 'recipient': who, 'text': text, 'language': language}
         before = dispatch(platform, 'read', expected, recipient=who, limit=20)
         if before.get('identity') != expected or before.get('recipient') != who:
@@ -103,7 +106,9 @@ def send(platform, who, text, language, dry_run=False, test_id=None, written_by=
 
 
 def submitting(path):
-    saved = read_json(path); saved.update(state='DM_SUBMITTING', submitted_at=now()); atomic_json(path, saved)
+    saved = read_json(path)
+    if saved.get('state') == 'DM_REPLACED': raise VpubError('attempt_replaced', 'A newer attempt took this message over, so this one sent nothing.')
+    saved.update(state='DM_SUBMITTING', submitted_at=now()); atomic_json(path, saved)
 
 
 def _verify(path):
