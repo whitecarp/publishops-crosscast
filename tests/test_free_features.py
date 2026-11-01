@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 
 from video_publisher import adapters, browser_edits, chapters, cli, comment_actions, comment_actions_api as api, edits, edits_bilibili
 from video_publisher.core import Ledger, VpubError, atomic_json, digest, home, load_plan, read_json
+from shared_chrome import ChromeCase, async_playwright
 
 WORK = "BV1xx411c7mD"
 OWNER = "42"
@@ -649,9 +650,9 @@ class FakeDouyin:
         await route.fulfill(status=200, content_type="text/html", body="<!doctype html><body>manage")
 
 
-class DouyinTextTests(unittest.IsolatedAsyncioTestCase):
+class DouyinTextTests(ChromeCase):
+    quick_pauses = True  # This copy of the site has no timers of its own, so a pause can end once the page is quiet.
     async def asyncSetUp(self):
-        from patchright.async_api import async_playwright
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)

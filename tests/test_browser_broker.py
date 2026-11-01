@@ -106,18 +106,21 @@ class BrokerTests(unittest.TestCase):
         self.assertEqual(1, len(self.seen))
 
     def test_sent_command_is_never_replayed_or_sent_to_a_one_shot_worker(self):
+        answer = Event()
+
         async def hang(payload):
             self.seen.append(payload)
-            await asyncio.sleep(1)
+            await asyncio.to_thread(answer.wait, 10)
             return {}
         server = Server(hang)
         with patch.object(adapters.subprocess, "run") as one_shot:
-            with patch.object(adapters, "browser_timeout", return_value=0.05):
+            with patch.object(adapters, "browser_timeout", return_value=1):  # Long enough for a busy computer to get the command to the session.
                 with self.assertRaises(VpubError) as e:
                     adapters.browser_call("x", "operations", "default")
         self.assertEqual("browser_session_interrupted", e.exception.code)
         one_shot.assert_not_called()
         self.assertEqual(1, len(self.seen))
+        answer.set()
         broker.release("x", "default")
         server.wait()
 

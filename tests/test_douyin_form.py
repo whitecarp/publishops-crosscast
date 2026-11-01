@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, patch
 
 from video_publisher import browser_backends, browser_forms, cli
 from video_publisher.core import VpubError, atomic_json, home, load_plan
+from shared_chrome import ChromeCase, async_playwright
 
 OWNER = "owner123"
 TITLE = "My title"
@@ -63,9 +64,9 @@ class StubTx:
         await button.click(timeout=5000)
 
 
-class Base(unittest.IsolatedAsyncioTestCase):
+class Base(ChromeCase):
+    quick_pauses = True  # This copy of the site has no timers of its own, so a pause can end once the page is quiet.
     async def asyncSetUp(self):
-        from patchright.async_api import async_playwright
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         env = patch.dict(os.environ, {"VPUB_HOME": temp.name})

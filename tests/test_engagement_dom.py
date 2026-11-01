@@ -2,11 +2,11 @@
 import unittest
 from video_publisher.engagement_browser import controls
 from video_publisher.core import VpubError
+from shared_chrome import ChromeCase, async_playwright
 
 
-class EngagementDOMTests(unittest.IsolatedAsyncioTestCase):
+class EngagementDOMTests(ChromeCase):
     async def asyncSetUp(self):
-        from patchright.async_api import async_playwright
         self.pw=await async_playwright().start()
         try:self.browser=await self.pw.chromium.launch(channel='chrome',headless=True)
         except Exception:

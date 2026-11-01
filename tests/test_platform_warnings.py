@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from video_publisher import adapters, browser_broker as broker, browser_runtime as rt, browser_worker, cli, message_sources, operations_batch, safety
 from video_publisher.core import VpubError, atomic_json, home, read_json, stop_check
+from shared_chrome import ChromeCase, async_playwright
 
 
 class Server:
@@ -242,14 +243,14 @@ class PublishingTests(Home):
         self.assertEqual("stopped", result["results"]["douyin"]["code"])
 
 
-class WhoIsAskingTests(Home, unittest.IsolatedAsyncioTestCase):
+class WhoIsAskingTests(Home, ChromeCase):
     """In a real browser, because where the words sit is the whole point."""
+    quick_pauses = True  # This copy of the site has no timers of its own, so a pause can end once the page is quiet.
 
     def setUp(self):
         Home.setUp(self)
 
     async def asyncSetUp(self):
-        from patchright.async_api import async_playwright
         self.pw = await async_playwright().start()
         self.browser = await self.pw.chromium.launch(channel="chrome", headless=True)
         self.page = await self.browser.new_page()

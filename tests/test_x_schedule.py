@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 from video_publisher import browser_backends, browser_forms, cli, x_pages
 from video_publisher.core import VpubError, atomic_json, load_plan
+from shared_chrome import ChromeCase, async_playwright
 
 OWNER = "owner"
 
@@ -47,9 +48,9 @@ def page_html(keep_clock=True):
       </script>"""
 
 
-class Calendar(unittest.IsolatedAsyncioTestCase):
+class Calendar(ChromeCase):
+    quick_pauses = True  # This copy of the site has no timers of its own, so a pause can end once the page is quiet.
     async def asyncSetUp(self):
-        from patchright.async_api import async_playwright
         self.pw = await async_playwright().start()
         self.browser = await self.pw.chromium.launch(channel="chrome", headless=True)
         self.page = await self.browser.new_page(locale="en-US")
@@ -226,14 +227,13 @@ class ReadBackTests(unittest.IsolatedAsyncioTestCase):
         scheduled.assert_awaited_once()
 
 
-class OwnPostsTests(unittest.IsolatedAsyncioTestCase):
+class OwnPostsTests(ChromeCase):
     """The words and the moment come from each post's own row, not from everything the row shows."""
     ROW = """<article><a href="/{author}/status/{post}"><time datetime="2026-11-03T15:07:00.000Z">Nov 3</time></a><div data-testid="User-Name">Someone</div>
       <div data-testid="tweetText">{words}</div><div role="group" aria-label="3 likes"><a href="/compose/post?in_reply_to={post}">Reply</a></div>{extra}</article>"""
     VIDEO = '<div data-testid="videoPlayer"><video poster="https://pbs.twimg.com/amplify_video_thumb/77/img/a.jpg"></video></div>'
 
     async def asyncSetUp(self):
-        from patchright.async_api import async_playwright
         self.pw = await async_playwright().start()
         self.browser = await self.pw.chromium.launch(channel="chrome", headless=True)
         self.page = await self.browser.new_page()

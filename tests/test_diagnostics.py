@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 from video_publisher import browser_backends, browser_runtime as rt, browser_worker
 from video_publisher.core import atomic_json, file_sha, home, read_json
+from shared_chrome import ChromeCase, async_playwright
 
 SECRETS = ("PRIVATE-BODY-WORDS", "FIELD-VALUE-SECRET", "EDITOR-WORDS", "QUERY-VALUE-SECRET", "FRAGMENT-SECRET")
 PAGE = """<!doctype html><body><p>PRIVATE-BODY-WORDS</p>
@@ -22,9 +23,9 @@ class AddressTests(unittest.TestCase):
         self.assertEqual("", rt.plain_address("about:blank?x=1".replace("about:blank", "")))
 
 
-class Base(unittest.IsolatedAsyncioTestCase):
+class Base(ChromeCase):
+    quick_pauses = True  # This copy of the site has no timers of its own, so a pause can end once the page is quiet.
     async def asyncSetUp(self):
-        from patchright.async_api import async_playwright
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)

@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlsplit
 from video_publisher import browser_runtime as rt, collections as c, x_pages
 from video_publisher.collections_browser import click, execute, root
 from video_publisher.core import VpubError, atomic_json, digest, read_json
+from shared_chrome import ChromeCase, async_playwright
 
 OWNER = 'owner'
 POST = '1234567890'
@@ -107,9 +108,9 @@ class FakeX:
         await route.fulfill(status=200, content_type='application/json', body=json.dumps({'data': data}))
 
 
-class FolderTests(unittest.IsolatedAsyncioTestCase):
+class FolderTests(ChromeCase):
+    quick_pauses = True  # This copy of the site has no timers of its own, so a pause can end once the page is quiet.
     async def asyncSetUp(self):
-        from patchright.async_api import async_playwright
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         env = patch.dict(os.environ, {'VPUB_HOME': str(Path(temp.name) / 'runtime')})
@@ -344,11 +345,11 @@ class RedrawTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([0, 0], [control.pressed for control in controls])
 
 
-class EarlierSiteTests(unittest.IsolatedAsyncioTestCase):
+class EarlierSiteTests(ChromeCase):
     """The site a signed-in account still got on 2026-10-31. Its flows are the ones earlier live tests used, and a field check of its folder window."""
+    quick_pauses = True  # This copy of the site has no timers of its own, so a pause can end once the page is quiet.
 
     async def asyncSetUp(self):
-        from patchright.async_api import async_playwright
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         env = patch.dict(os.environ, {'VPUB_HOME': str(Path(temp.name) / 'runtime')})
@@ -591,9 +592,9 @@ class EarlierSiteTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await self.page.locator('body').get_attribute('data-writes'))
 
 
-class AccountTests(unittest.IsolatedAsyncioTestCase):
+class AccountTests(ChromeCase):
+    quick_pauses = True  # This copy of the site has no timers of its own, so a pause can end once the page is quiet.
     async def asyncSetUp(self):
-        from patchright.async_api import async_playwright
         self.pw = await async_playwright().start()
         self.browser = await self.pw.chromium.launch(channel='chrome', headless=True)
         self.page = await self.browser.new_page()

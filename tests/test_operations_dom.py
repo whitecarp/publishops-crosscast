@@ -1,11 +1,11 @@
 """Synthetic DOM regressions; never open a platform, account or network URL."""
 import unittest
 from video_publisher.operations_browser import COMMENT_ROWS, DOUYIN_PUBLIC_ROWS
+from shared_chrome import ChromeCase, async_playwright
 
 
-class CommentDOMTests(unittest.IsolatedAsyncioTestCase):
+class CommentDOMTests(ChromeCase):
     async def asyncSetUp(self):
-        from patchright.async_api import async_playwright
         self.pw=await async_playwright().start()
         try:
             self.browser=await self.pw.chromium.launch(channel='chrome',headless=True)
