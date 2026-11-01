@@ -119,9 +119,10 @@ def x_file_link(filename):
 
 def x_media_form(page, filename):
     """This file's own form, because filling another file's and composing from it could post the wrong video. A field check found the form holds a download link carrying the file's exact name, with Library's Upload Media button and tiles further out.
-    It is the outermost element with that link and Change thumbnail, and without that button. A review showed counting the name across the page proves nothing, and the classes on this page are generated."""
+    It is the outermost element with that link and Change thumbnail, without that button, and without another file's link. Reviews showed counting the name across the page proves nothing, and that a wider element can hold this file's link beside another file's form. The classes on this page are generated."""
     return (page.locator('div').filter(has=page.locator(x_file_link(filename))).filter(has=page.locator('button').filter(has_text=X_CHANGE_THUMBNAIL))
-            .filter(has_not=page.locator('button').filter(has_text=re.compile(r'^\s*Upload Media\s*$')))).first
+            .filter(has_not=page.locator('button').filter(has_text=re.compile(r'^\s*Upload Media\s*$')))
+            .filter(has_not=page.locator(f'a[download]:not({x_file_link(filename)})'))).first
 
 
 async def x_open_media(page, name, form, filename):

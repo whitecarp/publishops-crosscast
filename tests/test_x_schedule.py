@@ -135,7 +135,10 @@ class OpeningMediaTests(ChromeCase):
                 await self.stops_without_filling(self.library_that_opens_in_place(held))
 
     async def test_a_form_beside_this_files_link_is_not_its_form(self):
-        await self.stops_without_filling(self.library_that_opens_in_place('<a download="clip.mp4" href="#">Download</a><div><button>Upload Media</button>' + self.form_for("other.mp4") + "</div>"))
+        link = '<a download="clip.mp4" href="#">Download</a>'
+        for name, held in (("behind Upload Media", f"{link}<div><button>Upload Media</button>{self.form_for('other.mp4')}</div>"), ("from a review: another file's form with its own link, in the same wider element", link + self.form_for("other.mp4"))):
+            with self.subTest(name):
+                await self.stops_without_filling(self.library_that_opens_in_place(held))
 
     def test_a_file_name_with_quotes_is_still_one_name(self):
         self.assertEqual('a[download="a\\"b\\\\c.mp4"]', browser_forms.x_file_link('a"b\\c.mp4'))
