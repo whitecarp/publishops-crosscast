@@ -230,6 +230,14 @@ class RecoveryLabelTests(unittest.TestCase):
         self.assertFalse(rt.HUMAN_LABELS.search("my friend's account was locked last year"))
 
 
+class DoctorTests(Home):
+    def test_the_free_youtube_sign_in_is_listed_apart_from_the_paid_token(self):
+        self.assertIs(False, cli.doctor()["credentials_configured"]["youtube_browser"])
+        rt.remember_identity("youtube", "default", "UC1")
+        saved = cli.doctor()["credentials_configured"]
+        self.assertEqual((True, False), (saved["youtube_browser"], saved["youtube_api"]))
+
+
 class SignedInWithoutRecordTests(Home):
     def profile(self):
         path = rt.profile_dir("youtube", "default")

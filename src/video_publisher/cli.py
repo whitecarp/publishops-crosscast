@@ -185,6 +185,8 @@ def doctor():
             "local_stop": (home() / "STOP.json").exists(), "runtime_directory": str(home()),
             "credentials_configured": {
                 "youtube_api": (home() / "accounts/default/youtube-token.json").exists(),
+                # The free route keeps its sign-in in Chrome's own profile, so what is saved here is the record of whose it is.
+                "youtube_browser": (home() / "accounts/default/youtube-identity.json").exists(),
                 **{p: (home() / 'accounts/default' / (p+'-browser-session.json')).exists()
                    for p in ('douyin', 'instagram', 'x')}},
             "browser_requirement": "Google Chrome; vpub setup --install-browser installs it through Patchright when needed.",

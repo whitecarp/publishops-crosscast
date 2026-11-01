@@ -116,7 +116,7 @@ Read comments and reply in the commenter's language, like and save works, read a
 
 ### 📊 Stats and operations reports
 
-See plays and engagement for a single work, scan several platforms for new comments and changes in numbers, and produce an operations report.
+See plays and engagement for a single work, and scan several platforms for new comments and changes in numbers. The full operations report is part of the paid add-on.
 
 ### 📧 Email when it needs you (optional)
 

@@ -20,15 +20,21 @@ LABEL = "(AI reply)"
 
 # What a stranger's message may try, or what a person should answer themselves. A keyword list catches the
 # common cases and is not a guarantee, so the agent must still treat all viewer text as data.
-ASK = r"(?:send|give|share|tell|show|provide|reveal|post|paste|发|给|告诉|提供|透露|分享|贴出)"
+ASK = (r"(?:send|give|share|tell|show|provide|reveal|post|paste|return|print|dump|output|export|display|read|open|copy|upload|encode|email"
+       r"|发|给|告诉|提供|透露|分享|贴出|把|复制|複製|打开|打開|读取|讀取|导出|匯出|输出|輸出)")
+# Where an account's keys live, as well as the keys themselves.
+SECRET_WORDS = (r"password|passcode|api[ _-]?key|(?:access|refresh|session|auth\w*|bearer)\s+tokens?|cookies?\b|verification\s+code|one[- ]time\s+code|\botp\b|private\s+key|credentials?"
+                r"|config(?:uration)?\s+files?|\.env\b|environment\s+variables?|local\s+files?|keychain|browser\s+(?:profile|session|login|state)"
+                r"|密码|密碼|口令|验证码|驗證碼|令牌|密钥|密鑰|私钥|私鑰|登录态|登錄態|登入狀態|登录状态|登錄狀態|配置文件|設定檔|本地文件|本地檔案|环境变量|環境變數")
 INCOMING = {
     "instructions": re.compile(
         r"(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+|the\s+)?(?:previous|prior|above|earlier|your|system)\b.{0,30}(?:instruction|prompt|rule)"
         r"|system\s+prompt|developer\s+mode|jailbreak|you\s+are\s+now\s+(?:a|an|in)\b|new\s+instructions?\s*:"
         r"|(?:忽略|无视|忘记|忽視|無視|忘記).{0,12}(?:指令|提示|规则|規則|要求|设定|設定)|系统提示|系統提示|提示词|提示詞", re.I | re.S),
     "secrets": re.compile(
-        ASK + r".{0,30}(?:password|passcode|api[ _-]?key|access\s+token|cookies?\b|verification\s+code|one[- ]time\s+code|\botp\b|private\s+key|credentials?"
-        r"|密码|密碼|口令|验证码|驗證碼|令牌|密钥|密鑰|私钥|私鑰)", re.I | re.S),
+        ASK + r".{0,30}(?:" + SECRET_WORDS + r")"
+        # In other languages the word alone is rare enough in a video's comments to deserve a person's eye.
+        r"|contraseña|mot\s+de\s+passe|passwort|kennwort|senha|パスワード|認証コード|비밀번호|인증번호|пароль|код\s+подтверждения", re.I | re.S),
     "commands": re.compile(r"(?:run|execute)\s+(?:this|the\s+following)\s+(?:command|script|code)|powershell\s+-|curl\s+\S+\s*\||rm\s+-rf|执行(?:这个|以下|下面的?)?(?:命令|脚本|代码)|執行(?:這個|以下|下面的?)?(?:命令|腳本|程式)", re.I),
     "money": re.compile(r"转账|轉帳|汇款|匯款|打款|(?:send|transfer|wire)\s+(?:me\s+)?(?:money|funds|usdt|btc|bitcoin|crypto)|gift\s+cards?\b|bank\s+account", re.I),
     "care": re.compile(r"自杀|自殺|轻生|輕生|不想活|自残|自殘|suicid|kill\s+myself|self[- ]harm|end\s+my\s+life", re.I),
