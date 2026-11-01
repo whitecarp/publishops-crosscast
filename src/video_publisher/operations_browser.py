@@ -81,15 +81,26 @@ async def x_metrics(root):
     return values
 
 
+COMPOSER_WAITS=(5000,15000)
+
+
 async def x_composer(page,row,label):
-    """X's own reply window for one post, opened from that post's Reply control."""
-    await (await unique_visible(row.locator(x_pages.REPLY),label+' Reply')).click()
-    windows=page.locator(x_pages.COMPOSER)
-    await windows.first.wait_for(state='visible',timeout=15000)
-    window=await unique_visible(windows,label+' composer')
-    editor=await unique_visible(window.locator(x_pages.TEXT_BOX),label+' text')
+    """X's own reply window for one post, opened from that post's Reply control. On a signed-in account a click can open nothing while the keyboard does,
+    as a field check found for the share menu, and the outer of its nested windows can have no size, so this looks for the text box inside them."""
+    control=await unique_visible(row.locator(x_pages.REPLY),label+' Reply')
+    await control.click()
+    boxes=page.locator('[role="dialog"]').locator(x_pages.TEXT_BOX)
+    for attempt in range(2):
+        try:
+            await boxes.first.wait_for(state='visible',timeout=COMPOSER_WAITS[attempt])
+            break
+        except Exception:
+            if attempt:raise VpubError('layout_changed','X did not open its reply box; nothing was sent.') from None
+            await control.press('Enter')
+    editor=await unique_visible(boxes,label+' text')
+    window=editor.locator('xpath=ancestor::*[@role="dialog"][last()]')
     send=window.locator('[data-testid="tweetButton"]')
-    return window,editor,await unique_visible(send if await send.count() else window.get_by_role('button',name=x_pages.SEND_REPLY),label+' send')
+    return editor,await unique_visible(send if await send.count() else window.get_by_role('button',name=x_pages.SEND_REPLY),label+' send')
 
 
 async def fill_x_text(page,editor,text):
@@ -239,7 +250,7 @@ async def execute(page,platform,identity,payload):
         if identity!=test['identity']: raise VpubError('wrong_account','Test account changed.')
         if action=='test_seed':
             if platform=='x':
-                _,editor,button=await x_composer(page,await x_root(page,identity,work),'test reply')
+                editor,button=await x_composer(page,await x_root(page,identity,work),'test reply')
             elif platform=='instagram':
                 editor=await unique_visible(page.locator('textarea[aria-label="Add a comment…"]'),'test comment')
                 button=None
@@ -302,7 +313,8 @@ async def execute(page,platform,identity,payload):
     window=None
     if platform=='x':
         row=await unique_visible(x_pages.post_row(page,actual['id']),'target reply')
-        window,editor,button=await x_composer(page,row,'reply')
+        editor,button=await x_composer(page,row,'reply')
+        window=editor  # It goes when the reply is sent.
         await fill_x_text(page,editor,request['text'])
     else:
         row=page.locator(f'[data-crosscast-comment-row="{actual["ui_index"]}"]')

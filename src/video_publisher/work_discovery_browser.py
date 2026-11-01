@@ -4,7 +4,7 @@ from urllib.parse import urlsplit
 from . import x_pages
 from .core import VpubError, stop_check
 from .browser_runtime import risk_check, unique_visible
-from .browser_backends import MANAGE, links, work_url
+from .browser_backends import MANAGE, douyin_card_is_waiting, links, normalize, work_url
 
 EMPTY_LIST = re.compile(r'暂无作品|暂无内容|No posts yet|hasn.t posted', re.I)
 
@@ -36,9 +36,12 @@ async def scan(page, platform, identity, limit, pages):
             for title in (await titles.all())[:max(0,limit-len(rows))]:
                 text=await title.inner_text()
                 card=title.locator('xpath=ancestor::div[starts-with(@class,"video-card-content-")]')
-                if re.search('审核中|定时发布',await card.inner_text()): omitted+=1; continue
-                async with page.expect_popup(timeout=15000) as opened: await title.click()
-                detail=await opened.value
+                if douyin_card_is_waiting(normalize(await card.inner_text())): omitted+=1; continue
+                try:
+                    async with page.expect_popup(timeout=15000) as opened: await title.click()
+                    detail=await opened.value
+                except Exception:
+                    omitted+=1; continue
                 try:
                     await detail.wait_for_url(re.compile(r'/work-detail/\d+'),timeout=15000,wait_until='commit')
                     u=urlsplit(detail.url); match=re.fullmatch(r'/creator-micro/work-management/work-detail/(\d+)',u.path)

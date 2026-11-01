@@ -11,7 +11,7 @@ from .core import VpubError, douyin_caption, stop_check
 from .browser_runtime import risk_check, unique_visible, visible
 from .progress import stage
 from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, normalize, studio_offsets, studio_read, studio_style,
-                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x)
+                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, douyin_cards_titled, douyin_scheduled_card, DOUYIN_SCHEDULED)
 
 X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
 YT_DIALOG = 'ytcp-uploads-dialog'
@@ -39,6 +39,8 @@ async def finish(page, tx, before):
             if await cards.count() == 1 and '审核中' in await cards.inner_text():
                 return tx.save(state='SUBMITTED_UNVERIFIED', phase='platform_review', platform_status='UNDER_REVIEW',
                                error=None, review_url=page.url, note='Matching submitted work is under review; verify later, never reupload.')
+            if await douyin_scheduled_card(page, tx.receipt):
+                return tx.save(**DOUYIN_SCHEDULED)
         fresh = [v for k, v in found.items() if k not in before]
         matches = [v for v in fresh if tx.options['title'] in v.get('text', '')]
         candidates = matches
@@ -247,7 +249,7 @@ async def publish_douyin(page, tx):
     caption = douyin_caption(tx.options['description'], tx.options['tags'])
     if len(caption.encode('utf-16-le')) // 2 > 1000:
         raise VpubError('description_too_long', 'Douyin description plus hashtags exceeds 1000 UTF-16 units. No video uploaded.')
-    tx.save(before_ids=list(before), expected_text=tx.options['title'])
+    tx.save(before_ids=list(before), expected_text=tx.options['title'], same_title_cards_before=len(await douyin_cards_titled(page, tx.options['title'])))
     await page.goto('https://creator.douyin.com/creator-micro/content/upload', wait_until='domcontentloaded', timeout=60000)
     await page.locator('input[type=file]').wait_for(state='attached', timeout=20000)
     # Selecting a video here could replace a draft the person kept, and only they can say whether it matters.
@@ -288,7 +290,9 @@ async def douyin_schedule(page, when):
     await page.wait_for_timeout(1000)
     if (await box.input_value()).strip() != stamp:
         raise VpubError('schedule_unverified', 'Douyin did not keep this date and time. Nothing was published.', 'Douyin may limit how soon or how far ahead a post can be scheduled. Choose another time and make a new plan.')
-    return {'at': when.isoformat(), 'local': local.isoformat(), 'stamp': stamp, 'date': [local.year, local.month, local.day], 'time': [local.hour, local.minute], 'timezone_basis': 'computer'}
+    # Its upload form writes the time one way and its works list another, as a field check found.
+    card_stamp = f'{local.year}年{local.month:02d}月{local.day:02d}日 {local.hour:02d}:{local.minute:02d}'
+    return {'at': when.isoformat(), 'local': local.isoformat(), 'stamp': stamp, 'card_stamp': card_stamp, 'date': [local.year, local.month, local.day], 'time': [local.hour, local.minute], 'timezone_basis': 'computer'}
 
 
 async def douyin_collection(page, title):
@@ -533,9 +537,9 @@ async def yt_schedule(page, when):
     await clock.fill(time_style[2](local))
     await clock.press('Enter')
     await page.wait_for_timeout(1000)
-    if (studio_read(STUDIO_DATES, await day.inner_text()) != (local.year, local.month, local.day)
-            or studio_read(STUDIO_TIMES, await clock.input_value()) != (local.hour, local.minute)):
-        raise VpubError('schedule_unverified', 'The YouTube schedule was not confirmed. The upload is kept as a draft; nothing was published.')
+    shown_day, shown_time = await day.inner_text(), await clock.input_value()
+    if studio_read(STUDIO_DATES, shown_day) != (local.year, local.month, local.day) or studio_read(STUDIO_TIMES, shown_time) != (local.hour, local.minute):
+        raise VpubError('schedule_unverified', f'The YouTube schedule was not confirmed: Studio shows {normalize(shown_day)} {normalize(shown_time)} for {local.strftime("%Y-%m-%d %H:%M")}. The upload is kept as a draft; nothing was published.')
     return {'at': when.isoformat(), 'local': local.isoformat(), 'date': [local.year, local.month, local.day],
             'time': [local.hour, local.minute], 'timezone_basis': 'studio' if offsets else 'computer'}
 

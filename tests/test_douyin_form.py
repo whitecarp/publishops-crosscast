@@ -4,6 +4,7 @@ The copy follows what a signed-in account's form showed in a field check, and pu
 and the collection list. Nothing here contacts Douyin, and none of these steps has been tried on a real account yet.
 """
 from datetime import datetime, timedelta, timezone
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -220,7 +221,7 @@ class WholeFormTests(Base):
         self.assertIs(False, (await self.draft(None))["draft_offer_seen"])
 
     async def test_an_old_offer_that_shows_late_is_still_seen_before_the_upload(self):
-        await self.page.set_content('<!doctype html><meta charset="utf-8"><body><script>setTimeout(() => { const b = document.createElement("button"); b.textContent = "继续编辑"; document.body.append(b); }, 1500);</script>')
+        await self.page.set_content('<!doctype html><meta charset="utf-8"><body><script>window.pending = 1; setTimeout(() => { const b = document.createElement("button"); b.textContent = "继续编辑"; document.body.append(b); window.pending = 0; }, 1500);</script>')
         self.assertIs(True, await browser_forms.douyin_offers_draft(self.page, 3))
 
     async def test_a_stop_holds_the_draft_too(self):
@@ -230,6 +231,53 @@ class WholeFormTests(Base):
             await self.run_form(StubTx(submission_mode="draft_only"))
         self.assertEqual("stopped", caught.exception.code)
         self.assertEqual([], self.writes)
+
+
+class ScheduledCardTests(Base):
+    """From a field check: a scheduled work's card shows its title, its time in Chinese and a private mark, and opens nothing yet."""
+    STAMP = "2030年03月04日 15:07"
+
+    def card(self, title=TITLE, when=STAMP, private='<span class="private-mark-abc">私密</span>'):
+        return f'<div class="video-card-content-1"><div class="info-title-text-1">{title}</div><span>{when}</span>{private}</div>'
+
+    async def show(self, *cards):
+        await self.page.set_content('<!doctype html><meta charset="utf-8"><body>' + "".join(cards))
+
+    def receipt(self, before=0, visibility="private", card_stamp=STAMP):
+        return {"title": TITLE, "visibility": visibility, "same_title_cards_before": before, "schedule": {"card_stamp": card_stamp}}
+
+    async def test_one_new_card_with_this_title_time_and_privacy_is_this_one(self):
+        await self.show(self.card(), self.card("Another work"))
+        self.assertIs(True, await browser_backends.douyin_scheduled_card(self.page, self.receipt()))
+
+    async def test_anything_else_is_not_called_this_one(self):
+        for cards, receipt in (((), self.receipt()), ((self.card(TITLE + " more"),), self.receipt()), ((self.card(when="2030年03月04日 15:08"),), self.receipt()),
+                               ((self.card(private=""),), self.receipt()), ((self.card(),), self.receipt(before=1)), ((self.card(), self.card()), self.receipt()),
+                               ((self.card(),), {k: v for k, v in self.receipt().items() if k != "same_title_cards_before"}), ((self.card(),), {**self.receipt(), "schedule": {}})):
+            with self.subTest(cards=cards, receipt=receipt):
+                await self.show(*cards)
+                self.assertIs(False, await browser_backends.douyin_scheduled_card(self.page, receipt))
+
+    async def test_a_public_one_needs_no_private_mark(self):
+        await self.show(self.card(private=""))
+        self.assertIs(True, await browser_backends.douyin_scheduled_card(self.page, self.receipt(visibility="public")))
+
+    def test_a_card_with_a_time_still_to_come_is_waiting_and_a_past_one_is_not(self):
+        self.assertTrue(browser_backends.douyin_card_is_waiting("My work 2099年01月02日 03:04"))
+        self.assertFalse(browser_backends.douyin_card_is_waiting("My work 2020年01月02日 03:04"))
+        self.assertTrue(browser_backends.douyin_card_is_waiting("My work 审核中"))
+        self.assertFalse(browser_backends.douyin_card_is_waiting("My work"))
+
+    async def test_the_form_gives_the_time_as_the_card_writes_it(self):
+        await self.open()
+        result = await browser_forms.douyin_schedule(self.page, datetime(2030, 3, 4, 15, 7).astimezone())
+        self.assertEqual(self.STAMP, result["card_stamp"])
+
+    async def test_listing_works_skips_a_scheduled_card_without_waiting_on_it(self):
+        self.html = '<!doctype html><meta charset="utf-8"><body>' + self.card(when="2099年01月02日 03:04")
+        started = asyncio.get_running_loop().time()
+        self.assertEqual({}, await browser_backends.works(self.page, "douyin", OWNER))
+        self.assertLess(asyncio.get_running_loop().time() - started, 14)
 
 
 class KeptDraftTests(Base):
@@ -251,7 +299,7 @@ class KeptDraftTests(Base):
         self.assertEqual([], self.writes)
 
     async def test_a_kept_draft_that_shows_late_stops_it_too(self):
-        error, selected, _ = await self.publish('<!doctype html><meta charset="utf-8"><body><input type=file><script>setTimeout(() => { const b = document.createElement("button"); b.textContent = "继续编辑"; document.body.append(b); }, 1500);</script>')
+        error, selected, _ = await self.publish('<!doctype html><meta charset="utf-8"><body><input type=file><script>window.pending = 1; setTimeout(() => { const b = document.createElement("button"); b.textContent = "继续编辑"; document.body.append(b); window.pending = 0; }, 1500);</script>')
         self.assertEqual("existing_draft_requires_attention", error.code)
         selected.assert_not_called()
 

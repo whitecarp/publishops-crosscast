@@ -54,6 +54,7 @@ class FakeYouTube:
         self.keep_row = False  # Whether a deleted comment stays on the open page.
         # From a field check: pinning opens Studio's confirmation, whose own element holds a real button.
         self.watch_comments = True
+        self.watch_threads = None
         self.pin_ready_after = 0
         self.pin_sent_after = 0
         self.says_empty = True
@@ -172,6 +173,7 @@ class FakeYouTube:
               <ytd-menu-renderer><button id="button" data-opens="watch-menu-{row['id']}">...</button></ytd-menu-renderer>
               <div id="watch-menu-{row['id']}" hidden><ytd-menu-service-item-renderer onclick="fetch('/youtubei/v1/comment/perform_comment_action?write=comment-unpin/{row['id']}', {{method: 'POST', body: '{{}}'}}); this.parentElement.hidden = true">{'取消置顶' if row.get('pinned') else '置顶'}</ytd-menu-service-item-renderer></div></ytd-comment-thread-renderer>"""
                           for row in sorted(self.comments, key=lambda row: not row.get("pinned")))
+        threads = self.watch_threads or threads
         return f"""<yt-player-quick-action-buttons><like-button-view-model style="display:block;width:0;height:0;overflow:hidden"><button aria-pressed="false" style="width:0;height:0;padding:0;border:0"></button></like-button-view-model></yt-player-quick-action-buttons>
             {threads if self.watch_comments else ''}
             <ytd-watch-metadata><ytd-menu-renderer>
@@ -212,8 +214,8 @@ class FakeYouTube:
               const dialog = document.getElementById('pin-sure'), go = document.getElementById('pin-go');
               dialog.hidden = false;
               go.disabled = {json.dumps(self.pin_ready_after > 0)};
-              setTimeout(() => {{ go.disabled = false; }}, {self.pin_ready_after});
-              go.onclick = () => {{ dialog.hidden = true; setTimeout(() => act('comment-pin/' + id), {self.pin_sent_after}); }};
+              later(() => {{ go.disabled = false; }}, {self.pin_ready_after});
+              go.onclick = () => {{ dialog.hidden = true; later(() => act('comment-pin/' + id), {self.pin_sent_after}); }};
             }}
             const states = {states};
             for (const button of document.querySelectorAll('#like-button')) button.isToggled = states[button.closest('ytcp-comment').getAttribute('comment-id')];
@@ -650,6 +652,50 @@ class CommentTests(Browser):
         self.site.comments[0]["pinned"] = True
         self.assertIs(True, (await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
         self.assertEqual([], self.site.writes)
+
+    def pinned_thread(self, root, replies=()):
+        links = "".join(f'<a href="/watch?v={VIDEO}&lc={reply}">reply</a>' for reply in replies)
+        return f"""<ytd-comment-thread-renderer><div id="pinned-comment-badge">Pinned</div><a href="/watch?v={VIDEO}&lc={root}">now</a>
+            <ytd-menu-renderer><button id="button" data-opens="watch-menu-root">...</button></ytd-menu-renderer>
+            <div id="watch-menu-root" hidden><ytd-menu-service-item-renderer onclick="fetch('/youtubei/v1/comment/perform_comment_action?write=comment-unpin/{root}', {{method: 'POST', body: '{{}}'}})">取消置顶</ytd-menu-service-item-renderer></div>
+            <div id="replies">{links}<ytd-menu-renderer><button id="button">...</button></ytd-menu-renderer></div></ytd-comment-thread-renderer>"""
+
+    async def test_a_longer_id_on_the_pinned_comment_is_another_comment(self):
+        self.site.watch_threads = self.pinned_thread("c1.longer")
+        self.assertIs(False, (await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
+        with self.assertRaises(VpubError) as caught:
+            await yt.comment_action(self.page, CHANNEL, self.payload("pin", receipt=self.receipt_file()))
+        self.assertEqual("another_comment_pinned", caught.exception.code)
+        self.assertEqual([], self.site.writes)
+
+    async def test_a_reply_under_another_pinned_comment_is_not_the_pinned_one(self):
+        self.site.watch_threads = self.pinned_thread("c9", replies=("c1",))
+        self.assertIs(False, (await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
+
+    async def test_the_pinned_comment_is_itself_even_with_replies_under_it(self):
+        self.site.watch_threads = self.pinned_thread("c1", replies=("c1.reply", "c9"))
+        self.assertIs(True, (await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
+
+    async def test_a_pinned_comment_whose_id_cannot_be_read_says_nothing(self):
+        self.site.watch_threads = '<ytd-comment-thread-renderer><div id="pinned-comment-badge">Pinned</div></ytd-comment-thread-renderer>'
+        self.assertIsNone((await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
+
+    async def test_unpinning_refuses_before_any_menu_or_mark_unless_this_is_the_pinned_comment(self):
+        for threads in (self.pinned_thread("c1.longer"), self.pinned_thread("c9", replies=("c1",)), "<ytd-comment-thread-renderer></ytd-comment-thread-renderer>"):
+            with self.subTest(threads=threads[:60]):
+                self.site.watch_threads = threads
+                path = self.receipt_file()
+                with self.assertRaises(VpubError) as caught:
+                    await yt.watch_unpin(self.page, VIDEO, "c1", path)
+                self.assertEqual("comment_changed", caught.exception.code)
+                self.assertEqual("COMMENT_READY", read_json(path)["state"])
+                self.assertEqual(0, await self.page.locator("ytd-menu-service-item-renderer:visible").count())
+                self.assertEqual([], self.site.writes)
+
+    async def test_unpinning_uses_the_top_level_comments_own_menu(self):
+        self.site.watch_threads = self.pinned_thread("c1", replies=("c9",))
+        await yt.watch_unpin(self.page, VIDEO, "c1", self.receipt_file())
+        self.assertEqual([("comment-unpin", "c1")], self.site.writes)
 
     async def test_another_comments_pin_does_not_read_as_this_ones(self):
         self.site.comments[1]["pinned"] = True

@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .core import VpubError, atomic_json, file_sha, home, now, read_json, snapshot_file, stop_check
-from .browser_runtime import failure_record, look_until, plain_address, risk_check, unique_visible, visible
+from .browser_runtime import failure_message, failure_record, look_until, plain_address, risk_check, unique_visible, visible
 from .progress import stage
 from .x_pages import own_posts
 
@@ -173,6 +173,45 @@ async def links(page, platform, identity):
     return result
 
 
+POPUP_MS = 15000
+DOUYIN_CARD_TIME = re.compile(r"(\d{4})年(\d{2})月(\d{2})日 (\d{2}):(\d{2})")
+DOUYIN_CARD = '[class^="video-card-content-"]'
+DOUYIN_SCHEDULED = {'state': 'SUBMISSION_VERIFIED', 'phase': 'scheduled', 'error': None, 'verification_source': 'creator_card_title_and_time',
+                    'note': 'Douyin shows this new card with its title and scheduled time, and no ID until the time comes. Verify again after that time.'}
+
+
+def douyin_card_is_waiting(text):
+    """A card still under review or scheduled for later opens no work's page. A field check found a scheduled card's only sign is a time still to come."""
+    if re.search('审核中|定时发布', text):
+        return True
+    found = DOUYIN_CARD_TIME.search(text)
+    return bool(found) and datetime(*map(int, found.groups())) > datetime.now()
+
+
+async def douyin_cards_titled(page, title):
+    """The Creator Center cards with exactly this title."""
+    cards = []
+    for card in await page.locator(DOUYIN_CARD).all():
+        names = card.locator('[class^="info-title-text-"]')
+        if await names.count() and normalize(await names.first.inner_text()) == normalize(title):
+            cards.append(card)
+    return cards
+
+
+async def douyin_scheduled_card(page, receipt):
+    """Before its time a scheduled work has a card and no ID anywhere. One more card than before with exactly this title, showing this time, and marked private if it was meant to be, is this one."""
+    schedule = receipt.get('schedule') or {}
+    if not schedule.get('card_stamp') or 'same_title_cards_before' not in receipt:
+        return False
+    cards = await douyin_cards_titled(page, receipt.get('title') or '')
+    if len(cards) != receipt['same_title_cards_before'] + 1:
+        return False
+    matching = [card for card in cards if schedule['card_stamp'] in normalize(await card.inner_text())]
+    if len(matching) != 1:
+        return False
+    return receipt.get('visibility') != 'private' or await matching[0].locator('[class*="private-mark-"]').count() > 0
+
+
 async def works(page, platform, identity):
     if platform == "youtube":
         from .youtube_studio import works as studio_works
@@ -193,11 +232,14 @@ async def works(page, platform, identity):
                 for title in (await titles.all())[:10]:
                     text = await title.inner_text()
                     card = title.locator('xpath=ancestor::div[starts-with(@class,"video-card-content-")]')
-                    if '审核中' in await card.inner_text():
-                        continue  # Review cards do not open a detail popup yet.
-                    async with page.expect_popup(timeout=15000) as opened:
-                        await title.click()
-                    detail = await opened.value
+                    if douyin_card_is_waiting(normalize(await card.inner_text())):
+                        continue
+                    try:
+                        async with page.expect_popup(timeout=POPUP_MS) as opened:
+                            await title.click()
+                        detail = await opened.value
+                    except Exception:
+                        continue  # One card that opens nothing says nothing about the others.
                     try:
                         # Its address is all this needs, and a field run saw this page not finish loading in 15 seconds.
                         await detail.wait_for_url(re.compile(r'/work-detail/\d+'), timeout=15000, wait_until='commit')
@@ -329,6 +371,8 @@ async def verify(page, platform, identity, receipt):
         if len(matches) == 1:
             receipt = {**receipt, 'id':matches[0]['id'], 'url':matches[0]['url']}
     if not receipt.get("id"):
+        if platform == 'douyin' and await douyin_scheduled_card(page, receipt):
+            return {**receipt, **DOUYIN_SCHEDULED, 'verified_at': now()}
         if platform == 'douyin' and receipt.get('title'):
             cards = page.locator('[class^="video-card-content-"]').filter(has_text=receipt['title'])
             if await cards.count() == 1 and '审核中' in await cards.inner_text():
@@ -419,7 +463,7 @@ async def execute(page, platform, identity, payload):
         state = "WAITING_FOR_USER" if human else "UNKNOWN" if tx.receipt["final_submit_attempted"] else "PREPARATION_INCOMPLETE"
         return tx.save(state=state, blocked_phase=tx.receipt['phase'], phase="blocked", review_url=page.url,
                        error={"code": e.code if isinstance(e, VpubError) else "browser_step_failed",
-                              "message": e.message if isinstance(e, VpubError) else type(e).__name__},
+                              "message": e.message if isinstance(e, VpubError) else failure_message(e)},
                        user_action_required=human,
                        hint="Inspect the existing draft/work. Progress is saved; no automatic upload or submit retry.")
 

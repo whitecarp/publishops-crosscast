@@ -90,6 +90,12 @@ class DetailPageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(["123"], [item["id"] for item in result["items"]])
         self.assertLess(asyncio.get_running_loop().time() - started, 14)
 
+    async def test_a_card_that_opens_nothing_does_not_stop_the_others_being_read(self):
+        from video_publisher import browser_backends
+        self.CARD = '<div class="video-card-content-1"><div class="info-title-text-1">Opens nothing</div></div>' + self.CARD
+        with patch.object(browser_backends, "POPUP_MS", 500):
+            self.assertEqual(["123"], list(await browser_backends.works(self.page, "douyin", "me")))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -33,6 +33,14 @@ PIN_ITEM = re.compile(r"^\s*(Pin|置顶|置頂)\s*$")
 UNPIN_ITEM = re.compile(r"^\s*(Unpin|取消置顶|取消置頂)\s*$")
 REMOVE_ITEM = re.compile(r"^\s*(Remove|移除)\s*$")
 WATCH_TICKS = 20  # How long the video's page gets to load its comments, in seconds of scrolling.
+# What a thread's own top-level comment says, leaving out the replies under it: its exact ID, from its link's lc value, and whether it has a badge.
+WATCH_ROOT = """thread => {
+  const own = selector => [...thread.querySelectorAll(selector)].filter(e => !e.closest('#replies'));
+  const link = own('a[href*="lc="]')[0];
+  let id = null;
+  try { id = link ? new URL(link.href, location.href).searchParams.get('lc') : null; } catch (e) {}
+  return {id, badge: own('#pinned-comment-badge').some(e => e.getClientRects().length > 0)};
+}"""
 # A Studio list is read to its end, within reason; a longer one is reported as not complete.
 TABLE_PAGES = 20
 # After a change the page is left alone until its own requests have stopped for this many half-seconds, up to the limit.
@@ -693,20 +701,23 @@ async def watch_pin(page, work, comment):
     first = await watch_first_thread(page, work)
     if first is None:
         return None
-    if not await visible(first.locator("#pinned-comment-badge")):
+    root = await first.evaluate(WATCH_ROOT)
+    if not root["badge"]:
         return {"pinned": False, "other": False}
-    mine = await first.locator(f'a[href*="lc={comment}"]').count() > 0
-    return {"pinned": mine, "other": not mine}
+    if not root["id"]:
+        return None
+    return {"pinned": root["id"] == comment, "other": root["id"] != comment}
 
 
 async def watch_unpin(page, work, comment, receipt_path):
     """A field check found Studio's menu keeps offering to pin a pinned comment. The comment's menu on the video's own page offers to take it off, with no confirmation."""
     from .comment_actions import submitting
     first = await watch_first_thread(page, work)
-    if first is None or not await visible(first.locator("#pinned-comment-badge")) or not await first.locator(f'a[href*="lc={comment}"]').count():
+    root = await first.evaluate(WATCH_ROOT) if first is not None else {}
+    if not root.get("badge") or root.get("id") != comment:
         raise VpubError("comment_changed", "This comment is no longer the pinned one; nothing changed.")
     await first.hover()
-    await first.locator("ytd-menu-renderer button#button").first.click(timeout=10000)
+    await first.locator("ytd-menu-renderer button#button:not(#replies *)").first.click(timeout=10000)
     items = page.locator("ytd-menu-service-item-renderer").filter(has_text=UNPIN_ITEM)
     await appears(page, items, 8)
     item = await unique_visible(items, "comment menu item")
