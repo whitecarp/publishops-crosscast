@@ -97,7 +97,7 @@ Every release starts with a plan that spells out platforms, accounts, visibility
 
 ### 📮 Sign in once, then publish in the background
 
-After the first sign-in, the CLI does the uploading itself: Bilibili through bili-cli, and YouTube, Douyin, Instagram and X through a dedicated Chrome the CLI runs in the background. The official API routes for YouTube, X and Instagram need the paid add-on. Uploads can carry chapters (Bilibili, YouTube, Douyin) and join a playlist (YouTube) or a collection (Bilibili, Douyin). Bilibili, YouTube, Douyin and X can schedule a future time; Instagram cannot, and a plan that asks for it is refused. `vpub init --draft-only` uploads without publishing: Bilibili and YouTube keep an unpublished draft, Douyin presses its own save-and-leave button, and Instagram and X stop at a preview that may not last.
+After the first sign-in, the CLI does the uploading itself: Bilibili through bili-cli, and YouTube, Douyin, Instagram and X through a dedicated Chrome the CLI runs in the background. The official API routes for YouTube, X and Instagram need the paid add-on. Uploads can carry chapters (Bilibili, YouTube, Douyin) and join a playlist (YouTube) or a collection (Bilibili, Douyin). Bilibili, YouTube, Douyin and X can schedule a future time; Instagram cannot, and a plan that asks for it is refused. `vpub init --draft-only` uploads without publishing: Bilibili and YouTube keep an unpublished draft, Douyin presses its own save-and-leave button and then offers the draft on its upload page under 继续编辑 (CrossCast only looks, because opening it uses the draft up), and Instagram and X stop at a preview that may not last, so it is never called saved.
 
 ### 🔁 Pick up where it stopped
 
