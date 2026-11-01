@@ -5,6 +5,7 @@ before anything is sent, so a crash or a restart cannot reset them. Viewer text 
 """
 from datetime import date, datetime, timedelta, timezone
 import re
+import unicodedata
 from urllib.parse import urlsplit
 
 from .core import VpubError, atomic_json, config, digest, home, now, read_json, stop_check
@@ -30,13 +31,28 @@ SECRET_WORDS = (r"password|passcode|api[ _-]?key|(?:access|refresh|session|auth\
 INCOMING = {
     "instructions": re.compile(
         r"(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+|the\s+)?(?:previous|prior|above|earlier|your|system)\b.{0,30}(?:instruction|prompt|rule)"
+        r"|(?:ignore|disregard|forget)\s+(?:everything|anything|whatever|what)\b.{0,30}(?:told|said|above|before|instruct)"
+        r"|ignor\w*\s.{0,40}?(?:instrucciones|instructions|instruções|instrucoes|anweisungen|istruzioni)"
         r"|system\s+prompt|developer\s+mode|jailbreak|you\s+are\s+now\s+(?:a|an|in)\b|new\s+instructions?\s*:"
-        r"|(?:忽略|无视|忘记|忽視|無視|忘記).{0,12}(?:指令|提示|规则|規則|要求|设定|設定)|系统提示|系統提示|提示词|提示詞", re.I | re.S),
+        r"|(?:忽略|无视|忘记|忽視|無視|忘記).{0,12}(?:指令|提示|规则|規則|要求|设定|設定)|系统提示|系統提示|提示词|提示詞"
+        r"|开发者模式|開發者模式|管理员要求|管理員要求|以管理员身份|以管理員身份"
+        r"|(?:игнорируй|проигнорируй|забудь).{0,40}(?:инструкци|указани|правил)|(?:指示|命令|プロンプト|ルール).{0,10}(?:無視|忘れ)|(?:지시|명령|프롬프트|규칙).{0,10}(?:무시|잊어)", re.I | re.S),
     "secrets": re.compile(
         ASK + r".{0,30}(?:" + SECRET_WORDS + r")"
+        r"|(?:把|发|發|给|給|告诉|告訴).{0,15}(?<![a-z])token(?![a-z])"
         # In other languages the word alone is rare enough in a video's comments to deserve a person's eye.
         r"|contraseña|mot\s+de\s+passe|passwort|kennwort|senha|パスワード|認証コード|비밀번호|인증번호|пароль|код\s+подтверждения", re.I | re.S),
-    "commands": re.compile(r"(?:run|execute)\s+(?:this|the\s+following)\s+(?:command|script|code)|powershell\s+-|curl\s+\S+\s*\||rm\s+-rf|执行(?:这个|以下|下面的?)?(?:命令|脚本|代码)|執行(?:這個|以下|下面的?)?(?:命令|腳本|程式)", re.I),
+    "commands": re.compile(
+        r"(?:run|execute)\s+(?:this|the\s+following)\s+(?:command|script|code)|powershell\s+-|curl\s+\S+\s*\||rm\s+-rf"
+        r"|(?:执行|运行)(?:这个|以下|下面的?)?(?:命令|脚本|代码)|(?:執行|運行)(?:這個|以下|下面的?)?(?:命令|腳本|程式)"
+        # This tool's own commands and the switches that lift a hold, which no viewer has a reason to write.
+        r"|\bvpub\s+[a-z]|\bbili\s+(?:auth|comment|dm|me|owner|season|upload|video)\b|--(?:person-approved|allow-link|allow-new|written-by|clear)\b"
+        r"|\b(?:bash|sh|zsh)\s+-c\b|\bpython\d?\s+-c\b|\bcmd(?:\.exe)?\s+/c\b|\bInvoke-(?:WebRequest|Expression|RestMethod)\b|\biex\b|\b(?:curl|wget)\b.{0,40}https?://|\b(?:pip|npm)\s+install\b", re.I),
+    # Words built to read as this tool's answer, or as a turn in the agent's own conversation.
+    "lookalike": re.compile(
+        r'"(?:ok|state|data|error|platform_writes|needs_person|viewer_text)"\s*:|\b(?:REPLY|SUBMISSION|COMMENT|ACTION|EDIT)_VERIFIED\b|\bDM_VISIBLE\b'
+        r"|</?\s*(?:system|assistant|tool|tool_result|tool_use|function|instructions?)\b[^>]*>|(?-i:\b(?:SYSTEM|ASSISTANT|ADMIN|DEVELOPER|TOOL)\b)\s*[:\]]"
+        r"|^\s*(?:human|assistant|system|tool)\s*:|系统(?:消息|通知|指令)|系統(?:訊息|通知|指令)", re.I | re.M),
     "money": re.compile(r"转账|轉帳|汇款|匯款|打款|(?:send|transfer|wire)\s+(?:me\s+)?(?:money|funds|usdt|btc|bitcoin|crypto)|gift\s+cards?\b|bank\s+account", re.I),
     "care": re.compile(r"自杀|自殺|轻生|輕生|不想活|自残|自殘|suicid|kill\s+myself|self[- ]harm|end\s+my\s+life", re.I),
     "legal": re.compile(r"律师函|律師函|起诉|起訴|侵权|侵權|lawsuit|legal\s+action|my\s+(?:lawyer|attorney)|cease\s+and\s+desist|copyright\s+infring", re.I),
@@ -73,9 +89,17 @@ def set_limits(**values):
     return settings()
 
 
+def plain(text):
+    """What a keyword check reads: full-width letters as ordinary ones, with invisible characters taken out. A reader sees no difference."""
+    return "".join(mark for mark in unicodedata.normalize("NFKC", text) if unicodedata.category(mark) != "Cf")
+
+
 def incoming_flags(text):
     """Why a person should read this message before anything answers it."""
-    return sorted(name for name, pattern in INCOMING.items() if isinstance(text, str) and pattern.search(text))
+    if not isinstance(text, str):
+        return []
+    text = plain(text)
+    return sorted(name for name, pattern in INCOMING.items() if pattern.search(text))
 
 
 def labelled(text, language, written_by="ai"):
@@ -95,8 +119,9 @@ def comparable(text):
     """The same words count as the same message, whatever the spacing, punctuation or case."""
     if not isinstance(text, str):
         return None
+    text = plain(text)
     for label in (*LABELS.values(), LABEL):
-        text = text.replace(label, "")
+        text = text.replace(plain(label), "")
     return re.sub(r"[\W_]+", "", text.casefold()) or text.strip() or None
 
 
