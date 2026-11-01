@@ -46,5 +46,9 @@ Observed in this web session: Edit info after publication had no cover-replaceme
 
 Current Instagram publishing retains original footage/ratio with a separate cover, using shared Douyin portrait artwork through the phone camera-roll picker. The 0.2.4 lead-in experiment is withdrawn; publication history remains intact.
 
+## Deleting a comment instead of a work
+
+Comments are deleted with their own commands, not with this handoff: `vpub comments delete PLATFORM WORK COMMENT_ID` for your own comment and `vpub comments remove PLATFORM WORK COMMENT_ID` for a viewer's. Neither can be undone, so run them only for the exact comment the user named, after reading it with `vpub comments list`. A delete or remove is reported as done (`COMMENT_VERIFIED`) only with proof that the comment is gone. A list that loads only in part proves nothing by leaving a comment out, so the receipt stays `COMMENT_UNVERIFIED` until `vpub comments verify-action RECEIPT_KEY` or a look on the platform shows it gone. Never press delete again on an uncertain receipt. The proof each platform gives is in the [operations guide](OPERATIONS_EN.md#manage-individual-comments).
+
 Related links: [Instagram publishing and covers](OPERATIONS_EN.md#instagram-publishing-and-covers)
 

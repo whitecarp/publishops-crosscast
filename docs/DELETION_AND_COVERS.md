@@ -46,3 +46,7 @@ vpub browser begin KEY --identity OBSERVED_ACCOUNT
 
 目前預設 Instagram 保留原片及原比例，上傳時另外設定封面；手機可從相機膠卷選抖音共用直式圖。[目前指南](OPERATIONS.md#instagram-發布與封面)。0.2.4 的片頭實驗已撤回，既有發布記錄仍保留。
 
+## 刪除評論而不是作品
+
+評論用它們自己的指令刪除，不走這個交接流程：刪除自己的評論用 `vpub comments delete PLATFORM WORK COMMENT_ID`，移除觀眾的評論用 `vpub comments remove PLATFORM WORK COMMENT_ID`。兩者都不可復原，所以只能針對使用者指名的那一則，並且先用 `vpub comments list` 讀過它。刪除或移除只有在確實證明該評論已不在時，才會回報為完成（`COMMENT_VERIFIED`）。只載入一部分的清單，不能因為少了某則評論就當作已刪除，所以回執會維持 `COMMENT_UNVERIFIED`，直到 `vpub comments verify-action RECEIPT_KEY` 或到平台上確認它已消失。回執不確定時，絕不要再按一次刪除。各平台提供的證明見[操作指南](OPERATIONS.md#管理單條評論)。
+
