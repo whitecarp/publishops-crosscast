@@ -34,6 +34,8 @@ JUST_CHECKED_SECONDS = 60
 # A session checks who is signed in before it answers anyone, which is all a one-shot command does, so that check counts for its first command.
 FIRST_COMMAND_SECONDS = 5
 IDLE_SECONDS = 300
+YOUTUBE_IDLE_SECONDS = 20  # Long enough to join the steps of one command, not to leave a real Chrome window open.
+YOUTUBE_EXTRA_SECONDS = 120
 MAX_LIFETIME_SECONDS = 3600
 CONNECT_SECONDS = 15
 BUSY_SECONDS = 180  # How long a command waits for the one the session is running now.
@@ -117,11 +119,15 @@ def connect(platform, account, wait=None):
 
 
 def start(platform, account):
+    argv = [sys.executable, "-m", "video_publisher.browser_broker", platform, account]
+    # YouTube's browser is a real window, so its session only ever starts where no window can show.
+    if platform == "youtube":
+        from .hidden_desktop import Started
+        return Started(argv)
     flags = {"start_new_session": True}
     if sys.platform == "win32":
         flags = {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP}
-    return subprocess.Popen([sys.executable, "-m", "video_publisher.browser_broker", platform, account],
-                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    return subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                             env=dict(os.environ, PYTHONIOENCODING="utf-8"), **flags)
 
 
@@ -306,7 +312,9 @@ async def run(platform, account, on_closing=None):
                     runtime.check_identity(owner, payload.get("expected_identity"))
                     if action == "status":
                         return {"logged_in": True, "identity": owner, "account": account, "method": "browser"}
-                    result = await asyncio.wait_for(dispatch(page, platform, owner, payload), timeout=action_timeout(action))
+                    # Studio's heavy pages keep the time they had as a one-shot command.
+                    limit = action_timeout(action) + (YOUTUBE_EXTRA_SECONDS if platform == "youtube" else 0)
+                    result = await asyncio.wait_for(dispatch(page, platform, owner, payload), timeout=limit)
                     usable = await runtime.keep_session(context, platform, account)
                     return result
 
@@ -317,7 +325,8 @@ async def run(platform, account, on_closing=None):
                     atomic_json(path, {"address": address, "key": key.hex(), "pid": os.getpid()})
                     if sys.platform != "win32":
                         path.chmod(0o600)
-                    await serve(listener, handle, platform, usable=lambda: usable)
+                    idle = min(idle_seconds(), YOUTUBE_IDLE_SECONDS) if platform == "youtube" else None
+                    await serve(listener, handle, platform, idle=idle, usable=lambda: usable)
                 finally:
                     path.unlink(missing_ok=True)
             finally:
