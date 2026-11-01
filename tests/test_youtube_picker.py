@@ -32,6 +32,18 @@ class TickTests(unittest.IsolatedAsyncioTestCase):
             await browser_forms.yt_tick(self.page, box)
         return await box.get_attribute("aria-checked"), await self.page.evaluate("[window.clicks, window.keys]", isolated_context=False)
 
+    async def test_a_box_under_its_own_container_is_clicked_through_the_element_around_them(self):
+        await self.page.set_content("""<!doctype html><body><ytcp-checkbox-lit style="display: block; width: 20px"><div id="checkbox-container" style="position: relative; height: 20px">
+            <div role="checkbox" aria-checked="false" style="height: 20px"></div><div style="position: absolute; inset: 0"></div></div></ytcp-checkbox-lit>
+            <script>window.keys = 0; document.querySelector('ytcp-checkbox-lit').onclick = () => document.querySelector('[role=checkbox]').setAttribute('aria-checked', 'true');
+            document.addEventListener('keydown', () => { window.keys++; });</script>""")
+        box = self.page.locator('[role="checkbox"]')
+        with self.assertRaises(Exception):
+            await box.click(timeout=300)
+        with patch.object(browser_forms, "YT_TICK_MS", 500):
+            await browser_forms.yt_tick(self.page, box)
+        self.assertEqual(("true", 0), (await box.get_attribute("aria-checked"), await self.page.evaluate("window.keys", isolated_context=False)))
+
     async def test_a_box_that_can_be_clicked_gets_one_click_and_no_key(self):
         self.assertEqual(("true", [1, 0]), await self.tick("width: 20px; height: 20px"))
 

@@ -21,6 +21,9 @@ EMPTY_PLAYLIST = ".no-content.ytcp-playlist-video-section-content"
 COMMENT_EDITOR = "ytcp-commentbox textarea#textarea"
 BOX_TICKS = 40  # How long a comment's box gets to open, in quarters of a second.
 PRIVACY = {"private": "PRIVATE", "unlisted": "UNLISTED", "public": "PUBLIC"}
+# The request Studio sends to change a comment, and its answer. Not yet checked against a real delete.
+COMMENT_REQUEST = "/youtubei/v1/comment/perform_comment_action"
+COMMENT_DONE = "STATUS_SUCCEEDED"
 EDIT_ITEM = re.compile(r"^\s*(Edit|修改|編輯)\s*$")
 DELETE_ITEM = re.compile(r"^\s*(Delete|删除|刪除)\s*$")
 PIN_ITEM = re.compile(r"^\s*(Pin|置顶|置頂)\s*$")
@@ -750,7 +753,7 @@ async def comment_action(page, identity, payload):
         # By address and shape only, in case the read-back disagrees.
         result = {**sent(), "page_requests": sorted({urlsplit(item.url).path for item in requests}), "write_answers": await write_answers(requests, target["id"])}
         if kind != "pin":
-            result["acknowledged"] = acknowledged(result["write_answers"])
+            result["acknowledged"] = acknowledged(result["write_answers"], COMMENT_REQUEST, COMMENT_DONE)
             # Whether it left this page after the one press, which says more than a later read of a list that only loads in part.
             for _ in range(10):
                 result["gone_from_page"] = not await row.count()

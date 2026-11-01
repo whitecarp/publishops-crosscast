@@ -205,7 +205,7 @@ def admit(kind, platform, identity, text=None, person=None, incoming=None, name=
             raise VpubError("already_answered", "This person's same message was already answered, on this or a linked account.",
                             "Add --person-approved if a person wants it answered again.")
     if who and sum(row.get("day") == day for row in rows) >= limits["per_person_per_day"]:
-        raise VpubError("person_limit_reached", f"This person already got {limits['per_person_per_day']} replies today, so nothing was sent.", "Try again tomorrow, or change it with vpub safety set.")
+        raise VpubError("person_limit_reached", f"This person already got {limits['per_person_per_day']} replies or messages today, so nothing was sent.", "Try again tomorrow, or change it with vpub safety set.")
     counter = f"{platform}|{identity}|{kind}"
     used = data["days"].get(day, {}).get(counter, 0)
     if used >= limits[CAP_OF[kind]]:

@@ -10,6 +10,9 @@ from .collections import before_submit
 FOLDER_PAGE=100
 LIST_WAIT=25
 FOLDER_SCROLLS=20
+X_ANSWER_SECONDS=20
+# A column's own words, without its posts, which can say anything.
+NOT_POSTS="""column => { const copy = column.cloneNode(true); copy.querySelectorAll('article').forEach(e => e.remove()); return copy.textContent; }"""
 
 
 def folder_section(data):
@@ -41,11 +44,19 @@ def folders_in(data):
 
 
 def folder_write_done(data):
-    """X answers a folder change with one word and treats anything else as an error."""
-    done=(data.get('data') or {}).get('done') if isinstance(data,dict) else None
+    """X answers a folder change with one word and treats anything else as an error. The field holding that word is named after the change."""
+    answer=data.get('data') if isinstance(data,dict) else None
+    if not isinstance(answer,dict):return None
+    done=next((value for key,value in answer.items() if (key=='done' or 'bookmark' in key) and isinstance(value,str)),None)
     if done is None:return None
     if done!='Done':raise VpubError('platform_rejected','X did not accept the folder change.')
     return True
+
+
+async def x_answer(future):
+    """X's answer shows sooner that a change finished. Whether it went in is for the read-back to say, so no answer is not a failure."""
+    try:await asyncio.wait_for(future,X_ANSWER_SECONDS)
+    except asyncio.TimeoutError:pass
 
 
 def created_id(platform,data,title):
@@ -215,7 +226,7 @@ async def x_member(page,owner,payload):
     try:
         # The window closes as soon as the row is clicked, so X's own answer is what shows the request finished.
         await row.click(timeout=15000)
-        await asyncio.wait_for(future,20)
+        await x_answer(future)
     finally:page.remove_listener('response',capture)
     await rt.risk_check(page)
     return {'identity':owner,'submitted':True,'collection_id':cid}
@@ -224,7 +235,7 @@ async def x_member(page,owner,payload):
 async def x_folder_failed(page):
     """X's error message in the folder's own column. Its side columns fail by themselves and say nothing about the folder."""
     column=page.locator('[data-testid="primaryColumn"]')
-    if 'Something went wrong' in await (column if await column.count() else page.locator('body')).first.inner_text():
+    if 'Something went wrong' in await (column if await column.count() else page.locator('body')).first.evaluate(NOT_POSTS):
         raise VpubError('read_failed','X did not load the bookmark folder.')
 
 
@@ -248,9 +259,8 @@ async def x_folder_posts(page,cid,title):
 
 
 async def x_earlier_member(page,owner,payload):
-    """On the earlier site a post's share menu opens X's folder window, which names no post, and a folder's own page says what it holds."""
+    """On the earlier site a post's share menu opens X's folder window, which names no post. A folder's own page says what it holds, and the same menu there takes a post out."""
     op,cid,work=payload['operation'],payload['collection_id'],payload['work_id']
-    if op=='remove':raise VpubError('unverified_feature','Taking a post out of a folder is not yet available on the X site this account gets; nothing changed.')
     folders=await read_list(page,'x',owner)
     found=[x for x in folders['items'] if x['id']==cid]
     if len(found)!=1:raise VpubError('collection_not_visible','Exact folder ID is not visible; no changes made.')
@@ -261,8 +271,14 @@ async def x_earlier_member(page,owner,payload):
                 'scope':'one_post','coverage':'folder_page','platform_writes':0}
     if payload['before_members']!=([work] if work in seen else []):
         raise VpubError('collection_changed','This post moved since the last check; nothing changed.')
-    await page.goto(f'https://x.com/{owner}/status/{work}',wait_until='domcontentloaded')
+    await page.goto('https://x.com/i/history/bookmarks/'+cid if op=='remove' else f'https://x.com/{owner}/status/{work}',wait_until='domcontentloaded')
     row=x_pages.post_row(page,work)
+    if op=='remove':
+        # The folder's page loads as it scrolls, and this post was seen on it a moment ago.
+        for _ in range(FOLDER_SCROLLS):
+            if await row.count():break
+            await page.wait_for_timeout(1500)
+            await page.mouse.wheel(0,2400)
     try:await row.first.wait_for(state='visible',timeout=25000)
     except Exception:
         await rt.risk_check(page)
@@ -270,25 +286,30 @@ async def x_earlier_member(page,owner,payload):
     await rt.risk_check(page)
     share=await rt.unique_visible(row.first.get_by_role('button',name='Share post',exact=True),'Share post')
     menus=await x_pages.open_menu(page,share)
-    choices=menus.get_by_text('Bookmark to Folder',exact=True)
-    if not await rt.visible(choices):
-        raise VpubError('layout_changed','X did not offer Bookmark to Folder for this post, which may need saving first; nothing changed.','Save it with vpub engage save, then try again.')
-    await (await rt.unique_visible(choices,'Bookmark to Folder')).click(timeout=10000)
-    try:await page.wait_for_url(re.compile(r'/i/(bookmarks/add|premium)'),timeout=15000)
-    except Exception:raise VpubError('layout_changed','X did not open its folder window; nothing changed.') from None
-    if urlsplit(page.url).path.startswith('/i/premium'):raise VpubError('premium_required','X only offers bookmark folders with Premium; nothing changed.')
-    rows=page.get_by_role('dialog').get_by_text(title,exact=True)
-    try:await rows.first.wait_for(state='visible',timeout=20000)
-    except Exception:
+    if op=='remove':
+        choices=menus.get_by_text('Remove from Folder',exact=True)
+        if not await rt.visible(choices):raise VpubError('layout_changed','X did not offer Remove from Folder for this post; nothing changed.')
+        target=await rt.unique_visible(choices,'Remove from Folder')
+    else:
+        choices=menus.get_by_text('Bookmark to Folder',exact=True)
+        if not await rt.visible(choices):
+            raise VpubError('layout_changed','X did not offer Bookmark to Folder for this post, which may need saving first; nothing changed.','Save it with vpub engage save, then try again.')
+        await (await rt.unique_visible(choices,'Bookmark to Folder')).click(timeout=10000)
+        try:await page.wait_for_url(re.compile(r'/i/(bookmarks/add|premium)'),timeout=15000)
+        except Exception:raise VpubError('layout_changed','X did not open its folder window; nothing changed.') from None
+        if urlsplit(page.url).path.startswith('/i/premium'):raise VpubError('premium_required','X only offers bookmark folders with Premium; nothing changed.')
+        rows=page.get_by_role('dialog').get_by_text(title,exact=True)
+        try:await rows.first.wait_for(state='visible',timeout=20000)
+        except Exception:
+            await rt.risk_check(page)
+            raise VpubError('layout_changed','X did not list this folder in its window; nothing changed.') from None
         await rt.risk_check(page)
-        raise VpubError('layout_changed','X did not list this folder in its window; nothing changed.') from None
-    await rt.risk_check(page)
-    target=await rt.unique_visible(rows,'folder row')
+        target=await rt.unique_visible(rows,'folder row')
     future,capture=response_capture(page,'x',folder_write_done)
     before_submit(payload,owner)
     try:
         await target.click(timeout=15000)
-        await asyncio.wait_for(future,20)
+        await x_answer(future)
     finally:page.remove_listener('response',capture)
     await rt.risk_check(page)
     return {'identity':owner,'submitted':True,'collection_id':cid}

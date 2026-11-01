@@ -104,7 +104,7 @@ class FakeYouTube:
         elif kind == "comment-pin":
             row = next(row for row in self.comments if row["id"] == parts[1])
             row["pinned"] = not row.get("pinned")
-        await route.fulfill(status=200, content_type="application/json", body="{}")
+        await route.fulfill(status=200, content_type="application/json", body=json.dumps({"actionResults": [{"status": "STATUS_SUCCEEDED"}]}) if kind.startswith("comment-") else "{}")
 
     def list_page(self):
         rows = "".join(f"""<ytcp-playlist-row><a id="playlist-title-link" href="/playlist/{key}/edit">{row['title']}</a><span class="visibility-label"> {WORDS[row['visibility']]}</span>
@@ -548,6 +548,12 @@ class CommentTests(Browser):
 
     async def test_a_failed_request_is_not_acknowledged(self):
         self.assertIs(False, (await self.answered(500, "{}"))["acknowledged"])
+
+    async def test_an_answer_that_can_not_be_read_or_says_nothing_is_not_acknowledged(self):
+        for body in ("<html>Sorry</html>", "{}", '{"actionResults": [{"status": "STATUS_PENDING"}]}'):
+            with self.subTest(body=body):
+                self.site.comments = [{"id": "c1", "text": "Nice", "own": False, "liked": False}, {"id": "c2", "text": "Mine", "own": True, "liked": False}]
+                self.assertIs(False, (await self.answered(200, body))["acknowledged"])
 
     async def test_a_comment_still_on_the_page_after_the_press_is_not_called_gone(self):
         self.site.keep_row = True

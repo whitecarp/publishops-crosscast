@@ -43,7 +43,7 @@ def stop_state():
         detail = detail if isinstance(detail, dict) else {}
         return {"active": True, "message": exc.message, "reason": detail.get("reason") or detail.get("code"),
                 "platform": detail.get("platform"), "at": detail.get("at"),
-                "hint": "Inspect the reason. Only the operator may clear a stop, by deleting that file."}
+                "hint": "Inspect the reason. Only the operator may clear a stop, with vpub stop --clear."}
     return {"active": False}
 
 

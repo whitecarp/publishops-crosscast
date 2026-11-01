@@ -58,12 +58,16 @@ class AnswerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_it_keeps_the_shape_and_nothing_the_request_or_answer_held(self):
         answers = await self.answers(FakeRequest(body=json.dumps({"actions": [TARGET], "words": "PRIVATE-WORDS"}), answer={"actionResults": [{"status": "STATUS_SUCCEEDED", "text": "PRIVATE-WORDS"}]}))
-        self.assertEqual([{"path": "/youtubei/v1/comment/perform_comment_action", "names_target": True, "http": 200, "fields": ["actionResults"], "objected": False}], answers)
+        self.assertEqual([{"path": "/youtubei/v1/comment/perform_comment_action", "names_target": True, "http": 200, "fields": ["actionResults"], "statuses": ["STATUS_SUCCEEDED"], "objected": False}], answers)
         self.assertNotIn("SECRET", json.dumps(answers))
 
     async def test_a_field_name_that_looks_like_someones_words_is_left_out(self):
         answers = await self.answers(FakeRequest(body=TARGET, answer={"ok": 1, "a viewer's words": 2}))
         self.assertEqual(["ok"], answers[0]["fields"])
+
+    async def test_a_status_that_is_not_one_of_the_sites_own_words_is_left_out(self):
+        answers = await self.answers(FakeRequest(body=TARGET, answer={"status": "ok", "item": {"status": "a viewer's words here"}}))
+        self.assertEqual(["ok"], answers[0]["statuses"])
 
     async def test_only_post_requests_count(self):
         self.assertEqual([], await self.answers(FakeRequest(body=TARGET, method="GET")))
@@ -87,20 +91,32 @@ class AnswerTests(unittest.IsolatedAsyncioTestCase):
 
 class AcknowledgedTests(unittest.TestCase):
     def answer(self, **fields):
-        return {"names_target": True, "http": 200, "objected": False, **fields}
+        return {"path": "/change", "names_target": True, "http": 200, "statuses": ["ok"], "objected": False, **fields}
 
-    def test_it_takes_a_request_naming_the_target_answered_without_objection(self):
-        self.assertTrue(rt.acknowledged([self.answer()]))
-        self.assertTrue(rt.acknowledged([self.answer(), self.answer(names_target=False, http=500)]))
+    def acknowledged(self, *answers):
+        return rt.acknowledged(list(answers), "/change", "ok")
+
+    def test_it_takes_the_intended_request_naming_the_target_answered_with_the_success_word(self):
+        self.assertTrue(self.acknowledged(self.answer()))
+        self.assertTrue(self.acknowledged(self.answer(), self.answer(names_target=False, http=500)))
+        self.assertTrue(self.acknowledged(self.answer(), self.answer(path="/log", statuses=[])))
 
     def test_nothing_naming_the_target_acknowledges_nothing(self):
-        self.assertFalse(rt.acknowledged([]))
-        self.assertFalse(rt.acknowledged([self.answer(names_target=False)]))
+        self.assertFalse(self.acknowledged())
+        self.assertFalse(self.acknowledged(self.answer(names_target=False)))
+
+    def test_a_request_to_anywhere_else_acknowledges_nothing(self):
+        self.assertFalse(self.acknowledged(self.answer(path="/log")))
+
+    def test_an_answer_with_no_status_or_another_status_proves_nothing(self):
+        self.assertFalse(self.acknowledged(self.answer(statuses=[])))
+        self.assertFalse(self.acknowledged(self.answer(statuses=["pending"])))
+        self.assertFalse(self.acknowledged(self.answer(statuses=["ok", "pending"])))
 
     def test_one_objection_is_enough_even_if_another_request_succeeded(self):
-        self.assertFalse(rt.acknowledged([self.answer(), self.answer(objected=True)]))
-        self.assertFalse(rt.acknowledged([self.answer(), self.answer(http=500)]))
-        self.assertFalse(rt.acknowledged([self.answer(http=None)]))
+        self.assertFalse(self.acknowledged(self.answer(), self.answer(objected=True)))
+        self.assertFalse(self.acknowledged(self.answer(), self.answer(path="/log", http=500)))
+        self.assertFalse(self.acknowledged(self.answer(http=None)))
 
 
 if __name__ == "__main__":

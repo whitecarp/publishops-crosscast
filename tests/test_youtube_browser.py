@@ -50,6 +50,8 @@ class Element:
         return [self] if self.exists() else []
 
     async def count(self):
+        if "ancestor-or-self" in self.key:
+            return 0
         if "ytcp-chip" in self.key:
             return self.page.chips
         return 1 if self.exists() else 0

@@ -4,6 +4,7 @@ The rebuilt site's copy follows the page code X publishes: the folder window at 
 create and edit windows, and the answers they get. A signed-in account on 2026-10-31 still got the earlier site, where that
 address does not exist. Nothing here contacts X, and the rebuilt-site paths have not been tried on a real account yet.
 """
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -288,6 +289,14 @@ document.getElementById('share').addEventListener('keydown', event => { if (even
 const folder = document.getElementById('folder');
 if (folder) folder.onclick = () => { location.href = '/i/bookmarks/add'; };
 </script>'''
+# A field check on 2026-11-01 found Remove from Folder in a post's share menu on the folder's own page.
+EARLIER_FOLDER_MENU = '''<div role="menu" id="menu" hidden><div data-testid="Dropdown"><div role="menuitem">Copy link</div>%s</div></div>
+<script>
+const opener = document.getElementById('share');
+if (opener) opener.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); document.getElementById('menu').hidden = false; } });
+const out = document.getElementById('out');
+if (out) out.onclick = () => { fetch('/i/api/graphql/abc/RemoveTweetFromBookmarkFolder?folder=' + location.pathname.split('/').pop(), {method: 'POST', body: '{}'}); document.getElementById('menu').hidden = true; };
+</script>'''
 EARLIER_PICKER = '''<div role="dialog"><div role="dialog"><h2>Add to Folder</h2><button type="button">Create a new Bookmark Folder</button>
 <div data-viewportview="true"><div class="row"><div><span>All Bookmarks</span></div></div>%s</div></div></div>
 <script>
@@ -313,6 +322,9 @@ class EarlierSiteTests(unittest.IsolatedAsyncioTestCase):
         self.inside = {'111': set()}
         self.offers_folder = True
         self.folder_error = ''
+        self.post_words = ''
+        self.write_answer = {'done': 'Done'}
+        self.offers_removal = True
         self.writes = []
         await self.page.route('**/*', self.handle)
         await self.page.goto('https://x.com/home')
@@ -335,7 +347,11 @@ class EarlierSiteTests(unittest.IsolatedAsyncioTestCase):
             elif name == 'bookmarkTweetToFolder':
                 self.writes.append((name, query['folder'][0]))
                 self.inside[query['folder'][0]].add(POST)
-                data = {'done': 'Done'}
+                data = self.write_answer
+            elif name == 'RemoveTweetFromBookmarkFolder':
+                self.writes.append((name, query['folder'][0]))
+                self.inside[query['folder'][0]].discard(POST)
+                data = self.write_answer
             else:
                 self.writes.append((name, query.get('name', [None])[0]))
                 if name == 'createBookmarkFolder':
@@ -344,7 +360,8 @@ class EarlierSiteTests(unittest.IsolatedAsyncioTestCase):
         if url.path == '/i/history':
             return await route.fulfill(status=200, content_type='text/html', body='<!doctype html><body>' + EARLIER_HISTORY)
         if url.path.startswith('/i/history/bookmarks/'):
-            rows = ''.join(EARLIER_POST % {'post': post, 'extra': ''} for post in sorted(self.inside.get(name, ())))
+            rows = ''.join(EARLIER_POST % {'post': post, 'extra': self.post_words + '<button aria-label="Share post" id="share">s</button>'} for post in sorted(self.inside.get(name, ())))
+            rows += EARLIER_FOLDER_MENU % ('<div role="menuitem" id="out">Remove from Folder</div>' if self.offers_removal else '')
             return await route.fulfill(status=200, content_type='text/html', body='<!doctype html><body>' + EARLIER_FOLDER % self.folders.get(name, '') + '<main><div data-testid="primaryColumn">' + ('Something went wrong.' if self.folder_error == 'column' else '') + rows + '</div><div data-testid="sidebarColumn">' + ('Something went wrong. Try reloading.' if self.folder_error == 'side' else '') + '</div></main>')
         if url.path == f'/{OWNER}/status/{POST}':
             item = '<div role="menuitem" id="folder">Bookmark to Folder</div>' if self.offers_folder else ''
@@ -395,12 +412,29 @@ class EarlierSiteTests(unittest.IsolatedAsyncioTestCase):
         result = await self.run_op('add', collection_id='111', work_id=POST, before_members=list(before), receipt_key=key)
         return key, result
 
-    async def test_taking_a_post_out_says_it_is_not_available_here_and_changes_nothing(self):
+    async def remove(self, inside=(POST,)):
+        self.inside['111'] = set(inside)
         key = self.receipt('remove', work_id=POST, before_members=[POST])
+        return key, await self.run_op('remove', collection_id='111', work_id=POST, before_members=[POST], receipt_key=key)
+
+    async def test_a_post_is_taken_out_from_the_folders_own_page_once(self):
+        key, result = await self.remove()
+        self.assertEqual({'identity': OWNER, 'submitted': True, 'collection_id': '111'}, result)
+        self.assertEqual([('RemoveTweetFromBookmarkFolder', '111')], self.writes)
+        self.assertEqual('SUBMITTING', read_json(c.receipt_path(key))['state'])
+        self.assertEqual([], (await self.run_op('items', collection_id='111', work_id=POST))['items'])
+
+    async def test_a_menu_with_no_removal_changes_nothing(self):
+        self.offers_removal = False
         with self.assertRaises(VpubError) as caught:
-            await self.run_op('remove', collection_id='111', work_id=POST, before_members=[POST], receipt_key=key)
-        self.assertEqual('unverified_feature', caught.exception.code)
-        self.assertEqual('READY', read_json(c.receipt_path(key))['state'])
+            await self.remove()
+        self.assertEqual('layout_changed', caught.exception.code)
+        self.assertEqual([], self.writes)
+
+    async def test_a_post_that_already_left_the_folder_stops_it(self):
+        with self.assertRaises(VpubError) as caught:
+            await self.remove(inside=())
+        self.assertEqual('collection_changed', caught.exception.code)
         self.assertEqual([], self.writes)
 
     async def test_one_post_is_read_from_the_folders_own_page(self):
@@ -421,10 +455,36 @@ class EarlierSiteTests(unittest.IsolatedAsyncioTestCase):
             await self.run_op('items', collection_id='111', work_id=POST)
         self.assertEqual('read_failed', caught.exception.code)
 
+    async def test_a_post_that_says_those_words_is_not_an_error(self):
+        self.inside['111'].add(POST)
+        self.post_words = 'Something went wrong with my recipe'
+        self.assertEqual([{'id': POST}], (await self.run_op('items', collection_id='111', work_id=POST))['items'])
+
     async def test_a_folder_that_never_stops_loading_does_not_count_as_complete(self):
         with patch('video_publisher.collections_browser.FOLDER_SCROLLS', 1):
             result = await self.run_op('items', collection_id='111', work_id=POST)
         self.assertIs(False, result['complete'])
+
+    async def test_xs_answer_can_come_under_the_changes_own_name(self):
+        self.write_answer = {'bookmark_collection_tweet_put': 'Done'}
+        started = asyncio.get_running_loop().time()
+        await self.add()
+        self.assertLess(asyncio.get_running_loop().time() - started, 15)
+
+    async def test_no_answer_from_x_leaves_it_to_the_read_back(self):
+        self.write_answer = {}
+        with patch('video_publisher.collections_browser.X_ANSWER_SECONDS', 0.5):
+            key, result = await self.add()
+        self.assertIs(True, result['submitted'])
+        self.assertEqual('SUBMITTING', read_json(c.receipt_path(key))['state'])
+        await self.page.goto('https://x.com/home')
+        self.assertEqual([{'id': POST}], (await self.run_op('items', collection_id='111', work_id=POST))['items'])
+
+    async def test_a_refusal_in_xs_answer_stops_it(self):
+        self.write_answer = {'bookmark_collection_tweet_put': 'NotAllowed'}
+        with self.assertRaises(VpubError) as caught:
+            await self.add()
+        self.assertEqual('platform_rejected', caught.exception.code)
 
     async def test_adding_goes_through_the_share_menu_and_the_folder_window_once(self):
         key, result = await self.add()

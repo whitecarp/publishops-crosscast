@@ -5,6 +5,8 @@ from .operations_browser import open_work, comments
 from .core import VpubError, atomic_json, read_json, stop_check
 
 COMMENT_OPTIONS = '[role="button"]:has(svg[aria-label="Comment Options"]), [role="button"][aria-label="Comment Options"]'
+# The request Instagram's website sends to delete a comment, and its answer. Not yet checked against a real delete.
+DELETE_REQUEST = r'(/api/v1)?/web/comments/\d+/delete/\d+/?'
 
 
 async def press_once(page, platform, payload, control):
@@ -53,7 +55,7 @@ async def instagram_delete(page, identity, payload, comment):
     finally:
         page.remove_listener('request', heard)
     answers = await write_answers(requests, comment['id'])
-    return {'state': 'COMMENT_UNVERIFIED', 'platform_writes': 1, 'gone_from_page': gone, 'write_answers': answers, 'acknowledged': acknowledged(answers)}
+    return {'state': 'COMMENT_UNVERIFIED', 'platform_writes': 1, 'gone_from_page': gone, 'write_answers': answers, 'acknowledged': acknowledged(answers, DELETE_REQUEST, 'ok')}
 
 
 async def execute(page, platform, identity, payload):

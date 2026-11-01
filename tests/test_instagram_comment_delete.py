@@ -49,7 +49,7 @@ class Base(unittest.IsolatedAsyncioTestCase):
         self.page.set_default_timeout(5000)
         self.writes = []
         self.seen_at_send = None
-        self.answer = "{}"
+        self.answer = '{"status": "ok"}'
         self.html = PAGE % (row(0, "Mine") + row(1, "Theirs"))
         self.receipt = str(Path(temp.name) / "receipt.json")
         atomic_json(self.receipt, {"state": "COMMENT_READY"})

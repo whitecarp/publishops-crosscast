@@ -438,9 +438,11 @@ async def yt_category(page, category_id):
 
 
 async def yt_tick(page, box):
-    """One playlist box. On a real channel the first box refused a click for 15 seconds while its picker was open, so the keyboard takes over, as it would for a person."""
+    """One playlist box. A field check found the real box covered by its own container, and the ytcp-checkbox-lit around them took the click.
+    If nothing can, the keyboard takes over, as it would for a person."""
+    holder = box.locator('xpath=ancestor-or-self::ytcp-checkbox-lit[1]')
     try:
-        await box.click(timeout=YT_TICK_MS)
+        await (holder if await holder.count() else box).click(timeout=YT_TICK_MS)
     except Exception:
         await box.focus(timeout=YT_TICK_MS)
         await page.keyboard.press('Space')

@@ -325,7 +325,7 @@ class OperatorCommandTests(OverviewFixture):
     def test_stop_says_how_to_resume(self):
         result = cli.execute(cli.parser().parse_args(["stop", "--reason", "Testing"]))
         self.assertEqual(str(home() / "STOP.json"), result["stop_file"])
-        self.assertIn("deletes this file", result["hint"])
+        self.assertIn("vpub stop --clear", result["hint"])
 
     def test_init_rejects_a_missing_video_at_once(self):
         out = self.root / "new.json"
