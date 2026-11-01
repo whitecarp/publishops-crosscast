@@ -97,5 +97,42 @@ class CheckingTests(Temporary):
         self.assertEqual("EDIT_VERIFIED", self.run_send({"state": "EDIT_VERIFIED", "platform_writes": 1}, False)[0]["state"])
 
 
+class TitleTests(unittest.TestCase):
+    def test_a_title_a_form_or_a_command_could_not_hold_is_refused_at_once(self):
+        for platform in ("bilibili", "youtube", "douyin", "x", "instagram"):
+            for title in ("line\nbreak", "return\rcharacter", "null\x00character"):
+                with self.subTest(platform=platform, title=title), self.assertRaises(VpubError) as caught:
+                    edits.validate_patch(platform, {**TEXT, "title": title})
+                self.assertEqual("invalid_title", caught.exception.code)
+
+
+class AiWordsTests(Temporary):
+    def publish_record(self, platform, ai_generated):
+        ledger = Ledger()
+        key = ledger.claim(platform, "default", "a" * 64, {})
+        ledger.save(key, "SUBMISSION_VERIFIED", {"identity": {"identity": OWNER}, "options": {"ai_generated": ai_generated, "title": "Old"}, "receipt": {"id": "1234567890", "title": "Old"}})
+        ledger.close()
+        return key
+
+    def edit(self, platform, ai_generated):
+        key = self.publish_record(platform, ai_generated)
+        patch_path = self.root / "patch.json"
+        atomic_json(patch_path, TEXT)
+        with patch.object(adapters, "browser_call", return_value={"state": "EDIT_VERIFIED"}) as call:
+            edits.run(key, patch_path)
+        (home() / "publications.sqlite3").unlink()
+        return call.call_args.kwargs["patch"]["post_text"]
+
+    def test_an_ordinary_video_does_not_become_ai_generated_by_being_edited(self):
+        for platform in ("x", "instagram"):
+            with self.subTest(platform=platform):
+                self.assertEqual("New title\n\nNew text", self.edit(platform, False))
+
+    def test_an_ai_video_keeps_saying_so_after_an_edit(self):
+        for platform in ("x", "instagram"):
+            with self.subTest(platform=platform):
+                self.assertEqual("New title\n\nNew text\n\nAI-generated", self.edit(platform, True))
+
+
 if __name__ == "__main__":
     unittest.main()
