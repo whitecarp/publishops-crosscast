@@ -7,6 +7,7 @@ import subprocess
 import sys
 import uuid
 
+from . import progress
 from .core import VpubError, atomic_json, home, read_json
 
 DESKTOP = "CrossCastBackground"
@@ -40,31 +41,47 @@ def libraries():
     return user32, kernel32
 
 
-def run(argv, timeout):
-    """Run argv on the hidden desktop until it exits. After a timeout, end it and everything it started."""
+def launch(argv):
+    """Start argv on the hidden desktop. The handles stay open until the caller closes them."""
     user32, kernel32 = libraries()
     desktop = user32.CreateDesktopW(DESKTOP, None, None, 0, GENERIC_ALL, None)
     if not desktop:
         raise VpubError("browser_unavailable", "Could not create a hidden desktop for the background browser.")
-    try:
-        startup = STARTUPINFOW(cb=ctypes.sizeof(STARTUPINFOW), lpDesktop=DESKTOP)
-        process = PROCESS_INFORMATION()
-        command = ctypes.create_unicode_buffer(subprocess.list2cmdline([str(part) for part in argv]))
-        if not kernel32.CreateProcessW(None, command, None, None, False, CREATE_NO_WINDOW, None, None, ctypes.byref(startup), ctypes.byref(process)):
-            raise VpubError("browser_unavailable", "Could not start the background browser on its hidden desktop.")
-        try:
-            if kernel32.WaitForSingleObject(process.hProcess, int(timeout * 1000)) == WAIT_TIMEOUT:
-                subprocess.run(["taskkill", "/PID", str(process.dwProcessId), "/T", "/F"], capture_output=True)
-                raise subprocess.TimeoutExpired(argv, timeout)
-        finally:
-            kernel32.CloseHandle(process.hThread)
-            kernel32.CloseHandle(process.hProcess)
-    finally:
+    startup = STARTUPINFOW(cb=ctypes.sizeof(STARTUPINFOW), lpDesktop=DESKTOP)
+    process = PROCESS_INFORMATION()
+    command = ctypes.create_unicode_buffer(subprocess.list2cmdline([str(part) for part in argv]))
+    if not kernel32.CreateProcessW(None, command, None, None, False, CREATE_NO_WINDOW, None, None, ctypes.byref(startup), ctypes.byref(process)):
         user32.CloseDesktop(desktop)
+        raise VpubError("browser_unavailable", "Could not start the background browser on its hidden desktop.")
+    return user32, kernel32, desktop, process
+
+
+def run(argv, timeout):
+    """Run argv on the hidden desktop until it exits. After a timeout, end it and everything it started."""
+    user32, kernel32, desktop, process = launch(argv)
+    try:
+        if kernel32.WaitForSingleObject(process.hProcess, int(timeout * 1000)) == WAIT_TIMEOUT:
+            subprocess.run(["taskkill", "/PID", str(process.dwProcessId), "/T", "/F"], capture_output=True)
+            raise subprocess.TimeoutExpired(argv, timeout)
+    finally:
+        kernel32.CloseHandle(process.hThread)
+        kernel32.CloseHandle(process.hProcess)
+        user32.CloseDesktop(desktop)
+
+
+class Started:
+    """A process left running on the hidden desktop. Its handles close with this command's process, by when its Chrome holds the desktop open itself."""
+
+    def __init__(self, argv):
+        _, self.kernel32, self.desktop, self.process = launch(argv)
+
+    def poll(self):
+        return None if self.kernel32.WaitForSingleObject(self.process.hProcess, 0) == WAIT_TIMEOUT else 1
 
 
 def call_worker(payload, timeout):
     """One browser command on the hidden desktop. It has no console to answer on, so it answers in a private file."""
+    progress.stage("starting the browser", payload.get("stages_path"))
     folder = home() / "browser-jobs"
     name = uuid.uuid4().hex
     request, answer = folder / (name + ".json"), folder / (name + ".result.json")

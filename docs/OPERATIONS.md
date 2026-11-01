@@ -22,7 +22,7 @@
 
 - **官方 API 路徑改為獨立的付費附加元件，目前還沒有開賣。** 涵蓋 X、Instagram 與 YouTube。未安裝時，YouTube、抖音、Instagram 與 X 都使用背景瀏覽器。
 - **YouTube 作品、數據、留言與編輯可透過其官方頁面免費使用。** 未安裝附加元件時，`vpub works`、`vpub stats`、`vpub comments list`、`vpub comments reply`、`vpub comments like`、`vpub engage like`、`vpub engage save`、`vpub playlist` 與 `vpub edit` 會在背景瀏覽器中執行，頻道自己留言的 `vpub comments edit` 與 `vpub comments delete` 也一樣。讀取；建立、修改（名稱、說明、公開範圍）、刪除私人播放清單並在其中新增和移除影片；替影片按讚和收藏、替留言按讚（都已復原）；回覆留言；以及修改自己的留言再改回去，都已在真實頻道上檢查過。置頂留言在真實頻道上試過，置頂生效了（影片自己的頁面把它排在最前面，並帶有置頂標記），但 CrossCast 因為去 Studio 裡看（Studio 的列和選單仍然只提供「置頂」）而回報為未確認；現在它改在影片自己的頁面上讀取置頂狀態，這個版本還沒在真實頻道上完整跑過一遍；刪除自己的一則回覆試過一次，結果停在 `COMMENT_UNVERIFIED`（回覆從頁面上消失了，但平台的回覆沒有帶預期的成功字樣）；其他會造成變更的操作尚未試過。留言為 Studio 載入的內容，並非完整歷史。調整播放清單順序與待審核留言佇列需要附加元件。
-- **YouTube 新增免費背景路徑。** `vpub auth login youtube --method browser` 在專用 Chrome 視窗登入一次；之後經由 YouTube Studio 在背景發布，Windows 上使用隱藏桌面，不會出現視窗；設計上也不會留下工作列圖示，但工作列尚未在真實機器上檢查過。可依確切標題加入播放清單（`playlist_titles`），也可設定排程（依 Studio 顯示的時區，沒有顯示時依這台電腦的時區）；兩者都在最後儲存前讀回確認。真實嘗試停在播放清單選擇器兩次（第二次是因為 Studio 的勾選框被它自己的容器蓋住了）；選擇器現在會點選勾選框外面的容器，若 5 秒後點擊仍被拒絕，就改用鍵盤勾選，這還沒重新試過，所以兩者都還沒在真實帳號上確認過。播放清單 ID（`playlist_ids`）只能走付費 API。`--draft-only` 會在最後儲存前停止。
+- **YouTube 新增免費背景路徑。** `vpub auth login youtube --method browser` 在專用 Chrome 視窗登入一次；之後經由 YouTube Studio 在背景發布，Windows 上使用隱藏桌面，不會出現視窗或工作列圖示。擁有者在真實頻道上讀取八次時留意過兩者，都沒有看到；真實上傳時還沒有人看過工作列。可依確切標題加入播放清單（`playlist_titles`），也可設定排程（依 Studio 顯示的時區，沒有顯示時依這台電腦的時區）；兩者都在最後儲存前讀回確認。在真實頻道上，播放清單選擇器和排程都已在草稿上傳中通過，草稿上傳會停在最後儲存之前，所以排程還沒有真正儲存過。播放清單 ID（`playlist_ids`）只能走付費 API。`--draft-only` 會在最後儲存前停止。
 - **同樣移至附加元件：** 營運匯報（`vpub report`）、完整讀取（`vpub read-all`）與郵件提醒（`vpub notify`）。
 - **內含 bili-cli。** 安裝 CrossCast 時會一併提供 `bili` 指令，版本為 1.2.1。如果仍裝有舊版獨立的 `bili-agent`，`vpub doctor` 會說明如何移除。
 - **新增指令。** `vpub status` 列出未完成事項及每項的下一步指令。`vpub cleanup` 預覽可安全移除的已完成影片副本，加上 `--apply` 才會刪除。
@@ -658,7 +658,7 @@ B站使用內含的 [kukemc/bili-cli](https://github.com/kukemc/bili-cli)，並�
 
 ## 加快連續指令
 
-留言、數據、按讚、私訊等非發布的瀏覽器指令，現在每個帳號共用一個背景瀏覽器，後續指令不必重新啟動 Chrome。它只在你的電腦上運行，透過經過驗證的私有管道通訊；閒置 5 分鐘、滿 1 小時、發生任何錯誤或執行 `vpub stop` 後都會結束。發布、`resume`、`edit` 和登入會先關閉它再單獨執行。已送出的指令不會自動重送。某一步逾時時，錯誤是 `browser_step_timeout`，它會指出是哪一步（啟動 Chrome、確認誰已登入、檢查頁面有沒有平台的警告，或執行指令），並說明並沒有證據顯示登入已經過期；再執行指令之前請先查看回執。在共用瀏覽器的平台上，第二個指令會等第一個完成，最多等三分鐘，不會直接失敗。YouTube 是例外：它的 Chrome 每個指令結束就會關閉，所以每個 YouTube 指令都會重新啟動它。會改動內容的指令，或任何 YouTube 指令，在另一個指令執行時啟動，會以 `busy` 或 `browser_busy` 停下：請稍等再重新執行，絕不要刪除鎖檔。若要關閉此功能，在設定檔把 `browser_idle_seconds` 設為 0，或設定環境變數 `VPUB_BROWSER_IDLE_SECONDS=0`。
+留言、數據、按讚、私訊等非發布的瀏覽器指令，現在每個帳號共用一個背景瀏覽器，後續指令不必重新啟動 Chrome。它只在你的電腦上運行，透過經過驗證的私有管道通訊；閒置 5 分鐘、滿 1 小時、發生任何錯誤或執行 `vpub stop` 後都會結束。YouTube 的瀏覽器是真實的 Chrome 視窗，因此只在 Windows 上共用：它在隱藏桌面上運行，閒置 20 秒後關閉。在其他系統上，YouTube 的每個步驟都會自行啟動並關閉瀏覽器。發布、`resume`、`edit` 和登入會先關閉它再單獨執行。已送出的指令不會自動重送。某一步逾時時，錯誤是 `browser_step_timeout`，它會指出是哪一步（啟動 Chrome、確認誰已登入、檢查頁面有沒有平台的警告，或執行指令），並說明並沒有證據顯示登入已經過期；再執行指令之前請先查看回執。在共用瀏覽器上，第二個指令會等第一個完成，最多等三分鐘，不會直接失敗。會改動內容的指令，或 Windows 以外的 YouTube 指令，在另一個指令執行時啟動，會以 `busy` 或 `browser_busy` 停下：請稍等再重新執行，絕不要刪除鎖檔。若要關閉此功能，在設定檔把 `browser_idle_seconds` 設為 0，或設定環境變數 `VPUB_BROWSER_IDLE_SECONDS=0`。
 
 瀏覽器指令執行時會在 stderr 寫入簡短的 JSON 行，每到一個階段寫一行，且至少每 15 秒一行，讓較慢的指令不會看起來像卡住：`{"event": "browser_progress", "platform": "youtube", "stage": "opening the page", "elapsed_seconds": 12.3}`。階段有 `waiting for the browser`、`starting the browser`、`checking the account`、`opening the page`、`reading the page`、`uploading`、`pressing`、`reading back` 與 `closing the browser`。這些行不含任何人的文字、名稱、ID 或網址。stdout 仍只有一個 JSON 結果，請分開讀取這兩個資料流。
 
