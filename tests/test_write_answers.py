@@ -40,6 +40,16 @@ class NamesTests(unittest.TestCase):
         token = base64.urlsafe_b64encode(b"\x08\x06\x12\x0cUgwSomeoneElse\x18\x01").decode()
         self.assertFalse(rt.names_target(FakeRequest(body=json.dumps({"actions": [token]})), TARGET))
 
+    def test_a_longer_id_that_starts_with_it_does_not_count(self):
+        self.assertFalse(rt.names_target(FakeRequest(body=f"commentId={TARGET}.different-reply"), TARGET))
+        self.assertFalse(rt.names_target(FakeRequest(body=f"commentId={TARGET}x"), TARGET))
+        self.assertFalse(rt.names_target(FakeRequest(body=f"commentId=x{TARGET}"), TARGET))
+
+    def test_a_longer_id_inside_a_token_does_not_count(self):
+        longer = TARGET + ".different-reply"
+        token = base64.urlsafe_b64encode(b"\x08\x06\x12" + bytes([len(longer)]) + longer.encode()).decode()
+        self.assertFalse(rt.names_target(FakeRequest(body=json.dumps({"actions": [token]})), TARGET))
+
     def test_a_body_that_cannot_be_read_falls_back_to_the_address(self):
         class Unreadable(FakeRequest):
             @property
@@ -58,7 +68,7 @@ class AnswerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_it_keeps_the_shape_and_nothing_the_request_or_answer_held(self):
         answers = await self.answers(FakeRequest(body=json.dumps({"actions": [TARGET], "words": "PRIVATE-WORDS"}), answer={"actionResults": [{"status": "STATUS_SUCCEEDED", "text": "PRIVATE-WORDS"}]}))
-        self.assertEqual([{"path": "/youtubei/v1/comment/perform_comment_action", "names_target": True, "http": 200, "fields": ["actionResults"],
+        self.assertEqual([{"path": "/youtubei/v1/comment/perform_comment_action", "names_target": True, "http": 200, "target_at": [], "fields": ["actionResults"],
                            "shape": ["actionResults", "actionResults.status", "actionResults.text"], "statuses": {"actionResults.status": "STATUS_SUCCEEDED"}, "types": {}, "objected": False}], answers)
         self.assertNotIn("SECRET", json.dumps(answers))
 
@@ -98,6 +108,12 @@ class AnswerTests(unittest.IsolatedAsyncioTestCase):
     async def test_a_type_name_that_is_not_a_plain_name_is_left_out(self):
         answer = (await self.answers(FakeRequest(body=TARGET, answer={"__typename": "a viewer's words"})))[0]
         self.assertEqual({}, answer["types"])
+
+    async def test_it_says_which_fields_of_the_answer_hold_exactly_this_target(self):
+        real = {"actions": [{"pinCommentAction": {"commentId": TARGET, "other": TARGET + "x", "words": f"about {TARGET}"}}], "responseContext": {"commentId": TARGET}}
+        answer = (await self.answers(FakeRequest(answer=real)))[0]
+        self.assertEqual(["actions.pinCommentAction.commentId"], answer["target_at"])
+        self.assertNotIn(TARGET, json.dumps(answer))
 
     async def test_only_post_requests_count(self):
         self.assertEqual([], await self.answers(FakeRequest(body=TARGET, method="GET")))

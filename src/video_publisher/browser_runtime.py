@@ -323,20 +323,34 @@ def failure_message(exc):
 
 
 def names_target(request, target):
-    """Whether a request names this target, plainly or inside one of the encoded tokens a site sends. Only compared; nothing in the request is kept."""
+    """Whether a request mentions this target as a whole ID, plainly or as a whole string inside one of the encoded tokens a site sends.
+    Only compared; nothing in the request is kept. Mentioning isn't proof the request acts on it, so an answer's target_at is what binds a change to its target."""
     try:
         text = f"{request.url} {request.post_data or ''}"
     except Exception:
         text = request.url
-    if target in text:
+    if re.search(rf"(?<![\w.-]){re.escape(target)}(?![\w.-])", text):
         return True
+    # An encoded string is stored after its length, so the length marks where it ends.
+    whole = bytes([len(target)]) + target.encode() if len(target) < 128 else target.encode()
     for token in re.findall(r"[A-Za-z0-9_%=+/-]{16,}", text):
         try:
-            if target.encode() in base64.urlsafe_b64decode(unquote(token) + "==="):
+            if whole in base64.urlsafe_b64decode(unquote(token) + "==="):
                 return True
         except ValueError:
             pass
     return False
+
+
+def target_fields(value, target, path="", depth=0):
+    """The names of the fields in a site's answer that hold exactly this target."""
+    if depth >= ANSWER_DEPTH:
+        return set()
+    if isinstance(value, list):
+        return set().union(*(target_fields(item, target, path, depth + 1) for item in value))
+    if isinstance(value, dict):
+        return set().union(*(target_fields(item, target, f"{path}.{key}" if path else key, depth + 1) for key, item in value.items() if key not in ABOUT_THE_PAGE and FIELD_NAME.fullmatch(key)))
+    return {path} if value == target else set()
 
 
 def objected(value, depth=0):
@@ -406,13 +420,14 @@ async def write_answers(requests, target):
     for request in requests:
         if request.method != "POST":
             continue
-        answer = {"path": urlsplit(request.url).path, "names_target": names_target(request, target), "http": None, "fields": [], "shape": [], "statuses": {}, "types": {}, "objected": False}
+        answer = {"path": urlsplit(request.url).path, "names_target": names_target(request, target), "target_at": [], "http": None, "fields": [], "shape": [], "statuses": {}, "types": {}, "objected": False}
         try:
             response = await asyncio.wait_for(request.response(), 5)
             answer["http"] = response.status
             body = await asyncio.wait_for(response.json(), 5)
             answer["fields"] = sorted(key for key in body if FIELD_NAME.fullmatch(key))[:12] if isinstance(body, dict) else []
             answer["shape"] = answer_shape(body)[:60]
+            answer["target_at"] = sorted(target_fields(body, target))[:8]
             answer["statuses"] = dict(sorted(status_words(body).items())[:8])
             answer["types"] = dict(sorted(type_names(body).items())[:8])
             answer["objected"] = objected(body)
