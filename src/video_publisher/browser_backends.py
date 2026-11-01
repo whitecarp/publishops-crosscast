@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import re
 import time
 from pathlib import Path
+import unicodedata
 from urllib.parse import urlsplit
 
 from .core import VpubError, atomic_json, file_sha, home, now, read_json, snapshot_file, stop_check
@@ -194,8 +195,8 @@ async def douyin_card_status(card):
 
 
 def douyin_card_words(text):
-    """Douyin's spacing and the zero-width marks its editor adds are no part of what was written."""
-    return re.sub(r'[\s\u200b]+', '', text or '')
+    """What was written, by its letters and digits. A field check found a real card's title node holds more than the title, the caption and spacing, and that the right card was missed because of it."""
+    return ''.join(c for c in unicodedata.normalize('NFKC', text or '') if c.isalnum())
 
 
 async def douyin_cards_titled(page, title, caption=''):

@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
+from urllib.parse import urlsplit
 
 from video_publisher import browser_backends, browser_forms, cli, x_pages
 from video_publisher.core import VpubError, atomic_json, load_plan
@@ -46,6 +47,51 @@ def page_html(keep_clock=True):
       {'' if keep_clock else "document.getElementById('clock').onchange = e => { e.target.value = '12:24 AM'; };"}
       final.onclick = () => fetch('/save', {{method: 'POST', body: JSON.stringify({{month: m.value, year: y.value, day: document.querySelector('.is-rangeStart .Calendar-dayText').textContent, clock: document.getElementById('clock').value}})}});
       </script>"""
+
+
+class OpeningMediaTests(ChromeCase):
+    """From a field run: the uploaded file's page opened and had not finished loading after the 30 seconds this step waited, so the upload stopped there with its address not kept."""
+    LIBRARY = f"""<!doctype html><body><a href="https://analytics.twitter.com/user/{OWNER}/home">Analytics</a><button>Upload Media</button>
+      <p onclick="location.href='/library/13_77/edit'">clip.mp4</p>"""
+    MEDIA = """<!doctype html><body><img src="/never.png"><button>Change thumbnail</button>
+      <button type="button" onclick="document.getElementById('words').hidden = false">Post</button><textarea id="words" placeholder="What's happening?" hidden></textarea>"""
+
+    class Tx:
+        identity = OWNER
+        options = {"title": "Title", "description": "Words", "post_text": "Words", "submission_mode": "draft_only"}
+
+        def __init__(self):
+            self.receipt = {"before_ids": [], "media_selected": True, "upload_filename": "clip.mp4"}
+
+        def save(self, **changes):
+            self.receipt.update(changes)
+            return dict(self.receipt)
+
+        def cover(self):
+            return None
+
+    async def asyncSetUp(self):
+        self.pw = await async_playwright().start()
+        self.browser = await self.pw.chromium.launch(channel="chrome", headless=True)
+        self.page = await self.browser.new_page(locale="en-US")
+        self.page.set_default_timeout(5000)
+
+        async def answer(route):
+            path = urlsplit(route.request.url).path
+            if path == "/never.png":
+                return  # Never answered, so the page never finishes loading.
+            await route.fulfill(status=200, content_type="text/html; charset=utf-8", body=self.MEDIA if path.endswith("/edit") else self.LIBRARY)
+        await self.page.route("**/*", answer)
+
+    async def asyncTearDown(self):
+        await self.browser.close()
+        await self.pw.stop()
+
+    async def test_a_media_page_still_loading_does_not_stop_the_upload_and_its_address_is_kept(self):
+        tx = self.Tx()
+        self.assertEqual("PREVIEW_READY", (await browser_forms.publish_x(self.page, tx))["state"])
+        self.assertEqual("https://studio.x.com/library/13_77/edit", tx.receipt["media_url"])
+        self.assertEqual("Words", await self.page.get_by_placeholder("What's happening?", exact=True).input_value())
 
 
 class Calendar(ChromeCase):

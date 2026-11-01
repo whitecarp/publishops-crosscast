@@ -119,7 +119,7 @@ async def publish_x(page, tx):
     if tx.receipt.get('media_url'):
         if not re.fullmatch(r'https://studio\.x\.com/library/\d+_\d+/edit', tx.receipt['media_url']):
             raise VpubError('invalid_media_url', 'Resume requires the original Media Studio asset URL.')
-        await page.goto(tx.receipt['media_url'], wait_until='domcontentloaded')
+        await page.goto(tx.receipt['media_url'], wait_until='domcontentloaded', timeout=60000)
     else:
         if not tx.receipt['media_selected']:
             media = tx.media()
@@ -128,7 +128,8 @@ async def publish_x(page, tx):
         item = page.get_by_text(tx.receipt['upload_filename'], exact=True)
         await item.wait_for(state='visible', timeout=600000)
         await item.click()
-        await page.wait_for_url(re.compile(r'https://studio\.x\.com/library/\d+_\d+/edit'), timeout=30000)
+        # A field run saw this page not finish loading in 30 seconds. Its address is what has to be kept, and the next step waits for the controls.
+        await page.wait_for_url(re.compile(r'https://studio\.x\.com/library/\d+_\d+/edit'), wait_until='commit', timeout=30000)
         tx.save(phase='opening_media', media_url=page.url)
     change = page.locator('button').filter(has_text=re.compile(r'^\s*Change thumbnail\s*$'))
     await change.wait_for(state='visible', timeout=300000)
