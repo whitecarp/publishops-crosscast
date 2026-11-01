@@ -84,7 +84,9 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
             raise VpubError('inspect_existing_edit','A save was already attempted; inspect the existing work before any retry.',
                             'If a person has looked at the work and the change is not there, add --person-approved to try once more.')
     def checkpoint(data): atomic_json(path,{'key':key,'edit_id':edit_id,'at':now(),**data})
-    if not verify_only: checkpoint({'state':'EDIT_PREPARING','id':work_id})
+    # The record keeps that the flag was given, for a person to read later. It is someone's word, not proof that a person looked.
+    approved={'person_approved':True} if person_approved and not verify_only else {}
+    if not verify_only: checkpoint({'state':'EDIT_PREPARING','id':work_id,**approved})
     from . import adapters
     if platform=='bilibili':
         from .edits_bilibili import run as edit_bilibili
@@ -99,6 +101,7 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
     if verify_only and not tried and result.get('state')=='EDIT_SUBMITTED_UNVERIFIED': result={**result,'state':'EDIT_MISMATCH'}
     # A check can confirm an unclear save, and nothing less clears it: a page can show the old words for a while, and a cover cannot be compared at all.
     if verify_only and tried and result.get('state')!='EDIT_VERIFIED': result={**result,'state':'EDIT_SUBMITTED_UNVERIFIED'}
+    result={**result,**approved}
     checkpoint(result)
     return result
 

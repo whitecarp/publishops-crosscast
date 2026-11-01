@@ -42,7 +42,9 @@ async def execute(page, platform, identity, payload):
     output=Path(payload['edit_receipt_path'])
     def save(**fields):
         result={'id':work_id,'platform':platform,'identity':identity,'at':now(),**fields}
-        atomic_json(output,result);return result
+        # A check only reads. What it means for a save already tried is for edits.send to record, so a check cut off here leaves that save on record.
+        if not payload.get('verify_only'): atomic_json(output,result)
+        return result
     async def submit(button):
         await risk_check(page)
         stop_check(platform)

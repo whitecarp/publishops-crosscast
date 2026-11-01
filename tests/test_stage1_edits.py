@@ -1,17 +1,18 @@
 """Edits to works already out: a stop at the last moment, a check that changes nothing, and what an edit says about AI. Fakes and small page copies; nothing is contacted."""
+import asyncio
 import json
 import os
 from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).parent))
 from stage_browser import SharedBrowser
 
-from video_publisher import adapters, browser_edits, edits
+from video_publisher import adapters, browser_edits, edits, youtube_studio
 from video_publisher.core import Ledger, VpubError, atomic_json, digest, home, read_json
 
 OWNER = "owner"
@@ -172,7 +173,8 @@ class CheckingTests(Temporary):
         patch_value = edits.validate_patch("x", TEXT)
 
         def worker(platform, action, account, **options):
-            atomic_json(options["edit_receipt_path"], answer)
+            if not options["verify_only"]:
+                atomic_json(options["edit_receipt_path"], answer)
             return answer
         with patch.object(adapters, "browser_call", side_effect=worker) as call:
             result = edits.send("x", "default", OWNER, {"id": "1234567890"}, "key", patch_value, False, verify_only)
@@ -217,6 +219,12 @@ class CheckingTests(Temporary):
             result = edits.send("x", "default", OWNER, {"id": "1234567890"}, "key", patch_value, False, False, person_approved=True)
         self.assertEqual("EDIT_VERIFIED", result["state"])
         call.assert_called_once()
+        self.assertIs(True, result["person_approved"])
+        self.assertIs(True, read_json(home() / "edits" / (digest(["key", patch_value]) + ".json"))["person_approved"])
+
+    def test_the_record_says_nothing_of_a_person_unless_the_flag_was_given(self):
+        result, _ = self.run_send({"state": "EDIT_VERIFIED", "platform_writes": 1}, False)
+        self.assertNotIn("person_approved", result)
 
     def test_a_check_before_any_save_still_does_not_block_the_save(self):
         result, _ = self.run_send({"state": "EDIT_MISMATCH", "platform_writes": 0}, True)
@@ -228,6 +236,71 @@ class CheckingTests(Temporary):
         atomic_json(home() / "edits" / (digest(["key", patch_value]) + ".json"), {"state": "EDIT_SUBMITTING"})
         self.assertEqual("EDIT_VERIFIED", self.run_send({"state": "EDIT_VERIFIED", "platform_writes": 0}, True)[0]["state"])
         self.assertEqual("EDIT_VERIFIED", self.run_send({"state": "EDIT_VERIFIED", "platform_writes": 1}, False)[0]["state"])
+
+
+class LostCheckTests(Temporary):
+    """From a review: a check wrote what it found to the edit's record, the command was then cut off before that could be put right, and the next try saved a second time."""
+    COVER = {"expected_identity": OWNER, "cover": "cover.jpg", "cover_sha256": "hash"}
+    CAPTION = {"expected_identity": OWNER, "title": "New title", "post_text": "New title\n\nNew text"}
+
+    def setUp(self):
+        super().setUp()
+        addon = patch.object(adapters, "addon_installed", return_value=False)
+        addon.start()
+        self.addCleanup(addon.stop)
+        self.pressed = 0
+
+    def send(self, platform, value, verify_only, cut_off):
+        editor, post, page = MagicMock(), MagicMock(), MagicMock()
+        editor.inner_text = AsyncMock(return_value="Old words")
+        post.first.wait_for = page.goto = AsyncMock()
+
+        def worker(platform, action, account, **options):
+            if not options["verify_only"]:
+                self.pressed += 1
+                return {"state": "EDIT_VERIFIED", "platform_writes": 1}
+            with patch.object(youtube_studio, "edit_fields", new=AsyncMock(return_value=(MagicMock(), MagicMock()))), patch.object(browser_edits, "instagram_caption_editor", new=AsyncMock(return_value=editor)), \
+                    patch.object(browser_edits.x_pages, "post_row", return_value=post), patch.object(browser_edits.x_pages, "post_fields", new=AsyncMock(return_value={"text": "Old words"})):
+                answer = asyncio.run(browser_edits.execute(page, platform, OWNER, options))
+            if cut_off:
+                raise cut_off("The answer never got back.")
+            return answer
+        with patch.object(adapters, "browser_call", side_effect=worker):
+            return edits.send(platform, "default", OWNER, {"id": "1234567890"}, "key", value, False, verify_only)
+
+    def record(self, value):
+        return home() / "edits" / (digest(["key", value]) + ".json")
+
+    def test_a_check_cut_off_leaves_a_save_already_tried_on_record(self):
+        for platform, value, cut_off in (("youtube", self.COVER, TimeoutError), ("youtube", self.COVER, KeyboardInterrupt), ("instagram", self.CAPTION, TimeoutError), ("x", self.CAPTION, TimeoutError)):
+            with self.subTest(platform=platform, cut_off=cut_off):
+                atomic_json(self.record(value), {"state": "EDIT_SUBMITTED_UNVERIFIED"})
+                with self.assertRaises(cut_off):
+                    self.send(platform, value, True, cut_off)
+                self.assertEqual("EDIT_SUBMITTED_UNVERIFIED", read_json(self.record(value))["state"])
+                with self.assertRaises(VpubError) as caught:
+                    self.send(platform, value, False, None)
+                self.assertEqual("inspect_existing_edit", caught.exception.code)
+                self.assertEqual(0, self.pressed)
+
+    def test_a_check_that_finishes_still_keeps_a_save_already_tried_on_record(self):
+        for platform, value in (("youtube", self.COVER), ("instagram", self.CAPTION), ("x", self.CAPTION)):
+            with self.subTest(platform=platform):
+                atomic_json(self.record(value), {"state": "EDIT_SUBMITTING"})
+                self.assertEqual("EDIT_SUBMITTED_UNVERIFIED", self.send(platform, value, True, None)["state"])
+                self.assertEqual("EDIT_SUBMITTED_UNVERIFIED", read_json(self.record(value))["state"])
+
+    def test_a_check_cut_off_before_any_save_does_not_block_the_save(self):
+        """On X a check that finds other words answers as an unclear save, and that must not reach the record before edits.send has read it."""
+        for platform, value in (("youtube", self.COVER), ("instagram", self.CAPTION), ("x", self.CAPTION)):
+            with self.subTest(platform=platform):
+                self.pressed = 0
+                self.record(value).unlink(missing_ok=True)
+                with self.assertRaises(TimeoutError):
+                    self.send(platform, value, True, TimeoutError)
+                self.assertFalse(self.record(value).exists())
+                self.assertEqual("EDIT_VERIFIED", self.send(platform, value, False, None)["state"])
+                self.assertEqual(1, self.pressed)
 
 
 class TitleTests(unittest.TestCase):
