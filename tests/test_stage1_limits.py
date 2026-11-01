@@ -67,13 +67,14 @@ class TestLabelTests(Temporary):
             self.refused("needs_person", dm.send, "x", "viewer", "Hello", "en", test_id="t1")
 
     def test_a_labelled_like_still_counts_and_stops_at_the_cap(self):
-        state = {"identity": "me", "liked": False, "saved": False, "collection": None}
+        liked = set()
 
         def worker(platform, action, work=None, **options):
             if action == "set":
                 engagement.submitting(options["receipt_path"])
+                liked.add(work)
                 return {"state": "ACTION_SUBMITTING"}
-            return {**state, "liked": action == "status" and options.get("expected_identity") == "me"}
+            return {"identity": "me", "liked": work in liked, "saved": False, "collection": None}
         with patch.object(engagement, "dispatch", side_effect=worker):
             engagement.set_action("x", POST, "like", test_id="t1")
             self.assertEqual(1, self.used("x", "likes_per_day"))
