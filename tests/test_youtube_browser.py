@@ -124,7 +124,13 @@ class Element:
 
     async def press_sequentially(self, text, **options):
         self.page.log.append(("type", self.key, text))
+        if "#time-of-day-container" in self.key:
+            self.page.time_text = self.page.time_text if self.page.refuse_schedule else text
+            return
         self.page.chips = len([tag for tag in text.split(",") if tag]) - self.page.lost_tags
+
+    async def select_text(self, **options):
+        self.page.log.append(("select", self.key))
 
     async def set_input_files(self, path, **options):
         self.page.log.append(("files", self.key, str(path)))
@@ -360,7 +366,7 @@ class ScheduleTests(FormCase):
         page = FakeStudio(scheduler_text="Time zone GMT+08:00 China Standard Time", visibility_text="已安排\n2030年1月1日 08:00")
         _, result = self.run_form(page, self.plan(schedule=self.WHEN))
         self.assertIn(("fill", "ytcp-date-picker tp-yt-paper-input input", "2030年1月1日"), page.log)
-        self.assertIn(("fill", "#time-of-day-container input", "08:00"), page.log)
+        self.assertIn(("type", "#time-of-day-container input", "08:00"), page.log)
         self.assertEqual({"at": self.WHEN, "local": "2030-01-01T08:00:00+08:00", "date": [2030, 1, 1], "time": [8, 0], "timezone_basis": "studio"}, result["schedule"])
         self.assertIsNone(page.chosen_visibility())
         self.assertEqual(1, len(page.clicks("#done-button")))

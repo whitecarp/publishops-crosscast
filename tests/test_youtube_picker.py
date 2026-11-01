@@ -1,4 +1,4 @@
-"""A box in Studio's playlist picker, in a real browser against a small page. A real channel's first box refused a click for 15 seconds."""
+"""A box in Studio's playlist picker and its schedule's time box, in a real browser against small pages. A real channel's first box refused a click for 15 seconds, and its time box went back to its own time."""
 import unittest
 from unittest.mock import patch
 
@@ -56,6 +56,54 @@ class TickTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(browser_forms, "YT_TICK_MS", 500):
             await browser_forms.yt_tick(self.page, box)
         self.assertEqual(("true", [0, 1]), (await box.get_attribute("aria-checked"), await self.page.evaluate("[window.clicks, window.keys]", isolated_context=False)))
+
+
+# A time put in all at once is gone after Enter. Nothing here says that is exactly how Studio builds it; it is what a field check saw it do.
+TYPED_ONLY = """<!doctype html><body><input id="clock" value="10:00">
+<script>
+const clock = document.getElementById('clock');
+let typed = false;
+clock.addEventListener('keydown', event => { if (event.key === 'Enter') { if (!typed) clock.value = '10:00'; } else { typed = true; } });
+</script>"""
+LIST_ONLY = """<!doctype html><body><input id="clock" value="10:00"><div id="times" hidden><div role="option">08:45</div><div role="option">09:00</div><div role="option">09:15</div></div>
+<script>
+const clock = document.getElementById('clock');
+clock.addEventListener('keydown', event => event.preventDefault());
+clock.addEventListener('click', () => { document.getElementById('times').hidden = false; });
+for (const row of document.querySelectorAll('[role=option]')) row.onclick = () => { clock.value = row.textContent; document.getElementById('times').hidden = true; };
+</script>"""
+
+
+class TimeTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        from patchright.async_api import async_playwright
+        self.pw = await async_playwright().start()
+        self.browser = await self.pw.chromium.launch(channel="chrome", headless=True)
+        self.page = await self.browser.new_page()
+        self.clock = self.page.locator("#clock")
+
+    async def asyncTearDown(self):
+        await self.browser.close()
+        await self.pw.stop()
+
+    async def test_a_time_put_in_all_at_once_is_lost_and_one_typed_a_key_at_a_time_stays(self):
+        await self.page.set_content(TYPED_ONLY)
+        await self.clock.fill("09:00")
+        await self.clock.press("Enter")
+        self.assertEqual("10:00", await self.clock.input_value())
+        await self.page.set_content(TYPED_ONLY)
+        await browser_forms.yt_set_time(self.page, self.clock, "09:00")
+        self.assertEqual("09:00", await self.clock.input_value())
+
+    async def test_a_box_that_takes_no_typing_gets_the_time_from_its_list(self):
+        await self.page.set_content(LIST_ONLY)
+        await browser_forms.yt_set_time(self.page, self.clock, "09:00")
+        self.assertEqual("09:00", await self.clock.input_value())
+
+    async def test_a_time_the_list_does_not_offer_leaves_it_for_the_read_back_to_refuse(self):
+        await self.page.set_content(LIST_ONLY)
+        await browser_forms.yt_set_time(self.page, self.clock, "09:07")
+        self.assertEqual("10:00", await self.clock.input_value())
 
 
 if __name__ == "__main__":

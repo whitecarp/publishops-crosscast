@@ -508,6 +508,24 @@ async def yt_playlists(page, titles):
         raise VpubError('playlist_unverified', 'The YouTube playlists were not confirmed. The upload is kept as a draft; nothing was published.')
 
 
+async def yt_set_time(page, clock, wanted):
+    """Studio's time box comes with a list of times. A field check found a time put into it all at once was gone after Enter, and Studio's own time was back.
+    So it is typed a key at a time, as a person would, and if that does not hold, chosen from the list when the list offers exactly this time. The caller reads back what stayed."""
+    await clock.click(timeout=10000)
+    await clock.select_text(timeout=5000)
+    await clock.press_sequentially(wanted)
+    await clock.press('Enter')
+    await page.wait_for_timeout(1000)
+    if normalize(await clock.input_value()) == normalize(wanted):
+        return
+    await clock.click(timeout=10000)
+    await page.wait_for_timeout(500)
+    offered = page.locator('tp-yt-paper-item:visible, [role="option"]:visible').filter(has_text=re.compile(r'^\s*' + re.escape(wanted) + r'\s*$'))
+    if await offered.count() == 1:
+        await offered.click(timeout=5000)
+        await page.wait_for_timeout(1000)
+
+
 async def yt_schedule(page, when):
     """Fill Studio's own schedule and read the date and time back. Nothing is saved here."""
     for selector in ('#second-container-expand-button', '#schedule-radio-button'):
@@ -536,12 +554,11 @@ async def yt_schedule(page, when):
     await box.fill(date_style[2](local))
     await box.press('Enter')
     await page.wait_for_timeout(1000)
-    await clock.fill(time_style[2](local))
-    await clock.press('Enter')
-    await page.wait_for_timeout(1000)
+    held_before = await clock.input_value()
+    await yt_set_time(page, clock, time_style[2](local))
     shown_day, shown_time = await day.inner_text(), await clock.input_value()
     if studio_read(STUDIO_DATES, shown_day) != (local.year, local.month, local.day) or studio_read(STUDIO_TIMES, shown_time) != (local.hour, local.minute):
-        raise VpubError('schedule_unverified', f'The YouTube schedule was not confirmed: Studio shows {normalize(shown_day)} {normalize(shown_time)} for {local.strftime("%Y-%m-%d %H:%M")}. The upload is kept as a draft; nothing was published.')
+        raise VpubError('schedule_unverified', f'The YouTube schedule was not confirmed: Studio shows {normalize(shown_day)} {normalize(shown_time)} for {local.strftime("%Y-%m-%d %H:%M")}, and its time box held {normalize(held_before)} before. The upload is kept as a draft; nothing was published.')
     return {'at': when.isoformat(), 'local': local.isoformat(), 'date': [local.year, local.month, local.day],
             'time': [local.hour, local.minute], 'timezone_basis': 'studio' if offsets else 'computer'}
 
