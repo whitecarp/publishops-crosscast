@@ -11,7 +11,7 @@ import threading
 import time
 from urllib.parse import unquote, urlsplit
 
-from .core import VpubError, account_name, atomic_json, config, home, now, read_json
+from .core import VpubError, account_name, atomic_json, config, home, how_to_clear_a_stop, now, read_json
 from .progress import stage, watch
 
 BROWSER_PLATFORMS = {"douyin", "instagram", "x", "youtube"}
@@ -162,7 +162,7 @@ async def risk_check(page):
         from .safety import pushed_back
         # Recorded where it is seen: a batch or a multi-step read catches the error below so it can report its other steps.
         pushed_back(platform_at(page.url), "human_verification_required", await what_asked(page))
-        raise VpubError("human_verification_required", "The platform requires human verification.", "Run auth login for this platform and complete the official verification, then vpub stop --clear; inspect any existing draft before retrying.")
+        raise VpubError("human_verification_required", "The platform requires human verification.", f"Run auth login for this platform and complete the official verification, then {how_to_clear_a_stop()}; inspect any existing draft before retrying.")
 
 
 async def identity(page, platform):
@@ -287,7 +287,7 @@ async def login(pw, payload):
                 remember_identity(platform, account, actual)
                 result = {"logged_in": True, "platform": platform, "account": account, "identity": actual, "method": "browser"}
                 if (home() / "STOP.json").exists():
-                    result["next"] = "CrossCast is still stopped because of a platform's warning. Once its check is done, run vpub stop --clear."
+                    result["next"] = f"CrossCast is still stopped because of a platform's warning. Once its check is done, run {how_to_clear_a_stop()}."
                 return result
             await asyncio.sleep(2)
         raise VpubError("login_timeout", "Login was not completed within 15 minutes; saved profile is retained.")

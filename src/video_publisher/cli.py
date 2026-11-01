@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 from . import __version__, adapters
-from .core import Ledger, NOT_ON_SALE, PLATFORMS, VpubError, atomic_json, config, file_sha, home, load_plan, never_sent, now, part_left_undone, publication_lock, read_json, snapshot_file, stop_check, platform_check
+from .core import Ledger, NOT_ON_SALE, PLATFORMS, VpubError, atomic_json, config, file_sha, home, how_to_clear_a_stop, load_plan, never_sent, now, part_left_undone, publication_lock, read_json, snapshot_file, stop_check, platform_check
 from .overview import DRAFTS
 from .safety import pushed_back
 
@@ -817,7 +817,7 @@ def run_command(args):
         path = home() / "STOP.json"
         atomic_json(path, {"reason": args.reason, "at": now()})
         return {"stopped": True, "stop_file": str(path),
-                "hint": "Publishing and browser commands now refuse to run. To resume, a person looks at why it stopped, then runs vpub stop --clear."}
+                "hint": f"Publishing and browser commands now refuse to run. To resume, a person looks at why it stopped, then runs {how_to_clear_a_stop()}."}
     if args.command == "status":
         from .overview import status
         return status(args.limit)

@@ -8,7 +8,7 @@ import shutil
 import sys
 
 from . import adapters
-from .core import PLATFORMS, Ledger, VpubError, file_sha, home, part_left_undone, publication_lock, read_json, stop_check
+from .core import PLATFORMS, Ledger, VpubError, file_sha, home, how_to_clear_a_stop, part_left_undone, publication_lock, read_json, stop_check
 from .process_lock import alive
 
 FINISHED = {"SUBMISSION_VERIFIED", "EXISTING_VERIFIED", "AGENT_REPORTED_VERIFIED", "AGENT_REPORTED_DELETED"}
@@ -43,7 +43,7 @@ def stop_state():
         detail = detail if isinstance(detail, dict) else {}
         return {"active": True, "message": exc.message, "reason": detail.get("reason") or detail.get("code"),
                 "platform": detail.get("platform"), "at": detail.get("at"),
-                "hint": "Inspect the reason. Only the operator may clear a stop, with vpub stop --clear."}
+                "hint": f"Inspect the reason. Only the operator may clear a stop, with {how_to_clear_a_stop()}."}
     return {"active": False}
 
 

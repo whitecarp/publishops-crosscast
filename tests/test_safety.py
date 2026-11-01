@@ -394,8 +394,25 @@ class PushbackTests(Temporary):
         self.assertEqual(("x", "human_verification_required"), (saved["platform"], saved["code"]))
         with self.assertRaises(VpubError):
             stop_check("x")
-        self.assertEqual({"stopped": False, "cleared": True, "platform_writes": 0}, cli.run_command(cli.parser().parse_args(["stop", "--clear"])))
+        cleared = cli.run_command(cli.parser().parse_args(["stop", "--clear"]))
+        self.assertEqual((False, True, 0, str(home())), (cleared["stopped"], cleared["cleared"], cleared["platform_writes"], cleared["runtime_directory"]))
+        self.assertNotIn("note", cleared)
         stop_check("x")
+
+    def test_clearing_in_a_folder_with_no_stop_says_so_and_says_which_folder(self):
+        """From a field run: the command in an ordinary window looked in another folder, and said only that it had cleared nothing."""
+        answer = cli.run_command(cli.parser().parse_args(["stop", "--clear"]))
+        self.assertIs(False, answer["cleared"])
+        self.assertEqual(str(home() / "STOP.json"), answer["stop_file"])
+        self.assertIn("VPUB_HOME", answer["note"])
+
+    def test_every_way_of_being_told_about_a_stop_names_its_folder(self):
+        safety.pushed_back("x", "human_verification_required")
+        with self.assertRaises(VpubError) as caught:
+            stop_check("douyin")
+        for words in (caught.exception.hint, read_json(home() / "STOP.json")["hint"], cli.run_command(cli.parser().parse_args(["stop", "--reason", "looking"]))["hint"]):
+            self.assertIn("vpub stop --clear", words)
+            self.assertIn(f"VPUB_HOME set to {home()}", words)
 
     def test_bilibili_risk_control_stops_it_too(self):
         output = json.dumps({"ok": False, "error": {"code": "risk_control", "message": "Blocked."}})

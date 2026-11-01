@@ -8,7 +8,7 @@ import re
 import unicodedata
 from urllib.parse import urlsplit
 
-from .core import VpubError, atomic_json, config, digest, home, now, read_json, stop_check
+from .core import VpubError, atomic_json, config, digest, home, how_to_clear_a_stop, now, read_json, stop_check
 
 DEFAULTS = {"replies_per_day": 50, "messages_per_day": 20, "likes_per_day": 50, "per_person_per_day": 3, "repeat_days": 30}
 LOWEST = {"replies_per_day": 0, "messages_per_day": 0, "likes_per_day": 0, "per_person_per_day": 1, "repeat_days": 1}
@@ -301,7 +301,7 @@ def pushed_back(platform, code, seen=None):
     path = home() / "STOP.json"
     if not path.exists():
         atomic_json(path, {"platform": platform, "code": code, "at": now(), "source": "safety", **({"seen": seen} if seen else {}),
-                           "hint": "Pass the platform's check (vpub auth login for this platform still opens its window), then run vpub stop --clear."})
+                           "hint": f"Pass the platform's check (vpub auth login for this platform still opens its window), then run {how_to_clear_a_stop()}."})
     return True
 
 
@@ -309,7 +309,10 @@ def clear_stop():
     path = home() / "STOP.json"
     existed = path.exists()
     path.unlink(missing_ok=True)
-    return {"stopped": False, "cleared": existed, "platform_writes": 0}
+    result = {"stopped": False, "cleared": existed, "platform_writes": 0, "runtime_directory": str(home()), "stop_file": str(path)}
+    if not existed:
+        result["note"] = "There is no stop in this folder, and nothing was cleared. If a command still says it is stopped, its message names its stop file: run this again with VPUB_HOME set to that file's folder."
+    return result
 
 
 def status():

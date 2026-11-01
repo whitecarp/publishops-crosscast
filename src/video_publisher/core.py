@@ -187,6 +187,11 @@ def douyin_caption(description, tags):
     return "\n\n".join(p for p in (description, " ".join("#" + t.lstrip("#") for t in tags)) if p)
 
 
+def how_to_clear_a_stop():
+    """A field run cleared a stop from an ordinary window and it stayed: an app installed from the Store can have its own private AppData, so the same command looked in another folder, found no stop and said so."""
+    return f"vpub stop --clear, with VPUB_HOME set to {home()} if you run it in another window"
+
+
 def stop_check(platform=None, signing_in=False):
     candidates = [home() / "STOP.json"]
     external = config().get("external_stop_file")
@@ -209,9 +214,9 @@ def stop_check(platform=None, signing_in=False):
                 continue
             if index == 0 and isinstance(signal, dict) and signal.get("source") == "safety":
                 raise VpubError("stopped", f"CrossCast is stopped because {signal.get('platform')} objected ({signal.get('code')}), and a platform's objection stops every platform. Stop file: {path}",
-                                f"{signal.get('platform')}'s own sign-in window still opens with vpub auth login. vpub status says more. Only a person clears the stop.")
+                                f"{signal.get('platform')}'s own sign-in window still opens with vpub auth login. vpub status says more. Only a person clears the stop: {how_to_clear_a_stop()}.")
             raise VpubError("stopped", f"Publication stop file exists: {path}",
-                            "Inspect the stop reason. Only the operator may clear it.")
+                            "Inspect the stop reason. Only the operator may clear it" + (f": {how_to_clear_a_stop()}." if index == 0 else "."))
 
 
 def manifest_file(manifest, value, code, message):

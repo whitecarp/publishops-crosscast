@@ -342,7 +342,7 @@ For a pending action, first run `comments verify-action ACTION_KEY`; it only rea
 
 ## Persistent comment inbox and fewer browser starts
 
-`ops sync` groups up to ten watched works for the same platform/account into one CLI-owned browser session. Instagram/X reuse the selected work page for comments and statistics; Douyin still switches between public comments and Creator Center metrics. The batch accepts reads only. A failed read stops subsequent reads on that platform, preserves completed results and continues with other platforms. A platform's warning stops every platform, also preserving completed results. This reduces repeated startup; it is not an official API or a fixed speed guarantee.
+`ops sync` groups up to ten watched works for the same platform/account into one CLI-owned browser session. Instagram/X reuse the selected work page for comments and statistics; Douyin still switches between public comments and Creator Center metrics. The batch accepts reads only. A failed read stops subsequent reads on that platform, preserves completed results and continues with other platforms. A platform's warning stops every platform, also preserving completed results. An app installed from the Store on Windows, such as an agent's desktop app, can have its own private AppData, so `vpub stop --clear` in an ordinary window may look in another folder and clear nothing. Its answer names the folder it looked in, and the stop's message names the one to set `VPUB_HOME` to. This reduces repeated startup; it is not an official API or a fixed speed guarantee.
 
 ```sh
 vpub ops sync --reply-pages 1 --reply-threads 5 --out round.json
