@@ -365,6 +365,18 @@ def status_words(value, depth=0):
     return own + [word for key, item in value.items() if key not in ABOUT_THE_PAGE for word in status_words(item, depth + 1)]
 
 
+def type_names(value, depth=0):
+    """The type names a site's answer gives, at any of its levels. Like status words, these are the site's own fixed words."""
+    if depth >= ANSWER_DEPTH:
+        return []
+    if isinstance(value, list):
+        return sorted({name for item in value for name in type_names(item, depth + 1)})
+    if not isinstance(value, dict):
+        return []
+    own = {value["__typename"]} if isinstance(value.get("__typename"), str) and FIELD_NAME.fullmatch(value["__typename"]) else set()
+    return sorted(own.union(*(type_names(item, depth + 1) for key, item in value.items() if key not in ABOUT_THE_PAGE)))
+
+
 def answer_shape(value, depth=0):
     """The names of an answer's fields, nested, and never what they hold, so a receipt can show what a site really sends."""
     if depth >= ANSWER_DEPTH:
@@ -388,7 +400,7 @@ async def write_answers(requests, target):
     for request in requests:
         if request.method != "POST":
             continue
-        answer = {"path": urlsplit(request.url).path, "names_target": names_target(request, target), "http": None, "fields": [], "shape": [], "statuses": [], "objected": False}
+        answer = {"path": urlsplit(request.url).path, "names_target": names_target(request, target), "http": None, "fields": [], "shape": [], "statuses": [], "types": [], "objected": False}
         try:
             response = await asyncio.wait_for(request.response(), 5)
             answer["http"] = response.status
@@ -396,6 +408,7 @@ async def write_answers(requests, target):
             answer["fields"] = sorted(key for key in body if FIELD_NAME.fullmatch(key))[:12] if isinstance(body, dict) else []
             answer["shape"] = answer_shape(body)[:60]
             answer["statuses"] = status_words(body)[:8]
+            answer["types"] = type_names(body)[:8]
             answer["objected"] = objected(body)
         except Exception:
             pass  # No answer, or one that isn't JSON. The status, if any, is all it says.
@@ -404,12 +417,12 @@ async def write_answers(requests, target):
 
 
 def acknowledged(answers, endpoint, success):
-    """Positive evidence only: the request that makes this change went to `endpoint` and named this target, and was answered with exactly this success word.
+    """Positive evidence only: the request that makes this change went to `endpoint` and named this target, and `success` recognises its answer.
     An answer that can't be read, or says anything else, proves nothing. Any other request naming the target must not have objected."""
     named = [answer for answer in answers if answer["names_target"]]
     made = [answer for answer in named if re.fullmatch(endpoint, answer["path"])]
     return (bool(made) and all(answer["http"] and 200 <= answer["http"] < 300 and not answer["objected"] for answer in named)
-            and all(set(answer["statuses"]) == {success} for answer in made))
+            and all(success(answer) for answer in made))
 
 
 async def save_session(context, platform, account):

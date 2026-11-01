@@ -5,8 +5,15 @@ from .operations_browser import open_work, comments
 from .core import VpubError, atomic_json, read_json, stop_check
 
 COMMENT_OPTIONS = '[role="button"]:has(svg[aria-label="Comment Options"]), [role="button"][aria-label="Comment Options"]'
-# The request Instagram's website sends to delete a comment, and its answer. Not yet checked against a real delete.
-DELETE_REQUEST = r'(/api/v1)?/web/comments/\d+/delete/\d+/?'
+# The request a real delete sent, from a field check, and the field its answer came back in. That check saw the field and not the type
+# inside it, which is what says whether it worked, so no answer counts as acknowledged until a real delete has shown that type.
+DELETE_REQUEST = '/api/graphql'
+DELETE_FIELD = 'data.xig_comment_delete.__typename'
+DELETE_TYPES = frozenset()
+
+
+def delete_answered(answer):
+    return DELETE_FIELD in answer['shape'] and bool(DELETE_TYPES) and set(answer['types']) <= DELETE_TYPES and bool(answer['types'])
 
 
 async def press_once(page, platform, payload, control):
@@ -39,6 +46,8 @@ async def instagram_delete(page, identity, payload, comment):
         await choices.first.wait_for(state='visible', timeout=10000)
     except Exception:
         raise VpubError('layout_changed', 'Instagram did not offer Delete for this comment; nothing changed.') from None
+    # By the comment's own address where it has one. Its words can't say, because a field run found another comment with the same words.
+    still_there = page.locator(f'a[href*="/c/{comment["id"]}"]') if comment['id'].isdigit() else page.locator(f'[data-crosscast-comment-row="{comment["ui_index"]}"]')
     requests = []
 
     def heard(request):
@@ -49,13 +58,13 @@ async def instagram_delete(page, identity, payload, comment):
         # Whether it left this page after the one press, which says more than a later read of a list that only loads in part.
         gone = False
         for _ in range(10):
-            gone = not await page.locator(f'[data-crosscast-comment-row="{comment["ui_index"]}"]').count() and not await page.get_by_text(comment['text'], exact=True).count()
+            gone = not await still_there.count()
             if gone: break
             await page.wait_for_timeout(500)
     finally:
         page.remove_listener('request', heard)
     answers = await write_answers(requests, comment['id'])
-    return {'state': 'COMMENT_UNVERIFIED', 'platform_writes': 1, 'gone_from_page': gone, 'write_answers': answers, 'acknowledged': acknowledged(answers, DELETE_REQUEST, 'ok')}
+    return {'state': 'COMMENT_UNVERIFIED', 'platform_writes': 1, 'gone_from_page': gone, 'write_answers': answers, 'acknowledged': acknowledged(answers, DELETE_REQUEST, delete_answered)}
 
 
 async def execute(page, platform, identity, payload):

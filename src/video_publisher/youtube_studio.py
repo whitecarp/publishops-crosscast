@@ -753,7 +753,7 @@ async def comment_action(page, identity, payload):
         # By address and shape only, in case the read-back disagrees.
         result = {**sent(), "page_requests": sorted({urlsplit(item.url).path for item in requests}), "write_answers": await write_answers(requests, target["id"])}
         if kind != "pin":
-            result["acknowledged"] = acknowledged(result["write_answers"], COMMENT_REQUEST, COMMENT_DONE)
+            result["acknowledged"] = acknowledged(result["write_answers"], COMMENT_REQUEST, lambda answer: set(answer["statuses"]) == {COMMENT_DONE})
             # Whether it left this page after the one press, which says more than a later read of a list that only loads in part.
             for _ in range(10):
                 result["gone_from_page"] = not await row.count()

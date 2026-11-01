@@ -59,7 +59,7 @@ class AnswerTests(unittest.IsolatedAsyncioTestCase):
     async def test_it_keeps_the_shape_and_nothing_the_request_or_answer_held(self):
         answers = await self.answers(FakeRequest(body=json.dumps({"actions": [TARGET], "words": "PRIVATE-WORDS"}), answer={"actionResults": [{"status": "STATUS_SUCCEEDED", "text": "PRIVATE-WORDS"}]}))
         self.assertEqual([{"path": "/youtubei/v1/comment/perform_comment_action", "names_target": True, "http": 200, "fields": ["actionResults"],
-                           "shape": ["actionResults", "actionResults.status", "actionResults.text"], "statuses": ["STATUS_SUCCEEDED"], "objected": False}], answers)
+                           "shape": ["actionResults", "actionResults.status", "actionResults.text"], "statuses": ["STATUS_SUCCEEDED"], "types": [], "objected": False}], answers)
         self.assertNotIn("SECRET", json.dumps(answers))
 
     async def test_a_field_name_that_looks_like_someones_words_is_left_out(self):
@@ -89,6 +89,16 @@ class AnswerTests(unittest.IsolatedAsyncioTestCase):
         answer = (await self.answers(FakeRequest(body=TARGET, answer={"responseContext": {"status": "fail"}, "actions": []})))[0]
         self.assertEqual(([], False), (answer["statuses"], answer["objected"]))
 
+    async def test_it_keeps_the_type_names_an_answer_gives_and_nothing_else_in_it(self):
+        answer = (await self.answers(FakeRequest(body=TARGET, answer={"data": {"xig_comment_delete": {"__typename": "XIGDeleted", "text": "PRIVATE-WORDS"}}, "extensions": {"is_final": True}})))[0]
+        self.assertEqual(["XIGDeleted"], answer["types"])
+        self.assertIn("data.xig_comment_delete.__typename", answer["shape"])
+        self.assertNotIn("PRIVATE", json.dumps(answer))
+
+    async def test_a_type_name_that_is_not_a_plain_name_is_left_out(self):
+        answer = (await self.answers(FakeRequest(body=TARGET, answer={"__typename": "a viewer's words"})))[0]
+        self.assertEqual([], answer["types"])
+
     async def test_only_post_requests_count(self):
         self.assertEqual([], await self.answers(FakeRequest(body=TARGET, method="GET")))
 
@@ -114,7 +124,7 @@ class AcknowledgedTests(unittest.TestCase):
         return {"path": "/change", "names_target": True, "http": 200, "statuses": ["ok"], "objected": False, **fields}
 
     def acknowledged(self, *answers):
-        return rt.acknowledged(list(answers), "/change", "ok")
+        return rt.acknowledged(list(answers), "/change", lambda answer: set(answer["statuses"]) == {"ok"})
 
     def test_it_takes_the_intended_request_naming_the_target_answered_with_the_success_word(self):
         self.assertTrue(self.acknowledged(self.answer()))

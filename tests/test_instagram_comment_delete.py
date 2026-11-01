@@ -16,7 +16,7 @@ WORK = "AbC_12"
 
 def row(number, text, menu=True, choices="Delete", stays=False):
     options = f'<div role="button" class="options" data-choices="{choices}" data-stays="{str(stays).lower()}"><svg width="20" height="20" aria-label="Comment Options"></svg></div>' if menu else ""
-    return f'<div class="holder"><div data-crosscast-comment-row="{number}">{text}</div>{options}</div>'
+    return f'<div class="holder"><div data-crosscast-comment-row="{number}"><a href="/p/{WORK}/c/{100 + number}/">now</a> {text}</div>{options}</div>'
 
 
 PAGE = """<!doctype html><style>.options { display: none; } .holder { min-height: 30px; } .holder:hover .options { display: block; }</style><body><main>%s</main>
@@ -27,7 +27,7 @@ for (const menu of document.querySelectorAll('.options')) menu.onclick = () => {
   for (const word of [...menu.dataset.choices.split(','), 'Cancel']) {
     const button = document.createElement('button');
     button.textContent = word;
-    if (word === 'Delete') button.onclick = () => { fetch('/api/v1/web/comments/1/delete/' + (100 + Number(menu.closest('.holder').querySelector('[data-crosscast-comment-row]').dataset.crosscastCommentRow)) + '/', {method: 'POST', body: menu.closest('.holder').innerText}); window_.remove(); if (menu.dataset.stays !== 'true') menu.closest('.holder').remove(); };
+    if (word === 'Delete') button.onclick = () => { fetch('/api/graphql', {method: 'POST', body: 'comment_id=' + (100 + Number(menu.closest('.holder').querySelector('[data-crosscast-comment-row]').dataset.crosscastCommentRow)) + '&words=' + menu.closest('.holder').innerText}); window_.remove(); if (menu.dataset.stays !== 'true') menu.closest('.holder').remove(); };
     window_.append(button);
   }
   document.body.append(window_);
@@ -49,7 +49,10 @@ class Base(unittest.IsolatedAsyncioTestCase):
         self.page.set_default_timeout(5000)
         self.writes = []
         self.seen_at_send = None
-        self.answer = '{"status": "ok"}'
+        self.answer = '{"data": {"xig_comment_delete": {"__typename": "XIGDeleted"}}, "extensions": {"is_final": true}}'
+        known = patch("video_publisher.comment_actions_browser.DELETE_TYPES", frozenset({"XIGDeleted"}))
+        known.start()
+        self.addCleanup(known.stop)
         self.html = PAGE % (row(0, "Mine") + row(1, "Theirs"))
         self.receipt = str(Path(temp.name) / "receipt.json")
         atomic_json(self.receipt, {"state": "COMMENT_READY"})
@@ -87,7 +90,7 @@ class DeleteTests(Base):
     async def test_it_records_the_attempt_then_presses_delete_once(self):
         result = await self.run_it()
         self.assertEqual(("COMMENT_UNVERIFIED", 1, True, True), (result["state"], result["platform_writes"], result["gone_from_page"], result["acknowledged"]))
-        self.assertEqual(("/api/v1/web/comments/1/delete/100/", True, 200), tuple(result["write_answers"][0][key] for key in ("path", "names_target", "http")))
+        self.assertEqual(("/api/graphql", True, 200), tuple(result["write_answers"][0][key] for key in ("path", "names_target", "http")))
         self.assertEqual(1, len(self.writes))
         self.assertIn("Mine", self.writes[0])
         self.assertEqual("COMMENT_SUBMITTING", self.seen_at_send)
@@ -116,9 +119,22 @@ class DeleteTests(Base):
         self.assertEqual("COMMENT_READY", read_json(self.receipt)["state"])
 
     async def test_an_answer_that_refuses_is_not_acknowledged_even_though_the_row_went(self):
-        self.answer = '{"status": "fail", "message": "No."}'
-        result = await self.run_it()
-        self.assertEqual((True, False), (result["gone_from_page"], result["acknowledged"]))
+        for answer in ('{"data": {"xig_comment_delete": null}, "errors": [{"message": "No."}]}', '{"data": {"xig_comment_delete": {"__typename": "XIGNotAllowed"}}}', '{"data": {"other": {"__typename": "XIGDeleted"}}}', "<html>Sorry</html>"):
+            with self.subTest(answer=answer):
+                self.writes.clear()
+                atomic_json(self.receipt, {"state": "COMMENT_READY"})
+                self.answer = answer
+                result = await self.run_it()
+                self.assertEqual((True, False), (result["gone_from_page"], result["acknowledged"]))
+
+    async def test_until_a_real_delete_has_shown_its_type_nothing_is_acknowledged(self):
+        with patch("video_publisher.comment_actions_browser.DELETE_TYPES", frozenset()):
+            self.assertIs(False, (await self.run_it())["acknowledged"])
+
+    async def test_another_comment_with_the_same_words_does_not_keep_it_from_counting_as_gone(self):
+        self.html = PAGE % (row(0, "Mine") + row(1, "Mine"))
+        result = await self.run_it(shown=[self.comment(), self.comment(1, "Mine")])
+        self.assertIs(True, result["gone_from_page"])
 
     async def test_a_comment_with_no_real_id_can_not_be_acknowledged(self):
         result = await self.run_it(comment={**self.comment(), "id": "ui-abc"}, shown=[{**self.comment(), "id": "ui-abc"}])
