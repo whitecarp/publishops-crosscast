@@ -67,8 +67,11 @@ def browser_identity(platform, work):
 
 def backend(platform, action, work, **kw):
     from . import adapters, operations_api
-    if platform in {'bilibili','youtube'}:
+    if platform=='bilibili' or (platform=='youtube' and adapters.addon_installed()):
         return operations_api.execute(platform,action,work,**kw)
+    if platform=='youtube':
+        # Studio only opens a channel's own videos, so the page itself proves ownership.
+        return adapters.browser_call(platform,'operations','default',operation=action,work_id=work,**kw)
     return adapters.browser_call(platform,'operations','default',expected_identity=browser_identity(platform,work),
                                  operation=action,work_id=work,**kw)
 
@@ -253,7 +256,7 @@ def capabilities():
             'direct_messages':'dm list/read/send/verify: exact recipient, one language, CLI-owned Instagram/Douyin/X sessions; Bilibili upstream delegation (no live test this release). X dm unlock opens official PIN UI on explicit request. YouTube has no DM adapter. Visible outgoing messages do not prove recipient delivery/read.',
             'works':'Bilibili published pages, YouTube uploads playlist pages, other platforms visible first page.',
             'reply_pages':'comments replies: Bilibili and YouTube roots with next_cursor; browser replies remain bounded.',
-            'comments':{'bilibili':'upstream CLI, paged threads','youtube':'official API, paged threads and replies',
+            'comments':{'bilibili':'upstream CLI, paged threads','youtube':'Studio comments page in the background browser; official API, paged threads and replies, with the paid add-on',
                         'douyin':'CLI public work reads; Creator Center top-level replies and statistics','instagram':'CLI visible comments','x':'CLI visible conversation entries; parent ID is not exposed'},
             'reply':'Direct send, optional --dry-run; one language matching the comment; durable deduplication and read-back.',
             'stats':'Per-work observations with source and timestamp; missing metrics stay null. X post views are not video plays.',

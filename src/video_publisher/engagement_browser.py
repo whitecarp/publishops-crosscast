@@ -80,6 +80,9 @@ async def controls(page,platform,work):
 
 
 async def execute(page,platform,identity,payload):
+    if platform=='youtube':
+        from .youtube_studio import engagement
+        return await engagement(page,identity,payload)
     work=payload['work_id'];loaded=None
     if platform=='douyin':
         # Observe only the normal page's own detail load; no forged requests,

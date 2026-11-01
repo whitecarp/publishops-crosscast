@@ -110,6 +110,9 @@ async def execute(page, platform, identity, payload):
         if 'chapters' in patch:
             return await douyin_chapters(page,receipt,patch,save,submit,verify_only=payload.get('verify_only',False))
         raise VpubError('unsupported_edit','No supported Douyin correction fields.')
+    if platform=='youtube':
+        from .youtube_studio import edit
+        return await edit(page,payload,save,submit)
     raise VpubError('unsupported_edit','Unsupported platform.')
 
 

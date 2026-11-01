@@ -15,10 +15,10 @@ This requirement exists because non-subscribers are limited to **140-second, 512
 | Cover | Upstream | Studio thumbnail; Thumbnail API with the paid add-on | Landscape + portrait | Custom Studio thumbnail | Separate cover; Original crop |
 | Target metadata language | Simplified Chinese | English | Simplified Chinese | English | English |
 | Work read-back | Upstream | Studio edit page; API with the paid add-on | Creator cards/detail IDs | Own profile/status | Own grid/Reel |
-| Comments/replies | Upstream CLI | Official API | Public reads/Creator Center top-level replies | Visible conversation/Reply | Visible comments/Reply |
-| Work metrics | Creator data | Basic statistics | Creator Center | Post metrics | Visible values; not full Insights |
+| Comments/replies | Upstream CLI | Studio comments page; official API with the paid add-on | Public reads/Creator Center top-level replies | Visible conversation/Reply | Visible comments/Reply |
+| Work metrics | Creator data | Studio analytics; basic statistics with the paid add-on | Creator Center | Post metrics | Visible values; not full Insights |
 | Operations report | Local receipts | Local receipts | Local receipts | Local receipts | Local receipts |
-| Like / unlike | Upstream CLI | Rating API | Video controls | Post controls | Post toolbar |
+| Like / unlike | Upstream CLI | Watch page; Rating API with the paid add-on | Video controls | Post controls | Post toolbar |
 | Private text messages | Upstream (not live-tested this round) | No adapter | CLI official UI | CLI X Chat | CLI official UI |
 | Save / remove | Selected favorite folder | Selected ordinary playlist | Default saved items | Private bookmarks | Default Saved |
 | Mentions | bili-cli; `vpub messages sync` | Not integrated | Visible previews | Mentions | Tags/mentions; nonempty fixture pending |

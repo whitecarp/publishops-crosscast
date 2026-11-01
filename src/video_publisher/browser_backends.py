@@ -166,6 +166,9 @@ async def links(page, platform, identity):
 
 
 async def works(page, platform, identity):
+    if platform == "youtube":
+        from .youtube_studio import works as studio_works
+        return await studio_works(page, identity)
     url = MANAGE if platform == "douyin" else f"https://www.instagram.com/{identity}/" if platform == "instagram" else f"https://x.com/{identity}"
     await page.goto(url, wait_until="domcontentloaded", timeout=60000)
     for _ in range(10):

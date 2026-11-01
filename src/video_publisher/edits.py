@@ -7,13 +7,13 @@ from .language_policy import route
 
 
 def validate_patch(platform, value):
-    allowed={'expected_identity','title','description','content_language','metadata_language','metadata_mode','portrait','chapters','duration_seconds'}
+    allowed={'expected_identity','title','description','content_language','metadata_language','metadata_mode','portrait','chapters','duration_seconds','cover'}
     if not isinstance(value,dict) or set(value)-allowed or not isinstance(value.get('expected_identity'),str) or not value['expected_identity']:
         raise VpubError('invalid_edit','Provide expected_identity and supported correction fields only; privacy/media replacement/deletion are forbidden.')
     p=deepcopy(value)
-    groups=sum(('description' in p or 'title' in p, 'portrait' in p, 'chapters' in p))
+    groups=sum(('description' in p or 'title' in p, 'portrait' in p, 'chapters' in p, 'cover' in p))
     if groups != 1:
-        raise VpubError('invalid_edit','Correct one field group per request: caption, portrait, or chapters. Each has its own save/read-back receipt.')
+        raise VpubError('invalid_edit','Correct one field group per request: caption, portrait, cover or chapters. Each has its own save/read-back receipt.')
     metadata='description' in p or 'title' in p
     if metadata:
         if platform not in {'youtube','instagram','x'}:
@@ -39,11 +39,17 @@ def validate_patch(platform, value):
         if not f.is_file() or f.suffix.lower() not in {'.png','.jpg','.jpeg'}:
             raise VpubError('invalid_cover','Use the completed shared portrait artwork.')
         p['portrait']=str(f);p['portrait_sha256']=file_sha(f)
+    if 'cover' in p:
+        if platform!='youtube': raise VpubError('unsupported_edit','This command replaces a YouTube thumbnail; other platforms have their own cover steps.')
+        f=Path(str(p['cover'])).resolve()
+        if not f.is_file() or f.suffix.lower() not in {'.png','.jpg','.jpeg'}:
+            raise VpubError('invalid_cover','Use a complete JPG or PNG thumbnail.')
+        p['cover']=str(f);p['cover_sha256']=file_sha(f)
     if 'chapters' in p:
         if platform!='douyin': raise VpubError('unsupported_edit','Chapter corrections currently support Douyin.')
         from .chapters import validate
         validate(p['chapters'],platform,'native',p.get('duration_seconds'))
-    if not(metadata or 'portrait' in p or 'chapters' in p):
+    if not(metadata or 'portrait' in p or 'chapters' in p or 'cover' in p):
         raise VpubError('invalid_edit','No correction fields were supplied.')
     return p
 
@@ -71,7 +77,7 @@ def run(key, patch_path, dry_run=False, verify_only=False):
             def checkpoint(data): atomic_json(path,{'key':key,'edit_id':edit_id,'at':now(),**data})
             if not verify_only: checkpoint({'state':'EDIT_PREPARING','id':work_id})
             from . import adapters
-            if row['platform']=='youtube': result=adapters.youtube_api().update_video(row['account'],work_id,patch,checkpoint,verify_only)
+            if row['platform']=='youtube' and adapters.addon_installed(): result=adapters.youtube_api().update_video(row['account'],work_id,patch,checkpoint,verify_only)
             else:
                 result=adapters.browser_call(row['platform'],'edit',row['account'],expected_identity=actual,
                     receipt=receipt,patch=patch,edit_receipt_path=str(path),verify_only=verify_only)

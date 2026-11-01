@@ -193,6 +193,9 @@ async def comments(page,platform,identity,work,limit,expand_replies=True):
 
 async def execute(page,platform,identity,payload):
     work=payload['work_id'];action=payload['operation']
+    if platform=='youtube':
+        from .youtube_studio import operations
+        return await operations(page,identity,payload)
     url=await open_work(page,platform,identity,work,public_comments=platform=='douyin' and action not in {'stats','test_seed','reply'},reuse_page=payload.get('reuse_page',False))
     if platform=='douyin' and action=='reply':
         from .operations_douyin import reply as creator_reply

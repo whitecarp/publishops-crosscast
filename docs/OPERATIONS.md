@@ -21,6 +21,7 @@
 ## 0.16.0：升級時的變化
 
 - **官方 API 路徑改為獨立的付費附加元件。** 涵蓋 X、Instagram 與 YouTube。未安裝時，YouTube、抖音、Instagram 與 X 都使用背景瀏覽器。
+- **YouTube 作品、數據、留言與編輯可透過其官方頁面免費使用。** 未安裝附加元件時，`vpub works`、`vpub stats`、`vpub comments list`、`vpub comments reply`、`vpub engage like` 與 `vpub edit` 會在背景瀏覽器中執行。讀取已在真實頻道上檢查過；回覆、按讚與編輯尚未在真實頻道上試過。留言為 Studio 載入的內容，並非完整歷史。播放清單管理、存入播放清單、留言按讚與審核暫時需要附加元件。
 - **YouTube 新增免費背景路徑。** `vpub auth login youtube --method browser` 在專用 Chrome 視窗登入一次；之後經由 YouTube Studio 在背景發布，Windows 上使用隱藏桌面，不會出現視窗或工作列圖示。可依確切標題加入播放清單（`playlist_titles`），也可設定排程（依 Studio 顯示的時區，沒有顯示時依這台電腦的時區）；兩者都在最後儲存前讀回確認，尚未在真實帳號上實測。播放清單 ID（`playlist_ids`）只能走付費 API。`--draft-only` 會在最後儲存前停止。
 - **同樣移至附加元件：** 營運匯報（`vpub report`）、完整讀取（`vpub read-all`）與郵件提醒（`vpub notify`）。
 - **內含 bili-cli。** 安裝 CrossCast 時會一併提供 `bili` 指令，版本為 1.2.1。如果仍裝有舊版獨立的 `bili-agent`，`vpub doctor` 會說明如何移除。

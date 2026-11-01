@@ -26,7 +26,7 @@ def works(platform, limit=20, cursor=None):
     platform_check(platform);stop_check(platform)
     if not 1<=limit<=50: raise VpubError('invalid_limit','Work limit must be 1–50.')
     if cursor and (not isinstance(cursor,str) or len(cursor)>1000): raise VpubError('invalid_cursor','Invalid cursor.')
-    if platform=='youtube':
+    if platform=='youtube' and adapters.addon_installed():
         result=adapters.youtube_api().works(limit,cursor)
     elif platform=='bilibili':
         if cursor and not re.fullmatch(r'[1-9][0-9]{0,7}',cursor): raise VpubError('invalid_cursor','Use a positive page number.')

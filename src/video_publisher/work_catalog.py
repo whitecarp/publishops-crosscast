@@ -46,7 +46,7 @@ def adopt(platform, work, pages=3):
         raise VpubError('invalid_limit', 'Use pages 1–10.')
     if platform in {'bilibili','youtube'}:
         value = ops.backend(platform, 'stats', work)
-        evidence = 'fresh_api_owner_check'
+        evidence = value.get('ownership_evidence','fresh_api_owner_check')
     else:
         # A fresh authenticated check is mandatory; cached discovery alone is not ownership.
         value = adapters.browser_call(platform,'adopt_work','default',work_id=work,pages=pages)
