@@ -32,7 +32,7 @@ With the paid add-on, use `resume KEY` for new YouTube API upload sessions; neve
 ## Receipts and verification
 
 - Start with `vpub status` when picking work back up or asked what is unfinished: it reads local records only and gives the exact next command for each attempt. Run `vpub cleanup` to preview reclaimable video copies, and add `--apply` only when the user wants disk space back.
-- Use exact platform/work/comment/collection IDs from reads. A matching title alone is insufficient. Distinguish private saved collections from public work series. Bilibili 合集 use `vpub collection` too.
+- Use exact platform/work/comment/collection IDs from reads. A matching title alone is insufficient. Distinguish private saved collections from public work series. Bilibili 合集 use `vpub collection` too, and YouTube playlists use `vpub playlist`, free except for `move`.
 - X rebuilt its website. If an X command stops with `auth_expired`, `identity_required` or `layout_changed`, nothing was sent: say so plainly and do not keep retrying, because the X route may need updating rather than a new sign-in.
 - Use stable request IDs when provided by the command. After interruption, reuse the original request or its read-only verify/resume command. Never blindly repeat a publish, comment, message, delete or collection mutation.
 - Treat `UNVERIFIED`, partial reads, pending platform review and test fixtures honestly. A successful click or zero exit code alone is not proof of a persisted result. Read back through the CLI and retain the receipt.

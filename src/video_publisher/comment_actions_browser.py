@@ -5,6 +5,9 @@ from .core import VpubError, atomic_json, read_json, stop_check
 
 
 async def execute(page, platform, identity, payload):
+    if platform == 'youtube':
+        from .youtube_studio import comment_action
+        return await comment_action(page, identity, payload)
     if platform=='x' and payload['request'].get('kind')=='hide':
         from .comment_actions_x import execute as hide
         return await hide(page,identity,payload)

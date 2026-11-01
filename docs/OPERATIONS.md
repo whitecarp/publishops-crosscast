@@ -21,7 +21,7 @@
 ## 0.16.0：升級時的變化
 
 - **官方 API 路徑改為獨立的付費附加元件。** 涵蓋 X、Instagram 與 YouTube。未安裝時，YouTube、抖音、Instagram 與 X 都使用背景瀏覽器。
-- **YouTube 作品、數據、留言與編輯可透過其官方頁面免費使用。** 未安裝附加元件時，`vpub works`、`vpub stats`、`vpub comments list`、`vpub comments reply`、`vpub engage like` 與 `vpub edit` 會在背景瀏覽器中執行。讀取已在真實頻道上檢查過；回覆、按讚與編輯尚未在真實頻道上試過。留言為 Studio 載入的內容，並非完整歷史。播放清單管理、存入播放清單、留言按讚與審核暫時需要附加元件。
+- **YouTube 作品、數據、留言與編輯可透過其官方頁面免費使用。** 未安裝附加元件時，`vpub works`、`vpub stats`、`vpub comments list`、`vpub comments reply`、`vpub comments like`、`vpub engage like`、`vpub engage save`、`vpub playlist` 與 `vpub edit` 會在背景瀏覽器中執行，頻道自己留言的 `vpub comments edit` 與 `vpub comments delete` 也一樣。讀取已在真實頻道上檢查過；會造成變更的操作都尚未在真實頻道上試過。留言為 Studio 載入的內容，並非完整歷史。調整播放清單順序與待審核留言佇列需要附加元件。
 - **YouTube 新增免費背景路徑。** `vpub auth login youtube --method browser` 在專用 Chrome 視窗登入一次；之後經由 YouTube Studio 在背景發布，Windows 上使用隱藏桌面，不會出現視窗或工作列圖示。可依確切標題加入播放清單（`playlist_titles`），也可設定排程（依 Studio 顯示的時區，沒有顯示時依這台電腦的時區）；兩者都在最後儲存前讀回確認，尚未在真實帳號上實測。播放清單 ID（`playlist_ids`）只能走付費 API。`--draft-only` 會在最後儲存前停止。
 - **同樣移至附加元件：** 營運匯報（`vpub report`）、完整讀取（`vpub read-all`）與郵件提醒（`vpub notify`）。
 - **內含 bili-cli。** 安裝 CrossCast 時會一併提供 `bili` 指令，版本為 1.2.1。如果仍裝有舊版獨立的 `bili-agent`，`vpub doctor` 會說明如何移除。
@@ -122,7 +122,11 @@ vpub ops runs
 
 ## YouTube 播放列表管理
 
-使用官方 API 管理本帳號的一般播放列表：建立、改名、修改說明／可見性、添加／移除影片、調整順序和刪除列表。建立預設私密；改名保留原說明、語言及可見性。移動／移除使用 `playlist items` 返回的精確 **ITEM_ID**，不是 VIDEO_ID；排序位置從 0 開始。
+管理本帳號的一般播放列表：建立、改名、修改說明／可見性、添加／移除影片和刪除列表。建立預設私密；改名保留原說明及可見性。
+
+**未安裝附加元件時**，這些操作在背景瀏覽器中透過 YouTube 自己的頁面執行。`remove` 使用 VIDEO_ID。添加與移除使用影片觀看頁的儲存視窗，它會標明這部影片是否在該列表中；該視窗不顯示 ID，因此播放列表的標題不能重複。清單與讀取已在真實頻道上檢查過；變更尚未在真實頻道上試過。調整順序（`move`）會回傳 `paid_feature_required`。
+
+**安裝附加元件後**改用官方 API，也可調整順序。移動／移除使用 `playlist items` 返回的精確 **ITEM_ID**，不是 VIDEO_ID；排序位置從 0 開始。
 
 ```sh
 vpub playlist list
@@ -167,12 +171,12 @@ vpub ops sync --platforms youtube,douyin,instagram,x --full
 
 ## 點讚、收藏與撤銷
 
-首次登入後，以同一組 CLI 命令操作指定作品。B站沿用 bili-cli，YouTube 使用官方 API（需付費附加元件）；抖音、Instagram、X 復用 CLI 專用背景 Chrome，不需要宿主逐步操作內置瀏覽器。
+首次登入後，以同一組 CLI 命令操作指定作品。B站沿用 bili-cli；YouTube、抖音、Instagram、X 復用 CLI 專用背景 Chrome，不需要宿主逐步操作內置瀏覽器。
 
 | 平台 | 點讚／取消讚 | 保存／移除的實際含義 |
 |---|---|---|
 | B站 | bili-cli | 指定收藏夾；省略 ID 時使用唯一預設夾，撤銷不影響其他夾 |
-| YouTube | 官方影片評分 API | 指定自己擁有的普通播放列表；不支援「稍後觀看」、喜歡清單或舊版最愛 |
+| YouTube | 觀看頁的按讚按鈕，或附加元件的官方評分 API | 指定自己擁有的普通播放列表，透過觀看頁的儲存視窗或附加元件的 API；不支援「稍後觀看」、喜歡清單或舊版最愛 |
 | 抖音 | 指定影片的點讚按鈕 | 該影片的預設收藏 |
 | Instagram | 作品工具列的 Like | 預設 Saved；具名容器使用 `collection`，評論點讚使用獨立指令 |
 | X | 指定帖文的 Like | 預設私人 Bookmarks；具名容器使用 `collection`，X Lists 為不同功能 |
@@ -191,7 +195,7 @@ vpub engage save youtube VIDEO_ID --collection PLAYLIST_ID --remove
 vpub engage verify RECEIPT_KEY
 ```
 
-`status`、`collections`、`verify` 都是唯讀。收藏夾／播放列表 ID 來自 `collections`；YouTube 清單可用 `--cursor` 繼續。支援 `--out result.json`。`like`／`save` 是直接執行命令，可加 `--dry-run` 預覽；不另加逐次確認。
+`status`、`collections`、`verify` 都是唯讀。收藏夾／播放列表 ID 來自 `collections`；安裝附加元件後，YouTube 清單可用 `--cursor` 繼續。支援 `--out result.json`。`like`／`save` 是直接執行命令，可加 `--dry-run` 預覽；不另加逐次確認。
 
 B站的精確收藏夾成員查詢使用內含 bili-cli 的唯讀輔助函式；寫入仍走它的 CLI。更新內含版本後需要重新驗證這個內部介面，讀不到成員狀態時不猜測或刪除其他收藏。
 
@@ -371,7 +375,7 @@ vpub comments verify-action RECEIPT_KEY
 |---|---|
 | B站 | 透過固定版本 bili-cli 點讚／取消讚，讀回確切評論狀態 |
 | Instagram／X | 對確切可見評論點讚／取消讚；愛心控制項不唯一時停止 |
-| YouTube | 透過官方 API 編輯／刪除自己影片下自己發出的評論 |
+| YouTube | 在 Studio 留言頁替任何留言按讚／取消按讚，也可編輯／刪除自己影片下自己發出的留言；安裝附加元件後編輯與刪除改用官方 API。這些操作尚未在真實頻道上試過。 |
 | 抖音 | 創作者中心評論點讚／取消讚；刪除自己作品下自己發出且沒有回覆的評論；既有頂層回覆仍可使用 |
 
 這些指令明確指定單條評論，與影片點讚分開。先讀取評論再操作；不設逐條文案審核，`--dry-run` 為可選預覽。YouTube 編輯使用宿主提供的單語正文，不自行翻譯。提交前核對作者、帳號、作品與當前正文；逾時或未確認的操作會保留回執，阻止再次修改，應以唯讀核驗處理，不自動重送。自測使用 `--test-id`，普通匯報排除這些記錄。刪除只在明確要求時執行且不可復原，登入不會觸發。抖音刪除拒絕有回覆的父評論。置頂／隱藏邊界見下節；批量審核未實作。

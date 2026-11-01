@@ -18,7 +18,10 @@ def validate(platform,work,collection=None):
 
 
 def dispatch(platform,action,work=None,**kw):
-    if platform=='bilibili' or (platform=='youtube' and (action=='collections' or adapters.addon_installed())):
+    if platform=='youtube' and action=='collections' and not adapters.addon_installed():
+        from .youtube_playlists import listing
+        return listing(None,kw.get('cursor'))
+    if platform=='bilibili' or (platform=='youtube' and adapters.addon_installed()):
         from .engagement_api import execute
         return execute(platform,action,work,**kw)
     return adapters.browser_call(platform,'engagement','default',operation=action,work_id=work,**kw)
@@ -55,8 +58,6 @@ def set_action(platform,work,kind,desired=True,collection=None,dry_run=False,tes
     validate(platform,work,collection)
     if kind not in {'like','save'} or not isinstance(desired,bool):raise VpubError('invalid_action','Choose like/save and on/off.')
     if test_id and not re.fullmatch(r'[A-Za-z0-9_-]{1,80}',test_id):raise VpubError('invalid_test_id','Use a short alphanumeric test label.')
-    if kind=='save' and platform=='youtube' and not adapters.addon_installed():
-        raise VpubError('unsupported_operation','Saving to a playlist is not in the free YouTube route yet; nothing changed.')
     if kind=='save' and platform=='youtube' and not collection:
         raise VpubError('collection_required','YouTube saves require --collection with an owned playlist ID.')
     if kind=='like' and collection:raise VpubError('invalid_collection','Like does not use a collection.')

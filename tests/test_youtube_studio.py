@@ -325,7 +325,7 @@ class LikeTests(Temporary):
         self.assertEqual("state_unavailable", caught.exception.code)
         with self.assertRaises(VpubError) as caught:
             self.run_it(yt.engagement(page, CHANNEL, self.payload("set", kind="save", desired=True)))
-        self.assertEqual("unsupported_operation", caught.exception.code)
+        self.assertEqual("state_unavailable", caught.exception.code)
         self.assertEqual([], page.clicks("like-button"))
 
 
@@ -437,13 +437,10 @@ class RouteTests(Temporary):
             result = work_catalog.adopt("youtube", VIDEO)
         self.assertEqual(("ADOPTED", "studio_analytics_opened"), (result["state"], result["ownership_evidence"]))
 
-    def test_likes_use_the_browser_and_saves_say_they_are_not_built(self):
+    def test_likes_use_the_browser(self):
         with patch.object(adapters, "browser_call", return_value={"identity": CHANNEL, "liked": False}) as browser:
             engagement.status("youtube", VIDEO)
         self.assertEqual("engagement", browser.call_args.args[1])
-        with self.assertRaises(VpubError) as caught:
-            engagement.set_action("youtube", VIDEO, "save", True, "PLabcdefgh")
-        self.assertEqual("unsupported_operation", caught.exception.code)
 
     def test_edits_use_the_browser(self):
         from video_publisher.core import Ledger

@@ -5,15 +5,18 @@ from . import adapters
 from .core import VpubError, atomic_json, digest, home, now, publication_lock, read_json, stop_check
 from .direct_messages import identity
 
-PLATFORMS = ('instagram', 'x', 'douyin', 'bilibili')
+PLATFORMS = ('instagram', 'x', 'douyin', 'bilibili', 'youtube')
 NEEDS_COVER = {'douyin', 'bilibili'}
+ID_PATTERNS = {'youtube': r'[A-Za-z0-9_-]{10,64}'}
+# These answer for one work, so they never have to read a whole collection.
+ONE_WORK = {'x', 'youtube'}
 
 
 def validate(platform, collection=None):
     if platform not in PLATFORMS:
         raise VpubError('unsupported_platform', 'Use instagram, x, douyin or bilibili; YouTube uses playlist commands.')
-    if collection is not None and (not isinstance(collection,str) or not re.fullmatch(r'[0-9]{1,40}', collection)):
-        raise VpubError('invalid_collection', 'Use the exact numeric ID returned by collection list.')
+    if collection is not None and (not isinstance(collection,str) or not re.fullmatch(ID_PATTERNS.get(platform,r'[0-9]{1,40}'), collection)):
+        raise VpubError('invalid_collection', 'Use the exact ID returned by the list command.')
     stop_check(platform)
 
 
@@ -31,8 +34,7 @@ def call(platform, operation, owner, **kw):
 
 
 def members(platform, owner, collection, work):
-    """X's folder window answers for one post, so X never has to read a whole folder."""
-    return call(platform, 'items', owner, collection_id=collection, **({'work_id': work} if platform == 'x' else {}))
+    return call(platform, 'items', owner, collection_id=collection, **({'work_id': work} if platform in ONE_WORK else {}))
 
 
 def listing(platform, collection=None):
@@ -73,18 +75,23 @@ def verify(key):
         return {**r,'platform_writes':0}
 
 
-def change(platform, action, collection=None, title=None, request_id=None, cover=None, description=None):
+def change(platform, action, collection=None, title=None, request_id=None, cover=None, description=None, privacy=None):
     validate(platform,collection)
     if action not in {'create','rename','delete'}:raise VpubError('invalid_action','Use create, rename or delete.')
     if action!='create' and collection is None:raise VpubError('collection_required','An exact collection ID is required.')
     if action=='create' and collection is not None:raise VpubError('invalid_collection','Create does not take an existing ID.')
     if not request_id or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',request_id):
         raise VpubError('request_id_required','Use --request-id once per intended change; reuse after interruption.')
-    if action in {'create','rename'} and (not isinstance(title,str) or not title.strip() or title!=title.strip() or len(title)>({'x':25,'douyin':20,'instagram':100,'bilibili':80}[platform]) or any(ord(c)<32 for c in title)):
-        raise VpubError('invalid_title','Use a nonempty title without surrounding whitespace/control characters; maximum X 25, Douyin 20, Instagram 100, Bilibili 80.')
+    if action in {'create','rename'} and (not isinstance(title,str) or not title.strip() or title!=title.strip() or len(title)>({'x':25,'douyin':20,'instagram':100,'bilibili':80,'youtube':150}[platform]) or any(ord(c)<32 for c in title)):
+        raise VpubError('invalid_title','Use a nonempty title without surrounding whitespace/control characters; maximum X 25, Douyin 20, Instagram 100, Bilibili 80, YouTube 150.')
     intent=dict(action=action,collection=collection,title=title)
     extra={}
-    if platform in NEEDS_COVER and action=='create':
+    if platform=='youtube':
+        if privacy not in {None,'private','unlisted','public'}:raise VpubError('invalid_privacy','Use private, unlisted or public.')
+        if description is not None and (not isinstance(description,str) or len(description)>5000):raise VpubError('invalid_description','The description maximum is 5000 characters.')
+        extra={'description':description,'privacy':privacy}
+        intent.update(extra)
+    elif platform in NEEDS_COVER and action=='create':
         from .core import file_sha
         path=Path(cover or '')
         if not cover or not path.is_file() or path.suffix.lower() not in {'.jpg','.jpeg','.png'} or path.stat().st_size>5*1024*1024:
@@ -117,7 +124,7 @@ def change(platform, action, collection=None, title=None, request_id=None, cover
                state='READY',started_at=now(),platform_writes=0,next_command='vpub collection verify '+key,**extra)
         atomic_json(path,r)
         try:
-            if action=='rename' and matches[0]['title']==title:
+            if action=='rename' and matches[0]['title']==title and not any(extra.values()):
                 r=checked_result(r,before)
             else:
                 result=call(platform,action,owner,collection_id=collection,title=title,receipt_key=key,**extra)

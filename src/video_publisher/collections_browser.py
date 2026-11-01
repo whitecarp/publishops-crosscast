@@ -210,6 +210,9 @@ async def x_member(page,owner,payload):
 
 async def execute(page,platform,owner,payload):
     op=payload['operation']
+    if platform=='youtube':
+        from .youtube_studio import playlists
+        return await playlists(page,owner,payload)
     if platform=='douyin':
         from .collections_douyin import execute as douyin_execute
         return await douyin_execute(page,owner,payload)

@@ -4,7 +4,7 @@ import uuid
 from . import adapters, operations as ops, safety
 from .core import VpubError, atomic_json, digest, home, now, publication_lock, read_json, stop_check
 
-SUPPORTED = {'bilibili': {'like', 'pin'}, 'instagram': {'like'}, 'x': {'like','hide'}, 'youtube': {'edit', 'delete','moderate'}, 'douyin': {'like', 'delete'}}
+SUPPORTED = {'bilibili': {'like', 'pin'}, 'instagram': {'like'}, 'x': {'like','hide'}, 'youtube': {'like', 'edit', 'delete','moderate'}, 'douyin': {'like', 'delete'}}
 PENDING = {'COMMENT_SUBMITTING', 'COMMENT_UNVERIFIED'}
 
 
@@ -26,7 +26,8 @@ def target(platform, work, comment_id):
 
 def dispatch(request, operation='status', receipt_path=None):
     p = request['platform']; stop_check(p)
-    if p in {'bilibili', 'youtube'}:
+    # YouTube's API cannot like a comment, so likes use Studio's own page on every route.
+    if p == 'bilibili' or (p == 'youtube' and adapters.addon_installed() and request.get('kind') != 'like'):
         from .comment_actions_api import execute
         return execute(request, operation, receipt_path)
     return adapters.browser_call(p, 'comment_management', 'default', expected_identity=request['identity'],

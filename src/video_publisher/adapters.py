@@ -78,6 +78,14 @@ def youtube_api():
     return youtube
 
 
+def youtube_playlists():
+    """Playlist commands: the official API with the add-on, otherwise YouTube's own pages."""
+    if addon_installed():
+        return youtube_api().playlists
+    from . import youtube_playlists as free
+    return free
+
+
 def yt_service(account):
     return youtube_api().client(account)
 

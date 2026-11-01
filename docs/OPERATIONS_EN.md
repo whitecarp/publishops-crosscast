@@ -21,7 +21,7 @@ Default routes: Bilibili uses bili-cli, and YouTube/Douyin/Instagram/X use a ded
 ## 0.16.0: what changes when you upgrade
 
 - **Official API routes are a separate paid add-on.** This covers X, Instagram and YouTube. Without it, YouTube, Douyin, Instagram and X all use the background browser.
-- **YouTube works, stats, comments and edits are free through its own pages.** Without the add-on, `vpub works`, `vpub stats`, `vpub comments list`, `vpub comments reply`, `vpub engage like` and `vpub edit` run in the background browser. Reads were checked on a real channel; replies, likes and edits have not been tried on one. Comments are those Studio loaded, not the full history. Playlist management, saving to playlists, comment likes and moderation need the add-on for now.
+- **YouTube works, stats, comments and edits are free through its own pages.** Without the add-on, `vpub works`, `vpub stats`, `vpub comments list`, `vpub comments reply`, `vpub comments like`, `vpub engage like`, `vpub engage save`, `vpub playlist` and `vpub edit` run in the background browser, and so do `vpub comments edit` and `vpub comments delete` on the channel's own comments. Reads were checked on a real channel; nothing that changes anything has been tried on one. Comments are those Studio loaded, not the full history. Reordering a playlist and the held-for-review queue need the add-on.
 - **YouTube has a free background route.** `vpub auth login youtube --method browser` signs in once in a dedicated Chrome window. After that, publishing runs out of sight through YouTube Studio: on Windows it uses a hidden desktop, with no window or taskbar icon. It adds the video to playlists by exact title (`playlist_titles`) and can schedule it, in the time zone Studio shows or otherwise this computer's; both are read back before the final Save and have not been tried on a real account yet. Playlist IDs (`playlist_ids`) need the paid API. `--draft-only` stops before the final Save.
 - **Also in the add-on:** the operations report (`vpub report`), complete reads (`vpub read-all`) and email reminders (`vpub notify`).
 - **bili-cli is included.** Installing CrossCast also gives you the `bili` command, version 1.2.1. If an older separate `bili-agent` is still installed, `vpub doctor` says how to remove it.
@@ -122,7 +122,11 @@ One same-machine, same-account comparison of 10 forced reads across four platfor
 
 ## YouTube playlist management
 
-Use the official API for ordinary playlists owned by the signed-in channel: create, rename, change description/privacy, add/remove videos, reorder and delete. Creation defaults to private. Renaming preserves description, language and privacy. Move/remove use the exact **ITEM_ID** from `playlist items`, not VIDEO_ID; positions are zero-based.
+Manage ordinary playlists owned by the signed-in channel: create, rename, change description/privacy, add/remove videos and delete. Creation defaults to private, and renaming preserves description and privacy.
+
+**Without the add-on** these run on YouTube's own pages in the background browser. `remove` takes the VIDEO_ID. Adding and removing use the Save window on the video's watch page, which says whether that one video is in the playlist, and that window shows no IDs, so playlists need different titles. Lists and reads were checked on a real channel; the changes have not been tried on one. Reordering (`move`) returns `paid_feature_required`.
+
+**With the add-on** they use the official API, which also reorders. Move/remove use the exact **ITEM_ID** from `playlist items`, not VIDEO_ID; positions are zero-based.
 
 ```sh
 vpub playlist list
@@ -167,12 +171,12 @@ Each completed step is saved. API comments and replies retain validated pages an
 
 ## Likes, saves and reversals
 
-After first login, use the same CLI commands for an exact work. Bilibili reuses bili-cli and YouTube uses its official API (paid add-on required). Douyin, Instagram and X reuse the CLI's dedicated background Chrome session without step-by-step host-browser operation.
+After first login, use the same CLI commands for an exact work. Bilibili reuses bili-cli. YouTube, Douyin, Instagram and X reuse the CLI's dedicated background Chrome session without step-by-step host-browser operation.
 
 | Platform | Like / unlike | What save / remove actually means |
 |---|---|---|
 | Bilibili | bili-cli | Selected favorite folder; a unique default is used if omitted. Removal preserves membership in other folders. |
-| YouTube | Official video rating API | Selected ordinary playlist owned by the account; no Watch Later, Likes-list or legacy Favorites management. |
+| YouTube | Watch page Like button, or the official rating API with the add-on | Selected ordinary playlist owned by the account, through the watch page's Save window or the API with the add-on; no Watch Later, Likes-list or legacy Favorites management. |
 | Douyin | Exact video's Like control | Default favorite/save for that video. |
 | Instagram | Post toolbar Like | Default Saved. Named containers use `collection`; comment likes use separate commands. |
 | X | Exact post's Like | Default private Bookmarks. Named containers use `collection`; X Lists are separate. |
@@ -191,7 +195,7 @@ vpub engage save youtube VIDEO_ID --collection PLAYLIST_ID --remove
 vpub engage verify RECEIPT_KEY
 ```
 
-`status`, `collections` and `verify` are read-only. Choose folder/playlist IDs from `collections`; YouTube supports continuation through `--cursor`. Commands support `--out result.json`. `like` and `save` execute directly with optional `--dry-run`, without another per-action approval step.
+`status`, `collections` and `verify` are read-only. Choose folder/playlist IDs from `collections`; with the add-on, YouTube supports continuation through `--cursor`. Commands support `--out result.json`. `like` and `save` execute directly with optional `--dry-run`, without another per-action approval step.
 
 Exact Bilibili folder membership uses a read-only helper in the included bili-cli; writes still use its CLI. That internal interface needs revalidation whenever the included copy is updated. Missing membership information never triggers guessing or removal from other folders.
 
@@ -371,7 +375,7 @@ vpub comments verify-action RECEIPT_KEY
 |---|---|
 | Bilibili | Like/unlike through pinned upstream bili-cli; exact comment state read back |
 | Instagram / X | Like/unlike the exact visible comment; an ambiguous heart stops the action |
-| YouTube | Edit/delete your own comment on your own video through the official API |
+| YouTube | Like/unlike any comment on Studio's comment page. Edit/delete your own comment on your own video there too, or through the official API with the add-on. These have not been tried on a real channel. |
 | Douyin | Creator Center comment like/unlike; delete your own comment without replies on your own work; existing top-level replies remain available |
 
 These are explicit single-comment commands, separate from video likes. Read the comment first. There is no mandatory editorial approval; `--dry-run` is optional. YouTube editing takes the host's single-language text without translating it. Author, account, work and current text are checked before writing. A timed-out or unverified action is retained and blocks another mutation until read-only verification; there is no automatic resend. Test labels use `--test-id` and are excluded from ordinary reports. Deletion is only performed when explicitly requested and is irreversible; login never runs it. Douyin deletion refuses parent comments with replies. Pinning/hiding boundaries are described below; bulk moderation is not implemented.
