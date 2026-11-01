@@ -368,7 +368,7 @@ class ScheduleTests(FormCase):
         self.assertIn(("fill", "ytcp-date-picker tp-yt-paper-input input", "2030年1月1日"), page.log)
         self.assertIn(("type", "#time-of-day-container input", "08:00"), page.log)
         self.assertEqual({"at": self.WHEN, "local": "2030-01-01T08:00:00+08:00", "date": [2030, 1, 1], "time": [8, 0], "timezone_basis": "studio",
-                          "time_entry": {"typed": "08:00", "after_enter": "08:00"}}, result["schedule"])
+                          "time_entry": {"typed": "08:00", "after_leaving": "08:00"}}, result["schedule"])
         self.assertIsNone(page.chosen_visibility())
         self.assertEqual(1, len(page.clicks("#done-button")))
         self.assertEqual("SUBMISSION_VERIFIED", result["state"])
@@ -394,7 +394,7 @@ class ScheduleTests(FormCase):
         with self.assertRaises(VpubError) as caught:
             self.run_form(FakeStudio(refuse_schedule=True), self.plan(schedule=self.WHEN))
         self.assertIn("held 18:00 before", caught.exception.message)
-        self.assertIn("after_enter", caught.exception.message)
+        self.assertIn("after_leaving", caught.exception.message)
         self.assertIn("quarter hour", caught.exception.hint)
 
     def test_anything_unconfirmed_stops_before_the_final_click(self):

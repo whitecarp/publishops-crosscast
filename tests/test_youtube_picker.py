@@ -58,7 +58,7 @@ class TickTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(("true", [0, 1]), (await box.get_attribute("aria-checked"), await self.page.evaluate("[window.clicks, window.keys]", isolated_context=False)))
 
 
-# Field checks saw a time come back an hour later after Enter. Nothing here says that is exactly how Studio builds it.
+# A field check typed 14:07, and Enter moved it to 15:07 while leaving the box kept it. Nothing here says that is exactly how Studio builds it.
 ENTER_MOVES_IT = """<!doctype html><body><input id="clock" value="00:00">
 <script>
 const clock = document.getElementById('clock');
@@ -98,28 +98,28 @@ class TimeTests(unittest.IsolatedAsyncioTestCase):
         await self.clock.press("Enter")
         self.assertEqual("10:00", await self.clock.input_value())
         await self.page.set_content(TYPED_ONLY)
-        self.assertEqual({"typed": "09:00", "after_enter": "09:00"}, await browser_forms.yt_set_time(self.page, self.clock, "09:00"))
+        self.assertEqual({"typed": "09:00", "after_leaving": "09:00"}, await browser_forms.yt_set_time(self.page, self.clock, "09:00"))
         self.assertEqual("09:00", await self.clock.input_value())
 
     async def test_a_box_that_takes_no_typing_gets_the_time_from_its_list(self):
         await self.page.set_content(LIST_ONLY)
-        self.assertEqual({"typed": "10:00", "after_enter": "10:00", "listed": 1, "from_list": "09:00"}, await browser_forms.yt_set_time(self.page, self.clock, "09:00"))
+        self.assertEqual({"typed": "10:00", "after_leaving": "10:00", "listed": 1, "from_list": "09:00"}, await browser_forms.yt_set_time(self.page, self.clock, "09:00"))
         self.assertEqual("09:00", await self.clock.input_value())
 
     async def test_a_time_the_list_does_not_offer_leaves_it_for_the_read_back_to_refuse(self):
         await self.page.set_content(LIST_ONLY)
-        self.assertEqual({"typed": "10:00", "after_enter": "10:00", "listed": 0, "after_leaving": "10:00"}, await browser_forms.yt_set_time(self.page, self.clock, "09:07"))
+        self.assertEqual({"typed": "10:00", "after_leaving": "10:00", "listed": 0, "after_enter": "10:00"}, await browser_forms.yt_set_time(self.page, self.clock, "09:07"))
         self.assertEqual("10:00", await self.clock.input_value())
 
-    async def test_when_enter_moves_the_time_it_is_typed_again_and_left_without_enter(self):
+    async def test_a_time_typed_and_left_never_meets_the_enter_that_moves_it(self):
         await self.page.set_content(ENTER_MOVES_IT % "")
-        self.assertEqual({"typed": "14:07", "after_enter": "15:07", "listed": 0, "after_leaving": "14:07"}, await browser_forms.yt_set_time(self.page, self.clock, "14:07"))
+        self.assertEqual({"typed": "14:07", "after_leaving": "14:07"}, await browser_forms.yt_set_time(self.page, self.clock, "14:07"))
         self.assertEqual("14:07", await self.clock.input_value())
 
     async def test_when_leaving_moves_it_too_the_wrong_time_is_left_for_the_read_back_to_refuse(self):
         await self.page.set_content(ENTER_MOVES_IT % """clock.addEventListener('blur', () => { const [hour, minute] = clock.value.split(':'); clock.value = String(+hour + 1).padStart(2, '0') + ':' + minute; });""")
         steps = await browser_forms.yt_set_time(self.page, self.clock, "14:07")
-        self.assertEqual("15:07", steps["after_leaving"])
+        self.assertEqual(("15:07", "15:07"), (steps["after_leaving"], steps["after_enter"]))
 
 
 if __name__ == "__main__":

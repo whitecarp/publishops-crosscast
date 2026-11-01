@@ -509,8 +509,8 @@ async def yt_playlists(page, titles):
 
 
 async def yt_set_time(page, clock, wanted):
-    """Studio's time box comes with a list of times. Field checks found a time typed or put into it and confirmed with Enter came back an hour later, while a quarter-hour time could still be set.
-    So it is typed, then chosen from the list when the list offers exactly this time, then typed again and left without Enter. The caller reads back what stayed; this says what the box showed at each step."""
+    """Studio's time box comes with a list of times. A field check typed 14:07: Enter moved it to 15:07, and leaving the box with Tab kept 14:07.
+    So it is typed and left, then chosen from the list when the list offers exactly this time, and Enter is the last thing tried. The caller reads back what stayed; this says what the box showed at each step."""
     steps = {}
 
     async def held(step):
@@ -520,9 +520,9 @@ async def yt_set_time(page, clock, wanted):
     await clock.select_text(timeout=5000)
     await clock.press_sequentially(wanted)
     await held('typed')
-    await clock.press('Enter')
+    await clock.press('Tab')
     await page.wait_for_timeout(1000)
-    if await held('after_enter'):
+    if await held('after_leaving'):
         return steps
     await clock.click(timeout=10000)
     await page.wait_for_timeout(500)
@@ -533,11 +533,12 @@ async def yt_set_time(page, clock, wanted):
         await page.wait_for_timeout(1000)
         if await held('from_list'):
             return steps
+    await clock.click(timeout=10000)
     await clock.select_text(timeout=5000)
     await clock.press_sequentially(wanted)
-    await clock.press('Tab')
+    await clock.press('Enter')
     await page.wait_for_timeout(1000)
-    await held('after_leaving')
+    await held('after_enter')
     return steps
 
 
