@@ -92,7 +92,7 @@ async def execute(page, platform, identity, payload):
             await page.goto(url,wait_until='domcontentloaded',timeout=60000)
             title=page.locator('input[placeholder*="填写作品标题"]')
             await title.wait_for(timeout=45000)
-            if await title.input_value()!=receipt['title']: raise VpubError('wrong_work','Existing title differs from the receipt; inspect before applying a cover.')
+            if receipt.get('title') and await title.input_value()!=receipt['title']: raise VpubError('wrong_work','Existing title differs from the receipt; inspect before applying a cover.')
             control=page.locator('[class^="coverControl-"]').filter(has=page.get_by_text('竖封面3:4',exact=True))
             if payload.get('verify_only'):
                 return await capture_cover(page,control,output,patch,save,url)
@@ -114,11 +114,48 @@ async def execute(page, platform, identity, payload):
             return await capture_cover(page,control,output,patch,save,url)
         if 'chapters' in patch:
             return await douyin_chapters(page,receipt,patch,save,submit,verify_only=payload.get('verify_only',False))
+        if 'caption' in patch:
+            return await douyin_text(page,work_id,patch,save,submit,payload.get('verify_only',False))
         raise VpubError('unsupported_edit','No supported Douyin correction fields.')
     if platform=='youtube':
         from .youtube_studio import edit
         return await edit(page,payload,save,submit)
     raise VpubError('unsupported_edit','Unsupported platform.')
+
+
+async def douyin_fields(page,url,work_id):
+    await page.goto(url,wait_until='domcontentloaded',timeout=60000)
+    title=page.locator('input[placeholder*="填写作品标题"]')
+    await title.wait_for(timeout=45000)
+    await risk_check(page)
+    if f'mid={work_id}' not in urlsplit(page.url).query: raise VpubError('wrong_work','Douyin opened another page instead of this work; nothing changed.')
+    for _ in range(20):
+        if normalize(await title.input_value()): break
+        await page.wait_for_timeout(500)
+    return title,await unique_visible(page.locator('[contenteditable=true]'),'Douyin description')
+
+
+async def douyin_text(page,work_id,patch,save,submit,verify_only=False):
+    """Title and description on the work's own edit page, the one its cover uses. Saved once, then read back from a fresh load."""
+    url=f'https://creator.douyin.com/creator-micro/content/post/video?mid={work_id}&enter_from=edit_item'
+    wanted=normalize(patch['title']),normalize(patch['caption'])
+    async def current(title,editor): return normalize(await title.input_value()),normalize(await editor.inner_text())
+    title,editor=await douyin_fields(page,url,work_id)
+    if await current(title,editor)==wanted:
+        return save(state='EDIT_VERIFIED',unchanged=True,platform_writes=0,url=url)
+    if verify_only:
+        return save(state='EDIT_MISMATCH',platform_writes=0,url=url,reason='The saved text differs; no write attempted.')
+    await title.fill(patch['title'])
+    await editor.fill(patch['caption'])
+    if await current(title,editor)!=wanted:
+        raise VpubError('metadata_mismatch','Douyin\'s form did not keep the intended text; nothing was saved.')
+    button=await visible(page.get_by_role('button',name=re.compile(r'^(保存|保存修改|提交修改|发布)$')))
+    if button is None: raise VpubError('layout_changed','Existing-work save button is unavailable; nothing was saved.')
+    await submit(button)
+    await page.wait_for_url(re.compile('/content/manage'),timeout=60000)
+    title,editor=await douyin_fields(page,url,work_id)
+    matched=await current(title,editor)==wanted
+    return save(state='EDIT_VERIFIED' if matched else 'EDIT_SUBMITTED_UNVERIFIED',platform_writes=1,url=url,note='Douyin may review the change, and the old text may show until that finishes.')
 
 
 async def capture_cover(page,control,output,patch,save,url):

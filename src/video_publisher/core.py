@@ -209,8 +209,8 @@ def load_plan(path, selected=None):
         if not isinstance(v, dict):
             raise VpubError("invalid_manifest", "Each platform needs an object.")
         permitted = {"account", "title", "description", "tags", "visibility", "ai_generated", "schedule", "content_language", "metadata_language", "metadata_mode", "chapters", "duration_seconds"}
-        permitted |= {"tid", "expected_uid", "method"} if platform == "bilibili" else set()
-        permitted |= {"category_id", "made_for_kids", "expected_channel_id", "method", "playlist_ids", "playlist_titles", "submission_mode"} if platform == "youtube" else set()
+        permitted |= {"tid", "expected_uid", "method", "season_id"} if platform == "bilibili" else set()
+        permitted |= {"category_id", "made_for_kids", "expected_channel_id", "method", "playlist_ids", "playlist_titles", "create_missing_playlists", "submission_mode"} if platform == "youtube" else set()
         permitted |= {"method", "expected_identity"} if platform == "douyin" else set()
         permitted |= {"method", "expected_identity", "submission_mode"} if platform in {"x", "instagram"} else set()
         if set(v) - permitted:
@@ -238,6 +238,10 @@ def load_plan(path, selected=None):
                 raise VpubError("invalid_playlist", "Use custom playlist IDs copied from YouTube, not video IDs or system lists.")
             if v.get("method") == "api" and v.get("playlist_titles"):
                 raise VpubError("invalid_playlist", "API mode requires exact playlist_ids; names may be ambiguous.")
+            if "create_missing_playlists" in v and (type(v["create_missing_playlists"]) is not bool or v.get("method", "browser") != "browser" or not v.get("playlist_titles")):
+                raise VpubError("invalid_playlist", "create_missing_playlists is true or false, on the browser route, with playlist_titles.")
+        if platform == "bilibili" and "season_id" in v and (type(v["season_id"]) is not int or v["season_id"] <= 0):
+            raise VpubError("invalid_collection", "Use the exact collection ID from vpub collection list bilibili.")
         if platform == "douyin" and v.get("method", "browser") not in {"native", "browser"}:
             raise VpubError("invalid_method", "Douyin method must be native or browser.")
         if platform == "douyin" and "expected_identity" in v:
@@ -332,8 +336,12 @@ def load_plan(path, selected=None):
         if platform == "bilibili":
             plans[platform]["method"] = v.get("method", "cli")
         if "chapters" in v:
-            from .chapters import validate
+            from .chapters import validate, youtube_description
             validate(v["chapters"], platform, plans[platform]["method"], v.get("duration_seconds"))
+            if platform == "youtube" and plans[platform]["method"] == "browser":
+                plans[platform]["description"] = youtube_description(desc, v["chapters"], v["duration_seconds"])
+                if len(plans[platform]["description"].encode("utf-8")) > 5000:
+                    raise VpubError("invalid_description", "YouTube description plus chapters exceeds 5000 UTF-8 bytes.")
     covers = {}
     supplied_covers = m.get("covers", {})
     if not isinstance(supplied_covers, dict) or set(supplied_covers) - set(PLATFORMS):

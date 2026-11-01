@@ -30,6 +30,7 @@ def post_id_now():
 
 class FakeX:
     update_label = "更新"
+    delete_label = "删除"
 
     def __init__(self):
         self.liked = {}
@@ -41,6 +42,7 @@ class FakeX:
         self.post_text = "ty for 4 years of bangers"
         self.confirm_hide = True
         self.chat_ready = True
+        self.gone_words = "Hmm...this page doesn't exist. Try searching for something else."
 
     def actions(self, post, likes="9839", label=None):
         liked = "true" if self.liked.get(post) else "false"
@@ -57,7 +59,7 @@ class FakeX:
     def more(self, post, hidden=False):
         item = "取消隐藏回复" if hidden else "隐藏回复"
         return f"""<button type="button" aria-label="更多" aria-haspopup="menu" data-slot="xds-menu-trigger" onclick="document.getElementById('menu-{post}').hidden = false"><svg role="img" width="16" height="16"><use href="#icon-more-dots-hor"></use></svg></button>
-          <div role="menu" id="menu-{post}" hidden><div role="menuitem" tabindex="0" onclick="hideReply('{post}', {str(hidden).lower()})">{item}</div><div role="menuitem" tabindex="0" onclick="editPost('{post}')">编辑</div></div>"""
+          <div role="menu" id="menu-{post}" hidden><div role="menuitem" tabindex="0" onclick="hideReply('{post}', {str(hidden).lower()})">{item}</div><div role="menuitem" tabindex="0" onclick="editPost('{post}')">编辑</div><div role="menuitem" tabindex="0" onclick="askDelete('{post}')">{self.delete_label}</div></div>"""
 
     def reply_row(self, row, hidden=False, extra=""):
         return f"""<article class="flex flex-col gap-1"><a href="/{row['author']}"><img alt="" width="10" height="10"></a><a href="/{row['author']}"><div>Name</div></a><a href="/{row['author']}"><span>@{row['author']}</span></a>
@@ -76,7 +78,10 @@ class FakeX:
         return """<div role="dialog" aria-modal="true" id="composer" data-modal-slot-surface="" hidden><form onsubmit="return false"><div contenteditable="true" role="textbox" aria-multiline="true" aria-label="发布你的回复" oninput="send.disabled = !this.innerText.trim()"></div>
           <button type="button" id="send" disabled>回复</button></form></div>
           <div role="alertdialog" id="sure" hidden><h2>Hiding replies</h2><button type="button" id="sure-yes">隐藏回复</button></div>
+          <div role="alertdialog" id="gone" hidden><h2>Delete?</h2><button type="button" id="gone-yes">DELETE_LABEL</button></div>
           <script>
+          function askDelete(post) { document.getElementById('menu-' + post).hidden = true; document.getElementById('gone').hidden = false;
+            document.getElementById('gone-yes').onclick = () => { fetch('/i/api/graphql/abc/DeleteTweet?write=delete/' + post, {method: 'POST', body: '{}'}); document.getElementById('gone').hidden = true; }; }
           const send = document.getElementById('send');
           const box = document.querySelector('#composer [contenteditable=true]');
           let write = 'reply';
@@ -92,7 +97,7 @@ class FakeX:
           function send_hide(post) { fetch('/i/api/graphql/abc/hide?write=hide/' + post, {method: 'POST', body: '{}'}); document.getElementById('sure').hidden = true; }
           function hideReply(post, hidden) { document.getElementById('menu-' + post).hidden = true; if (hidden) { fetch('/i/api/graphql/abc/unhide?write=unhide/' + post, {method: 'POST', body: '{}'}); return; }
             if (CONFIRM) { pendingHide = post; document.getElementById('sure').hidden = false; document.getElementById('sure-yes').onclick = () => send_hide(post); } else send_hide(post); }
-          </script>""".replace("CONFIRM", "true" if self.confirm_hide else "false").replace("POST_TEXT", self.post_text).replace("UPDATE_LABEL", self.update_label)
+          </script>""".replace("CONFIRM", "true" if self.confirm_hide else "false").replace("POST_TEXT", self.post_text).replace("UPDATE_LABEL", self.update_label).replace("DELETE_LABEL", self.delete_label)
 
     async def handle(self, route):
         url = urlsplit(route.request.url)
@@ -113,6 +118,9 @@ class FakeX:
             return await self.page_at(route, '<button data-testid="dm-new-chat-button">New</button>' if self.chat_ready else '<input aria-label="Digit 1 of 4">')
         if path == f"/{OWNER}/status/{POST}" or path == f"/i/status/{POST}" or path == f"/{OWNER}/status/{REPLY}" or path == f"/i/status/{REPLY}":
             return await self.page_at(route, self.post_page())
+        if path == f"/{OWNER}/status/{MINE}":
+            mine = any(row["id"] == MINE for row in self.replies)
+            return await self.page_at(route, self.post_page() if mine else f"<main><p>{self.gone_words}</p></main>")
         await self.page_at(route, "<main></main>")
 
     async def page_at(self, route, body):
@@ -128,6 +136,8 @@ class FakeX:
             self.replies.append({"id": post_id_now(), "author": OWNER, "text": data["text"]})
         elif parts[0] == "edit":
             self.post_text = data["text"]
+        elif parts[0] == "delete":
+            self.replies = [row for row in self.replies if row["id"] != parts[1]]
         elif parts[0] == "hide":
             row = next(row for row in self.replies if row["id"] == parts[1])
             self.replies.remove(row)
@@ -141,6 +151,7 @@ class FakeX:
 class FakeEarlierX(FakeX):
     """What a signed-in account showed: test labels, time links and a second reply box on the post's own page."""
     update_label = "Update"
+    delete_label = "Delete"
 
     def actions(self, post, likes="9839", label=None):
         like = "unlike" if self.liked.get(post) else "like"
@@ -154,7 +165,7 @@ class FakeEarlierX(FakeX):
     def more(self, post, hidden=False):
         item = "Unhide reply" if hidden else "Hide reply"
         return f"""<button type="button" data-testid="caret" aria-label="More" aria-haspopup="menu" onclick="document.getElementById('menu-{post}').hidden = false">...</button>
-          <div role="menu" id="menu-{post}" hidden><div role="menuitem" tabindex="0" onclick="hideReply('{post}', {str(hidden).lower()})">{item}</div><div role="menuitem" tabindex="0" onclick="editPost('{post}')">Edit post</div></div>"""
+          <div role="menu" id="menu-{post}" hidden><div role="menuitem" tabindex="0" onclick="hideReply('{post}', {str(hidden).lower()})">{item}</div><div role="menuitem" tabindex="0" onclick="editPost('{post}')">Edit post</div><div role="menuitem" tabindex="0" onclick="askDelete('{post}')">{self.delete_label}</div></div>"""
 
     def author(self, name, handle, row):
         return f"""<div data-testid="User-Name"><a href="/{handle}"><span>{name}</span></a><a href="/{handle}"><span>@{handle}</span></a>
@@ -175,9 +186,10 @@ class FakeEarlierX(FakeX):
         return f"<main>{focal}{rows}{ad}</main>{self.composer()}"
 
     def composer(self):
+        # A signed-in account's reply window nests one dialog inside another, with every control in the inner one.
         return (super().composer().replace('contenteditable="true" role="textbox"', 'contenteditable="true" data-testid="tweetTextarea_0" role="textbox"')
                 .replace('id="send"', 'id="send" data-testid="tweetButton"').replace(">回复<", ">Reply<").replace('role="alertdialog"', 'role="dialog"')
-                .replace(">隐藏回复<", ">Hide reply<"))
+                .replace(">隐藏回复<", ">Hide reply<").replace('<form onsubmit="return false">', '<div role="dialog"><form onsubmit="return false">').replace("</form>", "</form></div>"))
 
 
 class Site(unittest.IsolatedAsyncioTestCase):
@@ -369,6 +381,38 @@ class ChangeTests(Site):
 
     async def no_wait(self, ms):
         return None
+
+    def delete_payload(self, operation="set", comment=MINE, text="My own note", is_owner=True, receipt=None):
+        return {"operation": operation, "receipt_path": receipt, "request": {"identity": OWNER, "work_id": POST, "kind": "delete", "desired": True,
+                                                                             "comment": {"id": comment, "text": text, "is_owner": is_owner}}}
+
+    async def test_deleting_your_own_reply_confirms_once_and_reads_back_as_gone(self):
+        path = self.receipt("delete", state="COMMENT_READY")
+        before = await comment_actions_x.delete_own(self.page, OWNER, self.delete_payload("status"))
+        self.assertEqual((False, "My own note"), (before["deleted"], before["text"]))
+        result = await comment_actions_x.delete_own(self.page, OWNER, self.delete_payload(receipt=path))
+        self.assertEqual(("COMMENT_UNVERIFIED", 1), (result["state"], result["platform_writes"]))
+        self.assertEqual([("delete", MINE)], self.x.writes)
+        self.assertEqual("COMMENT_UNVERIFIED", read_json(path)["state"])
+        self.assertIs(True, (await comment_actions_x.delete_own(self.page, OWNER, self.delete_payload("status")))["deleted"])
+
+    async def test_an_unknown_page_does_not_count_as_deleted(self):
+        self.x.replies = [row for row in self.x.replies if row["id"] != MINE]
+        self.x.gone_words = "Something went wrong."
+        result = await comment_actions_x.delete_own(self.page, OWNER, self.delete_payload("status"))
+        self.assertIsNone(result["deleted"])
+
+    async def test_someone_elses_reply_is_refused_before_anything(self):
+        with self.assertRaises(VpubError) as caught:
+            await comment_actions_x.delete_own(self.page, OWNER, self.delete_payload(comment=REPLY, text="这首歌叫什么？", is_owner=False))
+        self.assertEqual("own_comment_required", caught.exception.code)
+        self.assertEqual([], self.x.writes)
+
+    async def test_a_reply_that_changed_is_not_deleted(self):
+        with self.assertRaises(VpubError) as caught:
+            await comment_actions_x.delete_own(self.page, OWNER, self.delete_payload(text="Different words", receipt=self.receipt("delete", state="COMMENT_READY")))
+        self.assertEqual("comment_changed", caught.exception.code)
+        self.assertEqual([], self.x.writes)
 
     def edit_payload(self, text="New words"):
         return {"patch": {"post_text": text, "title": text}, "receipt": {"id": POST}, "edit_receipt_path": str(self.root / "edit.json")}

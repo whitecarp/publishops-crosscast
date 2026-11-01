@@ -12,6 +12,9 @@ async def execute(page, platform, identity, payload):
     if platform=='x' and payload['request'].get('kind')=='hide':
         from .comment_actions_x import execute as hide
         return await hide(page,identity,payload)
+    if platform=='x' and payload['request'].get('kind')=='delete':
+        from .comment_actions_x import delete_own
+        return await delete_own(page,identity,payload)
     if platform == 'douyin':
         from .comment_actions_douyin import execute as douyin
         return await douyin(page, identity, payload)

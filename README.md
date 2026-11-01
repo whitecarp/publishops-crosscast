@@ -108,7 +108,7 @@ B站、抖音用简体中文，YouTube、Instagram、X 用英文。视频本身�
 
 ### ✏️ 发出去还能改
 
-`vpub edit` 原地修改已发布的作品：YouTube 的标题和简介、Instagram 的配文、抖音的竖版封面和章节，X 在出现编辑入口时也能改。不换视频，不改公开范围。
+`vpub edit` 原地修改已发布的作品：B站的标题、简介、标签、封面和章节，YouTube 的标题、简介、缩略图和章节，抖音的标题、简介、竖版封面和章节，Instagram 的配文，X 在出现编辑入口时也能改。不换视频，不改公开范围。不是 CrossCast 发布的旧作品，先用 `vpub ops adopt` 认领，再用 `vpub edit-work` 修改。
 
 ### 💬 评论、点赞和私信
 

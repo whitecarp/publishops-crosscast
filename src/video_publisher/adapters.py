@@ -174,10 +174,21 @@ def auth_status(platform, account, method=None):
         return youtube_api().status(account)
     if method == "api":
         return paid_api().status(platform, account)
-    from .browser_runtime import profile_dir
-    if not (profile_dir(platform, account).parent / (platform + "-identity.json")).exists():
-        raise VpubError("not_logged_in", "No verified independent browser login.", f"Run vpub auth login {platform} --method browser.")
-    return browser_call(platform, "status", account)
+    from .browser_runtime import identity_path, profile_dir, remember_identity
+    if identity_path(platform, account).exists():
+        return browser_call(platform, "status", account)
+    # A sign-in can finish after its window stopped being watched, leaving a working profile with no record. The site decides.
+    profile = profile_dir(platform, account)
+    if profile.is_dir() and any(profile.iterdir()):
+        try:
+            found = browser_call(platform, "status", account)
+        except VpubError as exc:
+            if exc.code != "auth_expired":
+                raise
+        else:
+            remember_identity(platform, account, found["identity"])
+            return found
+    raise VpubError("not_logged_in", "No verified independent browser login.", f"Run vpub auth login {platform} --method browser.")
 
 
 def auth_login(platform, account, client_json=None, method=None):
@@ -226,14 +237,34 @@ def publish_bilibili(plan, options, checkpoint):
         args += ["--private"]
     if options.get("schedule"):
         args += ["--schedule", options["schedule"]]
+    if options.get("season_id"):
+        args += ["--season", str(options["season_id"])]
     v = bili(args, timeout=3600)
     bvid = v.get("bvid")
     if not bvid:
         return {"state": "SUBMITTED_UNVERIFIED", "reason": "Backend returned no BV identifier."}
     receipt = {"state": "SUBMITTED", "id": bvid, "url": f"https://www.bilibili.com/video/{bvid}",
                "expected_ai_declare": options["ai_generated"]}
+    if options.get("season_id"):
+        # The upload stands even if adding it to the collection failed; the receipt says so.
+        receipt["season"] = {"id": options["season_id"], "added": v.get("season_added") is True, "error": v.get("season_error")}
+    if options.get("chapters"):
+        receipt.update(pending_chapters=options["chapters"], chapters_state="PENDING")
     checkpoint(receipt)
     return verify("bilibili", options["account"], receipt)
+
+
+def finish_bilibili_chapters(receipt):
+    """Bilibili takes chapters once the work exists, so they follow the upload. Setting them replaces the list, so a repeat cannot stack."""
+    if not receipt.get("pending_chapters") or receipt.get("chapters_state") == "VERIFIED":
+        return receipt
+    from .edits_bilibili import set_chapters
+    try:
+        saved = set_chapters(receipt["id"], receipt["pending_chapters"])
+    except VpubError as exc:
+        return {**receipt, "chapters_state": "NOT_APPLIED", "chapters_error": exc.code, "chapters_reason": exc.message,
+                "next": "Run vpub verify for this receipt to try the chapters again; the video is not uploaded again."}
+    return {**receipt, "chapters_state": "VERIFIED" if saved else "SAVE_UNVERIFIED"}
 
 
 def publish(platform, plan, options, checkpoint):
@@ -276,5 +307,5 @@ def verify(platform, account, receipt):
             result.update(state="SUBMITTED_UNVERIFIED", declaration_mismatch=True,
                           note="Bilibili recorded a different AI-content declaration. Correct it on this existing work "
                                "(bili upload edit with --ai-declare or --no-ai-declare); do not upload again.")
-        return result
+        return finish_bilibili_chapters(result)
     return youtube_api().verify_video(account, receipt, video_id)

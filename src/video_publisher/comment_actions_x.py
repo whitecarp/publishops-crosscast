@@ -49,8 +49,44 @@ async def execute(page,identity,payload):
     if await confirm.is_visible():
         if not r['desired']:raise VpubError('unexpected_confirmation','Unexpected action confirmation; inspect before retrying.')
         window=page.locator('[role="dialog"],[role="alertdialog"]').filter(has=confirm)
-        if await window.count()!=1:raise VpubError('unexpected_confirmation','Unrecognized hide-reply dialog; inspect before retrying.')
+        if not await window.count():raise VpubError('unexpected_confirmation','Unrecognized hide-reply dialog; inspect before retrying.')
         await risk_check(page);stop_check('x');await confirm.click()
     await page.wait_for_timeout(1200)
     saved=read_json(payload['receipt_path']);saved.update(state='COMMENT_UNVERIFIED',platform_writes=1);atomic_json(payload['receipt_path'],saved)
+    return {'state':'COMMENT_UNVERIFIED','platform_writes':1}
+
+
+async def delete_own(page,identity,payload):
+    """Delete the account's own reply, read from that reply's own page so a long conversation proves nothing either way."""
+    r=payload['request'];target=r['comment'];reply=target['id']
+    if identity!=r['identity']:raise VpubError('wrong_account','X owner changed.')
+    if not target.get('is_owner'):raise VpubError('own_comment_required','Only your own reply can be deleted.')
+    await page.goto(f'https://x.com/{identity}/status/{reply}',wait_until='domcontentloaded',timeout=60000)
+    rows=x_pages.post_row(page,reply)
+    try:await rows.first.wait_for(state='visible',timeout=20000)
+    except Exception:
+        await risk_check(page)
+        missing=x_pages.GONE_PAGE.search(await page.locator('body').inner_text())
+        return {'identity':identity,'text':None,'liked':None,'deleted':True if missing else None,'source':'reply_page'}
+    await risk_check(page)
+    row=await unique_visible(rows,'exact reply')
+    post=await x_pages.post_fields(row)
+    if not post or post['author'].casefold()!=identity.casefold():raise VpubError('own_comment_required','This page shows a reply by another account; nothing changed.')
+    observed={'identity':identity,'text':post['text'],'liked':None,'deleted':False,'source':'reply_page'}
+    if payload['operation']=='status':return observed
+    if payload['operation']!='set':raise VpubError('unsupported_operation','Choose status or set.')
+    if post['text']!=target['text']:raise VpubError('comment_changed','Reply text changed.')
+    await (await unique_visible(row.locator(x_pages.MORE),'reply menu button')).click()
+    menu=await unique_visible(page.get_by_role('menu'),'reply menu')
+    await (await unique_visible(menu.get_by_role('menuitem',name=x_pages.DELETE_POST),'reply Delete')).click()
+    confirm=page.locator('[role="dialog"],[role="alertdialog"]').get_by_role('button',name=x_pages.DELETE_POST)
+    try:await confirm.first.wait_for(state='visible',timeout=10000)
+    except Exception:raise VpubError('unexpected_confirmation','X did not ask to confirm the delete; nothing was deleted.') from None
+    confirm=await unique_visible(confirm,'delete confirmation')
+    await risk_check(page);stop_check('x')
+    from .comment_actions import submitting
+    submitting(payload['receipt_path'])
+    await confirm.click()
+    saved=read_json(payload['receipt_path']);saved.update(state='COMMENT_UNVERIFIED',platform_writes=1);atomic_json(payload['receipt_path'],saved)
+    await page.wait_for_timeout(2000)
     return {'state':'COMMENT_UNVERIFIED','platform_writes':1}

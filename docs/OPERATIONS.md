@@ -368,17 +368,23 @@ vpub comments delete youtube VIDEO_ID OWN_COMMENT_ID
 vpub comments like douyin WORK_ID COMMENT_ID
 vpub comments like douyin WORK_ID COMMENT_ID --remove
 vpub comments delete douyin WORK_ID OWN_COMMENT_ID
+vpub comments pin youtube VIDEO_ID COMMENT_ID
+vpub comments pin youtube VIDEO_ID COMMENT_ID --remove
+vpub comments remove youtube VIDEO_ID VIEWER_COMMENT_ID
+vpub comments delete bilibili BV_ID OWN_COMMENT_ID
+vpub comments remove bilibili BV_ID VIEWER_COMMENT_ID
+vpub comments delete x POST_ID OWN_REPLY_ID
 vpub comments verify-action RECEIPT_KEY
 ```
 
 | 平台 | 新增評論控制 |
 |---|---|
-| B站 | 透過固定版本 bili-cli 點讚／取消讚，讀回確切評論狀態 |
-| Instagram／X | 對確切可見評論點讚／取消讚；愛心控制項不唯一時停止 |
-| YouTube | 在 Studio 留言頁替任何留言按讚／取消按讚，也可編輯／刪除自己影片下自己發出的留言；安裝附加元件後編輯與刪除改用官方 API。這些操作尚未在真實頻道上試過。 |
+| B站 | 透過內含的 bili-cli 點讚／取消讚、置頂／取消置頂頂層評論；刪除自己的評論，或移除自己作品下觀眾的評論；讀回確切評論狀態。刪除與移除尚未在真實帳號上試過。 |
+| Instagram／X | 對確切可見評論點讚／取消讚；愛心控制項不唯一時停止。X 也可隱藏／取消隱藏觀眾的回覆，並刪除自己的回覆，從該回覆自己的頁面讀回；刪除尚未在真實帳號上試過。 |
+| YouTube | 在 Studio 留言頁替任何留言按讚／取消按讚、置頂／取消置頂，移除觀眾的留言，也可編輯／刪除自己發出的留言；安裝附加元件後編輯與刪除改用官方 API。置頂不會取代另一則已置頂的留言。這些操作尚未在真實頻道上試過。 |
 | 抖音 | 創作者中心評論點讚／取消讚；刪除自己作品下自己發出且沒有回覆的評論；既有頂層回覆仍可使用 |
 
-這些指令明確指定單條評論，與影片點讚分開。先讀取評論再操作；不設逐條文案審核，`--dry-run` 為可選預覽。YouTube 編輯使用宿主提供的單語正文，不自行翻譯。提交前核對作者、帳號、作品與當前正文；逾時或未確認的操作會保留回執，阻止再次修改，應以唯讀核驗處理，不自動重送。自測使用 `--test-id`，普通匯報排除這些記錄。刪除只在明確要求時執行且不可復原，登入不會觸發。抖音刪除拒絕有回覆的父評論。置頂／隱藏邊界見下節；批量審核未實作。
+這些指令明確指定單條評論，與影片點讚分開。先讀取評論再操作；不設逐條文案審核，`--dry-run` 為可選預覽。YouTube 編輯使用宿主提供的單語正文，不自行翻譯。提交前核對作者、帳號、作品與當前正文；逾時或未確認的操作會保留回執，阻止再次修改，應以唯讀核驗處理，不自動重送。自測使用 `--test-id`，普通匯報排除這些記錄。刪除與移除只在明確要求時執行且不可復原，登入不會觸發。`delete` 用於自己的評論，`remove` 用於觀眾的評論。抖音刪除拒絕有回覆的父評論。置頂／隱藏邊界見下節；批量審核未實作。
 
 ## 私信與平台差異
 
@@ -533,11 +539,13 @@ vpub browser cover RECEIPT_KEY --file landscape.jpg --portrait portrait.jpg --id
 
 ## 播放列表、類別與章節
 
-YouTube 可設定 `playlist_titles`（免費背景路徑或內置瀏覽器，依確切標題勾選）或 `playlist_ids`（付費 API）。API 先查成員避免重複加入，不盲目重試結果不明的寫入。所需管理權限已納入首次 OAuth 授權。Studio 新建私密清單並選入既有影片已驗證，API 路徑仍為模擬測試；B站合集使用 `vpub collection`。
+YouTube 可設定 `playlist_titles`（免費背景路徑或內置瀏覽器，依確切標題勾選）或 `playlist_ids`（付費 API）。API 先查成員避免重複加入，不盲目重試結果不明的寫入。所需管理權限已納入首次 OAuth 授權。Studio 新建私密清單並選入既有影片已驗證，API 路徑仍為模擬測試。免費路徑加上 `create_missing_playlists: true` 時，頻道缺少的標題會在上傳開始前建立為私人清單，已存在的不動。B站合集使用 `vpub collection`，上傳時也可用 `season_id` 加入合集，填 `vpub collection list bilibili` 回傳的確切 ID。即使 B站拒絕加入合集，上傳本身仍然有效，回執會寫明。
 
 新 YouTube 方案必須明確填寫 `category_id`，由宿主依影片內容與官方選項選擇，不再固定為「人物和博客」。`metadata request/apply` 可提供類別，已指定值會保留。
 
 抖音 `method: browser` 可在發布流程中設定 `duration_seconds` 與 `chapters`：作品取得持久 ID 後，CLI 填入自訂章節、保存並逐項讀回；不把平台自動建議當成已完成。若作品仍審核中，回執記錄待辦，後續 `vpub verify`／`resume` 完成這個章節步驟，不重傳影片。B站／抖音／YouTube 的 native 交接仍保留。時間點來自同一支成片，自零開始、遞增且小於片長；標題跟隨平台文案語言。
+
+B站 CLI 路徑與 YouTube 瀏覽器路徑也接受 `chapters` 與 `duration_seconds`。B站在上傳後立刻透過 bili-cli 設定並進入審核；它只允許超過一定長度的影片加章節，被拒絕時上傳仍然有效，回執為 `chapters_state: NOT_APPLIED`，`vpub verify` 會再試一次章節，不重傳影片。YouTube 的章節來自簡介裡帶時間碼的行，所以會加在簡介裡：至少三段，每段至少 10 秒。兩者都尚未在真實帳號上試過。
 
 ```json
 {
@@ -560,9 +568,12 @@ vpub edit RECEIPT_KEY correction.json --dry-run
 vpub edit RECEIPT_KEY correction.json
 # 保存結果不明時只讀回，不再按保存：
 vpub edit RECEIPT_KEY correction.json --verify-only
+# 不是 CrossCast 發布的作品：先核對一次擁有者，再依平台與 ID 修改。
+vpub ops adopt bilibili BV_ID
+vpub edit-work bilibili BV_ID correction.json
 ```
 
-JSON 必須有 `expected_identity`，每次只改一組：完整 `title`／`description` 與語言欄位，或抖音 `portrait` 檔案，或 `chapters`／`duration_seconds`。YouTube 經 API、Instagram／X／抖音經專用 CLI 會話；不更換影片或修改可見性。回執保留原作品 ID，結果不明的保存禁止自動重試。封面回讀提供本機截圖，仍須視覺核對，不以檔案雜湊冒充遠端像素比對。
+JSON 必須有 `expected_identity`，每次只改一組：完整 `title`／`description` 與語言欄位（B站與抖音可加 `tags`），或抖音 `portrait` 檔案，或 YouTube／B站 `cover` 檔案，或 B站／抖音／YouTube 的 `chapters`／`duration_seconds`。B站經內含的 bili-cli，每次修改都會重新審核，也可能丟棄個別標籤，回執會列出。YouTube 經 Studio，安裝附加元件後經 API；Instagram／X／抖音經專用 CLI 會話。YouTube 的章節只取代簡介裡從零開始的時間碼清單，其餘內容不動。B站修改與抖音標題、簡介修改尚未在真實帳號上試過。不更換影片或修改可見性。回執保留原作品 ID，結果不明的保存禁止自動重試。封面回讀提供本機截圖，仍須視覺核對，不以檔案雜湊冒充遠端像素比對。
 
 X 只有原帖出現 Edit 時才可嘗試修改；不可編輯時不自動刪除、重發或回覆。本次第二期依使用者選擇保留原帖，下一條才採新語言規則。
 

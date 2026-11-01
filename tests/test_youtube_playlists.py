@@ -86,8 +86,11 @@ class FakeYouTube:
             next(row for row in self.comments if row["id"] == parts[1])["liked"] ^= True
         elif kind == "comment-edit":
             next(row for row in self.comments if row["id"] == parts[1])["text"] = data["text"]
-        elif kind == "comment-delete":
+        elif kind in {"comment-delete", "comment-remove"}:
             self.comments = [row for row in self.comments if row["id"] != parts[1]]
+        elif kind == "comment-pin":
+            row = next(row for row in self.comments if row["id"] == parts[1])
+            row["pinned"] = not row.get("pinned")
         await route.fulfill(status=200, content_type="application/json", body="{}")
 
     def list_page(self):
@@ -155,10 +158,12 @@ class FakeYouTube:
         rows = ""
         for row in self.comments:
             handle = "mychannel" if row["own"] else "viewer"
-            items = (f"""<ytcp-menu-service-item-renderer>置顶</ytcp-menu-service-item-renderer><ytcp-menu-service-item-renderer onclick="editing('{row['id']}')">修改</ytcp-menu-service-item-renderer>
+            pin = f"""<ytcp-menu-service-item-renderer onclick="act('comment-pin/{row['id']}')">{'取消置顶' if row.get('pinned') else '置顶'}</ytcp-menu-service-item-renderer>"""
+            items = (pin + f"""<ytcp-menu-service-item-renderer onclick="editing('{row['id']}')">修改</ytcp-menu-service-item-renderer>
                         <ytcp-menu-service-item-renderer onclick="removing('{row['id']}')">删除</ytcp-menu-service-item-renderer>""" if row["own"]
-                     else "<ytcp-menu-service-item-renderer>移除</ytcp-menu-service-item-renderer><ytcp-menu-service-item-renderer>举报</ytcp-menu-service-item-renderer>")
-            rows += f"""<ytcp-comment-thread><ytcp-comment comment-id="{row['id']}"><a id="name" href="http://www.youtube.com/@{handle}"><span class="author-text">{handle}</span></a><span class="published-time-text">now</span>
+                     else pin + f"""<ytcp-menu-service-item-renderer onclick="act('comment-remove/{row['id']}')">移除</ytcp-menu-service-item-renderer><ytcp-menu-service-item-renderer>举报</ytcp-menu-service-item-renderer>""")
+            pinned_label = '<span class="pinned">置顶者：mychannel</span>' if row.get("pinned") else ""
+            rows += f"""<ytcp-comment-thread><ytcp-comment comment-id="{row['id']}">{pinned_label}<a id="name" href="http://www.youtube.com/@{handle}"><span class="author-text">{handle}</span></a><span class="published-time-text">now</span>
               <div id="content-text">{row['text']}</div>
               <ytcp-comment-toggle-button id="like-button"><ytcp-icon-button aria-label="赞" onclick="fetch('/youtubei/v1/comment/perform_comment_action?write=comment-like/{row['id']}', {{method: 'POST', body: '{{}}'}}); this.parentElement.isToggled = !this.parentElement.isToggled"></ytcp-icon-button></ytcp-comment-toggle-button>
               <ytcp-icon-button id="action-menu-button" data-opens="menu-{row['id']}"></ytcp-icon-button><div id="menu-{row['id']}" hidden>{items}</div></ytcp-comment></ytcp-comment-thread>"""
@@ -170,6 +175,8 @@ class FakeYouTube:
             const states = {states};
             for (const button of document.querySelectorAll('#like-button')) button.isToggled = states[button.closest('ytcp-comment').getAttribute('comment-id')];
             function removing(id) {{ {confirm} }}
+            function act(write) {{ fetch('/youtubei/v1/comment/perform_comment_action?write=' + write, {{method: 'POST', body: '{{}}'}}); }}
+            document.addEventListener('keydown', event => {{ if (event.key === 'Escape') for (const menu of document.querySelectorAll('[id^="menu-"]')) menu.hidden = true; }});
             function editing(id) {{ document.getElementById('box').innerHTML = '<ytcp-commentbox><textarea id="textarea"></textarea><div id="submit-button"><button>Save</button></div></ytcp-commentbox>';
               document.querySelector('#submit-button button').onclick = () => {{ fetch('/youtubei/v1/comment/update_comment?write=comment-edit/' + id, {{method: 'POST', body: JSON.stringify({{text: document.getElementById('textarea').value}})}}); document.getElementById('box').innerHTML = ''; }}; }}
             </script>"""
@@ -281,6 +288,22 @@ class PlaylistTests(Browser):
         result = await self.run_op("create", collection_id=None, title="Cooking", description="About food", privacy="private", receipt_key=key)
         self.assertEqual("PLnewnewnewnewnewnewnew", result["collection_id"])
         self.assertEqual(("private", "About food"), (self.site.playlists[result["collection_id"]]["visibility"], self.site.playlists[result["collection_id"]]["description"]))
+
+    async def test_before_an_upload_only_a_missing_playlist_is_made_and_private(self):
+        made = await yt.ensure_playlists(self.page, CHANNEL, ["Recipes", "Cooking"])
+        self.assertEqual([{"id": "PLnewnewnewnewnewnewnew", "title": "Cooking"}], made)
+        self.assertEqual("private", self.site.playlists["PLnewnewnewnewnewnewnew"]["visibility"])
+        self.assertEqual(1, len([write for write in self.site.writes if write[0] == "create"]))
+
+    async def test_every_playlist_already_there_makes_nothing(self):
+        self.assertEqual([], await yt.ensure_playlists(self.page, CHANNEL, ["Recipes", "Music"]))
+        self.assertEqual([], self.site.writes)
+
+    async def test_a_list_read_only_part_way_does_not_prove_a_playlist_is_missing(self):
+        with patch.object(yt, "read_playlists", return_value=([{"id": FIRST, "title": "Recipes"}], False)), self.assertRaises(VpubError) as caught:
+            await yt.ensure_playlists(self.page, CHANNEL, ["Cooking"])
+        self.assertEqual("read_incomplete", caught.exception.code)
+        self.assertEqual([], self.site.writes)
 
     async def test_renaming_waits_for_the_change_studio_sends_later(self):
         key = self.receipt("rename", FIRST, "Later")
@@ -454,6 +477,48 @@ class CommentTests(Browser):
         with self.assertRaises(VpubError) as caught:
             await yt.comment_action(self.page, "UC" + "b" * 22, self.payload("like", receipt=self.receipt_file()))
         self.assertEqual("wrong_account", caught.exception.code)
+
+    async def test_the_pin_state_is_read_from_the_comments_own_menu(self):
+        self.assertIs(False, (await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
+        self.site.comments[0]["pinned"] = True
+        self.assertIs(True, (await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
+        self.assertEqual([], self.site.writes)
+
+    async def test_pinning_marks_the_receipt_then_chooses_it_once(self):
+        path = self.receipt_file()
+        result = await yt.comment_action(self.page, CHANNEL, self.payload("pin", receipt=path))
+        self.assertEqual(("COMMENT_UNVERIFIED", 1), (result["state"], result["platform_writes"]))
+        self.assertEqual([("comment-pin", "c1")], self.site.writes)
+
+    async def test_unpinning_uses_the_other_menu_item(self):
+        self.site.comments[0]["pinned"] = True
+        await yt.comment_action(self.page, CHANNEL, self.payload("pin", desired=False, receipt=self.receipt_file()))
+        self.assertEqual([("comment-pin", "c1")], self.site.writes)
+
+    async def test_a_comment_already_pinned_sends_nothing(self):
+        self.site.comments[0]["pinned"] = True
+        result = await yt.comment_action(self.page, CHANNEL, self.payload("pin", receipt=self.receipt_file()))
+        self.assertEqual("NO_CHANGE", result["state"])
+        self.assertEqual([], self.site.writes)
+
+    async def test_pinning_never_replaces_another_pinned_comment(self):
+        self.site.comments[1]["pinned"] = True
+        with self.assertRaises(VpubError) as caught:
+            await yt.comment_action(self.page, CHANNEL, self.payload("pin", receipt=self.receipt_file()))
+        self.assertEqual("another_comment_pinned", caught.exception.code)
+        self.assertEqual([], self.site.writes)
+
+    async def test_removing_a_viewers_comment_chooses_remove_once(self):
+        path = self.receipt_file()
+        result = await yt.comment_action(self.page, CHANNEL, self.payload("remove", receipt=path))
+        self.assertEqual(("COMMENT_UNVERIFIED", 1), (result["state"], result["platform_writes"]))
+        self.assertEqual([("comment-remove", "c1")], self.site.writes)
+        self.assertIs(True, (await yt.comment_action(self.page, CHANNEL, self.payload("remove", operation="status")))["deleted"])
+
+    async def test_the_channels_own_comment_has_no_remove_to_choose(self):
+        with self.assertRaises(VpubError):
+            await yt.comment_action(self.page, CHANNEL, self.payload("remove", "c2", text="Mine", receipt=self.receipt_file()))
+        self.assertEqual([], self.site.writes)
 
     async def test_moderation_says_it_needs_the_add_on(self):
         with self.assertRaises(VpubError) as caught:

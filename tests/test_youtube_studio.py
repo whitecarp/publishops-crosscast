@@ -397,7 +397,14 @@ class EditTests(Temporary):
             self.run_edit(FakePage(), {"cover": str(cover), "cover_sha256": "old"})
         self.assertEqual("source_changed", caught.exception.code)
 
-    def test_a_cover_edit_is_its_own_request_on_youtube_only(self):
+    def test_chapters_replace_only_the_old_list_in_the_description(self):
+        page = FakePage(fields={"title": "Same", "description": "Intro\n\n0:00 Old\n1:00 Older\n\nBye"})
+        chapters = [{"start_seconds": 0, "title": "One"}, {"start_seconds": 60, "title": "Two"}, {"start_seconds": 120, "title": "Three"}]
+        result = self.run_edit(page, {"chapters": chapters, "duration_seconds": 300})
+        self.assertEqual("EDIT_VERIFIED", result["state"])
+        self.assertEqual({"title": "Same", "description": "Intro\n\nBye\n\n0:00 One\n1:00 Two\n2:00 Three"}, page.saved_fields)
+
+    def test_a_cover_edit_is_its_own_request_on_youtube_and_bilibili_only(self):
         cover = self.root / "cover.jpg"
         cover.write_bytes(b"cover")
         checked = edits.validate_patch("youtube", {"expected_identity": CHANNEL, "cover": str(cover)})

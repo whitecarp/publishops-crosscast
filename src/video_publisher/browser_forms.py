@@ -407,6 +407,9 @@ async def publish_youtube(page, tx):
     """One upload through Studio's own form. Studio shows the video's ID as soon as the upload starts, so it is saved first."""
     options = tx.options
     tx.save(expected_text=options['description'], visibility=options['visibility'])
+    if options.get('create_missing_playlists'):
+        from .youtube_studio import ensure_playlists
+        tx.save(created_playlists=await ensure_playlists(page, tx.identity, options['playlist_titles']))
     await page.goto(f'https://studio.youtube.com/channel/{tx.identity}/videos/upload?d=ud', wait_until='domcontentloaded', timeout=60000)
     picker = page.locator('ytcp-uploads-file-picker input[type="file"]')
     await wait_until(page, picker.count, seconds=60, label='YouTube upload dialog')

@@ -32,7 +32,7 @@ MAX_LIFETIME_SECONDS = 3600
 CONNECT_SECONDS = 15
 BUSY_SECONDS = 180  # How long a command waits for the one the session is running now.
 START_SECONDS = 150  # Longer than the slowest sign-in check, so a slow start is not mistaken for a failure.
-CLOSING_SECONDS = 10  # A session that just exited may still be closing Chrome and holding the profile lock.
+CLOSING_SECONDS = 100  # A session that just ended may still be closing Chrome and holding the profile lock; it ends by itself within this.
 RELEASE_SECONDS = 30
 
 
@@ -174,7 +174,7 @@ def release(platform, account):
             pass
         finally:
             conn.close()
-    wait_for_lock(platform, account, RELEASE_SECONDS)
+    wait_for_lock(platform, account, CLOSING_SECONDS)
 
 
 def accept_later(listener):
@@ -235,8 +235,9 @@ async def serve(listener, handle, platform, *, idle=None, lifetime=MAX_LIFETIME_
                 out = {"ok": True, "data": await handle(payload)}
             except Exception as exc:
                 failed = True
+                from .browser_runtime import failure_message
                 out = {"ok": False, "error": {"code": exc.code if isinstance(exc, VpubError) else "browser_error",
-                                              "message": exc.message if isinstance(exc, VpubError) else f"Browser command failed ({type(exc).__name__}).",
+                                              "message": exc.message if isinstance(exc, VpubError) else failure_message(exc),
                                               "hint": exc.hint if isinstance(exc, VpubError) else "Inspect the original work and receipt before retrying; no automatic resubmission."}}
             conn.send_bytes(json.dumps(out, ensure_ascii=False).encode("utf-8"))
             if failed:
@@ -250,7 +251,7 @@ async def serve(listener, handle, platform, *, idle=None, lifetime=MAX_LIFETIME_
             return "idle"
 
 
-async def run(platform, account):
+async def run(platform, account, on_closing=None):
     from patchright.async_api import async_playwright
     from . import browser_runtime as runtime
     from .browser_worker import dispatch, action_timeout
@@ -296,16 +297,16 @@ async def run(platform, account):
                 finally:
                     path.unlink(missing_ok=True)
             finally:
-                try:
-                    await runtime.save_session(context, platform, account)
-                finally:
-                    await context.close()
+                if on_closing:
+                    on_closing()
+                await runtime.close_context(context, platform, account)
 
 
 def main():
+    from .browser_runtime import exit_soon
     platform, account = sys.argv[1], sys.argv[2]
     try:
-        asyncio.run(run(platform, account))
+        asyncio.run(run(platform, account, exit_soon))
     except VpubError as exc:
         # run() removes only its own state file; a session that won the lock keeps running.
         atomic_json(failure_path(platform, account), {"code": exc.code, "message": exc.message, "hint": exc.hint})

@@ -108,7 +108,7 @@ Each platform's progress keeps its real name: Queued → Publishing → Submitte
 
 ### ✏️ Edit after posting
 
-`vpub edit` changes a published work in place: YouTube titles and descriptions, Instagram captions, Douyin portrait covers and chapters, and X posts when an Edit option appears. The video and visibility stay the same.
+`vpub edit` changes a published work in place: Bilibili titles, descriptions, tags, covers and chapters; YouTube titles, descriptions, thumbnails and chapters; Douyin titles, descriptions, portrait covers and chapters; Instagram captions; and X posts when an Edit option appears. The video and visibility stay the same. For older works CrossCast didn't publish, adopt them with `vpub ops adopt`, then edit them with `vpub edit-work`.
 
 ### 💬 Comments, likes and messages
 

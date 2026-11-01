@@ -12,7 +12,7 @@ from video_publisher.core import VpubError, atomic_json, load_plan
 BAD = [None, 5, True, [], {}, "", "\x00", ["a"], [None], [{}], {"a": None}]
 OPTIONS = ["account", "title", "description", "tags", "visibility", "ai_generated", "schedule", "content_language", "metadata_language",
            "metadata_mode", "chapters", "duration_seconds", "tid", "expected_uid", "method", "category_id", "made_for_kids",
-           "expected_channel_id", "playlist_ids", "playlist_titles", "expected_identity", "submission_mode"]
+           "expected_channel_id", "playlist_ids", "playlist_titles", "create_missing_playlists", "season_id", "expected_identity", "submission_mode"]
 
 
 class MalformedInputTests(unittest.TestCase):

@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager
+import os
 from pathlib import Path
 import re
+import threading
 import time
 from urllib.parse import urlsplit
 
@@ -14,7 +16,12 @@ BROWSER_PLATFORMS = {"douyin", "instagram", "x", "youtube"}
 URLS = {"douyin": "https://creator.douyin.com/creator-micro/home",
         "instagram": "https://www.instagram.com/", "x": "https://x.com/home",
         "youtube": "https://studio.youtube.com/"}
-HUMAN_LABELS = re.compile(r"安全验证|请完成验证|滑块验证|操作频繁|验证是你本人|Confirm it's you|Verify it's you|Verify your identity|Authenticate your account|Confirm your identity|Unusual activity", re.I)
+HUMAN_LABELS = re.compile(r"安全验证|请完成验证|滑块验证|操作频繁|验证是你本人|Confirm it's you|Verify it's you|Verify your identity|Authenticate your account|Confirm your identity|Unusual activity"
+                          # A locked account's recovery page. A person answers it; CrossCast never presses anything on it.
+                          r"|Choose a way to recover|Get help from friends", re.I)
+# Chrome can stop answering, and this process holds the profile lock until it ends.
+CLOSE_SECONDS = 30
+EXIT_SECONDS = 90
 
 
 def profile_dir(platform, account="default"):
@@ -113,37 +120,85 @@ async def open_context(pw, platform, account, interactive=False):
         raise VpubError("browser_unavailable", "Could not start the dedicated Chrome profile.", "Install Google Chrome, close any other CrossCast login for this platform, then retry. Your normal browser profile is never used.")
 
 
+def identity_path(platform, account):
+    return profile_dir(platform, account).parent / (platform + "-identity.json")
+
+
+def remember_identity(platform, account, actual):
+    atomic_json(identity_path(platform, account), {"identity": actual, "verified_at": now(), "method": "browser"})
+
+
 async def login(pw, payload):
     platform, account = payload["platform"], payload["account"]
     job = Path(payload["job_path"])
     context = await open_context(pw, platform, account, interactive=True)
     deadline = time.monotonic() + 900
+    waiting = {"platform": platform, "login_url": URLS[platform], "expires_epoch": time.time() + 900}
     try:
         page = context.pages[0] if context.pages else await context.new_page()
         await page.goto(URLS[platform], wait_until="domcontentloaded", timeout=60000)
-        atomic_json(job, {"state": "LOGIN_PENDING", "platform": platform, "login_url": URLS[platform],
-                          "expires_epoch": time.time() + 900,
+        await page.bring_to_front()
+        atomic_json(job, {"state": "LOGIN_PENDING", **waiting, "window_opened": True,
                           "hint": "Complete official login in the CrossCast Chrome window. No password, SMS or CAPTCHA is entered by the CLI."})
+        asked = False
         while time.monotonic() < deadline:
-            if page.is_closed():
+            # A sign-in can replace its tab or open another, so only closing every tab cancels it.
+            pages = [item for item in context.pages if not item.is_closed()]
+            if not pages:
                 raise VpubError("login_cancelled", "Login window was closed before account verification.")
-            actual = await identity(page, platform)
-            if actual:
-                # Wait for the login redirect to settle and prove a fresh load.
-                await asyncio.sleep(3)
-                await page.reload(wait_until="domcontentloaded")
-                await asyncio.sleep(2)
-                if await identity(page, platform) != actual:
-                    continue
+            for page in pages:
+                try:
+                    actual = await identity(page, platform)
+                    if not actual:
+                        if not asked and await visible(page.get_by_text(HUMAN_LABELS)):
+                            asked = True
+                            atomic_json(job, {"state": "VERIFICATION_REQUIRED", **waiting, "window_opened": True,
+                                              "hint": "The platform is asking for a check or account recovery. Finish it yourself in the CrossCast Chrome window; the CLI never answers it."})
+                        continue
+                    # Wait for the login redirect to settle and prove a fresh load.
+                    await asyncio.sleep(3)
+                    await page.reload(wait_until="domcontentloaded")
+                    await asyncio.sleep(2)
+                    if await identity(page, platform) != actual:
+                        continue
+                except Exception as exc:
+                    if isinstance(exc, VpubError):
+                        raise
+                    continue  # This tab closed or moved on while it was being read; the next pass looks again.
                 await save_session(context, platform, account)
-                atomic_json(profile_dir(platform, account).parent / (platform + "-identity.json"),
-                            {"identity": actual, "verified_at": now(), "method": "browser"})
+                remember_identity(platform, account, actual)
                 return {"logged_in": True, "platform": platform, "account": account,
                         "identity": actual, "method": "browser"}
             await asyncio.sleep(2)
         raise VpubError("login_timeout", "Login was not completed within 15 minutes; saved profile is retained.")
     finally:
-        await context.close()
+        await close_context(context)
+
+
+async def close_context(context, platform=None, account=None):
+    """Save and close, each with a limit. A session that cannot be saved or closed must not fail the finished command."""
+    steps = [save_session(context, platform, account)] if platform else []
+    for step in [*steps, context.close()]:
+        try:
+            await asyncio.wait_for(step, CLOSE_SECONDS)
+        except Exception:
+            pass
+
+
+def exit_soon():
+    """The last resort once a session is done: its process ends, which lets go of the profile lock, even if closing hangs."""
+    timer = threading.Timer(EXIT_SECONDS, os._exit, args=(0,))
+    timer.daemon = True
+    timer.start()
+
+
+def failure_message(exc):
+    """Which step failed and on which control, for whoever diagnoses it: the error's own first lines, without page text or query strings."""
+    lines = str(exc).splitlines()
+    step = [lines[0].strip()] if lines else []
+    step += [line.strip(" -") for line in lines[1:] if "waiting for" in line][:1]
+    note = re.sub(r"(https?://[^\s?#'\"]+)[^\s'\"]*", r"\1", " ".join(step))[:240]
+    return f"Browser command failed ({type(exc).__name__})" + (f": {note}" if note else ".")
 
 
 async def save_session(context, platform, account):

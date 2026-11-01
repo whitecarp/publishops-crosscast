@@ -4,8 +4,10 @@ import uuid
 from . import adapters, operations as ops, safety
 from .core import VpubError, atomic_json, digest, home, now, publication_lock, read_json, stop_check
 
-SUPPORTED = {'bilibili': {'like', 'pin'}, 'instagram': {'like'}, 'x': {'like','hide'}, 'youtube': {'like', 'edit', 'delete','moderate'}, 'douyin': {'like', 'delete'}}
+SUPPORTED = {'bilibili': {'like', 'pin', 'delete', 'remove'}, 'instagram': {'like'}, 'x': {'like', 'hide', 'delete'}, 'youtube': {'like', 'pin', 'edit', 'delete', 'remove', 'moderate'}, 'douyin': {'like', 'delete'}}
 PENDING = {'COMMENT_SUBMITTING', 'COMMENT_UNVERIFIED'}
+# YouTube's API cannot do these, so they use Studio's own page on every route.
+STUDIO_ONLY = {'like', 'pin', 'remove'}
 
 
 def target(platform, work, comment_id):
@@ -26,8 +28,7 @@ def target(platform, work, comment_id):
 
 def dispatch(request, operation='status', receipt_path=None):
     p = request['platform']; stop_check(p)
-    # YouTube's API cannot like a comment, so likes use Studio's own page on every route.
-    if p == 'bilibili' or (p == 'youtube' and adapters.addon_installed() and request.get('kind') != 'like'):
+    if p == 'bilibili' or (p == 'youtube' and adapters.addon_installed() and request.get('kind') not in STUDIO_ONLY):
         from .comment_actions_api import execute
         return execute(request, operation, receipt_path)
     return adapters.browser_call(p, 'comment_management', 'default', expected_identity=request['identity'],
@@ -47,7 +48,7 @@ def submitting(path):
 
 def matches(request, observed):
     if observed.get('identity') != request['identity']: return False
-    key = {'like': 'liked', 'pin': 'pinned', 'hide':'hidden', 'moderate':'moderation_status', 'edit': 'text', 'delete': 'deleted'}[request['kind']]
+    key = {'like': 'liked', 'pin': 'pinned', 'hide':'hidden', 'moderate':'moderation_status', 'edit': 'text', 'delete': 'deleted', 'remove': 'deleted'}[request['kind']]
     return observed.get(key) == request['desired'] and (key in {'text','moderation_status'} or type(observed.get(key)) is bool)
 
 
@@ -59,7 +60,7 @@ def mutate(platform, work, comment_id, kind, desired=True, dry_run=False, test_i
     elif kind == 'edit':
         if not isinstance(desired, str) or not desired.strip() or len(desired) > 2000 or '\x00' in desired:
             raise VpubError('invalid_text', 'Supply nonempty comment text of at most 2000 characters.')
-    elif type(desired) is not bool or (kind == 'delete' and not desired):
+    elif type(desired) is not bool or (kind in {'delete', 'remove'} and not desired):
         raise VpubError('invalid_action', 'Invalid target state.')
     if test_id and not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', test_id): raise VpubError('invalid_test_id', 'Use a short test label.')
     request = {**target(platform, work, comment_id), 'kind': kind, 'desired': desired}
@@ -67,6 +68,8 @@ def mutate(platform, work, comment_id, kind, desired=True, dry_run=False, test_i
         raise VpubError('other_author_required','Use a viewer comment for moderation. The live self-comment probe did not change state.')
     if kind in {'edit', 'delete'} and not request['comment'].get('is_owner'):
         raise VpubError('own_comment_required', 'Editing/deleting is restricted to your own comments on your own work.')
+    if kind == 'remove' and request['comment'].get('is_owner'):
+        raise VpubError('other_author_required', 'Remove is for a viewer\'s comment; use delete for your own.')
     with publication_lock():
         index = home() / 'operations/comment-targets' / (digest([platform, request['identity'], work, comment_id]) + '.json')
         if index.exists():

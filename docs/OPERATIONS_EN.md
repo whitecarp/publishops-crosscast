@@ -368,17 +368,23 @@ vpub comments delete youtube VIDEO_ID OWN_COMMENT_ID
 vpub comments like douyin WORK_ID COMMENT_ID
 vpub comments like douyin WORK_ID COMMENT_ID --remove
 vpub comments delete douyin WORK_ID OWN_COMMENT_ID
+vpub comments pin youtube VIDEO_ID COMMENT_ID
+vpub comments pin youtube VIDEO_ID COMMENT_ID --remove
+vpub comments remove youtube VIDEO_ID VIEWER_COMMENT_ID
+vpub comments delete bilibili BV_ID OWN_COMMENT_ID
+vpub comments remove bilibili BV_ID VIEWER_COMMENT_ID
+vpub comments delete x POST_ID OWN_REPLY_ID
 vpub comments verify-action RECEIPT_KEY
 ```
 
 | Platform | New comment controls |
 |---|---|
-| Bilibili | Like/unlike through pinned upstream bili-cli; exact comment state read back |
-| Instagram / X | Like/unlike the exact visible comment; an ambiguous heart stops the action |
-| YouTube | Like/unlike any comment on Studio's comment page. Edit/delete your own comment on your own video there too, or through the official API with the add-on. These have not been tried on a real channel. |
+| Bilibili | Like/unlike and pin/unpin a top-level comment through the included bili-cli; delete your own comment or remove a viewer's on your own work; exact comment state read back. Deleting and removing have not been tried on a real account. |
+| Instagram / X | Like/unlike the exact visible comment; an ambiguous heart stops the action. X also hides or unhides a viewer's reply and deletes your own, read back from that reply's own page; deleting has not been tried on a real account. |
+| YouTube | On Studio's comment page, like/unlike or pin/unpin any comment, remove a viewer's, and edit or delete your own; with the add-on, editing and deleting use the official API. Pinning never replaces another pinned comment. These have not been tried on a real channel. |
 | Douyin | Creator Center comment like/unlike; delete your own comment without replies on your own work; existing top-level replies remain available |
 
-These are explicit single-comment commands, separate from video likes. Read the comment first. There is no mandatory editorial approval; `--dry-run` is optional. YouTube editing takes the host's single-language text without translating it. Author, account, work and current text are checked before writing. A timed-out or unverified action is retained and blocks another mutation until read-only verification; there is no automatic resend. Test labels use `--test-id` and are excluded from ordinary reports. Deletion is only performed when explicitly requested and is irreversible; login never runs it. Douyin deletion refuses parent comments with replies. Pinning/hiding boundaries are described below; bulk moderation is not implemented.
+These are explicit single-comment commands, separate from video likes. Read the comment first. There is no mandatory editorial approval; `--dry-run` is optional. YouTube editing takes the host's single-language text without translating it. Author, account, work and current text are checked before writing. A timed-out or unverified action is retained and blocks another mutation until read-only verification; there is no automatic resend. Test labels use `--test-id` and are excluded from ordinary reports. Deleting and removing are only performed when explicitly requested and are irreversible; login never runs them. `delete` is for your own comment and `remove` for a viewer's. Douyin deletion refuses parent comments with replies. Pinning/hiding boundaries are described below; bulk moderation is not implemented.
 
 ## Direct messages and platform differences
 
@@ -531,11 +537,13 @@ vpub browser cover RECEIPT_KEY --file landscape.jpg --portrait portrait.jpg --id
 
 ## Playlists, categories and chapters
 
-YouTube accepts `playlist_titles` (the free background route or native, ticked by exact title) or `playlist_ids` (paid API). The API checks membership before inserting and never blindly retries uncertain writes. The required management permission is included in first-time OAuth. Studio creation of a private list and selection for the existing work were verified; the API route remains mock-tested. Bilibili collections use `vpub collection`.
+YouTube accepts `playlist_titles` (the free background route or native, ticked by exact title) or `playlist_ids` (paid API). The API checks membership before inserting and never blindly retries uncertain writes. The required management permission is included in first-time OAuth. Studio creation of a private list and selection for the existing work were verified; the API route remains mock-tested. On the free route, `create_missing_playlists: true` makes any of those titles the channel lacks, private, before the upload starts; one that already exists is left alone. Bilibili collections use `vpub collection`, and a Bilibili upload can join one with `season_id`, the exact ID from `vpub collection list bilibili`. The upload stands even if Bilibili refuses the collection, and the receipt says so.
 
 New YouTube plans require an explicit `category_id`, selected from content and official choices rather than defaulting to People & Blogs. The host model can supply it via `metadata request/apply`; explicit selections are preserved.
 
 Douyin `method: browser` accepts measured `duration_seconds` and `chapters` in the publication plan. Once a durable published work ID is available, the CLI applies custom chapters, saves and reads each pair back; platform-generated suggestions are not treated as completion. Review delays leave a pending step, completed by later `vpub verify`/`resume` without reuploading. Native Bilibili/Douyin/YouTube handoffs remain available. Starts must come from the same final video, begin at zero and increase within its duration. Translate titles without altering timing.
+
+Bilibili's CLI route and YouTube's browser route take `chapters` and `duration_seconds` too. Bilibili gets them through bili-cli right after the upload and reviews them. It only allows chapters on videos over a length it sets, and a refusal leaves the upload in place with `chapters_state: NOT_APPLIED`; `vpub verify` tries the chapters again without uploading again. YouTube makes chapters from timestamped lines in the description, so they are added there: at least three, each at least 10 seconds. Neither has been tried on a real account.
 
 ```json
 {
@@ -558,11 +566,14 @@ vpub edit RECEIPT_KEY correction.json --dry-run
 vpub edit RECEIPT_KEY correction.json
 # Read back an uncertain save without saving again:
 vpub edit RECEIPT_KEY correction.json --verify-only
+# A work CrossCast did not publish: check its owner once, then edit it by platform and ID.
+vpub ops adopt bilibili BV_ID
+vpub edit-work bilibili BV_ID correction.json
 ```
 
 Instagram caption edits read the original saved text from the existing work’s editor. Page translations, comments and old success receipts are not current-caption evidence. Matching text causes no save; a mismatch is corrected on the same work, then the editor is reopened for read-back. `vpub edit KEY PATCH --verify-only` checks without saving; `EDIT_MISMATCH` means the actual text differs and permits an explicit correction after inspection.
 
-JSON requires `expected_identity` and exactly one group: full `title`/`description` with language fields, a Douyin `portrait` file, or `chapters`/`duration_seconds`. YouTube uses its API; Instagram/X/Douyin use the CLI-owned session. Video bytes and visibility are not changed. Receipts retain the work ID and block automatic retries after uncertain saves. Cover read-back provides a local screenshot for visual inspection; source hashes are not remote pixel comparisons.
+JSON requires `expected_identity` and exactly one group: full `title`/`description` with language fields (plus `tags` on Bilibili and Douyin), a Douyin `portrait` file, a YouTube or Bilibili `cover` file, or `chapters`/`duration_seconds` on Bilibili, Douyin or YouTube. Bilibili goes through the included bili-cli and reviews every edit again; it can drop an individual tag, which the receipt lists. YouTube uses Studio, or its API with the add-on. Instagram/X/Douyin use the CLI-owned session. On YouTube, chapters replace only the description's list of timestamped lines that starts at zero, and the rest stays. Bilibili edits and Douyin title and description edits have not been tried on a real account. Video bytes and visibility are not changed. Receipts retain the work ID and block automatic retries after uncertain saves. Cover read-back provides a local screenshot for visual inspection; source hashes are not remote pixel comparisons.
 
 X editing is attempted only when the original post exposes Edit. Missing access never triggers deletion, reposting or replies. The operator chose to keep episode two unchanged; the next post will follow the new language policy.
 

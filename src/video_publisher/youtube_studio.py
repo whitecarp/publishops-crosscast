@@ -20,6 +20,10 @@ CONFIRM_BUTTON = "ytcp-confirmation-dialog #confirm-button, ytcp-dialog #confirm
 PRIVACY = {"private": "PRIVATE", "unlisted": "UNLISTED", "public": "PUBLIC"}
 EDIT_ITEM = re.compile(r"^\s*(Edit|修改|編輯)\s*$")
 DELETE_ITEM = re.compile(r"^\s*(Delete|删除|刪除)\s*$")
+PIN_ITEM = re.compile(r"^\s*(Pin|置顶|置頂)\s*$")
+UNPIN_ITEM = re.compile(r"^\s*(Unpin|取消置顶|取消置頂)\s*$")
+REMOVE_ITEM = re.compile(r"^\s*(Remove|移除)\s*$")
+PINNED_BY = re.compile(r"Pinned by|置顶者|置頂者|已置顶|已置頂")
 # A Studio list is read to its end, within reason; a longer one is reported as not complete.
 TABLE_PAGES = 20
 # After a change the page is left alone until its own requests have stopped for this many half-seconds, up to the limit.
@@ -445,7 +449,7 @@ async def playlist_fields(page, playlist):
 
 
 def visibility_trigger(page):
-    return page.locator("ytcp-text-menu#visibility-menu").locator("xpath=preceding-sibling::ytcp-text-dropdown-trigger[1]")
+    return page.locator("ytcp-text-menu#visibility-menu").locator("xpath=../ytcp-text-dropdown-trigger")
 
 
 async def rename_playlist(page, identity, payload, before_submit):
@@ -471,7 +475,27 @@ async def rename_playlist(page, identity, payload, before_submit):
     return {"identity": identity, "submitted": True, "collection_id": playlist}
 
 
-async def create_playlist(page, identity, payload, before_submit):
+async def ensure_playlists(page, identity, titles):
+    """Make any planned playlist the channel lacks, private, before an upload starts. One that already exists is left alone."""
+    rows, complete = await read_playlists(page, identity)
+    if not rows:
+        # A slow page looks like an empty list, and a wrong guess would make a duplicate.
+        await page.wait_for_timeout(5000)
+        rows, complete = await read_playlists(page, identity)
+    have = {normalize(row["title"]) for row in rows}
+    missing = [title for title in titles if normalize(title) not in have]
+    if missing and rows and not complete:
+        raise VpubError("read_incomplete", "Studio's playlist list could not be read to its end, so a missing playlist is not proven; nothing was uploaded.")
+    made = []
+    for title in missing:
+        result = await create_playlist(page, identity, {"title": title, "privacy": "private"}, lambda *_: None, known=[row["id"] for row in rows])
+        if not result.get("collection_id"):
+            raise VpubError("playlist_unverified", f'Studio did not show the new playlist "{title}"; nothing was uploaded.')
+        made.append({"id": result["collection_id"], "title": title})
+    return made
+
+
+async def create_playlist(page, identity, payload, before_submit, known=None):
     from .collections import receipt_path
     await open_playlist_list(page, identity)
     await (await unique_visible(page.locator(CREATE_BUTTON), "Create button")).click(timeout=15000)
@@ -495,7 +519,7 @@ async def create_playlist(page, identity, payload, before_submit):
     await button.wait_for(state="hidden", timeout=30000)
     await risk_check(page)
     # The new ID shows only in the list, as the one row that was not there before, and the list can take a moment to catch up.
-    known = set(read_json(receipt_path(payload["receipt_key"]))["before_ids"])
+    known = set(read_json(receipt_path(payload["receipt_key"]))["before_ids"] if known is None else known)
     new = []
     for _ in range(4):
         new = [row["id"] for row in (await read_playlists(page, identity))[0] if row["id"] not in known and row["title"] == normalize(payload["title"])]
@@ -595,8 +619,20 @@ async def comment_menu_item(page, row, words):
     return await unique_visible(items, "comment menu item")
 
 
+async def pinned_state(page, row):
+    """The row's own menu says which way the pin would go. Closed again without choosing anything."""
+    await row.hover()
+    await row.locator("#action-menu-button").first.click(timeout=10000)
+    items = page.locator("ytcp-menu-service-item-renderer")
+    await appears(page, items, 8)
+    state = True if await visible(items.filter(has_text=UNPIN_ITEM)) else False if await visible(items.filter(has_text=PIN_ITEM)) else None
+    await page.keyboard.press("Escape")
+    await page.wait_for_timeout(300)
+    return state
+
+
 async def comment_action(page, identity, payload):
-    """Likes on any comment, and editing or deleting the channel's own, on Studio's comment page."""
+    """Likes on any comment, pins, removing a viewer's, and editing or deleting the channel's own, on Studio's comment page."""
     request = payload["request"]
     target, kind = request["comment"], request.get("kind")
     if identity != request["identity"]:
@@ -610,6 +646,8 @@ async def comment_action(page, identity, payload):
     like = row.locator("ytcp-comment-toggle-button#like-button").first
     liked = await like.evaluate("e => e.isToggled", isolated_context=False) if await like.count() else None
     observed = {"identity": identity, "text": found[0]["text"], "liked": liked if type(liked) is bool else None, "deleted": False, "source": "studio_comment_list"}
+    if kind == "pin":
+        observed["pinned"] = await pinned_state(page, row)
     if payload["operation"] == "status":
         return observed
     if payload["operation"] != "set":
@@ -649,17 +687,26 @@ async def comment_action(page, identity, payload):
         submitting(payload["receipt_path"])
         await act_and_settle(page, lambda: button.click(timeout=15000))
         return sent()
-    if kind == "delete":
-        item = await comment_menu_item(page, row, DELETE_ITEM)
+    if kind in {"delete", "remove", "pin"}:
+        if kind == "pin":
+            if observed["pinned"] is None:
+                raise VpubError("state_unavailable", "The comment's pin state is unavailable; nothing changed.")
+            if observed["pinned"] is request["desired"]:
+                return {"state": "NO_CHANGE", "platform_writes": 0}
+            others = page.locator("ytcp-comment").filter(has_text=PINNED_BY)
+            if request["desired"] and await others.count():
+                raise VpubError("another_comment_pinned", "Another comment is pinned; this command will not replace it implicitly.")
+        words = {"delete": DELETE_ITEM, "remove": REMOVE_ITEM}.get(kind) or (PIN_ITEM if request["desired"] else UNPIN_ITEM)
+        item = await comment_menu_item(page, row, words)
         submitting(payload["receipt_path"])
 
-        async def remove():
+        async def choose():
             await item.click(timeout=10000)
             await studio_confirm(page)
 
-        await act_and_settle(page, remove)
+        await act_and_settle(page, choose)
         return sent()
-    raise VpubError("paid_feature_required", "This comment action needs the paid CrossCast add-on for now.", "Comment likes, and editing or deleting the channel's own comments, are free.")
+    raise VpubError("paid_feature_required", "This comment action needs the paid CrossCast add-on for now.", "Comment likes and pins, removing a viewer's comment, and editing or deleting the channel's own, are free.")
 
 
 async def edit_fields(page, url):
@@ -697,6 +744,10 @@ async def edit(page, payload, save, submit):
         await inputs.first.set_input_files(patch["cover"], timeout=60000)
         changes = None
     else:
+        if "chapters" in patch:
+            # YouTube's chapters are the timestamped lines in the description, so the rest of it stays as it is.
+            from .chapters import youtube_description
+            patch = {**patch, "title": await title.inner_text(), "description": youtube_description(await description.inner_text(), patch["chapters"], patch["duration_seconds"])}
         before = {"title": normalize(await title.inner_text()), "description": normalize(await description.inner_text())}
         wanted = {"title": normalize(patch["title"]), "description": normalize(patch["description"])}
         if before == wanted:

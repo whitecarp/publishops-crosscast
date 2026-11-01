@@ -1,6 +1,8 @@
-"""Comment likes and pins through the included bili-cli."""
+"""Comment likes, pins and deletes through the included bili-cli."""
 from . import adapters
 from .core import VpubError, atomic_json, read_json, stop_check
+
+DELETING = {'delete', 'remove'}
 
 
 def execute(request, operation, receipt_path=None):
@@ -14,9 +16,17 @@ def execute(request, operation, receipt_path=None):
     if not cid.isdigit(): raise VpubError('invalid_comment_id', 'Bilibili comment IDs must be numeric.')
     root = target.get('parent_id') or cid
     if not root.isdigit(): raise VpubError('invalid_comment_id', 'Bilibili root IDs must be numeric.')
-    data = adapters.bili(['comment', 'replies', w, root, '--size', '20', '--raw'])
+    # After a delete, Bilibili's own "no such comment" answer is the read-back, in the same page the comment was found in.
+    gone = {'identity': identity, 'text': None, 'liked': None, 'deleted': True, 'source': 'bili_cli_comment_read'}
+    checking = kind in DELETING and request.get('verification')
+    try:
+        data = adapters.bili(['comment', 'replies', w, root, '--size', '20', '--raw'])
+    except VpubError as exc:
+        if checking and exc.code == 'not_found': return gone
+        raise
     rows = [data.get('root') or {}, *(data.get('replies') or [])]
     found = [c for c in rows if str(c.get('rpid')) == cid]
+    if not found and checking: return gone
     if len(found) != 1: raise VpubError('comment_not_visible', 'Exact comment not found in the bounded reply page.')
     c = found[0]; action = c.get('action')
     observed = {'identity': identity, 'text': (c.get('content') or {}).get('message'), 'deleted': False,
@@ -38,10 +48,10 @@ def execute(request, operation, receipt_path=None):
     if operation == 'status': return observed
     if operation != 'set': raise VpubError('unsupported_operation', 'Choose status or set.')
     if observed['text'] != target['text']: raise VpubError('comment_changed', 'The comment changed since it was read.')
-    if kind not in {'like','pin'} or type(observed.get('pinned' if kind=='pin' else 'liked')) is not bool:
+    if kind not in DELETING and (kind not in {'like','pin'} or type(observed.get('pinned' if kind=='pin' else 'liked')) is not bool):
         raise VpubError('state_unavailable', 'Exact comment like state is unavailable.')
     from .comment_actions import submitting
     stop_check(p); submitting(receipt_path)
-    adapters.bili(['comment', kind, w, cid] + ([] if request['desired'] else ['--undo']))
+    adapters.bili(['comment', 'delete', w, cid] if kind in DELETING else ['comment', kind, w, cid] + ([] if request['desired'] else ['--undo']))
     saved = read_json(receipt_path); saved.update(state='COMMENT_UNVERIFIED', platform_writes=1); atomic_json(receipt_path, saved)
     return {'state': 'COMMENT_UNVERIFIED', 'platform_writes': 1}

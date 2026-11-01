@@ -14,11 +14,14 @@ SAVE_ON = 'button[data-testid="removeBookmark"], [role="group"] button[aria-pres
 REPLY = '[data-testid="reply"], [role="group"] a[href^="/compose/post?in_reply_to="]'
 REPOST = '[data-testid="retweet"], [data-testid="unretweet"], [role="group"] button:has(use[href^="#icon-repost"])'
 MORE = '[data-testid="caret"], button[data-slot="xds-menu-trigger"]:has(use[href^="#icon-more-dots"])'
-COMPOSER = '[role="dialog"]:has([contenteditable="true"])'
+# A signed-in account's window nests one dialog inside another, so this means the outer one, which holds every control.
+COMPOSER = '[role="dialog"]:has([contenteditable="true"]):not([role="dialog"] [role="dialog"])'
 TEXT_BOX = '[data-testid="tweetTextarea_0"], [contenteditable="true"]:not([data-testid="tweetTextarea_0"] *)'
 SEND_REPLY = re.compile(r"^(Reply|回复|回覆)$")
 HIDE_REPLY = re.compile(r"^(Hide reply|隐藏回复|隱藏回覆)$")
 UNHIDE_REPLY = re.compile(r"^(Unhide reply|取消隐藏回复|取消隱藏回覆)$")
+DELETE_POST = re.compile(r"^(Delete|删除|刪除)$")
+GONE_PAGE = re.compile(r"doesn.t exist|does not exist|was deleted|不存在|已被删除|已被刪除|已删除|已刪除", re.I)
 EDIT_POST = re.compile(r"^(Edit( post)?|编辑(帖子)?|修改(帖子)?|編輯(貼文)?)$")
 UPDATE_POST = re.compile(r"^(Update|更新)$")
 AD_LINES = {"Promoted", "Ad", "广告", "廣告", "推广", "推廣"}

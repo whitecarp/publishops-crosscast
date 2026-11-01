@@ -89,10 +89,7 @@ async def run(payload):
                     return await unlock(page,actual)
                 return await dispatch(page, platform, actual, payload)
             finally:
-                try:
-                    await runtime.save_session(context, platform, account)
-                finally:
-                    await context.close()
+                await runtime.close_context(context, platform, account)
 
 
 def main():
@@ -106,7 +103,7 @@ def main():
             atomic_json(payload["job_path"], {"state": "LOGGED_IN", "completed_at": now(), **result})
     except Exception as e:
         out = {"ok": False, "error": {"code": e.code if isinstance(e, VpubError) else "browser_error",
-               "message": e.message if isinstance(e, VpubError) else f"Browser command failed ({type(e).__name__}).",
+               "message": e.message if isinstance(e, VpubError) else runtime.failure_message(e),
                "hint": e.hint if isinstance(e, VpubError) else "Inspect the original draft/work and receipt before retrying; no automatic resubmission."}}
         if payload.get("job_path"):
             atomic_json(payload["job_path"], {"state": "FAILED", "platform": payload.get("platform"), **out})
