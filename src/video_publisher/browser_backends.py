@@ -278,16 +278,21 @@ async def verify_youtube(page, receipt):
 
 async def verify_scheduled_x(page, identity, receipt):
     """A scheduled post has no address until it goes out. Words on Studio's schedule page don't prove which post that is, its time
-    or its video, so before its time this only reports them. After its time, one new post with exactly its words, at about that time
-    and showing a video, settles it. X shows nothing that identifies the video itself, so which video it is stays unproven."""
+    or its video, so before its time this only reports them. After its time, one new post with exactly its words, at about that time,
+    showing the video Media Studio numbered, settles it. Without that number it is named as a candidate for a person to check."""
     moment = datetime.fromisoformat(receipt["schedule"]["at"])
     if datetime.now(timezone.utc) >= moment:
         words = normalize(receipt.get("expected_text") or receipt["title"])
         await works(page, "x", identity)  # Opens the account's page and waits for its posts.
         matches = [post for post in await own_posts(page, identity) if post["id"] not in receipt.get("before_ids", []) and normalize(post["text"] or "") == words and post["has_video"] and posted_around(post, moment)]
-        if len(matches) == 1:
-            return await verify(page, "x", identity, {**receipt, "id": matches[0]["id"], "url": work_url("x", identity, matches[0]["id"])})
-        return {**receipt, "state": "SUBMITTED_UNVERIFIED", "phase": "readback_pending", "note": f"Its time has passed and {len(matches)} posts on the first page match it exactly. Inspect the account; do not post again."}
+        if len(matches) != 1:
+            return {**receipt, "state": "SUBMITTED_UNVERIFIED", "phase": "readback_pending", "note": f"Its time has passed and {len(matches)} posts on the first page match it exactly. Inspect the account; do not post again."}
+        address = work_url("x", identity, matches[0]["id"])
+        media = re.search(r"/library/\d+_(\d+)/", receipt.get("media_url") or "")
+        if not media or matches[0].get("media_id") != media[1]:
+            return {**receipt, "state": "SUBMITTED_UNVERIFIED", "phase": "readback_pending", "candidate_id": matches[0]["id"], "candidate_url": address,
+                    "note": "One new post has its exact words at about its time, but nothing here proves it carries this video. Check that post; do not post again."}
+        return await verify(page, "x", identity, {**receipt, "id": matches[0]["id"], "url": address})
     await page.goto("https://studio.x.com/schedule", wait_until="domcontentloaded", timeout=60000)
     await page.wait_for_timeout(4000)
     await risk_check(page)

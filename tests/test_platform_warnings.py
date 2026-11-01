@@ -194,6 +194,17 @@ class SignInDuringAStopTests(Home):
             self.assertEqual({"logged_in": True}, asyncio.run(browser_worker.run({"platform": "x", "account": "default", "action": "login", "job_path": str(self.root / "job.json")})))
         login.assert_awaited_once()
 
+    def test_after_signing_in_during_a_stop_the_status_says_what_is_left_to_do(self):
+        self.stop(platform="x", code="human_verification_required", source="safety")
+        job = {"state": "LOGGED_IN", "logged_in": True, "identity": "me", "next": "Once its check is done, run vpub stop --clear."}
+        atomic_json(home() / "auth-jobs/x.json", job)
+        answer = cli.run_command(cli.parser().parse_args(["auth", "status", "x"]))
+        self.assertEqual(job["next"], answer["next"])
+        safety.clear_stop()
+        with patch.object(adapters, "auth_status", return_value={"logged_in": True, "identity": "me"}) as live:
+            self.assertNotIn("next", cli.run_command(cli.parser().parse_args(["auth", "status", "x"])))
+        live.assert_called_once()
+
     def test_a_person_clearing_it_is_still_the_only_way_out(self):
         self.stop(platform="x", code="human_verification_required", source="safety")
         stop_check("x", signing_in=True)
@@ -262,8 +273,11 @@ class WhoIsAskingTests(Home, unittest.IsolatedAsyncioTestCase):
         for body in ('<article><span>Confirm it\'s you</span></article>',
                      '<div data-testid="cellInnerDiv"><div>Verify your identity</div></div>',
                      '<ytcp-comment-thread><ytcp-comment><div id="content-text">Unusual activity</div></ytcp-comment></ytcp-comment-thread>',
-                     '<ul><li>请完成验证</li></ul>',
-                     '<div class="comment-row-abc"><span>Choose a way to recover</span></div>'):
+                     '<ul><li role="list-item"><div>请完成验证</div></li></ul>',
+                     '<div class="comment-row-abc"><span>Choose a way to recover</span></div>',
+                     '<div data-pagelet="IGDInboxThreadListScrollableAreaPagelet"><div role="button"><span>Unusual activity</span></div></div>',
+                     '<div><a href="/viewer/">viewer</a><span dir="auto">Confirm it\'s you</span><time datetime="2026-11-01">1h</time><span role="button">Reply</span></div>',
+                     '<div role="dialog"><div><a href="/viewer/">viewer</a><span>Verify your identity</span><time datetime="2026-11-01">1h</time></div></div>'):
             with self.subTest(body=body):
                 self.assertFalse(await self.shown(body))
         await rt.risk_check(self.page)
@@ -271,8 +285,11 @@ class WhoIsAskingTests(Home, unittest.IsolatedAsyncioTestCase):
 
     async def test_the_platform_saying_them_is(self):
         for body in ("<h1>Confirm it's you</h1>", '<div role="dialog"><div>Choose a way to recover</div></div>', "<div>安全验证</div>", "<main><h2>確認是你本人</h2></main>",
-                     '<article>An ordinary post</article><div role="dialog"><span>Verify your identity</span></div>'):
-            with self.subTest(body=body):
+                     '<article>An ordinary post</article><div role="dialog"><span>Verify your identity</span></div>',
+                     "<div role=\"dialog\"><ul><li>Confirm it's you</li></ul></div>",
+                     '<main><article><a href="/a">a</a><time datetime="2026-11-01">1h</time>A post</article></main><div role="dialog"><h2>Unusual activity</h2><a href="/help">Help</a></div>',
+                     '<div><div>Unusual activity</div><main>' + '<article><a href="/a">a</a><time datetime="2026-11-01">1h</time>' + 'word ' * 500 + '</article></main></div>'):
+            with self.subTest(body=body[:60]):
                 self.assertTrue(await self.shown(body))
 
     async def test_words_nobody_can_see_are_not(self):

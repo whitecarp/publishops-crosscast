@@ -26,6 +26,8 @@ DELETE_POST = re.compile(r"^(Delete|删除|刪除)$")
 GONE_PAGE = re.compile(r"doesn.t exist|does not exist|was deleted|不存在|已被删除|已被刪除|已删除|已刪除", re.I)
 EDIT_POST = re.compile(r"^(Edit( post)?|编辑(帖子)?|修改(帖子)?|編輯(貼文)?)$")
 UPDATE_POST = re.compile(r"^(Update|更新)$")
+# A video's picture is stored under the number Media Studio's address gives that video.
+VIDEO_NUMBER = re.compile(r"/(?:amplify_video_thumb|ext_tw_video_thumb)/(\d+)/")
 AD_LINES = {"Promoted", "Ad", "广告", "廣告", "推广", "推廣"}
 VIEWS = re.compile(r"(\d[\d,]*)\s*(?:views?\b|次观看|次觀看|观看|觀看|次浏览|次瀏覽|浏览|瀏覽|次查看)", re.I)
 # What one post on a page says about itself. The action row names the post exactly, and a quoted post has no action row.
@@ -41,6 +43,7 @@ POST_FIELDS = r"""article => {
   return {href: own ? own.getAttribute('href') : null, text: block ? block.innerText : null,
           time: own?.querySelector('time')?.getAttribute('datetime') || null,
           video: !!article.querySelector('video, [data-testid="videoPlayer"], [data-testid="videoComponent"]'),
+          poster: article.querySelector('video')?.getAttribute('poster') || null,
           lines: article.innerText.split('\n').map(line => line.trim())};
 }"""
 
@@ -79,8 +82,9 @@ async def post_fields(article):
     found = re.fullmatch(r"/([A-Za-z0-9_]+)/status/(\d+)", data["href"] or "")
     if not found:
         return None
+    media = VIDEO_NUMBER.search(data.get("poster") or "")
     return {"author": found[1], "id": found[2], "href": data["href"], "text": data["text"], "published_at": data["time"] or post_time(found[2]),
-            "has_video": bool(data.get("video")), "is_ad": bool(AD_LINES & set(data["lines"]))}
+            "has_video": bool(data.get("video")), "media_id": media[1] if media else None, "is_ad": bool(AD_LINES & set(data["lines"]))}
 
 
 async def own_posts(page, identity):

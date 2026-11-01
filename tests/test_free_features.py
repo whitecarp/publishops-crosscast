@@ -366,7 +366,7 @@ class BilibiliUploadTests(Temporary):
         self.bili.chapters = list(other)
         for state, expected in (("PENDING", "CONFLICT"), ("NOT_APPLIED", "CONFLICT"), ("SUBMITTING", "SAVE_UNVERIFIED"), ("SAVE_UNVERIFIED", "SAVE_UNVERIFIED")):
             with self.subTest(state=state):
-                result, _ = self.verify({"id": WORK, "state": "SUBMISSION_VERIFIED", "pending_chapters": LONG, "chapters_state": state})
+                result, _ = self.verify({"id": WORK, "state": "SUBMISSION_VERIFIED", "pending_chapters": LONG, "chapters_state": state, "chapters_error": "invalid_argument"})
                 self.assertEqual(expected, result["chapters_state"])
         self.assertEqual(0, self.sent())
         self.assertEqual(other, self.bili.chapters)
@@ -377,6 +377,19 @@ class BilibiliUploadTests(Temporary):
         self.assertEqual(("PENDING", "backend_timeout"), (result["chapters_state"], result["chapters_error"]))
         self.assertEqual(0, self.sent())
         self.assertEqual([], marks)
+
+    def test_an_older_receipt_that_says_not_applied_after_a_timeout_is_only_read(self):
+        for error in ("backend_timeout", "backend_error", None):
+            with self.subTest(error=error):
+                result, marks = self.verify({"id": WORK, "state": "SUBMISSION_VERIFIED", "pending_chapters": LONG, "chapters_state": "NOT_APPLIED", "chapters_error": error})
+                self.assertEqual("SAVE_UNVERIFIED", result["chapters_state"])
+                self.assertEqual(0, self.sent())
+                self.assertEqual([], marks)
+
+    def test_a_clear_refusal_can_still_be_tried_again(self):
+        result, _ = self.verify({"id": WORK, "state": "SUBMISSION_VERIFIED", "pending_chapters": LONG, "chapters_state": "NOT_APPLIED", "chapters_error": "invalid_argument"})
+        self.assertEqual("VERIFIED", result["chapters_state"])
+        self.assertEqual(1, self.sent())
 
     def test_a_stop_during_the_send_counts_as_not_sent(self):
         self.bili.fail = "stopped"

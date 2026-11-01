@@ -25,9 +25,21 @@ CHALLENGE_ADDRESSES = {"instagram.com": r"/(challenge|checkpoint|auth_platform|a
                        "x.com": r"/account/access(/|$)",
                        "google.com": r"(/v\d)?/signin(/v\d)?/(challenge|rejected)(/|$)"}
 # Where other people's words show. A viewer writing "Confirm it's you" in a comment is not the platform asking,
-# and it must not be able to stop the whole tool. A place missing from this list means a stop a person clears, never a missed check.
-OTHER_PEOPLES_WORDS = ('article, li, [role="article"], [role="listitem"], [role="row"], [role="gridcell"], [data-testid="cellInnerDiv"], [class*="comment" i], '
+# and it must not be able to stop the whole tool. These are the places CrossCast itself reads people's words from,
+# not generic lists, which a real check can use too. A place missing here means a stop a person clears, never a missed check.
+OTHER_PEOPLES_WORDS = ('article, [role="article"], [data-testid="cellInnerDiv"], [data-testid="tweetText"], [data-dm-message-row], [data-testid^="dm-conversation-item-"], [data-testid="dm-message-list"], '
+                       '[data-pagelet^="IGD"], [aria-roledescription="message"], [data-crosscast-comment-row], [data-crosscast-mentions-panel], '
+                       '[data-e2e="comment-list"], li[role="list-item"], [class*="comment" i], '
                        'ytcp-comment-thread, ytcp-comment, ytd-comment-thread-renderer, ytd-comment-view-model, ytcp-video-row, ytd-watch-metadata')
+# A small row with an author's link and a time is someone's post or comment, however the site builds it. A window is the edge of the search.
+SOMEONES_WORDS = """(e, others) => {
+  if (e.closest(others)) return true;
+  for (let row = e.parentElement, depth = 0; row && depth < 8 && row !== document.body && !row.matches('[role="dialog"],[role="alertdialog"],main'); row = row.parentElement, depth++) {
+    if (row.innerText.length > 2000) return false;
+    if (row.querySelector('time') && row.querySelector('a[href]')) return true;
+  }
+  return false;
+}"""
 SITES = {"x": ("x.com", "twitter.com"), "instagram": ("instagram.com",), "douyin": ("douyin.com", "bytedance.com"), "youtube": ("youtube.com", "google.com")}
 # Chrome can stop answering, and this process holds the profile lock until it ends.
 CLOSE_SECONDS = 30
@@ -81,7 +93,7 @@ async def challenge_shown(page):
     if challenge_address(page.url) or await visible(page.locator('iframe[src*="/verifycenter/captcha/"]')):
         return True
     for item in await page.get_by_text(HUMAN_LABELS).all():
-        if await item.is_visible() and not await item.evaluate("(e, others) => !!e.closest(others)", OTHER_PEOPLES_WORDS):
+        if await item.is_visible() and not await item.evaluate(SOMEONES_WORDS, OTHER_PEOPLES_WORDS):
             return True
     return False
 
@@ -183,8 +195,9 @@ async def login(pw, payload):
             if not pages:
                 raise VpubError("login_cancelled", "Login window was closed before account verification.")
             # A signed-in menu can still show behind a check, so a check on any tab comes before who the account is.
-            if await any_challenge(pages):
-                if not asked:
+            challenged = await any_challenge(pages)
+            if challenged is not False:
+                if challenged and not asked:
                     asked = True
                     atomic_json(job, {"state": "VERIFICATION_REQUIRED", **waiting, "window_opened": True,
                                       "hint": "The platform is asking for a check or account recovery. Finish it yourself in the CrossCast Chrome window; the CLI never answers it."})
@@ -199,7 +212,7 @@ async def login(pw, payload):
                     await asyncio.sleep(3)
                     await page.reload(wait_until="domcontentloaded")
                     await asyncio.sleep(2)
-                    if await any_challenge(pages) or await identity(page, platform) != actual:
+                    if await any_challenge(pages) is not False or await identity(page, platform) != actual:
                         continue
                 except Exception as exc:
                     if isinstance(exc, VpubError):
@@ -218,13 +231,15 @@ async def login(pw, payload):
 
 
 async def any_challenge(pages):
+    """True, False, or None when a tab that is still open could not be read, which proves nothing either way."""
+    unread = False
     for page in pages:
         try:
             if await challenge_shown(page):
                 return True
         except Exception:
-            pass  # This tab closed or moved on while it was being read.
-    return False
+            unread = unread or not page.is_closed()
+    return None if unread else False
 
 
 async def keep_session(context, platform, account):

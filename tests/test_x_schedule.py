@@ -160,7 +160,8 @@ class ReadBackTests(unittest.IsolatedAsyncioTestCase):
     async def after_its_time(self, posts, **extra):
         moment = datetime.now(timezone.utc) - timedelta(minutes=5)
         receipt = self.receipt(schedule={"at": moment.isoformat()}, **extra)
-        rows = [{"published_at": moment.isoformat(), "has_video": True, **post} for post in posts]
+        rows = [{"published_at": moment.isoformat(), "has_video": True, "media_id": "77", **post} for post in posts]
+        receipt.setdefault("media_url", "https://studio.x.com/library/13_77/edit")
         with patch.object(browser_backends, "works", new=AsyncMock()), patch.object(browser_backends, "own_posts", new=AsyncMock(return_value=rows)), \
                 patch.object(browser_backends, "verify", new=AsyncMock(return_value={"state": "SUBMISSION_VERIFIED", "id": "found"})) as read:
             return await browser_backends.verify_scheduled_x(self.page(""), OWNER, receipt), read
@@ -190,6 +191,21 @@ class ReadBackTests(unittest.IsolatedAsyncioTestCase):
     async def test_a_post_with_no_video_does_not_settle_it(self):
         await self.assert_not_settled([{"id": "2", "text": "My title", "has_video": False}])
 
+    async def test_a_different_video_or_none_it_can_read_leaves_only_a_candidate_for_a_person(self):
+        for number in ("88", None):
+            with self.subTest(number=number):
+                result, read = await self.after_its_time([{"id": "2", "text": "My title", "media_id": number}])
+                self.assertEqual(("SUBMITTED_UNVERIFIED", "2"), (result["state"], result["candidate_id"]))
+                self.assertIn("/status/2", result["candidate_url"])
+                self.assertNotIn("id", result)
+                self.assertIn("do not post again", result["note"])
+                read.assert_not_awaited()
+
+    async def test_no_studio_number_on_the_receipt_leaves_only_a_candidate(self):
+        result, read = await self.after_its_time([{"id": "2", "text": "My title"}], media_url="")
+        self.assertEqual("2", result["candidate_id"])
+        read.assert_not_awaited()
+
     async def test_a_post_from_before_the_upload_does_not_settle_it(self):
         await self.assert_not_settled([{"id": "1", "text": "My title"}])
 
@@ -214,7 +230,7 @@ class OwnPostsTests(unittest.IsolatedAsyncioTestCase):
     """The words and the moment come from each post's own row, not from everything the row shows."""
     ROW = """<article><a href="/{author}/status/{post}"><time datetime="2026-11-03T15:07:00.000Z">Nov 3</time></a><div data-testid="User-Name">Someone</div>
       <div data-testid="tweetText">{words}</div><div role="group" aria-label="3 likes"><a href="/compose/post?in_reply_to={post}">Reply</a></div>{extra}</article>"""
-    VIDEO = '<div data-testid="videoPlayer"><video></video></div>'
+    VIDEO = '<div data-testid="videoPlayer"><video poster="https://pbs.twimg.com/amplify_video_thumb/77/img/a.jpg"></video></div>'
 
     async def asyncSetUp(self):
         from patchright.async_api import async_playwright
@@ -231,8 +247,8 @@ class OwnPostsTests(unittest.IsolatedAsyncioTestCase):
                 self.ROW.format(author=OWNER.upper(), post="3", words="Ad words", extra="<span>Ad</span>"), self.ROW.format(author=OWNER, post="4", words="No video here", extra="")]
         await self.page.set_content("<main>" + "".join(rows) + "</main>")
         posts = await x_pages.own_posts(self.page, OWNER)
-        self.assertEqual([("1", "Exactly these words", "2026-11-03T15:07:00.000Z", True), ("4", "No video here", "2026-11-03T15:07:00.000Z", False)],
-                         [(post["id"], post["text"], post["published_at"], post["has_video"]) for post in posts])
+        self.assertEqual([("1", "Exactly these words", "2026-11-03T15:07:00.000Z", True, "77"), ("4", "No video here", "2026-11-03T15:07:00.000Z", False, None)],
+                         [(post["id"], post["text"], post["published_at"], post["has_video"], post["media_id"]) for post in posts])
 
 
 class PlanTests(unittest.TestCase):

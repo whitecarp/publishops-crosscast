@@ -198,8 +198,46 @@ class LoginTests(Home, unittest.IsolatedAsyncioTestCase):
         self.assertEqual("VERIFICATION_REQUIRED", seen["state"])
         self.assertEqual("UC1", result["identity"])
 
-    async def test_a_tab_that_closes_during_the_check_does_not_end_the_sign_in(self):
-        self.assertFalse(await rt.any_challenge([MagicMock(url="https://x.com/", locator=MagicMock(side_effect=RuntimeError("closed")))]))
+    async def test_a_tab_that_closes_during_the_check_does_not_hold_the_sign_in(self):
+        closed = MagicMock(url="https://x.com/", locator=MagicMock(side_effect=RuntimeError("closed")), is_closed=MagicMock(return_value=True))
+        self.assertIs(False, await rt.any_challenge([closed]))
+
+    async def test_a_tab_still_open_that_cannot_be_read_proves_nothing(self):
+        unread = MagicMock(url="https://x.com/", locator=MagicMock(side_effect=RuntimeError("busy")), is_closed=MagicMock(return_value=False))
+        self.assertIsNone(await rt.any_challenge([unread]))
+
+    async def test_a_sign_in_never_finishes_while_a_live_tab_cannot_be_read(self):
+        page = FakePage("UC1")
+        page.unreadable = True
+
+        async def challenge_shown(tab):
+            if tab.unreadable:
+                raise RuntimeError("busy")
+            return False
+        seen = {}
+
+        def still_waiting(context):
+            seen["job"] = read_json(self.root / "job.json")
+            seen["saved"] = rt.identity_path("youtube", "default").exists()
+            page.unreadable = False
+        context = FakeContext([page])
+        looks = {"count": 0}
+
+        async def tick(seconds):
+            looks["count"] += 1
+            if looks["count"] == 3:
+                still_waiting(context)
+            if looks["count"] > 12:
+                raise AssertionError("the sign-in never ended")
+
+        async def identity(tab, platform):
+            return tab.who
+        with patch.object(rt, "open_context", new=AsyncMock(return_value=context)), patch.object(rt, "identity", identity), patch.object(rt, "challenge_shown", challenge_shown), \
+                patch.object(rt.asyncio, "sleep", tick), patch.object(rt, "save_session", new=AsyncMock()):
+            result = await rt.login(None, {"platform": "youtube", "account": "default", "job_path": str(self.root / "job.json")})
+        self.assertEqual("LOGIN_PENDING", seen["job"]["state"])
+        self.assertIs(False, seen["saved"])
+        self.assertEqual("UC1", result["identity"])
 
     async def test_signing_in_does_not_clear_a_stop_and_says_so(self):
         atomic_json(home_stop(), {"platform": "youtube", "source": "safety", "code": "human_verification_required"})

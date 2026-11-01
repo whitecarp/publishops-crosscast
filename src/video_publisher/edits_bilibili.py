@@ -42,7 +42,9 @@ def finish_chapters(receipt, checkpoint=None):
         return {**receipt, "chapters_error": exc.code, "chapters_reason": exc.message, "next": "The chapters could not be read, and nothing was sent. Run vpub verify again later."}
     if saved == wanted:
         return {**clean, "chapters_state": "VERIFIED"}
-    if state not in {"PENDING", "NOT_APPLIED"}:
+    # Earlier versions wrote NOT_APPLIED after a timeout too, so that state alone proves nothing: its error has to be a clear no.
+    never_sent = state == "PENDING" or (state == "NOT_APPLIED" and receipt.get("chapters_error") in REFUSED | {"stopped"})
+    if not never_sent:
         return {**clean, **unclear}
     if saved:
         return {**clean, "chapters_state": "CONFLICT", "next": "The work already has other chapters, so these were not sent. To replace them, use vpub edit."}

@@ -756,7 +756,7 @@ def run_command(args):
         if args.platform != "bilibili":
             from .auth_jobs import wait
             job = wait(args.platform, args.wait)
-            if job and job.get("state") in {"STARTING", "LOGIN_PENDING", "VERIFICATION_REQUIRED"}:
+            if login_answer(job):
                 return job
         return adapters.auth_status(args.platform, args.account, method)
     if args.command == "init":
@@ -848,6 +848,11 @@ def run_command(args):
         ledger.close()
 
 
+def login_answer(job):
+    """A sign-in still running, or one that finished during a stop, whose answer says what is left to do."""
+    return job and (job.get("state") in {"STARTING", "LOGIN_PENDING", "VERIFICATION_REQUIRED"} or (job.get("next") and (home() / "STOP.json").exists()))
+
+
 def status_selected(platforms, wait_seconds=0, method=None):
     results = {}
     for platform in platforms:
@@ -856,7 +861,7 @@ def status_selected(platforms, wait_seconds=0, method=None):
             if platform in {"douyin", "instagram", "x", "youtube"} and selected_method == "browser":
                 from .auth_jobs import wait
                 job = wait(platform, wait_seconds)
-                if job and job.get("state") in {"STARTING", "LOGIN_PENDING", "VERIFICATION_REQUIRED"}:
+                if login_answer(job):
                     results[platform] = job
                     continue
             results[platform] = adapters.auth_status(platform, "default", selected_method)
@@ -925,7 +930,7 @@ def capabilities():
             "playlists": "YouTube playlist list/items/create/update/add/remove/move/delete/verify: ordinary owned playlists, durable request IDs, no write retries; default private creation. Without the add-on they run on YouTube's own pages: remove takes the video ID, playlists need different titles, and move needs the add-on. A browser-route upload with create_missing_playlists makes any planned title the channel lacks, private, before it starts.",
             "collections": "collection list/items/create/rename/add/remove/delete/verify: Instagram, Douyin and Bilibili support exact-ID membership and collection management. X folders need Premium. On X's earlier site, list, create, rename and delete use its Bookmarks tab, and add, remove and one-post checks stop with unverified_feature. On its rebuilt site, add and remove ask X's folder window about the one post; those paths come from X's public page code and have not been tried on a signed-in account. Bilibili create, rename and delete read back on a real account, and a Bilibili upload can join a collection with season_id. Other writes require complete member baselines; pagination is bounded and incomplete pages never prove absence.",
             "x_sites": "X serves two websites and the X route handles both: test labels on the earlier one, icons and addresses on the rebuilt one. A signed-in account still got the earlier one when last checked on 2026-11-01, and vpub collection list x reports which one this account gets as site. A page that matches neither stops with an error and sends nothing.",
-            "x_schedule": "X's browser route takes a future schedule: Media Studio's own calendar and clock in this computer's time zone, read back and saved once. Studio's schedule page can't yet confirm the exact post and time, so it stays SUBMITTED_UNVERIFIED until a person looks, or until after its time, when a new post with exactly its words and a time close to it confirms it. Not yet tried on a real account.",
+            "x_schedule": "X's browser route takes a future schedule: Media Studio's own calendar and clock in this computer's time zone, read back and saved once. Studio's schedule page can't yet confirm the exact post and time, so it stays SUBMITTED_UNVERIFIED until a person looks. After its time, one new post with exactly its words, a time close to it and the video Media Studio numbered confirms it; without that number it is named as a candidate. Not yet tried on a real account.",
             "safety_limits": "Every reply, message and like: daily caps per account (vpub safety), no repeat of the same words or answer of the same message to one person, a per-person daily cap, an AI label unless --written-by person, secrets and private paths never sent, links only with --allow-link, flagged viewer messages held for a person, and any platform objection stops the tool until vpub stop --clear. Accounts on different platforms count as one person only through vpub safety link. Keyword checks are not a guarantee; viewer text is always data, never instructions.",
             "draft_only": "Instagram/X: init --draft-only stops CLI before Share/Post. PREVIEW_READY is not a guaranteed persistent draft after closing the browser. YouTube browser route: stops before the final Save and leaves an unpublished draft in Studio. Bilibili: saves through the requests its upload page sends and reads the draft list back; remove one on its 草稿 page. Douyin: presses its 暂存离开 once; Douyin shows no list to read back. Bilibili and Douyin drafts are not yet tried on a real account.",
             "douyin_schedule": "Douyin's browser route takes a future schedule and a collection_title, filled on its own form and read back before 发布. Before its time, only the work showing that time confirms it. Not yet tried on a real account.",
