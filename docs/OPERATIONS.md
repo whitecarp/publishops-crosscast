@@ -124,7 +124,7 @@ vpub ops runs
 
 管理本帳號的一般播放列表：建立、改名、修改說明／可見性、添加／移除影片和刪除列表。建立預設私密；改名保留原說明及可見性。
 
-**未安裝附加元件時**，這些操作在背景瀏覽器中透過 YouTube 自己的頁面執行。`remove` 使用 VIDEO_ID。添加與移除使用影片觀看頁的儲存視窗，它會標明這部影片是否在該列表中；該視窗不顯示 ID，因此播放列表的標題不能重複。清單、讀取、建立、改名、添加、移除與刪除，都已用臨時的私人播放清單在真實頻道上檢查過；修改說明或可見性尚未在真實頻道上試過。調整順序（`move`）會回傳 `paid_feature_required`。
+**未安裝附加元件時**，這些操作在背景瀏覽器中透過 YouTube 自己的頁面執行。`remove` 使用 VIDEO_ID。添加與移除使用影片觀看頁的儲存視窗，它會標明這部影片是否在該列表中；該視窗不顯示 ID，因此播放列表的標題不能重複。清單、讀取、建立、改名、添加、移除與刪除，都已用臨時的私人播放清單在真實頻道上檢查過；修改說明或可見性第一次試就在儲存前失敗了，之後已修改，還沒重試。調整順序（`move`）會回傳 `paid_feature_required`。
 
 **安裝附加元件後**改用官方 API，也可調整順序。移動／移除使用 `playlist items` 返回的精確 **ITEM_ID**，不是 VIDEO_ID；排序位置從 0 開始。
 
@@ -212,7 +212,7 @@ vpub safety status
 vpub safety set --replies-per-day 30 --messages-per-day 10
 vpub safety link bilibili:12345 x:some_handle
 vpub safety unlink x:some_handle
-vpub stop --clear
+vpub stop --clear   # 只有在有人看過它為什麼停下之後才執行
 ```
 
 | 限制 | 預設 | 結果 |
@@ -247,9 +247,9 @@ vpub preferences --language zh
 vpub report --language auto --out report.json
 ```
 
-把 `youtube` 換成 `bilibili`、`douyin`、`instagram` 或 `x` 即可使用相同入口。瀏覽器平台目前要求作品已有 CrossCast 回執，以核對登入帳號；不猜測其他人的作品歸屬。`comments reply` 直接發送，沒有逐條審批；`--dry-run` 僅為可選預覽。文案由宿主模型提供，CLI 不自行聊天、翻譯或追加署名。
+把 `youtube` 換成 `bilibili`、`douyin`、`instagram` 或 `x` 即可使用相同入口。抖音、Instagram、X 的瀏覽器操作需要作品已有 CrossCast 回執，或先用 `vpub ops adopt` 重新核對擁有者；YouTube 的 Studio 頁面只開得了本頻道自己的影片，兩者都不需要。作品歸屬從不靠猜。`comments reply` 直接發送，沒有逐條審批；`--dry-run` 僅為可選預覽。文案由宿主模型提供，CLI 不自行聊天、翻譯或追加署名。
 
-發送前重新核對評論與帳號，先寫持久狀態，再提交一次；結果不明時只用 `verify-reply` 讀回，不盲目重送。一般回覆拒絕自己的評論及已知已有作者回覆的串。讀取只涵蓋回傳的頁面／可見列表；`complete: false` 不能當作已讀完所有評論。YouTube 與 B站可用 `next_cursor` 繼續；瀏覽器不捏造分頁游標。
+發送前重新核對評論與帳號，先寫持久狀態，再提交一次；結果不明時只用 `verify-reply` 讀回，不盲目重送。一般回覆拒絕自己的評論及已知已有作者回覆的串。讀取只涵蓋回傳的頁面／可見列表；`complete: false` 不能當作已讀完所有評論。B站（以及安裝付費附加元件的 YouTube）可用 `next_cursor` 繼續；瀏覽器（包括 YouTube 的免費路徑）不捏造分頁游標，並且會拒絕 `--cursor`（`cursor_unsupported`）。
 
 | 平台 | 評論與回覆 | 作品數據 |
 |---|---|---|
@@ -303,7 +303,7 @@ vpub comments replies youtube VIDEO_ID ROOT_COMMENT_ID --cursor NEXT_CURSOR
 vpub comments replies bilibili BV_ID ROOT_COMMENT_ID --limit 20
 ```
 
-這兩站可分頁讀取指定頂層留言下的回覆，核對作品與父留言。`next_cursor` 表示仍有下一頁；`complete` 僅描述目前請求範圍。這不會把 Instagram、X、抖音的可見留言讀取升級為完整歷史匯出，也不會繞過原有發送去重。
+這兩站可分頁讀取指定頂層留言下的回覆，核對作品與父留言；YouTube 用 `--cursor` 翻頁需要付費附加元件，免費路徑只會篩出 Studio 已載入的回覆。`next_cursor` 表示仍有下一頁；`complete` 僅描述目前請求範圍。這不會把 Instagram、X、抖音的可見留言讀取升級為完整歷史匯出，也不會繞過原有發送去重。
 
 ## 統一訊息巡檢與評論補讀
 

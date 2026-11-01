@@ -124,7 +124,7 @@ One same-machine, same-account comparison of 10 forced reads across four platfor
 
 Manage ordinary playlists owned by the signed-in channel: create, rename, change description/privacy, add/remove videos and delete. Creation defaults to private, and renaming preserves description and privacy.
 
-**Without the add-on** these run on YouTube's own pages in the background browser. `remove` takes the VIDEO_ID. Adding and removing use the Save window on the video's watch page, which says whether that one video is in the playlist, and that window shows no IDs, so playlists need different titles. Lists, reads, creating, renaming, adding, removing and deleting were checked on a real channel with a temporary private playlist; changing a description or visibility has not been tried on one. Reordering (`move`) returns `paid_feature_required`.
+**Without the add-on** these run on YouTube's own pages in the background browser. `remove` takes the VIDEO_ID. Adding and removing use the Save window on the video's watch page, which says whether that one video is in the playlist, and that window shows no IDs, so playlists need different titles. Lists, reads, creating, renaming, adding, removing and deleting were checked on a real channel with a temporary private playlist; changing a description or visibility failed before saving on its first try, was changed afterwards, and has not been retried. Reordering (`move`) returns `paid_feature_required`.
 
 **With the add-on** they use the official API, which also reorders. Move/remove use the exact **ITEM_ID** from `playlist items`, not VIDEO_ID; positions are zero-based.
 
@@ -212,7 +212,7 @@ vpub safety status
 vpub safety set --replies-per-day 30 --messages-per-day 10
 vpub safety link bilibili:12345 x:some_handle
 vpub safety unlink x:some_handle
-vpub stop --clear
+vpub stop --clear   # only after a person has looked at why it stopped
 ```
 
 | Limit | Default | What happens |
@@ -247,9 +247,9 @@ vpub preferences --language en
 vpub report --language auto --out report.json
 ```
 
-Replace `youtube` with `bilibili`, `douyin`, `instagram` or `x` for the same command interface. Browser operations currently require an existing CrossCast work receipt to verify the account; ownership is never guessed. `comments reply` sends directly without per-comment approval; `--dry-run` is optional. The host model supplies the copy; the CLI does not chat, translate or append a signature itself.
+Replace `youtube` with `bilibili`, `douyin`, `instagram` or `x` for the same command interface. On Douyin, Instagram and X, browser operations need an existing CrossCast work receipt or a fresh `vpub ops adopt` owner check; YouTube's Studio pages open only the channel's own videos, so they need neither. Ownership is never guessed. `comments reply` sends directly without per-comment approval; `--dry-run` is optional. The host model supplies the copy; the CLI does not chat, translate or append a signature itself.
 
-Before sending, the CLI checks the current comment and account, persists its intent and submits once. An uncertain result uses read-only `verify-reply`, never a blind resend. Ordinary replies reject own comments and threads known to contain an owner reply. Reads cover only the returned page or visible list; `complete: false` is not a full-history claim. YouTube and Bilibili return `next_cursor`; browser adapters do not invent pagination tokens.
+Before sending, the CLI checks the current comment and account, persists its intent and submits once. An uncertain result uses read-only `verify-reply`, never a blind resend. Ordinary replies reject own comments and threads known to contain an owner reply. Reads cover only the returned page or visible list; `complete: false` is not a full-history claim. Bilibili, and YouTube with the paid add-on, return `next_cursor`; browser adapters, YouTube's free route included, do not invent pagination tokens and refuse a `--cursor` (`cursor_unsupported`).
 
 | Platform | Comments and replies | Work metrics |
 |---|---|---|
@@ -303,7 +303,7 @@ vpub comments replies youtube VIDEO_ID ROOT_COMMENT_ID --cursor NEXT_CURSOR
 vpub comments replies bilibili BV_ID ROOT_COMMENT_ID --limit 20
 ```
 
-These two platforms support paged replies to a top-level comment with work and parent checks. `next_cursor` indicates another page; `complete` describes only the requested scope. This does not turn Instagram, X or Douyin visible comments into a complete historical export or bypass reply deduplication.
+These two platforms support paged replies to a top-level comment with work and parent checks; on YouTube, paging with `--cursor` needs the paid add-on, and the free route only filters the replies Studio loaded. `next_cursor` indicates another page; `complete` describes only the requested scope. This does not turn Instagram, X or Douyin visible comments into a complete historical export or bypass reply deduplication.
 
 ## Unified messages and bounded comment collection
 
