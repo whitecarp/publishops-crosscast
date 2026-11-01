@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 sys.path.insert(0, str(Path(__file__).parent))
 from stage_browser import SharedBrowser
 
-from video_publisher import adapters, browser_forms
+from video_publisher import adapters, browser_forms, cli
 from video_publisher.browser_backends import Transaction
 from video_publisher.core import VpubError, file_sha, home, read_json
 
@@ -207,6 +207,39 @@ class InstagramFormTests(Form):
 
 
 del Form
+
+
+class StopBeforeAnythingTests(unittest.TestCase):
+    """A stop that lands between the check and the upload's first step means nothing went out, so the plan can still run later."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        env = patch.dict(os.environ, {"VPUB_HOME": str(Path(temp.name) / "runtime")})
+        env.start()
+        self.addCleanup(env.stop)
+        self.plan = {"confirmation": "hash", "video_sha256": "a" * 64, "platforms": {"x": {"account": "default", "title": "T", "method": "browser"}}}
+
+    def publish(self, side_effect=None, answer=None):
+        with patch.object(adapters, "preflight", return_value={"identity": "me"}), patch.object(adapters, "publish", side_effect=side_effect, return_value=answer) as sent, patch.object(cli, "snapshot_plan", side_effect=lambda plan, platform: plan):
+            return cli.publish_plan(self.plan, "hash")["results"]["x"], sent
+
+    def test_it_is_reported_as_not_started_and_can_run_again(self):
+        first, _ = self.publish(VpubError("stopped", "Publication stop file exists."))
+        self.assertEqual(("NOT_STARTED", "stopped"), (first["state"], first["code"]))
+        again, sent = self.publish(answer={"state": "SUBMISSION_VERIFIED"})
+        sent.assert_called_once()
+        self.assertEqual("SUBMISSION_VERIFIED", again["state"])
+
+    def test_a_stop_after_a_receipt_exists_is_not_treated_as_never_started(self):
+        def part_way(platform, plan, options, checkpoint):
+            checkpoint({"state": "SUBMITTED", "id": "1234567890"})
+            raise VpubError("stopped", "Publication stop file exists.")
+        first, _ = self.publish(part_way)
+        self.assertEqual(("SUBMITTED_UNVERIFIED", "1234567890"), (first["state"], first["id"]))
+        again, sent = self.publish(answer={"state": "SUBMISSION_VERIFIED"})
+        sent.assert_not_called()
+        self.assertEqual("SKIPPED_EXISTING", again["state"])
 
 
 class BilibiliReadBackTests(unittest.TestCase):

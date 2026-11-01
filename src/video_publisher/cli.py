@@ -120,8 +120,8 @@ def publish_plan(plan, confirm):
                     results[platform] = {"key": key, **receipt}
                 except Exception as e:
                     code = e.code if isinstance(e, VpubError) else "backend_error"
-                    if never_sent(e) or (code == "browser_busy" and not record.get("receipt")):
-                        # The worker was refused the profile lock before it opened a page, or bili-cli held the upload back to keep its spacing.
+                    if never_sent(e) or (code in {"browser_busy", "stopped"} and not record.get("receipt")):
+                        # The worker was refused the profile lock before it opened a page, a stop landed before its first step, or bili-cli held the upload back to keep its spacing.
                         ledger.save(key, "IN_PROGRESS", record)
                         ledger.forget(key)
                         results[platform] = {"state": "NOT_STARTED", "code": code, "message": e.message, "hint": e.hint}
