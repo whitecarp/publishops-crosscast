@@ -199,6 +199,18 @@ def douyin_card_words(text):
     return ''.join(c for c in unicodedata.normalize('NFC', text or '') if not c.isspace() and unicodedata.category(c) != 'Cf')
 
 
+async def douyin_type_caption(page, editor, caption):
+    """A caption set in one go came out with a star at each new paragraph, on the card and, for a real video, on its public page, and the person never wrote those. So it is typed as a person would, a line at a time."""
+    await editor.click()
+    await editor.press('ControlOrMeta+A')
+    await editor.press('Backspace')
+    for number, line in enumerate(caption.split('\n')):
+        if number:
+            await page.keyboard.press('Enter')
+        if line:
+            await page.keyboard.insert_text(line)
+
+
 async def douyin_cards_titled(page, title, caption=''):
     """The Creator Center cards with exactly this title, or exactly this title and then this caption, which a field check found a card's title node holds, with a star where each new paragraph begins. A longer title or another caption is another work."""
     wanted = {douyin_card_words(title), douyin_card_words(title + caption), douyin_card_words(title + re.sub(r'\s*\n\s*', '*', caption.strip()))}

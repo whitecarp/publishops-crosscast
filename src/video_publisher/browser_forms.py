@@ -12,7 +12,7 @@ from .core import VpubError, douyin_caption, stop_check
 from .browser_runtime import risk_check, unique_visible, visible
 from .progress import stage
 from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, normalize, studio_offsets, studio_read, studio_style,
-                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, douyin_card_stamp, douyin_card_status, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, DOUYIN_SCHEDULED)
+                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, douyin_card_stamp, douyin_card_status, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
 
 X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
 YT_DIALOG = 'ytcp-uploads-dialog'
@@ -299,7 +299,7 @@ async def publish_douyin(page, tx):
     title = page.locator('input[placeholder*="填写作品标题"]')
     await title.fill(tx.options['title'])
     editor = await unique_visible(page.locator('[contenteditable=true]'), 'Douyin description')
-    await editor.fill(caption)
+    await douyin_type_caption(page, editor, caption)
     await page.get_by_text('重新上传', exact=True).wait_for(state='visible', timeout=900000)
     tx.save(phase='uploaded')
     return await finish_douyin_form(page, tx, before)
@@ -426,7 +426,7 @@ async def finish_douyin_form(page, tx, before):
         tx.save(collection=await douyin_collection(page, tx.options['collection_title']))
     if tx.options.get('schedule'):
         tx.save(schedule=await douyin_schedule(page, datetime.fromisoformat(tx.options['schedule'].replace('Z', '+00:00'))))
-    if await title.input_value() != tx.options['title'] or normalize(await editor.inner_text()).replace('\u200b','') != normalize(caption):
+    if await title.input_value() != tx.options['title'] or douyin_card_words(await editor.inner_text()) != douyin_card_words(caption):
         raise VpubError('metadata_mismatch', 'Douyin title or description differs from the manifest.')
     tx.save(phase='preview', metadata_readback=True, ai_disclosure='native_control', visibility=tx.options['visibility'])
     if tx.options.get('submission_mode') == 'draft_only':

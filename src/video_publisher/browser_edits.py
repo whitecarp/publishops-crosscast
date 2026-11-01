@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 from . import x_pages
 from .core import VpubError, atomic_json, file_sha, now, stop_check
 from .browser_runtime import risk_check, unique_visible, visible
-from .browser_backends import normalize, work_url
+from .browser_backends import douyin_card_words, douyin_type_caption, normalize, work_url
 from .progress import stage
 
 READ_BACKS = 4
@@ -162,15 +162,15 @@ async def douyin_fields(page,url,work_id):
 async def douyin_text(page,work_id,patch,save,submit,verify_only=False):
     """Title and description on the work's own edit page, the one its cover uses. Saved once, then read back from a fresh load."""
     url=f'https://creator.douyin.com/creator-micro/content/post/video?mid={work_id}&enter_from=edit_item'
-    wanted=normalize(patch['title']),normalize(patch['caption'])
-    async def current(title,editor): return normalize(await title.input_value()),normalize(await editor.inner_text())
+    wanted=normalize(patch['title']),douyin_card_words(patch['caption'])
+    async def current(title,editor): return normalize(await title.input_value()),douyin_card_words(await editor.inner_text())
     title,editor=await douyin_fields(page,url,work_id)
     if await current(title,editor)==wanted:
         return save(state='EDIT_VERIFIED',unchanged=True,platform_writes=0,url=url)
     if verify_only:
         return save(state='EDIT_MISMATCH',platform_writes=0,url=url,reason='The saved text differs; no write attempted.')
     await title.fill(patch['title'])
-    await editor.fill(patch['caption'])
+    await douyin_type_caption(page,editor,patch['caption'])
     if await current(title,editor)!=wanted:
         raise VpubError('metadata_mismatch','Douyin\'s form did not keep the intended text; nothing was saved.')
     button=await visible(page.get_by_role('button',name=re.compile(r'^(保存|保存修改|提交修改|发布)$')))

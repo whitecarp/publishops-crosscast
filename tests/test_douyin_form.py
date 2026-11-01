@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from video_publisher import browser_backends, browser_forms, cli
+from video_publisher import browser_backends, browser_edits, browser_forms, cli
 from video_publisher.core import VpubError, atomic_json, home, load_plan
 from shared_chrome import ChromeCase, async_playwright
 
@@ -231,6 +231,31 @@ class WholeFormTests(Base):
             await self.run_form(StubTx(submission_mode="draft_only"))
         self.assertEqual("stopped", caught.exception.code)
         self.assertEqual([], self.writes)
+
+
+class CaptionTypingTests(Base):
+    """From a field check: a caption set in one go came out with a star at each new paragraph, on the card and on a real video's public page. Nothing here can show Douyin's own side of that, only how the caption reaches its editor."""
+    PAGE = """<!doctype html><meta charset="utf-8"><body><div contenteditable="true" id="box">Old words</div>
+      <script>window.seen = []; document.getElementById('box').addEventListener('beforeinput', e => window.seen.push([e.inputType, e.data]));</script>"""
+
+    async def type_it(self, caption):
+        await self.page.set_content(self.PAGE)
+        box = self.page.locator("#box")
+        await browser_backends.douyin_type_caption(self.page, box, caption)
+        return box, await self.page.evaluate("window.seen", isolated_context=False)
+
+    async def test_no_line_break_ever_goes_in_with_the_words(self):
+        box, seen = await self.type_it("One line.\n\n第二行。\n\n#Tag")
+        self.assertFalse([data for _, data in seen if data and "\n" in data])
+        self.assertEqual(["One line.", "第二行。", "#Tag"], [data for kind, data in seen if kind == "insertText"])
+        self.assertEqual(browser_backends.douyin_card_words("One line.\n\n第二行。\n\n#Tag"), browser_backends.douyin_card_words(await box.inner_text()))
+
+    async def test_what_was_there_goes_first(self):
+        box, _ = await self.type_it("New.")
+        self.assertEqual("New.", (await box.inner_text()).strip())
+
+    async def test_the_edit_page_types_it_the_same_way(self):
+        self.assertIn("douyin_type_caption(page,editor,patch['caption'])", Path(browser_edits.__file__).read_text(encoding="utf-8"))
 
 
 class ScheduledCardTests(Base):
