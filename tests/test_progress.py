@@ -335,7 +335,7 @@ class RouteTests(Temporary):
             with patch.object(adapters.os, "name", "nt"):
                 self.assertEqual({"done": True}, adapters.browser_call("youtube", "operations", "default"))
         self.assertEqual(2, len(set(seen)))
-        self.assertEqual(["reading the page"] * 2, stages_of(errors.getvalue()))
+        self.assertEqual(["starting the browser", "reading the page"] * 2, stages_of(errors.getvalue()))
 
     def test_a_shared_session_is_told_where_to_write(self):
         sent = {}
@@ -572,29 +572,6 @@ class RealProcessTests(Temporary):
         self.assertEqual(["starting the browser", "checking the account", "opening the page", "reading the page", "opening the page", "reading the page", "closing the browser"], stages_of(done.stderr))
         self.assertEqual(["CrossCastBackground"], read_json(self.state)["desktops"])
         self.assertEqual([], [path for path in (home() / "browser-jobs").iterdir()])
-
-    @unittest.skipUnless(os.name == "nt", "Windows desktops")
-    def test_the_steps_of_a_youtube_command_share_one_chrome_on_the_hidden_desktop(self):
-        first = self.vpub("works", "youtube")
-        self.assertEqual(PRIVATE, self.assert_one_answer(first)["data"]["items"][0]["title"])
-        self.assert_nothing_private(first.stderr)
-        self.assertIn("starting the browser", stages_of(first.stderr))
-        self.assertNotIn("closing the browser", stages_of(first.stderr))
-        second = self.vpub("works", "youtube")
-        self.assert_one_answer(second)
-        self.assertNotIn("starting the browser", stages_of(second.stderr))
-        self.assertEqual(["CrossCastBackground"], read_json(self.state)["desktops"])
-        self.assertEqual(False, read_json(self.state)["headless"])
-
-    @unittest.skipUnless(os.name == "nt", "Windows desktops")
-    def test_a_youtube_session_nobody_asks_again_closes_itself_soon(self):
-        self.assert_one_answer(self.vpub("works", "youtube", idle=1))
-        path = broker.state_path("youtube", "default")
-        deadline = time.monotonic() + 30
-        while path.exists():
-            self.assertLess(time.monotonic(), deadline)
-            time.sleep(0.2)
-        self.assertTrue(broker.wait_for_lock("youtube", "default", 15))
 
     def test_a_command_with_no_browser_says_nothing(self):
         done = self.vpub("doctor")

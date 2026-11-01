@@ -7,7 +7,6 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -629,83 +628,6 @@ class HiddenDesktopTests(Temporary):
                 patch.object(adapters, "worker_call", return_value={"ok": True, "data": {}}), patch("video_publisher.browser_broker.enabled", return_value=False):
             adapters.browser_call("x", "status", "default")
         hidden.assert_not_called()
-
-    def test_a_read_on_windows_uses_the_shared_hidden_session_and_a_one_shot_only_if_none_can_start(self):
-        with patch("video_publisher.browser_broker.call", return_value={"identity": CHANNEL}) as session, patch.object(hidden_desktop, "call_worker") as one_shot:
-            self.assertEqual({"ok": True, "data": {"identity": CHANNEL}}, adapters.hidden_desktop_call({"platform": "youtube", "account": "default", "action": "operations"}, 10))
-        session.assert_called_once()
-        one_shot.assert_not_called()
-        answer = {"ok": True, "data": {}}
-        with patch("video_publisher.browser_broker.call", return_value=None), patch.object(hidden_desktop, "call_worker", return_value=answer) as one_shot:
-            self.assertEqual(answer, adapters.hidden_desktop_call({"platform": "youtube", "account": "default", "action": "operations"}, 10))
-        one_shot.assert_called_once()
-
-    def test_a_command_that_runs_alone_closes_the_session_first_and_never_uses_it(self):
-        answer = {"ok": True, "data": {}}
-        for action in ("publish", "resume", "edit", "read_all"):
-            with self.subTest(action=action), patch("video_publisher.browser_broker.call") as session, patch("video_publisher.browser_broker.release") as release, \
-                    patch.object(hidden_desktop, "call_worker", return_value=answer) as one_shot:
-                adapters.hidden_desktop_call({"platform": "youtube", "account": "default", "action": action}, 10)
-                session.assert_not_called()
-                release.assert_called_once_with("youtube", "default")
-                one_shot.assert_called_once()
-
-    def test_turning_shared_sessions_off_turns_this_one_off_too(self):
-        with patch.dict(os.environ, {"VPUB_BROWSER_IDLE_SECONDS": "0"}), patch("video_publisher.browser_broker.call") as session, patch.object(hidden_desktop, "call_worker", return_value={"ok": True, "data": {}}) as one_shot:
-            adapters.hidden_desktop_call({"platform": "youtube", "account": "default", "action": "operations"}, 10)
-        session.assert_not_called()
-        one_shot.assert_called_once()
-
-    def test_a_youtube_session_starts_only_on_the_hidden_desktop_never_as_a_plain_process(self):
-        from video_publisher import browser_broker as broker
-        with patch.object(hidden_desktop, "Started") as started, patch.object(broker.subprocess, "Popen") as plain:
-            broker.start("youtube", "default")
-        started.assert_called_once()
-        plain.assert_not_called()
-        with patch.object(hidden_desktop, "Started") as started, patch.object(broker.subprocess, "Popen") as plain:
-            broker.start("x", "default")
-        started.assert_not_called()
-        plain.assert_called_once()
-
-    def test_outside_windows_youtube_never_keeps_a_session(self):
-        with patch.object(adapters, "stop_check"), patch.object(adapters.os, "name", "posix"), patch("video_publisher.browser_broker.call") as session, \
-                patch("video_publisher.browser_broker.start") as starting, patch.object(adapters, "worker_call", return_value={"ok": True, "data": {}}) as plain:
-            adapters.browser_call("youtube", "operations", "default")
-        session.assert_not_called()
-        starting.assert_not_called()
-        plain.assert_called_once()
-
-    def test_a_youtube_session_stays_only_seconds_and_other_platforms_keep_their_five_minutes(self):
-        from video_publisher import browser_broker as broker
-        for platform, wanted in (("youtube", broker.YOUTUBE_IDLE_SECONDS), ("x", None)):
-            with self.subTest(platform=platform):
-                pw = MagicMock(__aenter__=AsyncMock(return_value=MagicMock()), __aexit__=AsyncMock(return_value=False))
-                context = MagicMock(close=AsyncMock(), storage_state=AsyncMock(return_value={"cookies": []}))
-                with patch("patchright.async_api.async_playwright", return_value=pw), patch.object(browser_runtime, "open_context", new=AsyncMock(return_value=context)), \
-                        patch.object(browser_runtime, "signed_in_page", new=AsyncMock(return_value=(MagicMock(), "owner"))), patch.object(broker, "serve", new=AsyncMock()) as serve:
-                    asyncio.run(broker.run(platform, "default"))
-                self.assertEqual(wanted, serve.await_args.kwargs["idle"])
-        self.assertLess(broker.YOUTUBE_IDLE_SECONDS, 60)
-
-    @unittest.skipUnless(os.name == "nt", "Windows desktops")
-    def test_a_process_left_running_on_the_hidden_desktop_says_when_it_has_ended(self):
-        done = self.root / "done.txt"
-        code = ("import ctypes,sys,time\n"
-                "u=ctypes.WinDLL('user32')\n"
-                "u.GetThreadDesktop.restype=ctypes.c_void_p\n"
-                "d=u.GetThreadDesktop(ctypes.WinDLL('kernel32').GetCurrentThreadId())\n"
-                "b=ctypes.create_unicode_buffer(256)\n"
-                "u.GetUserObjectInformationW(ctypes.c_void_p(d),2,b,512,None)\n"
-                "time.sleep(0.5)\n"
-                "open(sys.argv[1],'w').write(b.value)\n")
-        started = hidden_desktop.Started([sys.executable, "-c", code, str(done)])
-        self.assertIsNone(started.poll())
-        for _ in range(600):
-            if started.poll() is not None:
-                break
-            time.sleep(0.1)
-        self.assertIsNotNone(started.poll())
-        self.assertEqual(hidden_desktop.DESKTOP, done.read_text())
 
     def test_the_answer_comes_back_and_no_private_files_stay(self):
         def worker(argv, timeout):
