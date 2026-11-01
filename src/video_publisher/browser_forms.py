@@ -249,7 +249,11 @@ async def publish_douyin(page, tx):
     tx.save(before_ids=list(before), expected_text=tx.options['title'])
     await page.goto('https://creator.douyin.com/creator-micro/content/upload', wait_until='domcontentloaded', timeout=60000)
     await page.locator('input[type=file]').wait_for(state='attached', timeout=20000)
-    tx.save(draft_offered_before=await douyin_offers_draft(page, 3))
+    # Selecting a video here could replace a draft the person kept, and only they can say whether it matters.
+    if await douyin_offers_draft(page, 3):
+        raise VpubError('existing_draft_requires_attention', "Douyin's upload page is offering a kept draft, and uploading now could replace it. No video was selected.",
+                        "Continue or discard that draft on Douyin's upload page yourself, then run this again.")
+    tx.save(draft_offered_before=False)
     await upload_file(page, tx.media(), accept='video/')
     tx.save(phase='uploading')
     await page.wait_for_url(re.compile(r'/content/(publish|post/video)'), timeout=120000)

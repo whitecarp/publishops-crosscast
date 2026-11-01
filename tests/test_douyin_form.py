@@ -231,6 +231,36 @@ class WholeFormTests(Base):
         self.assertEqual([], self.writes)
 
 
+class KeptDraftTests(Base):
+    """An upload must not replace a draft the person kept."""
+
+    async def publish(self, upload_page):
+        self.upload_page = upload_page
+        tx = StubTx()
+        tx.media = lambda: "clip.mp4"
+        with patch.object(browser_forms, "works", new=AsyncMock(return_value={})), patch.object(browser_forms, "douyin_caption", return_value="Words"), \
+                patch.object(browser_forms, "upload_file", new=AsyncMock(side_effect=RuntimeError("selected"))) as selected, self.assertRaises(Exception) as caught:
+            await browser_forms.publish_douyin(self.page, tx)
+        return caught.exception, selected, tx
+
+    async def test_a_kept_draft_on_offer_stops_it_before_any_video_is_selected(self):
+        error, selected, tx = await self.publish('<!doctype html><meta charset="utf-8"><body><input type=file><button>继续编辑</button><button>放弃</button>')
+        self.assertEqual("existing_draft_requires_attention", error.code)
+        selected.assert_not_called()
+        self.assertEqual([], self.writes)
+
+    async def test_a_kept_draft_that_shows_late_stops_it_too(self):
+        error, selected, _ = await self.publish('<!doctype html><meta charset="utf-8"><body><input type=file><script>setTimeout(() => { const b = document.createElement("button"); b.textContent = "继续编辑"; document.body.append(b); }, 1500);</script>')
+        self.assertEqual("existing_draft_requires_attention", error.code)
+        selected.assert_not_called()
+
+    async def test_a_clean_page_goes_on_to_select_the_video(self):
+        error, selected, tx = await self.publish("<!doctype html><body><input type=file>")
+        self.assertEqual("selected", str(error))
+        selected.assert_awaited_once()
+        self.assertIs(False, tx.receipt["draft_offered_before"])
+
+
 class ReadBackTests(unittest.IsolatedAsyncioTestCase):
     def page(self):
         page = AsyncMock()
