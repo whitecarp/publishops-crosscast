@@ -83,6 +83,19 @@ async def unique_visible(locator, label):
     return items[0]
 
 
+async def look_until(page, look, milliseconds, step=500):
+    """A fixed wait that ends as soon as what comes next is already there. It lasts at least as long as the wait it replaces when nothing shows, and looks once more at the end."""
+    for _ in range(milliseconds // step):
+        try:
+            found = await look()
+        except Exception:
+            found = None  # The page is still changing, which is what the wait is for.
+        if found:
+            return found
+        await page.wait_for_timeout(step)
+    return await look()
+
+
 def on_site(host, site):
     return host == site or host.endswith("." + site)
 

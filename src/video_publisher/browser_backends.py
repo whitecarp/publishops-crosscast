@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .core import VpubError, atomic_json, file_sha, home, now, read_json, snapshot_file, stop_check
-from .browser_runtime import failure_record, plain_address, risk_check, unique_visible, visible
+from .browser_runtime import failure_record, look_until, plain_address, risk_check, unique_visible, visible
 from .progress import stage
 from .x_pages import own_posts
 
@@ -353,8 +353,13 @@ async def verify(page, platform, identity, receipt):
                 await page.locator('article').filter(has_text=receipt.get('title','')).first.wait_for(timeout=20000)
             except Exception:
                 pass
-        else:
-            await page.wait_for_timeout(4000)
+        expected = receipt.get("expected_text")
+        if platform == "instagram":
+            # Everything read below, as soon as all of it shows. A page that never shows it gets the same four seconds.
+            async def shown():
+                return (await visible(page.locator('a[href="/'+identity+'/"]')) and await visible(page.locator('video'))
+                        and (not expected or normalize(expected) in normalize(await page.locator("body").inner_text())))
+            await look_until(page, shown, 4000)
         await risk_check(page)
         present = str(receipt["id"]) in await links(page, platform, identity)
         if platform == "instagram":
@@ -362,7 +367,6 @@ async def verify(page, platform, identity, receipt):
             author = await visible(page.locator('a[href="/'+identity+'/"]'))
             present = bool(owned and author and await visible(page.locator('video')) and
                            urlsplit(page.url).path.rstrip('/').endswith('/'+receipt['id']))
-        expected = receipt.get("expected_text")
         if expected:
             actual = normalize(await page.locator("body").inner_text())
             present = present and normalize(expected) in actual

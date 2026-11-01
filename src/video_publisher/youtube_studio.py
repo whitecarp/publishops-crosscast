@@ -4,7 +4,7 @@ import re
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from .browser_backends import normalize, studio_visibility, work_url
-from .browser_runtime import risk_check, unique_visible, visible
+from .browser_runtime import look_until, risk_check, unique_visible, visible
 from .core import VpubError, atomic_json, file_sha, home, now, read_json, stop_check
 from .operations_api import metric
 from .progress import stage
@@ -150,9 +150,11 @@ async def own_handle(page, identity):
     if isinstance(saved, dict) and saved.get("identity") == identity:
         return saved.get("handle")
     await page.goto(f"https://www.youtube.com/channel/{identity}", wait_until="domcontentloaded", timeout=60000)
-    await page.wait_for_timeout(2000)
+
+    async def named():
+        return re.search(r'"vanityChannelUrl":"https?://www\.youtube\.com/@([^"]+)"', await page.content())
+    found = await look_until(page, named, 2000)
     await risk_check(page)
-    found = re.search(r'"vanityChannelUrl":"https?://www\.youtube\.com/@([^"]+)"', await page.content())
     handle = unquote(found[1]).casefold() if found else None
     if handle:
         atomic_json(path, {"identity": identity, "handle": handle})
