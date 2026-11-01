@@ -196,7 +196,8 @@ async def works(page, platform, identity):
                         await title.click()
                     detail = await opened.value
                     try:
-                        await detail.wait_for_url(re.compile(r'/work-detail/\d+'), timeout=15000)
+                        # Its address is all this needs, and a field run saw this page not finish loading in 15 seconds.
+                        await detail.wait_for_url(re.compile(r'/work-detail/\d+'), timeout=15000, wait_until='commit')
                         match = re.fullmatch(r'/creator-micro/work-management/work-detail/(\d+)', urlsplit(detail.url).path)
                         if match and urlsplit(detail.url).hostname == 'creator.douyin.com':
                             k = match[1]

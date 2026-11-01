@@ -40,7 +40,7 @@ async def scan(page, platform, identity, limit, pages):
                 async with page.expect_popup(timeout=15000) as opened: await title.click()
                 detail=await opened.value
                 try:
-                    await detail.wait_for_url(re.compile(r'/work-detail/\d+'),timeout=15000)
+                    await detail.wait_for_url(re.compile(r'/work-detail/\d+'),timeout=15000,wait_until='commit')
                     u=urlsplit(detail.url); match=re.fullmatch(r'/creator-micro/work-management/work-detail/(\d+)',u.path)
                     if u.hostname=='creator.douyin.com' and match:
                         k=match[1]; rows[k]={'id':k,'text':text,'url':work_url(platform,identity,k)}
