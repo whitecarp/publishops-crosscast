@@ -5,6 +5,7 @@ before anything is sent, so a crash or a restart cannot reset them. Viewer text 
 """
 from datetime import date, datetime, timedelta, timezone
 import re
+from urllib.parse import urlsplit
 
 from .core import VpubError, atomic_json, config, digest, home, now, read_json, stop_check
 
@@ -100,11 +101,14 @@ def comparable(text):
 
 
 def account(platform, value):
-    """One platform account, as a stable name. X and Instagram handles ignore case."""
+    """One platform account, as a stable name, however it was written: comments on Instagram and Douyin name their authors by
+    profile address and messages by a bare ID. X and Instagram handles and YouTube's @handles ignore case."""
     if not isinstance(value, str) or not value.strip():
         return None
     value = value.strip()
-    return f"{platform}:{value.casefold() if platform in {'x', 'instagram'} else value}"
+    if platform in {"instagram", "douyin"}:
+        value = urlsplit(value).path.strip("/").removeprefix("user/") or value
+    return f"{platform}:{value.casefold() if platform in {'x', 'instagram'} or value.startswith('@') else value}"
 
 
 def people_path():
