@@ -220,7 +220,7 @@ vpub stop --clear   # only after a person has looked at why it stopped
 | Replies per day, per account | 50 (up to 300) | `daily_limit_reached` |
 | Messages per day, per account | 20 (up to 100) | `daily_limit_reached` |
 | Likes and saves per day, per account | 50 (up to 200) | `daily_limit_reached`; undoing never counts |
-| Replies to one person per day | 3 (up to 20) | `person_limit_reached` |
+| Replies and messages to one person per day, counted together | 3 (up to 20) | `person_limit_reached` |
 | Same words to one person, or answering the same message from them again | Blocked for 30 days (up to 365) | `repeat_reply`, `already_answered` |
 
 - **Who counts as one person:** the same account on one platform always does. Accounts on different platforms count only after `vpub safety link`, because platforms don't say who owns which account. A matching display name is shown as `possible_same_person` and never assumed.

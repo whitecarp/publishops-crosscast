@@ -220,7 +220,7 @@ vpub stop --clear   # 只有在有人看過它為什麼停下之後才執行
 | 每個帳號每日回覆數 | 50（最高 300） | `daily_limit_reached` |
 | 每個帳號每日私信數 | 20（最高 100） | `daily_limit_reached` |
 | 每個帳號每日點讚與收藏數 | 50（最高 200） | `daily_limit_reached`；取消操作不計入 |
-| 每日回覆同一個人的次數 | 3（最高 20） | `person_limit_reached` |
+| 每日回覆與私信同一個人的次數，合併計算 | 3（最高 20） | `person_limit_reached` |
 | 對同一個人重複相同的話，或再次回答對方的同一則訊息 | 30 天內禁止（最高 365 天） | `repeat_reply`、`already_answered` |
 
 - **誰算同一個人：** 同一平台的同一帳號一定算。不同平台的帳號必須先用 `vpub safety link` 連結，因為平台不會告知帳號的擁有者。顯示名稱相同時只會列為 `possible_same_person`，絕不自行認定。
