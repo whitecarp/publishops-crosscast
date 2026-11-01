@@ -618,6 +618,7 @@ class FakeDouyin:
 
 
 class DouyinTextTests(ChromeCase):
+    quick_pauses = True  # This copy of the site has no timers of its own, so a pause can end once the page is quiet.
     async def asyncSetUp(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)

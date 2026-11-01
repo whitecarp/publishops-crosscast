@@ -49,6 +49,7 @@ def page_html(keep_clock=True):
 
 
 class Calendar(ChromeCase):
+    quick_pauses = True  # This copy of the site has no timers of its own, so a pause can end once the page is quiet.
     async def asyncSetUp(self):
         self.pw = await async_playwright().start()
         self.browser = await self.pw.chromium.launch(channel="chrome", headless=True)

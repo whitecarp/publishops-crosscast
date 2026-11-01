@@ -194,6 +194,7 @@ class FakeEarlierX(FakeX):
 
 
 class Site(ChromeCase):
+    quick_pauses = True  # This copy of the site has no timers of its own, so a pause can end once the page is quiet.
     site = FakeX
 
     async def asyncSetUp(self):

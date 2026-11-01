@@ -245,6 +245,7 @@ class PublishingTests(Home):
 
 class WhoIsAskingTests(Home, ChromeCase):
     """In a real browser, because where the words sit is the whole point."""
+    quick_pauses = True  # This copy of the site has no timers of its own, so a pause can end once the page is quiet.
 
     def setUp(self):
         Home.setUp(self)

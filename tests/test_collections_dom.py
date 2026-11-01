@@ -108,6 +108,7 @@ class FakeX:
 
 
 class FolderTests(ChromeCase):
+    quick_pauses = True  # This copy of the site has no timers of its own, so a pause can end once the page is quiet.
     async def asyncSetUp(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
@@ -297,6 +298,7 @@ for (const row of document.querySelectorAll('[data-folder]')) row.onclick = () =
 
 class EarlierSiteTests(ChromeCase):
     """The site a signed-in account still got on 2026-10-31. Its flows are the ones earlier live tests used, and a field check of its folder window."""
+    quick_pauses = True  # This copy of the site has no timers of its own, so a pause can end once the page is quiet.
 
     async def asyncSetUp(self):
         temp = tempfile.TemporaryDirectory()
@@ -491,6 +493,7 @@ class EarlierSiteTests(ChromeCase):
 
 
 class AccountTests(ChromeCase):
+    quick_pauses = True  # This copy of the site has no timers of its own, so a pause can end once the page is quiet.
     async def asyncSetUp(self):
         self.pw = await async_playwright().start()
         self.browser = await self.pw.chromium.launch(channel='chrome', headless=True)

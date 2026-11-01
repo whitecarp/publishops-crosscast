@@ -27,6 +27,8 @@ STYLE = "<style>ytcp-playlist-row,ytcp-video-row,ytcp-comment,ytcp-comment-threa
 
 def menu_script():
     return """
+window.pending = 0;
+function later(run, delay) { window.pending += 1; setTimeout(() => { try { run(); } finally { window.pending -= 1; } }, delay); }
 for (const box of document.querySelectorAll('[data-opens]')) box.onclick = () => { const menu = document.getElementById(box.dataset.opens); menu.hidden = !menu.hidden; };
 """
 
@@ -124,7 +126,7 @@ class FakeYouTube:
             function make() {{ fetch('/youtubei/v1/playlist/create?write=create', {{method: 'POST', body: JSON.stringify({{title: document.querySelector('.title').innerText, description: document.querySelector('.notes').innerText, visibility: chosen}})}}).then(() => {{ document.getElementById('make').hidden = true; document.getElementById('make').style.display = 'none'; }}); }}
             let target = '';
             function ask(key, title) {{ target = key; document.getElementById('ask-text').textContent = 'Delete ' + title + '?'; document.getElementById('ask').hidden = false; }}
-            function sure() {{ fetch('/youtubei/v1/playlist/delete', {{method: 'POST', body: '{{}}'}}).then(() => setTimeout(() => fetch('/youtubei/v1/playlist/delete?write=delete/' + target, {{method: 'POST', body: '{{}}'}}).then(() => {{ document.getElementById('ask').hidden = true; }}), 1500)); }}
+            function sure() {{ fetch('/youtubei/v1/playlist/delete', {{method: 'POST', body: '{{}}'}}).then(() => later(() => fetch('/youtubei/v1/playlist/delete?write=delete/' + target, {{method: 'POST', body: '{{}}'}}).then(() => {{ document.getElementById('ask').hidden = true; }}), 1500)); }}
             </script>"""
 
     def delete_call(self, key):
@@ -154,7 +156,7 @@ class FakeYouTube:
             function choose(item, name) {{ chosen = name; document.getElementById('shown').textContent = item.textContent; item.parentElement.hidden = true; document.body.append(item.parentElement); ready(); }}
             // Save greys out at once and the change goes out later, as it does in Studio.
             function save() {{ const body = JSON.stringify({{title: document.querySelector('#title-textarea #textbox').innerText, description: document.querySelector('#description-textarea #textbox').innerText, visibility: chosen}});
-              document.getElementById('save').setAttribute('aria-disabled', 'true'); setTimeout(() => fetch('/youtubei/v1/browse/edit_playlist?write=update/{key}', {{method: 'POST', body}}), 1500); }}
+              document.getElementById('save').setAttribute('aria-disabled', 'true'); later(() => fetch('/youtubei/v1/browse/edit_playlist?write=update/{key}', {{method: 'POST', body}}), 1500); }}
             </script>"""
 
     def watch_page(self):
@@ -199,7 +201,7 @@ class FakeYouTube:
             function act(write) {{ fetch('/youtubei/v1/comment/perform_comment_action?write=' + write, {{method: 'POST', body: '{{}}'}}); if (write.startsWith('comment-remove/')) leave(write.split('/')[1]); }}
             function openBox(row, word, send) {{
               const homes = {{comment: row, thread: row.closest('ytcp-comment-thread'), sibling: row.closest('ytcp-comment-thread').querySelector('.sibling'), page: document.getElementById('box')}};
-              setTimeout(() => {{
+              later(() => {{
                 if (!homes[{json.dumps(self.box_place)}]) return;
                 for (let i = 0; i < {self.boxes}; i++) {{
                   const box = document.createElement('ytcp-commentbox'); box.innerHTML = '<textarea id="textarea"></textarea>' + ({json.dumps(self.box_button)} ? '<div id="submit-button"><button>' + word + '</button></div>' : '');
@@ -215,6 +217,7 @@ class FakeYouTube:
 
 
 class Browser(ChromeCase):
+    quick_pauses = True  # This copy's timers count themselves in window.pending (see later() in its page), so a pause waits for them.
     async def asyncSetUp(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)

@@ -11,11 +11,13 @@ import inspect
 import unittest
 
 LONGEST_WAIT = 8000  # Milliseconds.
+QUIET = 0.1  # Seconds with nothing going on, which end a pause in a class with quick_pauses.
 
 _loop = None
 _chrome = None  # The driver and the one Chrome, once a test has asked for them.
 _kept = set()  # The driver's own tasks, which no test's clean-up may cancel.
 _open = []  # Windows handed out and not closed yet.
+_test = None  # The test that is running.
 
 
 def loop():
@@ -26,7 +28,13 @@ def loop():
 
 
 class ChromeCase(unittest.TestCase):
-    """What unittest.IsolatedAsyncioTestCase gives a test class, except that every test runs on the one shared loop."""
+    """What unittest.IsolatedAsyncioTestCase gives a test class, except that every test runs on the one shared loop.
+
+    A class whose copy of the site has no timers of its own can set quick_pauses. The code under test pauses, some of them for several
+    seconds, to let the page finish what it is doing, and a pause then ends as soon as the page has been quiet: no request started or
+    still open, and nothing counted in the page's window.pending. A copy that does use timers counts them there, and a pause lasts as
+    long as one is pending. A pause is never longer than the code asked for."""
+    quick_pauses = False
 
     async def asyncSetUp(self):
         pass
@@ -41,11 +49,14 @@ class ChromeCase(unittest.TestCase):
         return loop().run_until_complete(awaitable)
 
     def run(self, result=None):
+        global _test
         before = asyncio.all_tasks(loop())
         asyncio.set_event_loop(loop())
+        _test = self
         try:
             return super().run(result)
         finally:  # What a loop and a Chrome of its own would have done when the test ended.
+            _test = None
             self.run_async(close_windows())
             left = [task for task in asyncio.all_tasks(loop()) if task not in before and task not in _kept]
             for task in left:
@@ -85,6 +96,54 @@ def shorten_waits():
     _connection._augment_params = shorter
 
 
+def pause_when_quiet():
+    """Gives Page.wait_for_timeout its quick form in the windows of a class with quick_pauses; every other pause is as long as it was asked."""
+    from patchright.async_api import Page
+    if getattr(Page.wait_for_timeout, "quick", False):
+        return
+    asked = Page.wait_for_timeout
+
+    async def pause(self, timeout):
+        seen = getattr(self.context, "requests", None)
+        if seen is None:
+            return await asked(self, timeout)
+        clock = asyncio.get_running_loop().time
+        end = clock() + timeout / 1000
+        quiet_since, started = None, None
+        try:
+            while True:
+                # Answering at all means every request the page has made so far has been counted.
+                pending = await self.evaluate("() => window.pending || 0", isolated_context=False)
+                now = clock()
+                if pending or seen["open"] or seen["started"] != started:
+                    quiet_since, started = None, seen["started"]
+                elif quiet_since is None:
+                    quiet_since = now
+                if now >= end or (quiet_since is not None and now - quiet_since >= QUIET):
+                    return
+                await asyncio.sleep(0.02)
+        except Exception:  # The page is changing or gone: wait the rest as asked.
+            if end - clock() > 0:
+                await asked(self, (end - clock()) * 1000)
+    pause.quick = True
+    Page.wait_for_timeout = pause
+
+
+def watch(window):
+    """Counts a window's requests, which is what a pause needs to know about."""
+    window.requests = {"started": 0, "open": 0}
+
+    def started(request):
+        window.requests["started"] += 1
+        window.requests["open"] += 1
+
+    def ended(request):
+        window.requests["open"] = max(0, window.requests["open"] - 1)
+    window.on("request", started)
+    window.on("requestfinished", ended)
+    window.on("requestfailed", ended)
+
+
 async def chrome():
     global _chrome
     if asyncio.get_running_loop() is not loop():
@@ -100,6 +159,7 @@ async def chrome():
             raise
         _kept.update(task for task in asyncio.all_tasks() if task not in before)
         shorten_waits()
+        pause_when_quiet()
     return _chrome[1]
 
 
@@ -143,6 +203,8 @@ class Browser:
 
     async def new_context(self, **options):
         window = await self.shared.new_context(**options)
+        if getattr(_test, "quick_pauses", False):
+            watch(window)
         self.windows.append(window)
         _open.append(window)
         return window
