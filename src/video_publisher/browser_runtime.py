@@ -53,7 +53,7 @@ SOMEONES_WORDS = """(e, others) => {
 }"""
 # What a failure record says about a control: what it is, never what it holds.
 CONTROL_SHAPES = """es => es.map(e => ({tag: e.tagName, type: e.getAttribute('type'), name: e.getAttribute('name'), id: e.id, role: e.getAttribute('role'), testid: e.getAttribute('data-testid'),
-                                       test_id: e.getAttribute('test-id'), placeholder: e.getAttribute('placeholder'), label: e.getAttribute('aria-label'), disabled: e.hasAttribute('disabled')}))"""
+                                       test_id: e.getAttribute('test-id'), placeholder: e.getAttribute('placeholder'), label: e.getAttribute('aria-label'), disabled: e.hasAttribute('disabled'), visible: e.getClientRects().length > 0}))"""
 FORM_FIELDS = "input,textarea,select,[contenteditable=true]"
 # A command's quoted arguments can hold a viewer's or a person's own words. Only a selector made of nothing but page structure stays.
 QUOTED = re.compile(r""""(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'""")

@@ -53,8 +53,9 @@ class OpeningMediaTests(ChromeCase):
     """The address of the uploaded file's page is kept once it changes, whether or not the page has finished loading."""
     LIBRARY = f"""<!doctype html><body><a href="https://analytics.twitter.com/user/{OWNER}/home">Analytics</a><button>Upload Media</button>
       <p onclick="location.href='/library/13_77/edit'">clip.mp4</p>"""
-    MEDIA = """<!doctype html><body><img src="/never.png"><button>Change thumbnail</button>
+    FORM = """<p>clip.mp4</p><button>Change thumbnail</button>
       <button type="button" onclick="document.getElementById('words').hidden = false">Post</button><textarea id="words" placeholder="What's happening?" hidden></textarea>"""
+    MEDIA = "<!doctype html><body><img src=\"/never.png\"><p>clip.mp4</p>" + FORM
 
     class Tx:
         identity = OWNER
@@ -87,13 +88,37 @@ class OpeningMediaTests(ChromeCase):
         await self.browser.close()
         await self.pw.stop()
 
-    async def test_a_file_that_opens_nothing_at_first_is_tried_until_its_page_comes(self):
-        """From field runs: its name showed at once and a click opened nothing, while a click two minutes later opened it straight away."""
+    async def test_a_click_that_does_nothing_at_first_comes_again_while_the_name_is_on_the_tile_alone(self):
         self.LIBRARY = self.LIBRARY.replace("location.href=", "if (++window.clicks > 2) location.href=") + "<script>window.clicks = 0</script>"
         tx = self.Tx()
-        with patch.object(browser_forms, "X_OPEN_MS", 300):
+        with patch.object(browser_forms, "X_OPEN_SECONDS", 1):
             self.assertEqual("PREVIEW_READY", (await browser_forms.publish_x(self.page, tx))["state"])
         self.assertEqual("https://studio.x.com/library/13_77/edit", tx.receipt["media_url"])
+
+    def library_that_opens_the_form_in_place(self, delay=0):
+        return f"""<!doctype html><body><a href="https://analytics.twitter.com/user/{OWNER}/home">Analytics</a><button>Upload Media</button><div id="spot"></div>
+          <p onclick="window.clicks = (window.clicks || 0) + 1; setTimeout(() => {{ document.getElementById('spot').innerHTML = document.getElementById('held').innerHTML; }}, {delay})">clip.mp4</p>
+          <template id="held">{self.FORM}</template>"""
+
+    async def test_a_form_that_opens_with_the_address_unchanged_counts_and_is_never_clicked_again(self):
+        """From a field run: 15 seconds after the click the address was unchanged and the name showed twice, and a second click stopped on the two matches."""
+        self.LIBRARY = self.library_that_opens_the_form_in_place(1500)
+        tx = self.Tx()
+        with patch.object(browser_forms, "X_OPEN_SECONDS", 1):
+            self.assertEqual("PREVIEW_READY", (await browser_forms.publish_x(self.page, tx))["state"])
+        self.assertLessEqual(await self.page.evaluate("window.clicks", isolated_context=False), 2)
+        self.assertNotIn("media_url", tx.receipt)
+
+    async def test_a_form_without_this_files_name_or_address_is_not_taken_for_its_form(self):
+        self.LIBRARY = self.LIBRARY.replace("location.href=", "window.ignored=") + "<button>Change thumbnail</button>"
+        tx = self.Tx()
+        real = browser_forms.wait_until
+
+        async def soon(page, predicate, *, seconds=120, label="page state"):
+            return await real(page, predicate, seconds=2, label=label)
+        with patch.object(browser_forms, "wait_until", soon), self.assertRaises(VpubError) as caught:
+            await browser_forms.publish_x(self.page, tx)
+        self.assertEqual("processing_timeout", caught.exception.code)
 
     async def test_a_file_that_never_opens_stops_and_leaves_it_for_a_resume(self):
         self.LIBRARY = self.LIBRARY.replace("location.href=", "window.ignored=")
@@ -102,11 +127,17 @@ class OpeningMediaTests(ChromeCase):
 
         async def soon(page, predicate, *, seconds=120, label="page state"):
             return await real(page, predicate, seconds=2, label=label)
-        with patch.object(browser_forms, "X_OPEN_MS", 300), patch.object(browser_forms, "wait_until", soon), self.assertRaises(VpubError) as caught:
+        with patch.object(browser_forms, "X_OPEN_SECONDS", 1), patch.object(browser_forms, "wait_until", soon), self.assertRaises(VpubError) as caught:
             await browser_forms.publish_x(self.page, tx)
         self.assertEqual("processing_timeout", caught.exception.code)
         self.assertNotIn("media_url", tx.receipt)
         self.assertEqual((True, "clip.mp4"), (tx.receipt["media_selected"], tx.receipt["upload_filename"]))
+
+    def test_an_address_gives_the_files_page_only_once_it_names_the_file(self):
+        for address, wanted in (("https://studio.x.com/library/13_77/edit", {"media_url": "https://studio.x.com/library/13_77/edit"}), ("https://studio.x.com/library/13_77/compose", {"media_url": "https://studio.x.com/library/13_77/edit"}),
+                                ("https://studio.x.com/library", {}), ("https://elsewhere.example/library/13_77/edit", {})):
+            with self.subTest(address=address):
+                self.assertEqual(wanted, browser_forms.x_media_address(address))
 
     async def test_a_media_page_still_loading_does_not_stop_the_upload_and_its_address_is_kept(self):
         tx = self.Tx()

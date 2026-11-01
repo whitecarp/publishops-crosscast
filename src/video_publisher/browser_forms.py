@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlsplit
 
@@ -25,8 +26,8 @@ YT_PLAYLIST_ROWS = """boxes => boxes.map(box => {
 })"""
 
 
-X_MEDIA_PAGE = re.compile(r'https://studio\.x\.com/library/\d+_\d+/edit')
-X_OPEN_MS = 15000
+X_MEDIA_PAGE = re.compile(r'https://studio\.x\.com/library/\d+_\d+/')
+X_OPEN_SECONDS = 15
 
 
 async def enabled(locator):
@@ -105,21 +106,31 @@ async def x_send_scheduled(page, tx):
     return tx.save(**await verify_scheduled_x(page, tx.identity, tx.receipt))
 
 
-async def x_open_media(page, item):
-    """Field runs clicked the uploaded file's name as soon as it showed, and no page opened in 30 seconds. A click two minutes later opened it at once, and nothing on the page said what had changed.
-    Opening it changes nothing, so this exact file is tried until its page comes."""
-    from patchright.async_api import TimeoutError as BrowserTimeout
+def x_media_address(address):
+    """The uploaded file's own page, once the address says which file it is. Field runs found its form can open before that."""
+    found = X_MEDIA_PAGE.search(address)
+    return {'media_url': found[0] + 'edit'} if found else {}
+
+
+async def x_open_media(page, name, form):
+    """Field runs clicked the uploaded file's name as soon as it showed, and the address didn't change in 30 seconds. In one, 15 seconds on, the name showed twice, which is how it looks with the file's form open: on its tile and in the form.
+    So the file is open once its form shows with its name in it, or the address names it. A click changes nothing, and comes again only while the name is on the tile alone."""
+    from patchright.async_api import Error as BrowserError
+    clicked = None
 
     async def opened():
-        if X_MEDIA_PAGE.search(page.url):
-            return True
-        try:
-            await item.click(timeout=X_OPEN_MS)
-            await page.wait_for_url(X_MEDIA_PAGE, wait_until='commit', timeout=X_OPEN_MS)
-        except BrowserTimeout:
-            return False
-        return True
-    await wait_until(page, opened, seconds=600, label="the uploaded file's page in Media Studio")
+        nonlocal clicked
+        showing = await name.count()
+        if await visible(form):
+            return showing > 1 or bool(X_MEDIA_PAGE.search(page.url))
+        if showing == 1 and (clicked is None or time.monotonic() - clicked >= X_OPEN_SECONDS):
+            clicked = time.monotonic()
+            try:
+                await name.click(timeout=X_OPEN_SECONDS * 1000)
+            except BrowserError:
+                pass  # The next look says what happened.
+        return False
+    await wait_until(page, opened, seconds=600, label="the uploaded file's form in Media Studio")
 
 
 async def publish_x(page, tx):
@@ -141,18 +152,18 @@ async def publish_x(page, tx):
         if not re.fullmatch(r'https://studio\.x\.com/library/\d+_\d+/edit', tx.receipt['media_url']):
             raise VpubError('invalid_media_url', 'Resume requires the original Media Studio asset URL.')
         await page.goto(tx.receipt['media_url'], wait_until='domcontentloaded', timeout=60000)
-    else:
+    change = page.locator('button').filter(has_text=re.compile(r'^\s*Change thumbnail\s*$'))
+    if not tx.receipt.get('media_url'):
         if not tx.receipt['media_selected']:
             media = tx.media()
             await upload_file(page, media, accept='video/')
             tx.save(phase='uploading')
         item = page.get_by_text(tx.receipt['upload_filename'], exact=True)
         await item.wait_for(state='visible', timeout=600000)
-        await x_open_media(page, item)
-        tx.save(phase='opening_media', media_url=page.url)
-    change = page.locator('button').filter(has_text=re.compile(r'^\s*Change thumbnail\s*$'))
+        await x_open_media(page, item, change)
+        tx.save(phase='opening_media', **x_media_address(page.url))
     await change.wait_for(state='visible', timeout=300000)
-    tx.save(phase='media_ready', media_url=page.url)
+    tx.save(phase='media_ready', **x_media_address(page.url))
     if tx.cover() and not tx.receipt.get('cover'):
         await change.click()
         # Distinguish the image-only thumbnail input from the mixed media input.
@@ -184,7 +195,7 @@ async def publish_x(page, tx):
     await caption.fill(tx.options['post_text'])
     if await caption.input_value() != tx.options['post_text']:
         raise VpubError('metadata_mismatch', 'X post text differs from the manifest.')
-    tx.save(phase='preview', review_url=page.url, ai_disclosure='caption_text', metadata_readback=True)
+    tx.save(phase='preview', review_url=page.url, ai_disclosure='caption_text', metadata_readback=True, **x_media_address(page.url))
     if tx.options.get('submission_mode') == 'draft_only':
         return tx.save(state='PREVIEW_READY', note='Media saved in Studio; composer preview is not a confirmed persistent post draft.')
     if tx.options.get('schedule'):
