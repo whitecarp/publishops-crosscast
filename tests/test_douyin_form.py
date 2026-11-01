@@ -258,6 +258,36 @@ class ScheduledCardTests(Base):
                 await self.show(*cards)
                 self.assertIs(False, await browser_backends.douyin_scheduled_card(self.page, receipt))
 
+    CAPTION = "CC test. Private test.\n\n五秒测试。"
+
+    def card_with_caption(self, caption, title=TITLE, when=STAMP):
+        return f'<div class="video-card-content-1"><div class="info-title-text-1">{title} {caption}\u200b</div><span>{when}</span><span class="private-mark-abc">私密</span></div>'
+
+    def receipt_with_caption(self, **changes):
+        return {**self.receipt(**changes), "expected_caption": self.CAPTION}
+
+    async def test_a_real_cards_title_node_holds_the_title_and_then_the_caption(self):
+        """From a field check: the one new card, with the right time and private mark, was missed because its title node goes on to hold the caption."""
+        await self.show(self.card_with_caption("CC test. Private test. 五秒测试。"))
+        self.assertIs(True, await browser_backends.douyin_scheduled_card(self.page, self.receipt_with_caption()))
+
+    async def test_starting_with_the_title_is_not_enough(self):
+        for cards in ((self.card_with_caption("Other words."),), (self.card_with_caption("CC test. Private test. 五秒测试。 and more"),), (self.card(TITLE + " more"),),
+                      (self.card_with_caption("CC test. Private test. 五秒测试。", title=TITLE + " more"),)):
+            with self.subTest(cards=cards):
+                await self.show(*cards)
+                self.assertIs(False, await browser_backends.douyin_scheduled_card(self.page, self.receipt_with_caption()))
+
+    async def test_an_older_card_with_this_title_and_caption_is_counted_before_the_upload(self):
+        self.html = '<!doctype html><meta charset="utf-8"><body>' + self.card_with_caption("Words")
+        tx = StubTx(schedule=datetime(2030, 3, 4, 15, 7).astimezone().isoformat())
+        tx.media = lambda: "clip.mp4"
+        await self.page.goto("https://creator.douyin.com/creator-micro/content/manage")
+        with patch.object(browser_forms, "works", new=AsyncMock(return_value={})), patch.object(browser_forms, "douyin_caption", return_value="Words"), \
+                patch.object(browser_forms, "upload_file", new=AsyncMock(side_effect=RuntimeError("selected"))), self.assertRaises(RuntimeError):
+            await browser_forms.publish_douyin(self.page, tx)
+        self.assertEqual((1, 1, "Words"), (tx.receipt["same_title_cards_before"], tx.receipt["same_time_cards_before"], tx.receipt["expected_caption"]))
+
     async def test_an_older_card_with_this_title_and_time_never_stands_in_for_the_new_one(self):
         """From a review: the old card matched, the new one showed the wrong time, and the count of cards was right, so it passed."""
         await self.show(self.card(), self.card(when="2030年03月05日 15:07"))

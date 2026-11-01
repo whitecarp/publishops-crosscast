@@ -249,8 +249,8 @@ async def publish_douyin(page, tx):
     caption = douyin_caption(tx.options['description'], tx.options['tags'])
     if len(caption.encode('utf-16-le')) // 2 > 1000:
         raise VpubError('description_too_long', 'Douyin description plus hashtags exceeds 1000 UTF-16 units. No video uploaded.')
-    same_title = await douyin_cards_titled(page, tx.options['title'])
-    tx.save(before_ids=list(before), expected_text=tx.options['title'], same_title_cards_before=len(same_title))
+    same_title = await douyin_cards_titled(page, tx.options['title'], caption)
+    tx.save(before_ids=list(before), expected_text=tx.options['title'], expected_caption=caption, same_title_cards_before=len(same_title))
     if tx.options.get('schedule'):
         stamp = douyin_card_stamp(datetime.fromisoformat(tx.options['schedule'].replace('Z', '+00:00')))
         tx.save(same_time_cards_before=len(await douyin_cards_at(same_title, stamp)))

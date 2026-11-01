@@ -188,12 +188,18 @@ def douyin_card_is_waiting(text):
     return bool(found) and datetime(*map(int, found.groups())) > datetime.now()
 
 
-async def douyin_cards_titled(page, title):
-    """The Creator Center cards with exactly this title."""
+def douyin_card_words(text):
+    """Douyin's spacing and the zero-width marks its editor adds are no part of what was written."""
+    return re.sub(r'[\s\u200b]+', '', text or '')
+
+
+async def douyin_cards_titled(page, title, caption=''):
+    """The Creator Center cards with exactly this title, or exactly this title and then this caption, which a field check found a card's title node holds. A longer title or another caption is another work."""
+    wanted = {douyin_card_words(title), douyin_card_words(title + caption)}
     cards = []
     for card in await page.locator(DOUYIN_CARD).all():
         names = card.locator('[class^="info-title-text-"]')
-        if await names.count() and normalize(await names.first.inner_text()) == normalize(title):
+        if await names.count() and douyin_card_words(await names.first.inner_text()) in wanted:
             cards.append(card)
     return cards
 
@@ -214,7 +220,7 @@ async def douyin_scheduled_card(page, receipt):
     schedule = receipt.get('schedule') or {}
     if not schedule.get('card_stamp') or 'same_title_cards_before' not in receipt or receipt.get('same_time_cards_before') != 0:
         return False
-    cards = await douyin_cards_titled(page, receipt.get('title') or '')
+    cards = await douyin_cards_titled(page, receipt.get('title') or '', receipt.get('expected_caption') or '')
     if len(cards) != receipt['same_title_cards_before'] + 1:
         return False
     matching = await douyin_cards_at(cards, schedule['card_stamp'])
