@@ -342,7 +342,8 @@ async def open_watch_page(page, work):
     await appears(page, buttons, 25)
     address = urlsplit(page.url)
     if address.path != "/watch" or parse_qs(address.query).get("v") != [work]:
-        raise VpubError("wrong_work", "The page left the exact requested video.")
+        # A field run stopped here once and passed either side of it. The site and the address's first part say where it went, and nothing private.
+        raise VpubError("wrong_work", f"The page left the exact requested video, for {address.hostname}/{address.path.split('/')[1] if address.path.count('/') else ''}.")
     # The button shows before its state does.
     for _ in range(20):
         button = await visible(buttons)

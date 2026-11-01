@@ -425,6 +425,31 @@ class EditTests(Temporary):
                 edits.validate_patch(platform, value)
 
 
+class WatchPageTests(unittest.TestCase):
+    def leave_for(self, address):
+        page = MagicMock(url=address, goto=AsyncMock(), wait_for_timeout=AsyncMock())
+        with patch.object(yt, "appears", new=AsyncMock(return_value=False)), self.assertRaises(VpubError) as caught:
+            asyncio.run(yt.open_watch_page(page, "wanted"))
+        self.assertEqual("wrong_work", caught.exception.code)
+        return caught.exception.message
+
+    def test_leaving_the_video_says_where_it_went_and_nothing_private(self):
+        message = self.leave_for("https://accounts.google.com/v3/signin/identifier?continue=SECRET")
+        self.assertIn("accounts.google.com/v3", message)
+        self.assertNotIn("identifier", message)
+        self.assertNotIn("SECRET", message)
+        self.assertIn("studio.youtube.com/channel", self.leave_for("https://studio.youtube.com/channel/UC123/videos"))
+        self.assertNotIn("UC123", self.leave_for("https://studio.youtube.com/channel/UC123/videos"))
+
+    def test_another_video_is_named_only_as_the_watch_page(self):
+        message = self.leave_for("https://www.youtube.com/watch?v=OTHER")
+        self.assertIn("www.youtube.com/watch", message)
+        self.assertNotIn("OTHER", message)
+
+    def test_a_page_with_no_address_still_says_so(self):
+        self.assertIn("left the exact requested video", self.leave_for("about:blank"))
+
+
 class RouteTests(Temporary):
     def setUp(self):
         super().setUp()
