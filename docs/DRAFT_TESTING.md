@@ -18,9 +18,23 @@ vpub browser request RECEIPT_KEY
 vpub browser begin RECEIPT_KEY --identity OBSERVED_ACCOUNT
 ```
 
-`--draft-only` 在所選 Instagram／X 選項保存 `submission_mode: draft_only`；其他平台會拒絕這個旗標，不悄悄降級成公開發片。Instagram 專用封面請使用獨立方案或平台專用 `covers`；X 不能接受共用自訂封面。
+`--draft-only` 在每個所選平台的選項保存 `submission_mode: draft_only`；無法保存草稿的路徑（付費 API 路徑）會拒絕這個旗標，不悄悄降級成公開發片。Instagram 專用封面請使用獨立方案或平台專用 `covers`；X 不能接受共用自訂封面。
 
 `publish` 只建立持久交接，`begin` 在選檔前記錄本次嘗試。`final_submission_allowed: false` 要求宿主停在預覽或保存草稿，**不得點 Share／Post 或排期**。CLI 不控制瀏覽器按鈕，必須由執行 Agent 遵守。帳號受眾欄位仍是 `visibility: account`，不偽造平台不存在的 private 選項。
+
+## 目前路徑上的草稿模式
+
+使用預設路徑時，`vpub publish` 自己完成整個流程並停在最後一個按鈕之前，所以上面的 `browser request` 與 `browser begin` 交接只用於 `method: native`。各平台停在哪裡、結果是什麼：
+
+| 平台 | 停在 | 狀態 |
+| --- | --- | --- |
+| B站 | 透過 B站上傳頁自己送出的請求儲存草稿，並從它的草稿清單讀回 | `DRAFT_SAVED` |
+| YouTube | YouTube Studio 裡未發布的草稿，停在最後的儲存之前 | `PREVIEW_READY` |
+| 抖音 | 按一次抖音自己的「暂存离开」；抖音沒有草稿清單可以讀回 | `PREVIEW_READY` |
+| Instagram | 未發布的預覽，關閉瀏覽器後不一定還在 | `PREVIEW_READY` |
+| X | 發文編輯器，媒體已存進 Media Studio；不是已確認保存的草稿 | `PREVIEW_READY` |
+
+YouTube、X 和 Instagram 的付費 API 路徑沒有草稿，會拒絕這個旗標。B站或抖音的草稿只保留標題、簡介、標籤與封面，所以同時有排程、章節或合集的計畫會被拒絕。CrossCast 沒有刪除草稿的指令：B站的草稿請自己到其上傳管理的「草稿」頁面刪除。因為沒有發布任何內容，即使草稿已儲存，執行仍會以 `ok: false` 和退出碼 4 結束：請看狀態，不要看退出碼。`vpub status` 會列出已儲存的草稿。在真實帳號上，B站用這個方式儲存過一份草稿、讀回後自己刪除；其他平台還沒用這個指令試過。
 
 ## 本次實測
 

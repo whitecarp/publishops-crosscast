@@ -18,9 +18,23 @@ vpub browser request RECEIPT_KEY
 vpub browser begin RECEIPT_KEY --identity OBSERVED_ACCOUNT
 ```
 
-The flag stores `submission_mode: draft_only` for selected Instagram/X platforms. Other platforms reject it instead of silently publishing. Use a separate Instagram plan or platform-specific `covers` for custom artwork; X rejects a shared custom thumbnail.
+The flag stores `submission_mode: draft_only` for every selected platform. A route that cannot hold a draft (the paid API routes) rejects it instead of silently publishing. Use a separate Instagram plan or platform-specific `covers` for custom artwork; X rejects a shared custom thumbnail.
 
 The commands create a durable handoff and record the attempt before file selection. A false final-submission flag requires the host to stop at preview or saved draft: **never Share/Post or schedule**. The CLI cannot disable browser controls; the executing agent must honor the flag. Visibility remains account-based rather than inventing a per-post private option.
+
+## Draft-only on the current routes
+
+With the default routes, `vpub publish` does the whole run itself and stops before the final button, so the `browser request` and `browser begin` handoff above is only for `method: native`. Where each platform stops and how the run ends:
+
+| Platform | Stops at | State |
+| --- | --- | --- |
+| Bilibili | A draft saved through Bilibili's own upload requests and read back from its draft list | `DRAFT_SAVED` |
+| YouTube | An unpublished draft in YouTube Studio, before the final Save | `PREVIEW_READY` |
+| Douyin | Douyin's own 暂存离开 pressed once; Douyin shows no list of drafts to read it back from | `PREVIEW_READY` |
+| Instagram | The unpublished preview, which may not survive closing the browser | `PREVIEW_READY` |
+| X | The post composer, with the media saved in Media Studio; not a confirmed saved draft | `PREVIEW_READY` |
+
+The paid API routes for YouTube, X and Instagram have no drafts and refuse the flag. A Bilibili or Douyin draft keeps only the title, description, tags and cover, so a plan that also has a schedule, chapters or a collection is refused. CrossCast has no command that removes a draft: delete a Bilibili draft by hand on the 草稿 page of its upload manager. Nothing was published, so the run ends with `ok: false` and exit code 4 even when the draft was saved: read the state, not the exit code. `vpub status` lists saved drafts. On a real account one Bilibili draft was saved this way, read back and deleted by hand; the other platforms were not tried through this command.
 
 ## Live observations
 
