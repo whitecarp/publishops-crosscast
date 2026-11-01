@@ -4,7 +4,8 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).parent))
 from stage_browser import SharedBrowser
@@ -28,6 +29,34 @@ class Pages(SharedBrowser):
         self.body = body
         await self.page.goto(address)
 
+    def avatar(self, name):
+        return f'<a href="/{name}/"><img alt="{name}\'s profile picture" width="10" height="10"></a>'
+
+
+class InstagramSignInTests(Pages):
+    """A sign-in that ends on the home page, where a stranger's avatar can come first, goes on to the settings page to say who this is."""
+
+    def prepare(self):
+        self.signed_in = False
+
+    async def handle(self, route):
+        settings = urlsplit(route.request.url).path == "/accounts/edit/"
+        if settings and not self.signed_in:
+            self.signed_in = True
+            return await self.page_at(route, "<script>location.replace('/')</script>")
+        await self.page_at(route, self.avatar(OWNER) if settings else self.avatar("viewer") + self.avatar(OWNER))
+
+    async def test_a_sign_in_that_ends_on_the_home_page_finishes_on_the_settings_page(self):
+        page = self.page
+
+        class Context:
+            pages = [page]
+            close = AsyncMock()
+        with patch.object(rt, "open_context", new=AsyncMock(return_value=Context)), patch.object(rt, "save_session", new=AsyncMock()):
+            result = await rt.login(None, {"platform": "instagram", "account": "default", "job_path": str(self.root / "job.json")})
+        self.assertEqual(OWNER, result["identity"])
+        self.assertEqual("/accounts/edit/", urlsplit(page.url).path)
+
 
 class AccountTests(Pages):
     """The signed-in account is read from the platform's own navigation, never from other links on the page."""
@@ -39,8 +68,28 @@ class AccountTests(Pages):
     async def test_instagram_is_read_from_its_profile_link(self):
         self.assertEqual(OWNER, await self.account("instagram", f'<nav><a href="/{OWNER}/">Profile</a></nav>', "https://www.instagram.com/"))
 
-    async def test_instagram_is_read_from_its_profile_picture_link_too(self):
-        self.assertEqual(OWNER, await self.account("instagram", f'<a href="/{OWNER}/"><img alt="{OWNER}\'s profile picture" width="10" height="10"></a>', "https://www.instagram.com/"))
+    async def test_instagram_is_read_from_the_one_avatar_on_its_settings_page(self):
+        self.assertEqual(OWNER, await self.account("instagram", self.avatar(OWNER), "https://www.instagram.com/accounts/edit/"))
+        self.assertEqual(OWNER, await self.account("instagram", self.avatar(OWNER) * 2, "https://www.instagram.com/accounts/edit/"))
+
+    async def test_an_avatar_on_instagrams_home_never_names_the_account(self):
+        """From a field check: of seven avatars on the home page the first two were this account's and five were not, and a stranger's arriving first would read as the wrong account."""
+        for body in (self.avatar("viewer") + self.avatar(OWNER), self.avatar(OWNER), self.avatar("viewer")):
+            with self.subTest(body=body):
+                self.assertIsNone(await self.account("instagram", body, "https://www.instagram.com/"))
+
+    async def test_two_accounts_on_the_settings_page_name_nobody(self):
+        self.assertIsNone(await self.account("instagram", self.avatar(OWNER) + self.avatar("viewer"), "https://www.instagram.com/accounts/edit/"))
+
+    async def test_instagrams_sign_in_check_opens_its_settings_page(self):
+        self.body = self.avatar(OWNER)
+        context_page = self.page
+
+        class Context:
+            pages = [context_page]
+        _, owner = await rt.signed_in_page(Context, "instagram", OWNER)
+        self.assertEqual(OWNER, owner)
+        self.assertEqual("/accounts/edit/", urlsplit(self.page.url).path)
 
     async def test_instagrams_own_pages_are_not_mistaken_for_an_account(self):
         for path in ("accounts", "explore", "reels"):

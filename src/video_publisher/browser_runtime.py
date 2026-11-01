@@ -16,8 +16,9 @@ from .progress import stage, watch
 
 BROWSER_PLATFORMS = {"douyin", "instagram", "x", "youtube"}
 URLS = {"douyin": "https://creator.douyin.com/creator-micro/home",
-        "instagram": "https://www.instagram.com/", "x": "https://x.com/home",
+        "instagram": "https://www.instagram.com/accounts/edit/", "x": "https://x.com/home",
         "youtube": "https://studio.youtube.com/"}
+INSTAGRAM_AVATAR = 'img[alt*="profile picture"], img[alt*="的头像"], img[alt*="的大頭貼"]'
 HUMAN_LABELS = re.compile(r"安全验证|請完成驗證|请完成验证|滑块验证|滑塊驗證|验证是你本人|驗證是你本人|确认是你本人|確認是你本人|验证你的身份|驗證你的身分|确认你的身份|確認你的身分"
                           r"|Confirm it's you|Verify it's you|Verify your identity|Authenticate your account|Confirm your identity|Unusual activity"
                           # A platform saying too much, too fast.
@@ -155,12 +156,15 @@ async def identity(page, platform):
                 return path
     elif platform == "instagram":
         link = await visible(page.get_by_role("link", name=re.compile(r"^(Profile|个人主页|個人檔案|个人资料|個人資料)$", re.I)))
-        if not link:
-            link = await visible(page.locator('a').filter(has=page.locator('img[alt*="profile picture"], img[alt*="的头像"], img[alt*="的大頭貼"]')))
         if link:
-            path = urlsplit(await link.get_attribute("href") or "").path.strip("/")
-            if re.fullmatch(r"[A-Za-z0-9_.]{1,30}", path) and path not in {"accounts", "explore", "reels"}:
-                return path
+            names = {urlsplit(await link.get_attribute("href") or "").path.strip("/")}
+        elif urlsplit(page.url).path.rstrip("/") == "/accounts/edit":
+            # A field check found no link named Profile on the real site, and on the home page seven avatars, five of them other people's. Its settings page shows one, and only this account's.
+            names = {urlsplit(await item.get_attribute("href") or "").path.strip("/") for item in await page.locator("a").filter(has=page.locator(INSTAGRAM_AVATAR)).all() if await item.is_visible()}
+        else:
+            names = set()
+        if len(names) == 1 and re.fullmatch(r"[A-Za-z0-9_.]{1,30}", path := names.pop()) and path not in {"accounts", "explore", "reels"}:
+            return path
     elif platform == "youtube":
         # Studio's address names the signed-in channel; a signed-out visit lands on Google's sign-in page.
         address = urlsplit(page.url)
@@ -245,6 +249,9 @@ async def login(pw, payload):
                 try:
                     actual = await identity(page, platform)
                     if not actual:
+                        # A sign-in can end on Instagram's home page, which cannot say for certain who this is.
+                        if platform == "instagram" and urlsplit(page.url).path == "/" and await page.locator("a").filter(has=page.locator(INSTAGRAM_AVATAR)).count():
+                            await page.goto(URLS[platform], wait_until="domcontentloaded", timeout=60000)
                         continue
                     # Wait for the login redirect to settle and prove a fresh load.
                     await asyncio.sleep(3)

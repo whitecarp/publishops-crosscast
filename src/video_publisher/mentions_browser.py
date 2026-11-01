@@ -45,6 +45,7 @@ IG_ROWS=r'''root=>{
 async def instagram_panel(page):
     # Keyboard activation waits for the actual navigation element and avoids
     # clicking a loading feed or treating its @handles as notifications.
+    await page.goto('https://www.instagram.com/',wait_until='domcontentloaded',timeout=60000)
     nav=page.get_by_role('link',name=re.compile(r'^(Notifications|通知)$'))
     await nav.wait_for(state='visible',timeout=30000)
     await nav.press('Enter')
