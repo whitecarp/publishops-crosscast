@@ -36,9 +36,17 @@ def collections(platform,cursor=None):
     return dispatch(platform,'collections',cursor=cursor)
 
 
+def signed_in_as(platform):
+    """The account this browser profile was signed in to, when there is a record of it. A page showing anyone else stops a like before it is pressed."""
+    if platform=='bilibili' or (platform=='youtube' and adapters.addon_installed()):return None
+    from .browser_runtime import identity_path
+    path=identity_path(platform,'default')
+    return read_json(path).get('identity') if path.exists() else None
+
+
 def status(platform,work,collection=None,expected_identity=None):
     validate(platform,work,collection)
-    result=dispatch(platform,'status',work,collection=collection,expected_identity=expected_identity)
+    result=dispatch(platform,'status',work,collection=collection,expected_identity=expected_identity or signed_in_as(platform))
     return {**result,'platform':platform,'work_id':work,'observed_at':now(),'platform_writes':0}
 
 
