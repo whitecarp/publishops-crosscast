@@ -277,8 +277,9 @@ class HangingBrowserTests(unittest.TestCase):
         """Runs the real session on a thread until it ends by itself, with only the browser's own calls faked."""
         pw = MagicMock(__aenter__=AsyncMock(return_value=MagicMock()), __aexit__=AsyncMock(return_value=False))
         self.dispatch = dispatch or AsyncMock(return_value={"finished": True})
+        self.risk_check = AsyncMock()
         targets = [patch("patchright.async_api.async_playwright", return_value=pw), patch.object(rt, "open_context", opened or AsyncMock(return_value=context)),
-                   patch.object(rt, "signed_in_page", signed_in or AsyncMock(return_value=(MagicMock(), "owner"))),
+                   patch.object(rt, "signed_in_page", signed_in or AsyncMock(return_value=(MagicMock(), "owner"))), patch.object(rt, "risk_check", self.risk_check),
                    patch("video_publisher.browser_worker.dispatch", self.dispatch),
                    patch.object(rt, "CLOSE_SECONDS", 0.1), patch.object(broker, "SIGN_IN_SECONDS", 0.2)]
         for target in targets:
@@ -358,6 +359,7 @@ class HangingBrowserTests(unittest.TestCase):
         context = MagicMock(close=AsyncMock(), storage_state=AsyncMock(return_value={"cookies": []}))
         thread = self.session(context, signed_in=first_then_never)
         self.wait_for_session()
+        self.assertEqual({"finished": True}, broker.call({"platform": "x", "account": "default", "action": "operations"}, 5))
         with self.assertRaises(VpubError) as caught:
             broker.call({"platform": "x", "account": "default", "action": "operations"}, 5)
         self.assertEqual("browser_error", caught.exception.code)
@@ -365,6 +367,71 @@ class HangingBrowserTests(unittest.TestCase):
         self.assertFalse(thread.is_alive())
         self.assertEqual([True], self.closing)
         self.assertTrue(self.lock_is_free())
+
+    def counted_session(self):
+        checks = []
+
+        async def signed_in(*args):
+            checks.append(time.monotonic())
+            return MagicMock(), "owner"
+        context = MagicMock(close=AsyncMock(), storage_state=AsyncMock(return_value={"cookies": []}))
+        self.addCleanup(self.close_counted, self.session(context, signed_in=signed_in))
+        self.wait_for_session()
+        return checks
+
+    def close_counted(self, thread):
+        broker.release("x", "default")
+        thread.join(10)
+
+    def ask(self, action="operations", **options):
+        return broker.call({"platform": "x", "account": "default", "action": action, **options}, 5)
+
+    def test_the_check_a_session_just_made_counts_for_its_first_command_of_any_kind(self):
+        for action, options in (("operations", {"operation": "reply"}), ("engagement", {"operation": "set"}), ("status", {}), ("direct_messages", {"operation": "send"})):
+            with self.subTest(action=action):
+                self.assertTrue(broker.check_again({"action": action, **options}, 6, True))
+                self.assertFalse(broker.check_again({"action": action, **options}, 1, True))
+
+    def test_a_first_command_that_skips_the_check_still_gets_a_risk_check_and_the_expected_account(self):
+        checks = self.counted_session()
+        self.assertEqual({"finished": True}, self.ask())
+        self.assertEqual(1, len(checks))
+        self.risk_check.assert_awaited_once()
+        self.dispatch.reset_mock()
+        with self.assertRaises(VpubError) as caught:
+            self.ask("operations", operation="comments", expected_identity="someone else")
+        self.assertEqual("wrong_account", caught.exception.code)
+        self.dispatch.assert_not_awaited()
+
+    def test_a_press_always_checks_who_is_signed_in_again(self):
+        checks = self.counted_session()
+        self.ask()
+        for action, operation in (("operations", "reply"), ("operations", "test_seed"), ("comment_management", "set"), ("engagement", "set"), ("collections", "add"),
+                                  ("collections", "rename"), ("direct_messages", "send"), ("operations", None), ("operations", "verify_reply")):
+            with self.subTest(action=action, operation=operation):
+                before = len(checks)
+                self.ask(action, operation=operation)
+                self.assertEqual(before + 1, len(checks))
+
+    def test_a_plain_read_moments_after_a_check_needs_no_second_page_load(self):
+        checks = self.counted_session()
+        self.ask()
+        self.ask("engagement", operation="set")
+        before = len(checks)
+        for action, operation in (("engagement", "status"), ("comment_management", "status"), ("operations", "comments"), ("operations", "stats"), ("operations", "replies")):
+            with self.subTest(action=action, operation=operation):
+                self.ask(action, operation=operation)
+                self.assertEqual(before, len(checks))
+
+    def test_reads_that_prove_something_or_depend_on_the_page_left_open_still_check(self):
+        for action, operation in (("status", None), ("verify", None), ("adopt_work", None), ("collections", "list"), ("collections", "items"), ("direct_messages", "read"), ("direct_messages", "list")):
+            with self.subTest(action=action, operation=operation):
+                self.assertTrue(broker.check_again({"action": action, "operation": operation}, 1, False))
+
+    def test_a_check_only_stays_good_for_a_minute(self):
+        read = {"action": "operations", "operation": "comments"}
+        self.assertFalse(broker.check_again(read, broker.JUST_CHECKED_SECONDS - 1, False))
+        self.assertTrue(broker.check_again(read, broker.JUST_CHECKED_SECONDS + 1, False))
 
     def test_chrome_that_never_starts_ends_the_session_too(self):
         async def forever(*args, **kwargs):
@@ -389,7 +456,7 @@ async def forever(*args, **kwargs):
 pw = MagicMock(__aenter__=AsyncMock(return_value=MagicMock()), __aexit__=forever)
 context = MagicMock(storage_state=forever, close=forever)
 with patch("patchright.async_api.async_playwright", return_value=pw), patch.object(rt, "open_context", new=AsyncMock(return_value=context)), \\
-        patch.object(rt, "signed_in_page", new=AsyncMock(return_value=(MagicMock(), "owner"))), \\
+        patch.object(rt, "signed_in_page", new=AsyncMock(return_value=(MagicMock(), "owner"))), patch.object(rt, "risk_check", new=AsyncMock()), \\
         patch("video_publisher.browser_worker.dispatch", new=AsyncMock(return_value={"finished": True})), patch.object(rt, "CLOSE_SECONDS", 0.2):
     asyncio.run(broker.run("x", "default", lambda: rt.exit_soon(1)))
 """

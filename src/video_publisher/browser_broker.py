@@ -28,6 +28,11 @@ REUSABLE = {"status", "works", "verify", "operations", "operations_batch", "enga
 # Read-only actions may trust a recent identity check; anything else checks again first.
 CACHED_IDENTITY = {"works", "operations_batch", "message_sources", "discover_works"}
 IDENTITY_SECONDS = 300
+# The plain reads, which are also the reads around a press. A press always checks again, so these only need a check made moments ago.
+JUST_CHECKED = {"operations": {"comments", "replies", "stats"}, "comment_management": {"status"}, "engagement": {"status"}}
+JUST_CHECKED_SECONDS = 60
+# A session checks who is signed in before it answers anyone, which is all a one-shot command does, so that check counts for its first command.
+FIRST_COMMAND_SECONDS = 5
 IDLE_SECONDS = 300
 MAX_LIFETIME_SECONDS = 3600
 CONNECT_SECONDS = 15
@@ -257,6 +262,16 @@ async def serve(listener, handle, platform, *, idle=None, lifetime=MAX_LIFETIME_
             return "idle"
 
 
+def check_again(payload, age, first):
+    """Whether this command needs a new look at who is signed in, which costs a whole page load. When it does not, the page still gets a risk check."""
+    action = payload["action"]
+    if first and age <= FIRST_COMMAND_SECONDS:
+        return False
+    if action in CACHED_IDENTITY:
+        return age > IDENTITY_SECONDS
+    return payload.get("operation") not in JUST_CHECKED.get(action, ()) or age > JUST_CHECKED_SECONDS
+
+
 async def run(platform, account, on_closing=None):
     from patchright.async_api import async_playwright
     from . import browser_runtime as runtime
@@ -270,10 +285,10 @@ async def run(platform, account, on_closing=None):
             try:
                 context = await asyncio.wait_for(runtime.open_context(pw, platform, account), SIGN_IN_SECONDS)
                 page, owner = await asyncio.wait_for(runtime.signed_in_page(context, platform), SIGN_IN_SECONDS)
-                checked = time.monotonic()
+                checked, first = time.monotonic(), True
 
                 async def handle(payload):
-                    nonlocal owner, checked, page, usable
+                    nonlocal owner, checked, first, page, usable
                     progress.attach(payload)
                     stop_check(platform)
                     if (payload.get("platform"), payload.get("account"), payload.get("action") in REUSABLE) != (platform, account, True):
@@ -282,11 +297,12 @@ async def run(platform, account, on_closing=None):
                         from .operations_batch import validate
                         validate(payload)
                     action = payload["action"]
-                    if action not in CACHED_IDENTITY or time.monotonic() - checked > IDENTITY_SECONDS:
+                    if check_again(payload, time.monotonic() - checked, first):
                         page, owner = await asyncio.wait_for(runtime.signed_in_page(context, platform), SIGN_IN_SECONDS)
                         checked = time.monotonic()
                     else:
                         await asyncio.wait_for(runtime.risk_check(page), SIGN_IN_SECONDS)
+                    first = False
                     runtime.check_identity(owner, payload.get("expected_identity"))
                     if action == "status":
                         return {"logged_in": True, "identity": owner, "account": account, "method": "browser"}
