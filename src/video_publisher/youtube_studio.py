@@ -4,9 +4,10 @@ import re
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from .browser_backends import normalize, studio_visibility, work_url
-from .browser_runtime import acknowledged, risk_check, unique_visible, visible, write_answers
+from .browser_runtime import acknowledged, look_until, risk_check, unique_visible, visible, write_answers
 from .core import VpubError, atomic_json, file_sha, home, now, read_json, reply_still_open, stop_check
 from .operations_api import metric
+from .progress import stage
 
 STUDIO = "https://studio.youtube.com"
 PLAYLIST_ROWS = """rows => rows.map(row => ({href: row.querySelector('#playlist-title-link')?.getAttribute('href') || '', title: row.querySelector('#playlist-title-link')?.innerText || '',
@@ -159,9 +160,11 @@ async def own_handle(page, identity):
     if isinstance(saved, dict) and saved.get("identity") == identity:
         return saved.get("handle")
     await page.goto(f"https://www.youtube.com/channel/{identity}", wait_until="domcontentloaded", timeout=60000)
-    await page.wait_for_timeout(2000)
+
+    async def named():
+        return re.search(r'"vanityChannelUrl":"https?://www\.youtube\.com/@([^"]+)"', await page.content())
+    found = await look_until(page, named, 2000)
     await risk_check(page)
-    found = re.search(r'"vanityChannelUrl":"https?://www\.youtube\.com/@([^"]+)"', await page.content())
     handle = unquote(found[1]).casefold() if found else None
     if handle:
         atomic_json(path, {"identity": identity, "handle": handle})
@@ -306,6 +309,7 @@ async def operations(page, identity, payload):
     reply_still_open(saved)
     saved.update(before_reply_ids=[c["id"] for c in current], submitted_text=request["text"], state="REPLY_SUBMITTING")
     atomic_json(path, saved)
+    stage("pressing")
     await act_and_settle(page, lambda: button.click(timeout=20000))
     saved["state"] = "REPLY_UNVERIFIED"
     atomic_json(path, saved)
@@ -536,7 +540,7 @@ async def ensure_playlists(page, identity, titles):
         raise VpubError("read_incomplete", "Studio's playlist list could not be read to its end, so a missing playlist is not proven; nothing was uploaded.")
     made = []
     for title in missing:
-        result = await create_playlist(page, identity, {"title": title, "privacy": "private"}, lambda *_: stop_check("youtube"), known=[row["id"] for row in rows])
+        result = await create_playlist(page, identity, {"title": title, "privacy": "private"}, lambda *_: (stop_check("youtube"), stage("pressing")), known=[row["id"] for row in rows])
         if not result.get("collection_id"):
             raise VpubError("playlist_unverified", f'Studio did not show the new playlist "{title}"; nothing was uploaded.')
         made.append({"id": result["collection_id"], "title": title})

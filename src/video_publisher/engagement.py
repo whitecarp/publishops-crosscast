@@ -3,6 +3,7 @@ import re
 import uuid
 from . import adapters, operations, safety
 from .core import VpubError, atomic_json, digest, error_fields, home, never_sent, now, publication_lock, read_json, stop_check
+from .progress import stage
 
 PENDING={'ACTION_SUBMITTING','ACTION_UNVERIFIED'}
 
@@ -53,6 +54,7 @@ def status(platform,work,collection=None,expected_identity=None):
 def submitting(path):
     saved=read_json(path);saved.update(state='ACTION_SUBMITTING',submitted_at=now())
     atomic_json(path,saved)
+    stage('pressing')
 
 
 def finish(saved,observed):

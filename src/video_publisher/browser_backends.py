@@ -9,7 +9,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .core import VpubError, atomic_json, file_sha, home, now, read_json, snapshot_file, stop_check
-from .browser_runtime import failure_record, plain_address, risk_check, unique_visible, visible
+from .browser_runtime import failure_record, look_until, plain_address, risk_check, unique_visible, visible
+from .progress import stage
 from .x_pages import own_posts
 
 MANAGE = "https://creator.douyin.com/creator-micro/content/manage"
@@ -118,6 +119,7 @@ class Transaction:
         # The upload's file name, as a link to the private snapshot rather than a second copy of the video.
         dst = snapshot_file(src, src.with_name("crosscast-" + self.plan["video_sha256"][:16] + src.suffix), self.plan["video_sha256"], link=True)
         self.save(phase="selecting_media", media_selected=True, upload_filename=dst.name)
+        stage("uploading")
         return dst
 
     def validate_assets(self):
@@ -144,6 +146,7 @@ class Transaction:
         await risk_check(page)
         stop_check(self.platform)
         self.save(state="UNKNOWN", phase="submitting", final_submit_attempted=True, review_url=page.url)
+        stage("pressing")
         # Persist BEFORE clicking. A timeout must never cause another click.
         await button.click(timeout=20000)
 
@@ -351,8 +354,13 @@ async def verify(page, platform, identity, receipt):
                 await page.locator('article').filter(has_text=receipt.get('title','')).first.wait_for(timeout=20000)
             except Exception:
                 pass
-        else:
-            await page.wait_for_timeout(4000)
+        expected = receipt.get("expected_text")
+        if platform == "instagram":
+            # Everything read below, as soon as all of it shows. A page that never shows it gets the same four seconds.
+            async def shown():
+                return (await visible(page.locator('a[href="/'+identity+'/"]')) and await visible(page.locator('video'))
+                        and (not expected or normalize(expected) in normalize(await page.locator("body").inner_text())))
+            await look_until(page, shown, 4000)
         await risk_check(page)
         present = str(receipt["id"]) in await links(page, platform, identity)
         if platform == "instagram":
@@ -360,7 +368,6 @@ async def verify(page, platform, identity, receipt):
             author = await visible(page.locator('a[href="/'+identity+'/"]'))
             present = bool(owned and author and await visible(page.locator('video')) and
                            urlsplit(page.url).path.rstrip('/').endswith('/'+receipt['id']))
-        expected = receipt.get("expected_text")
         if expected:
             actual = normalize(await page.locator("body").inner_text())
             present = present and normalize(expected) in actual

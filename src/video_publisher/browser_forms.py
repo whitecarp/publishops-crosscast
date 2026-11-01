@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlsplit
 from .categories import STUDIO_CATEGORIES
 from .core import VpubError, douyin_caption, stop_check
 from .browser_runtime import risk_check, unique_visible, visible
+from .progress import stage
 from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, normalize, studio_offsets, studio_read, studio_style,
                                upload_file, wait_until, work_url, works, verify, verify_scheduled_x)
 
@@ -322,6 +323,7 @@ async def douyin_keep_draft(page, tx):
     await risk_check(page)
     stop_check('douyin')
     tx.save(phase='saving_draft')
+    stage('pressing')
     await leave.click(timeout=15000)
     await page.wait_for_timeout(3000)
     await risk_check(page)

@@ -6,6 +6,7 @@ from . import x_pages
 from .core import VpubError, atomic_json, file_sha, now, stop_check
 from .browser_runtime import risk_check, unique_visible, visible
 from .browser_backends import normalize, work_url
+from .progress import stage
 
 READ_BACKS = 4
 READ_BACK_WAIT = 10000
@@ -40,6 +41,7 @@ async def execute(page, platform, identity, payload):
         await risk_check(page)
         stop_check(platform)
         save(state='EDIT_SUBMITTING')
+        stage('pressing')
         await button.click(timeout=20000)
     if platform=='instagram':
         if not re.fullmatch(r'[A-Za-z0-9_-]+',work_id): raise VpubError('invalid_id','Invalid Instagram work ID.')

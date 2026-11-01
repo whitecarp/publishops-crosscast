@@ -9,7 +9,7 @@ import os
 import subprocess
 import sys
 
-from . import safety
+from . import progress, safety
 from .core import HELD_BACK, VpubError, stop_check, platform_check
 
 ROUTES = {"bilibili": {"cli"}, "douyin": {"browser"}, "youtube": {"browser", "api"}, "x": {"browser", "api"}, "instagram": {"browser", "api"}}
@@ -123,11 +123,22 @@ def browser_timeout(action):
 
 
 def hidden_desktop_call(payload, timeout):
+    """YouTube on Windows. The steps of one command share one Chrome on the hidden desktop, which closes itself soon after the last of them."""
+    from . import browser_broker
     from .hidden_desktop import call_worker
+    if browser_broker.enabled():
+        if payload["action"] in browser_broker.REUSABLE:
+            result = browser_broker.call(payload, timeout + browser_broker.SIGN_IN_SECONDS)
+            if result is not None:
+                return {"ok": True, "data": result}
+        else:
+            progress.stage("waiting for the browser", payload.get("stages_path"))
+            browser_broker.release(payload["platform"], payload["account"])
     return call_worker(payload, timeout)
 
 
 def worker_call(payload, timeout):
+    progress.stage("starting the browser", payload.get("stages_path"))
     try:
         cp = subprocess.run([sys.executable, "-m", "video_publisher.browser_worker"],
                             input=json.dumps(payload), capture_output=True, encoding="utf-8",
@@ -146,7 +157,8 @@ def browser_call(platform, action, account, **kwargs):
     stop_check(platform)
     payload = {"platform": platform, "action": action, "account": account, **kwargs}
     try:
-        return browser_answer(platform, action, account, payload)
+        with progress.relay(platform, payload):
+            return browser_answer(platform, action, account, payload)
     except VpubError as exc:
         safety.pushed_back(platform, exc.code)
         raise
@@ -154,13 +166,14 @@ def browser_call(platform, action, account, **kwargs):
 
 def browser_answer(platform, action, account, payload):
     from . import browser_broker
-    # YouTube's background browser is a real Chrome window, so it closes after each command instead of lingering.
+    # YouTube's background browser is a real Chrome window, so it never lingers where a window could show: see hidden_desktop_call for Windows.
     if platform != "youtube" and browser_broker.enabled():
         if action in browser_broker.REUSABLE:
             result = browser_broker.call(payload, browser_timeout(action))
             if result is not None:
                 return result
         else:
+            progress.stage("waiting for the browser", payload.get("stages_path"))
             browser_broker.release(platform, account)
     result = hidden_desktop_call(payload, browser_timeout(action)) if platform == "youtube" and os.name == "nt" else worker_call(payload, browser_timeout(action))
     if not result.get("ok"):

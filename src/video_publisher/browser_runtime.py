@@ -12,6 +12,7 @@ import time
 from urllib.parse import unquote, urlsplit
 
 from .core import VpubError, account_name, atomic_json, config, home, now, read_json
+from .progress import stage, watch
 
 BROWSER_PLATFORMS = {"douyin", "instagram", "x", "youtube"}
 URLS = {"douyin": "https://creator.douyin.com/creator-micro/home",
@@ -92,6 +93,19 @@ async def unique_visible(locator, label):
     if len(items) != 1:
         raise VpubError("layout_changed", f"Expected one visible {label}; found {len(items)}.", "Inspect the existing page before retrying. No final submission is repeated.")
     return items[0]
+
+
+async def look_until(page, look, milliseconds, step=500):
+    """A fixed wait that ends as soon as what comes next is already there. It lasts at least as long as the wait it replaces when nothing shows, and looks once more at the end."""
+    for _ in range(milliseconds // step):
+        try:
+            found = await look()
+        except Exception:
+            found = None  # The page is still changing, which is what the wait is for.
+        if found:
+            return found
+        await page.wait_for_timeout(step)
+    return await look()
 
 
 def on_site(host, site):
@@ -273,6 +287,7 @@ async def keep_session(context, platform, account):
 
 async def close_context(context, platform=None, account=None):
     """Save and close, each with a limit. A session that cannot be saved or closed must not fail the finished command."""
+    stage("closing the browser")
     if platform:
         await keep_session(context, platform, account)
     try:
@@ -463,6 +478,8 @@ async def save_session(context, platform, account):
 async def signed_in_page(context, platform, expected=None):
     page = context.pages[0] if context.pages else await context.new_page()
     page.set_default_timeout(10000)
+    stage("checking the account")
+    watch(page)
     await page.goto(URLS[platform], wait_until="domcontentloaded", timeout=60000)
     for _ in range(45):
         await risk_check(page)

@@ -18,6 +18,7 @@ import sys
 from threading import Thread
 import time
 
+from . import progress
 from .core import VpubError, account_name, atomic_json, config, home, read_json, stop_check
 
 # Publish, resume, edit, login and read_all keep their own one-shot worker.
@@ -27,7 +28,14 @@ REUSABLE = {"status", "works", "verify", "operations", "operations_batch", "enga
 # Read-only actions may trust a recent identity check; anything else checks again first.
 CACHED_IDENTITY = {"works", "operations_batch", "message_sources", "discover_works"}
 IDENTITY_SECONDS = 300
+# The plain reads, which are also the reads around a press. A press always checks again, so these only need a check made moments ago.
+JUST_CHECKED = {"operations": {"comments", "replies", "stats"}, "comment_management": {"status"}, "engagement": {"status"}}
+JUST_CHECKED_SECONDS = 60
+# A session checks who is signed in before it answers anyone, which is all a one-shot command does, so that check counts for its first command.
+FIRST_COMMAND_SECONDS = 5
 IDLE_SECONDS = 300
+YOUTUBE_IDLE_SECONDS = 20  # Long enough to join the steps of one command, not to leave a real Chrome window open.
+YOUTUBE_EXTRA_SECONDS = 120
 MAX_LIFETIME_SECONDS = 3600
 CONNECT_SECONDS = 15
 BUSY_SECONDS = 180  # How long a command waits for the one the session is running now.
@@ -111,17 +119,23 @@ def connect(platform, account, wait=None):
 
 
 def start(platform, account):
+    argv = [sys.executable, "-m", "video_publisher.browser_broker", platform, account]
+    # YouTube's browser is a real window, so its session only ever starts where no window can show.
+    if platform == "youtube":
+        from .hidden_desktop import Started
+        return Started(argv)
     flags = {"start_new_session": True}
     if sys.platform == "win32":
         flags = {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP}
-    return subprocess.Popen([sys.executable, "-m", "video_publisher.browser_broker", platform, account],
-                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    return subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                             env=dict(os.environ, PYTHONIOENCODING="utf-8"), **flags)
 
 
 def call(payload, timeout):
     """Run one command in the shared session. None means nothing was sent: use a one-shot worker."""
     platform, account = payload["platform"], payload["account"]
+    stages = payload.get("stages_path")
+    progress.stage("waiting for the browser", stages)
     # A busy session still owns the profile, so wait for it; a second session could never start.
     conn = connect(platform, account, BUSY_SECONDS)
     if conn is None:
@@ -130,6 +144,7 @@ def call(payload, timeout):
         failure.unlink(missing_ok=True)
         if not wait_for_lock(platform, account, CLOSING_SECONDS):
             raise busy_error()
+        progress.stage("starting the browser", stages)
         process = start(platform, account)
         deadline = time.monotonic() + START_SECONDS
         while conn is None and time.monotonic() < deadline:
@@ -262,6 +277,16 @@ async def within(step, work, seconds):
                         "This computer or the site may be busy; a sign-in has not been shown to have expired. Check any receipt before trying again. Nothing is resent automatically.") from None
 
 
+def check_again(payload, age, first):
+    """Whether this command needs a new look at who is signed in, which costs a whole page load. When it does not, the page still gets a risk check."""
+    action = payload["action"]
+    if first and age <= FIRST_COMMAND_SECONDS:
+        return False
+    if action in CACHED_IDENTITY:
+        return age > IDENTITY_SECONDS
+    return payload.get("operation") not in JUST_CHECKED.get(action, ()) or age > JUST_CHECKED_SECONDS
+
+
 async def run(platform, account, on_closing=None):
     from patchright.async_api import async_playwright
     from . import browser_runtime as runtime
@@ -275,10 +300,11 @@ async def run(platform, account, on_closing=None):
             try:
                 context = await within("starting Chrome", runtime.open_context(pw, platform, account), SIGN_IN_SECONDS)
                 page, owner = await within("checking who is signed in", runtime.signed_in_page(context, platform), SIGN_IN_SECONDS)
-                checked = time.monotonic()
+                checked, first = time.monotonic(), True
 
                 async def handle(payload):
-                    nonlocal owner, checked, page, usable
+                    nonlocal owner, checked, first, page, usable
+                    progress.attach(payload)
                     stop_check(platform)
                     if (payload.get("platform"), payload.get("account"), payload.get("action") in REUSABLE) != (platform, account, True):
                         raise VpubError("session_scope", "This session cannot run that command.")
@@ -286,15 +312,18 @@ async def run(platform, account, on_closing=None):
                         from .operations_batch import validate
                         validate(payload)
                     action = payload["action"]
-                    if action not in CACHED_IDENTITY or time.monotonic() - checked > IDENTITY_SECONDS:
+                    if check_again(payload, time.monotonic() - checked, first):
                         page, owner = await within("checking who is signed in", runtime.signed_in_page(context, platform), SIGN_IN_SECONDS)
                         checked = time.monotonic()
                     else:
                         await within("checking the page for a platform's warning", runtime.risk_check(page), SIGN_IN_SECONDS)
+                    first = False
                     runtime.check_identity(owner, payload.get("expected_identity"))
                     if action == "status":
                         return {"logged_in": True, "identity": owner, "account": account, "method": "browser"}
-                    result = await within("running the command", dispatch(page, platform, owner, payload), action_timeout(action))
+                    # Studio's heavy pages keep the time they had as a one-shot command.
+                    limit = action_timeout(action) + (YOUTUBE_EXTRA_SECONDS if platform == "youtube" else 0)
+                    result = await within("running the command", dispatch(page, platform, owner, payload), limit)
                     usable = await runtime.keep_session(context, platform, account)
                     return result
 
@@ -305,7 +334,8 @@ async def run(platform, account, on_closing=None):
                     atomic_json(path, {"address": address, "key": key.hex(), "pid": os.getpid()})
                     if sys.platform != "win32":
                         path.chmod(0o600)
-                    await serve(listener, handle, platform, usable=lambda: usable)
+                    idle = min(idle_seconds(), YOUTUBE_IDLE_SECONDS) if platform == "youtube" else None
+                    await serve(listener, handle, platform, idle=idle, usable=lambda: usable)
                 finally:
                     path.unlink(missing_ok=True)
             finally:

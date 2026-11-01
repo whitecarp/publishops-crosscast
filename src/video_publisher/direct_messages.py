@@ -3,6 +3,7 @@ import re
 import uuid
 from . import adapters, safety
 from .core import VpubError, atomic_json, digest, error_fields, home, never_sent, now, publication_lock, read_json, stop_check
+from .progress import stage
 
 PENDING = {'DM_SUBMITTING', 'DM_UNVERIFIED'}
 
@@ -114,6 +115,7 @@ def submitting(path):
     saved = read_json(path)
     if saved.get('state') == 'DM_REPLACED': raise VpubError('attempt_replaced', 'A newer attempt took this message over, so this one sent nothing.')
     saved.update(state='DM_SUBMITTING', submitted_at=now()); atomic_json(path, saved)
+    stage('pressing')
 
 
 def _verify(path):

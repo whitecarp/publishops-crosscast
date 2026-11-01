@@ -4,6 +4,7 @@ from pathlib import Path
 from . import adapters
 from .core import VpubError, atomic_json, digest, error_fields, home, never_sent, now, publication_lock, read_json, stop_check
 from .direct_messages import identity
+from .progress import stage
 
 PLATFORMS = ('instagram', 'x', 'douyin', 'bilibili', 'youtube')
 NEEDS_COVER = {'douyin', 'bilibili'}
@@ -162,6 +163,7 @@ def before_submit(payload, owner):
             raise VpubError('receipt_conflict','The collection cover or description changed after preparation.')
     stop_check(r['platform']);r.update(state='SUBMITTING',submitted_at=now(),platform_writes=1)
     atomic_json(path,r)
+    stage('pressing')
 
 
 def membership(platform, action, collection, work, request_id):
