@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 from . import __version__, adapters
-from .core import Ledger, PLATFORMS, VpubError, atomic_json, config, file_sha, home, load_plan, never_sent, now, publication_lock, read_json, snapshot_file, stop_check, platform_check
+from .core import Ledger, PLATFORMS, VpubError, atomic_json, config, file_sha, home, load_plan, never_sent, now, part_left_undone, publication_lock, read_json, snapshot_file, stop_check, platform_check
 from .safety import pushed_back
 
 # The command finished, but the work it was asked to do did not.
@@ -961,16 +961,11 @@ def one_line(value):
     return UNSAFE_OUTPUT.sub(lambda found: f"\\u{ord(found[0]):04x}", json.dumps(value, ensure_ascii=False))
 
 
-def part_left_undone(value):
-    """Chapters or a collection chosen at upload that did not land, on a work that did."""
-    return isinstance(value, dict) and (value.get("chapters_state") not in {None, "VERIFIED"} or (value.get("season") or {}).get("added") is False)
-
-
 def finished(value):
     if not isinstance(value, dict):
         return True
     results = value.get("results")
-    parts = results.values() if isinstance(results, dict) else ()
+    parts = [part for part in results.values() if isinstance(part, dict)] if isinstance(results, dict) else []
     return not (value.get("all_submissions_verified") is False or value.get("state") in UNFINISHED_STATES or part_left_undone(value) or any(part_left_undone(part) for part in parts))
 
 

@@ -28,6 +28,12 @@ def never_sent(exc):
     return isinstance(exc, VpubError) and exc.code == HELD_BACK
 
 
+def part_left_undone(receipt):
+    """Chapters or a collection chosen at upload that did not land, on a work that did."""
+    season = receipt.get("season")
+    return receipt.get("chapters_state") not in {None, "VERIFIED"} or (isinstance(season, dict) and season.get("added") is False)
+
+
 def reply_still_open(saved):
     """A reply's last check before its click. A command killed part way can still be running in the shared background browser, with a second attempt queued behind it."""
     if saved.get("state") in {"REPLY_SUBMITTING", "REPLY_UNVERIFIED", "REPLY_VERIFIED", "REPLY_REJECTED"}:

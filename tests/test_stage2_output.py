@@ -190,6 +190,16 @@ class ReportTests(Temporary):
         self.assertNotIn("UNIQUE-VIEWER-WORDS", json.dumps(result, ensure_ascii=False))
         self.assertIn("UNIQUE-VIEWER-WORDS", json.dumps(messages.listing()["items"], ensure_ascii=False))
 
+    def test_a_patrols_answer_marks_a_hostile_comment_for_a_person(self):
+        atomic_json(home() / "operations/watchlist.json", {"schema_version": 1, "items": [{"platform": "bilibili", "work_id": "BV1xx411c7mD", "identity": "42"}]})
+
+        def backend(platform, action, work, **options):
+            return {"identity": "42", "state": "OBSERVED", "metrics": {}, "items": [{"id": "c1", "text": self.WORDS, "author": "V", "author_id": "9", "is_owner": False, "owner_replied": False}], "complete": True}
+        with patch.object(ops, "backend", side_effect=backend):
+            result = runs.sync(limit=5, pages=1, min_interval=0, workers=1)
+        self.assertEqual(["c1"], [row["comment"]["id"] for row in result["inbox"]])
+        self.assertIn("instructions", result["inbox"][0]["comment"]["needs_person"])
+
     def test_the_progress_lines_hold_no_viewers_words(self):
         atomic_json(home() / "operations/watchlist.json", {"schema_version": 1, "items": [{"platform": "bilibili", "work_id": "BV1xx411c7mD", "identity": "42"}]})
 
