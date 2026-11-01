@@ -188,6 +188,11 @@ def douyin_card_is_waiting(text):
     return bool(found) and datetime(*map(int, found.groups())) > datetime.now()
 
 
+async def douyin_card_status(card):
+    """A card's words apart from its title node, which a field check found goes on to hold the caption. A person's words can mention any date or state; only the platform's count."""
+    return normalize(await card.evaluate("""card => { const title = card.querySelector('[class^="info-title-text-"]'); return title ? card.innerText.replace(title.innerText, '') : card.innerText; }"""))
+
+
 def douyin_card_words(text):
     """Douyin's spacing and the zero-width marks its editor adds are no part of what was written."""
     return re.sub(r'[\s\u200b]+', '', text or '')
@@ -210,12 +215,22 @@ def douyin_card_stamp(when):
     return f'{local.year}年{local.month:02d}月{local.day:02d}日 {local.hour:02d}:{local.minute:02d}'
 
 
+async def douyin_card_time(card):
+    """The time in a card's own time node, which a field check found outside its title node, or None unless there is exactly one."""
+    nodes = card.locator('[class^="info-time-"]:not([class^="info-title-text-"] *)')
+    if await nodes.count() != 1:
+        return None
+    found = [match[0] for match in DOUYIN_CARD_TIME.finditer(normalize(await nodes.first.inner_text()))]
+    return found[0] if len(found) == 1 else None
+
+
 async def douyin_cards_at(cards, stamp):
-    return [card for card in cards if stamp in normalize(await card.inner_text())]
+    """The cards that show this time, or might: one whose time cannot be read could be at any time."""
+    return [card for card in cards if await douyin_card_time(card) in (stamp, None)]
 
 
 async def douyin_scheduled_card(page, receipt):
-    """Before its time a scheduled work has a card and no ID anywhere. One more card than before with exactly this title, the only one showing this time, and marked private if it was meant to be, is this one.
+    """Before its time a scheduled work has a card and no ID anywhere. One more card than before with exactly this title, the only one whose own time node shows this time, and marked private if it was meant to be, is this one.
     An older card with this title and time could pass for it, so unless none was there before the upload, this stays unverified."""
     schedule = receipt.get('schedule') or {}
     if not schedule.get('card_stamp') or 'same_title_cards_before' not in receipt or receipt.get('same_time_cards_before') != 0:
@@ -224,7 +239,7 @@ async def douyin_scheduled_card(page, receipt):
     if len(cards) != receipt['same_title_cards_before'] + 1:
         return False
     matching = await douyin_cards_at(cards, schedule['card_stamp'])
-    if len(matching) != 1:
+    if len(matching) != 1 or await douyin_card_time(matching[0]) != schedule['card_stamp']:
         return False
     return receipt.get('visibility') != 'private' or await matching[0].locator('[class*="private-mark-"]').count() > 0
 
@@ -249,7 +264,7 @@ async def works(page, platform, identity):
                 for title in (await titles.all())[:10]:
                     text = await title.inner_text()
                     card = title.locator('xpath=ancestor::div[starts-with(@class,"video-card-content-")]')
-                    if douyin_card_is_waiting(normalize(await card.inner_text())):
+                    if douyin_card_is_waiting(await douyin_card_status(card)):
                         continue
                     try:
                         async with page.expect_popup(timeout=POPUP_MS) as opened:
@@ -392,7 +407,7 @@ async def verify(page, platform, identity, receipt):
             return {**receipt, **DOUYIN_SCHEDULED, 'verified_at': now()}
         if platform == 'douyin' and receipt.get('title'):
             cards = page.locator('[class^="video-card-content-"]').filter(has_text=receipt['title'])
-            if await cards.count() == 1 and '审核中' in await cards.inner_text():
+            if await cards.count() == 1 and '审核中' in await douyin_card_status(cards):
                 return {**receipt, 'state':'SUBMITTED_UNVERIFIED', 'phase':'platform_review',
                         'platform_status':'UNDER_REVIEW', 'review_url':MANAGE, 'error':None,
                         'note':'Matching submitted card is under platform review; verify later, never reupload.'}

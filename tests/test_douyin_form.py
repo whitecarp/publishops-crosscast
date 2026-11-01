@@ -238,7 +238,7 @@ class ScheduledCardTests(Base):
     STAMP = "2030年03月04日 15:07"
 
     def card(self, title=TITLE, when=STAMP, private='<span class="private-mark-abc">私密</span>'):
-        return f'<div class="video-card-content-1"><div class="info-title-text-1">{title}</div><span>{when}</span>{private}</div>'
+        return f'<div class="video-card-content-1"><div class="info-title-text-1">{title}</div><div class="info-time-1">{when}</div>{private}</div>'
 
     async def show(self, *cards):
         await self.page.set_content('<!doctype html><meta charset="utf-8"><body>' + "".join(cards))
@@ -261,7 +261,7 @@ class ScheduledCardTests(Base):
     CAPTION = "CC test. Private test.\n\n五秒测试。"
 
     def card_with_caption(self, caption, title=TITLE, when=STAMP):
-        return f'<div class="video-card-content-1"><div class="info-title-text-1">{title} {caption}\u200b</div><span>{when}</span><span class="private-mark-abc">私密</span></div>'
+        return f'<div class="video-card-content-1"><div class="info-title-text-1">{title} {caption}\u200b</div><div class="info-time-1">{when}</div><span class="private-mark-abc">私密</span></div>'
 
     def receipt_with_caption(self, **changes):
         return {**self.receipt(**changes), "expected_caption": self.CAPTION}
@@ -277,6 +277,48 @@ class ScheduledCardTests(Base):
             with self.subTest(cards=cards):
                 await self.show(*cards)
                 self.assertIs(False, await browser_backends.douyin_scheduled_card(self.page, self.receipt_with_caption()))
+
+    async def test_a_date_in_the_words_never_stands_in_for_the_cards_own_time(self):
+        """From a review: the caption mentioned the time asked for, the card's own time was a day later, and it passed."""
+        later = "2030年03月05日 15:07"
+        words = f"On {self.STAMP}"
+        await self.show(self.card_with_caption(words, when=later))
+        self.assertIs(False, await browser_backends.douyin_scheduled_card(self.page, {**self.receipt(), "expected_caption": words}))
+        await self.show(self.card_with_caption(words))
+        self.assertIs(True, await browser_backends.douyin_scheduled_card(self.page, {**self.receipt(), "expected_caption": words}))
+        await self.show(self.card(title=f"{TITLE} {self.STAMP}", when=later))
+        self.assertIs(False, await browser_backends.douyin_scheduled_card(self.page, {**self.receipt(), "title": f"{TITLE} {self.STAMP}"}))
+
+    def card_with_time_nodes(self, nodes):
+        return f'<div class="video-card-content-1"><div class="info-title-text-1">{TITLE}</div>{nodes}<span class="private-mark-abc">私密</span></div>'
+
+    async def test_a_card_without_one_clear_time_is_not_known_to_be_at_this_time(self):
+        one = f'<div class="info-time-1">{self.STAMP}</div>'
+        for nodes in (f'<span>{self.STAMP}</span>', one * 2, f'<div class="info-time-1">{self.STAMP} {self.STAMP}</div>', '<div class="info-time-1">soon</div>'):
+            with self.subTest(nodes=nodes):
+                await self.show(self.card_with_time_nodes(nodes))
+                self.assertIs(False, await browser_backends.douyin_scheduled_card(self.page, self.receipt()))
+
+    async def test_an_older_card_whose_time_cannot_be_read_could_be_at_this_time(self):
+        await self.show(self.card(), self.card_with_time_nodes(""))
+        self.assertIs(False, await browser_backends.douyin_scheduled_card(self.page, self.receipt(before=1)))
+        self.html = '<!doctype html><meta charset="utf-8"><body>' + self.card_with_time_nodes("")
+        tx = StubTx(schedule=datetime(2030, 3, 4, 15, 7).astimezone().isoformat())
+        tx.media = lambda: "clip.mp4"
+        await self.page.goto("https://creator.douyin.com/creator-micro/content/manage")
+        with patch.object(browser_forms, "works", new=AsyncMock(return_value={})), patch.object(browser_forms, "douyin_caption", return_value="Words"), \
+                patch.object(browser_forms, "upload_file", new=AsyncMock(side_effect=RuntimeError("selected"))), self.assertRaises(RuntimeError):
+            await browser_forms.publish_douyin(self.page, tx)
+        self.assertEqual((1, 1), (tx.receipt["same_title_cards_before"], tx.receipt["same_time_cards_before"]))
+
+    async def test_a_caption_never_says_what_state_a_card_is_in(self):
+        past, later = "2020年01月02日 03:04", "2099年01月02日 03:04"
+        for words, shown, waiting in ((f"Back on {later}", past, False), ("定时发布 审核中", past, False), (f"Since {past}", later, True)):
+            with self.subTest(words=words):
+                await self.show(self.card_with_caption(words, when=shown))
+                status = await browser_backends.douyin_card_status(self.page.locator(browser_backends.DOUYIN_CARD))
+                self.assertEqual(shown + " 私密", status)
+                self.assertIs(waiting, browser_backends.douyin_card_is_waiting(status))
 
     async def test_an_older_card_with_this_title_and_caption_is_counted_before_the_upload(self):
         self.html = '<!doctype html><meta charset="utf-8"><body>' + self.card_with_caption("Words")

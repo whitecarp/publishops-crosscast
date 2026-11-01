@@ -11,7 +11,7 @@ from .core import VpubError, douyin_caption, stop_check
 from .browser_runtime import risk_check, unique_visible, visible
 from .progress import stage
 from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, normalize, studio_offsets, studio_read, studio_style,
-                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, douyin_card_stamp, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, DOUYIN_SCHEDULED)
+                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, douyin_card_stamp, douyin_card_status, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, DOUYIN_SCHEDULED)
 
 X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
 YT_DIALOG = 'ytcp-uploads-dialog'
@@ -36,7 +36,7 @@ async def finish(page, tx, before):
         found = await works(page, tx.platform, tx.identity)
         if tx.platform == 'douyin':
             cards = page.locator('[class^="video-card-content-"]').filter(has_text=tx.options['title'])
-            if await cards.count() == 1 and '审核中' in await cards.inner_text():
+            if await cards.count() == 1 and '审核中' in await douyin_card_status(cards):
                 return tx.save(state='SUBMITTED_UNVERIFIED', phase='platform_review', platform_status='UNDER_REVIEW',
                                error=None, review_url=page.url, note='Matching submitted work is under review; verify later, never reupload.')
             if await douyin_scheduled_card(page, tx.receipt):

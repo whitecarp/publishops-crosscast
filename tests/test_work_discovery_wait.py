@@ -90,6 +90,12 @@ class DetailPageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(["123"], [item["id"] for item in result["items"]])
         self.assertLess(asyncio.get_running_loop().time() - started, 14)
 
+    async def test_a_caption_mentioning_a_time_to_come_does_not_hide_a_published_work(self):
+        from video_publisher.browser_backends import works
+        self.CARD = self.CARD.replace("My work", "My work 2099年01月02日 03:04 定时发布")
+        self.assertEqual(["123"], list(await works(self.page, "douyin", "me")))
+        self.assertEqual(["123"], [item["id"] for item in (await discovery.scan(self.page, "douyin", "me", 5, 1))["items"]])
+
     async def test_a_card_that_opens_nothing_does_not_stop_the_others_being_read(self):
         from video_publisher import browser_backends
         self.CARD = '<div class="video-card-content-1"><div class="info-title-text-1">Opens nothing</div></div>' + self.CARD
