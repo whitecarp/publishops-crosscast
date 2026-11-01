@@ -5,6 +5,7 @@ from copy import deepcopy
 import importlib.util
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -19,6 +20,8 @@ UNFINISHED_STATES = {"INCOMPLETE", "INTERRUPTED", "UPLOAD_PAUSED", "UPLOAD_INITI
                      "EDIT_SUBMITTING", "EDIT_SUBMITTED_UNVERIFIED", "EDIT_UNAVAILABLE", "REPLY_READY", "REPLY_PENDING", "REPLY_SUBMITTING", "REPLY_UNVERIFIED", "REPLY_REJECTED",
                      "TEST_SEED_UNVERIFIED", "TEST_REPLY_UNVERIFIED", "TEST_COMMENT_NOT_VISIBLE", "FAILED_BEFORE_SUBMIT", "UNVERIFIED", "EDIT_FAILED", "EDIT_MISMATCH",
                      "READY", "SUBMITTING", "PLATFORM_REJECTED", "BROWSER_VERIFICATION_REQUIRED", "TEST_READY", "TEST_SEED_SUBMITTING"}
+# Marks JSON leaves as they are that can still end a line, act on a terminal or reorder what a reader sees. A viewer can type any of them.
+UNSAFE_OUTPUT = re.compile("[\x7f-\x9f؜​-‏ -‮⁠-⁩\ud800-\udfff﻿]")
 # Commands whose --out saves the JSON result. For the others, --out names the file the command produces.
 SAVES_RESULT = {"dm", "read-all", "collection", "playlist", "messages", "engage", "ops", "comments", "stats", "report", "works", "status", "cleanup"}
 
@@ -953,6 +956,11 @@ def capabilities():
             "interaction_rule": "Login/setup does not authorize comments, messages, likes or publication."}
 
 
+def one_line(value):
+    """One line of JSON, whatever a viewer wrote inside it. These marks only ever sit inside a string, where the escaped form reads back the same."""
+    return UNSAFE_OUTPUT.sub(lambda found: f"\\u{ord(found[0]):04x}", json.dumps(value, ensure_ascii=False))
+
+
 def part_left_undone(value):
     """Chapters or a collection chosen at upload that did not land, on a work that did."""
     return isinstance(value, dict) and (value.get("chapters_state") not in {None, "VERIFIED"} or (value.get("season") or {}).get("added") is False)
@@ -973,10 +981,10 @@ def main():
         args = parser().parse_args()
         value = execute(args)
         ok = finished(value)
-        print(json.dumps({"ok": ok, "data": value}, ensure_ascii=False))
+        print(one_line({"ok": ok, "data": value}))
         raise SystemExit(0 if ok else 4)
     except VpubError as e:
-        print(json.dumps({"ok": False, "error": {"code": e.code, "message": e.message, "hint": e.hint}}, ensure_ascii=False))
+        print(one_line({"ok": False, "error": {"code": e.code, "message": e.message, "hint": e.hint}}))
         raise SystemExit(2)
     except FileNotFoundError as e:
         print(json.dumps({"ok": False, "error": {"code": "file_not_found", "message": f"File not found: {e.filename}",
