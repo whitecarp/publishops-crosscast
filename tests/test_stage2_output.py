@@ -79,9 +79,10 @@ class OneAnswerTests(Temporary):
         answer = json.loads(printed)
         self.assertEqual((False, "REPLY_UNVERIFIED", 4), (answer["ok"], answer["data"]["state"], code))
 
-    def test_ordinary_chinese_stays_readable(self):
-        printed, _ = self.printed({"state": "OBSERVED", "text": "你好，世界"})
-        self.assertIn("你好，世界", printed)
+    def test_ordinary_chinese_and_joined_emoji_stay_readable(self):
+        for text in ("你好，世界", "👨‍👩‍👧"):
+            with self.subTest(text=text):
+                self.assertIn(text, self.printed({"state": "OBSERVED", "text": text})[0])
 
     def test_an_error_goes_out_the_same_way(self):
         printed, code = self.printed(error=VpubError("wrong_account", "line one\nline two " + NASTY["terminal escape"], "hint\u0085two"))

@@ -21,7 +21,7 @@ UNFINISHED_STATES = {"INCOMPLETE", "INTERRUPTED", "UPLOAD_PAUSED", "UPLOAD_INITI
                      "TEST_SEED_UNVERIFIED", "TEST_REPLY_UNVERIFIED", "TEST_COMMENT_NOT_VISIBLE", "FAILED_BEFORE_SUBMIT", "UNVERIFIED", "EDIT_FAILED", "EDIT_MISMATCH",
                      "READY", "SUBMITTING", "PLATFORM_REJECTED", "BROWSER_VERIFICATION_REQUIRED", "TEST_READY", "TEST_SEED_SUBMITTING"}
 # Marks JSON leaves as they are that can still end a line, act on a terminal or reorder what a reader sees. A viewer can type any of them.
-UNSAFE_OUTPUT = re.compile("[\x7f-\x9f؜​-‏ -‮⁠-⁩\ud800-\udfff﻿]")
+UNSAFE_OUTPUT = re.compile("[\x7f-\x9f؜​‎‏ -‮⁠-⁩\ud800-\udfff﻿]")
 # Commands whose --out saves the JSON result. For the others, --out names the file the command produces.
 SAVES_RESULT = {"dm", "read-all", "collection", "playlist", "messages", "engage", "ops", "comments", "stats", "report", "works", "status", "cleanup"}
 
