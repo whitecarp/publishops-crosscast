@@ -97,7 +97,7 @@ B站、抖音用簡體中文，YouTube、Instagram、X 用英文。影片本身�
 
 ### 📮 登入一次，之後背景發布
 
-首次登入之後，CLI 自己完成上傳：B站走 bili-cli，YouTube、抖音、Instagram、X 由 CLI 在背景操作專用的 Chrome。YouTube、X 和 Instagram 的官方 API 路徑需要付費附加元件。上傳時可以附上章節（B站、YouTube、抖音），並加入播放清單（YouTube）或合集（B站、抖音）。B站、YouTube、抖音和 X 都支援排程發布；Instagram 不支援，要求排程的方案會被拒絕。`vpub init --draft-only` 只上傳、不發布：B站和 YouTube 會留下未發布的草稿，抖音會按它自己的「暫存離開」，之後上傳頁會在「繼續編輯」下提供這份草稿（CrossCast 只看不按，因為打開它就會把草稿用掉），Instagram 和 X 則停在預覽，預覽不一定能保留，所以不會被說成已儲存。
+首次登入之後，CLI 自己完成上傳：B站走 bili-cli，YouTube、抖音、Instagram、X 由 CLI 在背景操作專用的 Chrome。YouTube、X 和 Instagram 的官方 API 路徑需要付費附加元件。上傳時可以附上章節（B站、YouTube、抖音），並加入播放清單（YouTube）或合集（B站、抖音）。B站、YouTube、抖音和 X 都支援排程發布；Instagram 不支援，要求排程的方案會被拒絕。`vpub init --draft-only` 只上傳、不發布：B站和 YouTube 會留下未發布的草稿，抖音會按它自己的「暫存離開」，之後上傳頁可能會在「繼續編輯」下提供這份草稿（CrossCast 只看不按，因為這個入口說不出是誰的草稿，而且打開它可能會把草稿用掉），Instagram 和 X 則停在預覽，預覽不一定能保留，所以不會被說成已儲存。
 
 ### 🔁 中斷了也能接著做
 
