@@ -357,6 +357,9 @@ async def verify(page, platform, identity, receipt):
             present = present and normalize(expected) in actual
     if platform == 'douyin' and receipt.get('expected_text'):
         present = present and receipt['expected_text'] in found.get(str(receipt['id']), {}).get('text', '')
+    if platform == 'douyin' and present and receipt.get('schedule') and datetime.now(timezone.utc) < datetime.fromisoformat(receipt['schedule']['at']):
+        # Before its time, only the work showing that time proves the schedule took, rather than it having gone out already.
+        present = receipt['schedule']['stamp'] in found.get(str(receipt['id']), {}).get('text', '')
     return {**receipt, "url": url, "state": "SUBMISSION_VERIFIED" if present else "SUBMITTED_UNVERIFIED",
             'phase':'complete' if present else 'readback_pending', 'error':None if present else receipt.get('error'),
             "verification_source": "independent_browser_dom", "verified_at": now(),

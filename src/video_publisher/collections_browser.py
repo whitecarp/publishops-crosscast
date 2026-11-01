@@ -9,6 +9,7 @@ from .collections import before_submit
 # X's page asks for this many folders at once.
 FOLDER_PAGE=100
 LIST_WAIT=25
+FOLDER_SCROLLS=20
 
 
 def folder_section(data):
@@ -220,6 +221,72 @@ async def x_member(page,owner,payload):
     return {'identity':owner,'submitted':True,'collection_id':cid}
 
 
+async def x_folder_posts(page,cid,title):
+    """What one folder holds on the earlier site, from its own page. It loads as it scrolls, so it counts as complete only once nothing more appears."""
+    folder='/i/history/bookmarks/'+cid
+    await page.goto('https://x.com'+folder,wait_until='domcontentloaded')
+    await page.get_by_role('tab',name=title,exact=True).wait_for(state='visible');await rt.risk_check(page)
+    if urlsplit(page.url).path!=folder:raise VpubError('wrong_collection','X redirected away from the requested folder.')
+    seen,still=set(),0
+    for _ in range(FOLDER_SCROLLS):
+        await page.wait_for_timeout(1500)
+        if 'Something went wrong' in await page.locator('body').inner_text():raise VpubError('read_failed','X did not load the bookmark folder.')
+        posts=[await x_pages.post_fields(row) for row in await page.locator('main article').all()]
+        found={post['id'] for post in posts if post}
+        still=still+1 if found<=seen else 0
+        seen|=found
+        if still>=2:return seen,True
+        await page.mouse.wheel(0,2400)
+    return seen,False
+
+
+async def x_earlier_member(page,owner,payload):
+    """On the earlier site a post's share menu opens X's folder window, which names no post, and a folder's own page says what it holds."""
+    op,cid,work=payload['operation'],payload['collection_id'],payload['work_id']
+    if op=='remove':raise VpubError('unverified_feature','Taking a post out of a folder is not yet available on the X site this account gets; nothing changed.')
+    folders=await read_list(page,'x',owner)
+    found=[x for x in folders['items'] if x['id']==cid]
+    if len(found)!=1:raise VpubError('collection_not_visible','Exact folder ID is not visible; no changes made.')
+    title=found[0]['title']
+    seen,complete=await x_folder_posts(page,cid,title)
+    if op=='items':
+        return {'identity':owner,'collection_id':cid,'items':[{'id':work}] if work in seen else [],'complete':complete or work in seen,
+                'scope':'one_post','coverage':'folder_page','platform_writes':0}
+    if payload['before_members']!=([work] if work in seen else []):
+        raise VpubError('collection_changed','This post moved since the last check; nothing changed.')
+    await page.goto(f'https://x.com/{owner}/status/{work}',wait_until='domcontentloaded')
+    row=x_pages.post_row(page,work)
+    try:await row.first.wait_for(state='visible',timeout=25000)
+    except Exception:
+        await rt.risk_check(page)
+        raise VpubError('layout_changed','X did not show this post; nothing changed.') from None
+    await rt.risk_check(page)
+    share=await rt.unique_visible(row.first.get_by_role('button',name='Share post',exact=True),'Share post')
+    menus=await x_pages.open_menu(page,share)
+    choices=menus.get_by_text('Bookmark to Folder',exact=True)
+    if not await rt.visible(choices):
+        raise VpubError('layout_changed','X did not offer Bookmark to Folder for this post, which may need saving first; nothing changed.','Save it with vpub engage save, then try again.')
+    await (await rt.unique_visible(choices,'Bookmark to Folder')).click(timeout=10000)
+    try:await page.wait_for_url(re.compile(r'/i/(bookmarks/add|premium)'),timeout=15000)
+    except Exception:raise VpubError('layout_changed','X did not open its folder window; nothing changed.') from None
+    if urlsplit(page.url).path.startswith('/i/premium'):raise VpubError('premium_required','X only offers bookmark folders with Premium; nothing changed.')
+    rows=page.get_by_role('dialog').get_by_text(title,exact=True)
+    try:await rows.first.wait_for(state='visible',timeout=20000)
+    except Exception:
+        await rt.risk_check(page)
+        raise VpubError('layout_changed','X did not list this folder in its window; nothing changed.') from None
+    await rt.risk_check(page)
+    target=await rt.unique_visible(rows,'folder row')
+    future,capture=response_capture(page,'x',folder_write_done)
+    before_submit(payload,owner)
+    try:
+        await target.click(timeout=15000)
+        await asyncio.wait_for(future,20)
+    finally:page.remove_listener('response',capture)
+    await rt.risk_check(page)
+    return {'identity':owner,'submitted':True,'collection_id':cid}
+
+
 async def execute(page,platform,owner,payload):
     op=payload['operation']
     if platform=='youtube':
@@ -234,8 +301,7 @@ async def execute(page,platform,owner,payload):
     rebuilt=platform=='x' and await x_pages.rebuilt(page)
     if op=='list':return await read_list(page,platform,owner,rebuilt)
     if platform=='x' and (op in {'add','remove'} or (op=='items' and payload.get('work_id'))):
-        if not rebuilt:raise VpubError('unverified_feature','Checking or changing one post in a folder is not yet available on the X site this account gets; nothing changed.')
-        return await x_member(page,owner,payload)
+        return await (x_member if rebuilt else x_earlier_member)(page,owner,payload)
     if op in {'items','rename','delete'} and platform=='x':
         current=await read_list(page,platform,owner,rebuilt)
         matches=[x for x in current['items'] if x['id']==payload['collection_id']]

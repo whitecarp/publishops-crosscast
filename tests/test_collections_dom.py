@@ -278,8 +278,25 @@ document.getElementById('tab').onclick = () => {
 </script>'''
 
 
+EARLIER_POST = '''<article><a href="/owner/status/%(post)s"><time datetime="2026-10-30T10:00:00.000Z">x</time></a><div data-testid="User-Name">Someone</div>
+<div data-testid="tweetText">Words</div><div role="group"><a href="/compose/post?in_reply_to=%(post)s">Reply</a>%(extra)s</div></article>'''
+# A field check on 2026-11-01 found the share button opens its menu by keyboard, and the window names no post.
+EARLIER_POST_PAGE = '''<!doctype html><body><a data-testid="AppTabBar_Profile_Link" href="/owner">Profile</a><main>%s</main>
+<div role="menu" id="menu" hidden><div data-testid="Dropdown"><div role="menuitem">Copy link</div>%s</div></div>
+<script>
+document.getElementById('share').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); document.getElementById('menu').hidden = false; } });
+const folder = document.getElementById('folder');
+if (folder) folder.onclick = () => { location.href = '/i/bookmarks/add'; };
+</script>'''
+EARLIER_PICKER = '''<div role="dialog"><div role="dialog"><h2>Add to Folder</h2><button type="button">Create a new Bookmark Folder</button>
+<div data-viewportview="true"><div class="row"><div><span>All Bookmarks</span></div></div>%s</div></div></div>
+<script>
+for (const row of document.querySelectorAll('[data-folder]')) row.onclick = () => fetch('/i/api/graphql/abc/bookmarkTweetToFolder?folder=' + row.dataset.folder, {method: 'POST', body: '{}'});
+</script>'''
+
+
 class EarlierSiteTests(unittest.IsolatedAsyncioTestCase):
-    """The site a signed-in account still got on 2026-10-31. Its flows are the ones earlier live tests used."""
+    """The site a signed-in account still got on 2026-10-31. Its flows are the ones earlier live tests used, and a field check of its folder window."""
 
     async def asyncSetUp(self):
         from patchright.async_api import async_playwright
@@ -293,6 +310,8 @@ class EarlierSiteTests(unittest.IsolatedAsyncioTestCase):
         self.page = await self.browser.new_page()
         self.page.set_default_timeout(5000)
         self.folders = {'111': 'Recipes'}
+        self.inside = {'111': set()}
+        self.offers_folder = True
         self.writes = []
         await self.page.route('**/*', self.handle)
         await self.page.goto('https://x.com/home')
@@ -312,6 +331,10 @@ class EarlierSiteTests(unittest.IsolatedAsyncioTestCase):
             if name == 'BookmarkFoldersSlice':
                 items = [{'id': key, 'name': title} for key, title in self.folders.items()]
                 data = {'viewer': {'user_results': {'result': {'bookmark_collections_slice': {'items': items, 'slice_info': {}}}}}}
+            elif name == 'bookmarkTweetToFolder':
+                self.writes.append((name, query['folder'][0]))
+                self.inside[query['folder'][0]].add(POST)
+                data = {'done': 'Done'}
             else:
                 self.writes.append((name, query.get('name', [None])[0]))
                 if name == 'createBookmarkFolder':
@@ -320,7 +343,14 @@ class EarlierSiteTests(unittest.IsolatedAsyncioTestCase):
         if url.path == '/i/history':
             return await route.fulfill(status=200, content_type='text/html', body='<!doctype html><body>' + EARLIER_HISTORY)
         if url.path.startswith('/i/history/bookmarks/'):
-            return await route.fulfill(status=200, content_type='text/html', body='<!doctype html><body>' + EARLIER_FOLDER % self.folders.get(name, ''))
+            rows = ''.join(EARLIER_POST % {'post': post, 'extra': ''} for post in sorted(self.inside.get(name, ())))
+            return await route.fulfill(status=200, content_type='text/html', body='<!doctype html><body>' + EARLIER_FOLDER % self.folders.get(name, '') + '<main>' + rows + '</main>')
+        if url.path == f'/{OWNER}/status/{POST}':
+            item = '<div role="menuitem" id="folder">Bookmark to Folder</div>' if self.offers_folder else ''
+            return await route.fulfill(status=200, content_type='text/html', body=EARLIER_POST_PAGE % (EARLIER_POST % {'post': POST, 'extra': '<button aria-label="Share post" id="share">s</button>'}, item))
+        if url.path == '/i/bookmarks/add':
+            rows = ''.join(f'<div class="row" data-folder="{key}"><div><span>{title}</span></div></div>' for key, title in self.folders.items())
+            return await route.fulfill(status=200, content_type='text/html', body='<!doctype html><body>' + EARLIER_PICKER % rows)
         await route.fulfill(status=200, content_type='text/html', body='<!doctype html><body><a data-testid="AppTabBar_Profile_Link" href="/owner">Profile</a>')
 
     def receipt(self, action, collection='111', title=None, **extra):
@@ -359,15 +389,73 @@ class EarlierSiteTests(unittest.IsolatedAsyncioTestCase):
         await self.run_op('delete', collection_id='111', receipt_key=key)
         self.assertEqual([('DeleteBookmarkFolder', None)], self.writes)
 
-    async def test_adding_a_post_says_it_is_not_available_here_and_changes_nothing(self):
+    async def add(self, before=()):
+        key = self.receipt('add', work_id=POST, before_members=list(before))
+        result = await self.run_op('add', collection_id='111', work_id=POST, before_members=list(before), receipt_key=key)
+        return key, result
+
+    async def test_taking_a_post_out_says_it_is_not_available_here_and_changes_nothing(self):
+        key = self.receipt('remove', work_id=POST, before_members=[POST])
+        with self.assertRaises(VpubError) as caught:
+            await self.run_op('remove', collection_id='111', work_id=POST, before_members=[POST], receipt_key=key)
+        self.assertEqual('unverified_feature', caught.exception.code)
+        self.assertEqual('READY', read_json(c.receipt_path(key))['state'])
+        self.assertEqual([], self.writes)
+
+    async def test_one_post_is_read_from_the_folders_own_page(self):
+        result = await self.run_op('items', collection_id='111', work_id=POST)
+        self.assertEqual(([], True, 'one_post'), (result['items'], result['complete'], result['scope']))
+        self.inside['111'].add(POST)
+        result = await self.run_op('items', collection_id='111', work_id=POST)
+        self.assertEqual(([{'id': POST}], True), (result['items'], result['complete']))
+        self.assertEqual([], self.writes)
+
+    async def test_a_folder_that_never_stops_loading_does_not_count_as_complete(self):
+        with patch('video_publisher.collections_browser.FOLDER_SCROLLS', 1):
+            result = await self.run_op('items', collection_id='111', work_id=POST)
+        self.assertIs(False, result['complete'])
+
+    async def test_adding_goes_through_the_share_menu_and_the_folder_window_once(self):
+        key, result = await self.add()
+        self.assertEqual({'identity': OWNER, 'submitted': True, 'collection_id': '111'}, result)
+        self.assertEqual([('bookmarkTweetToFolder', '111')], self.writes)
+        saved = read_json(c.receipt_path(key))
+        self.assertEqual(('SUBMITTING', 1), (saved['state'], saved['platform_writes']))
+        await self.page.goto('https://x.com/home')  # Every command starts from the account's home page.
+        self.assertEqual([{'id': POST}], (await self.run_op('items', collection_id='111', work_id=POST))['items'])
+
+    async def test_a_post_with_no_folder_choice_stops_before_any_change(self):
+        self.offers_folder = False
         key = self.receipt('add', work_id=POST, before_members=[])
         with self.assertRaises(VpubError) as caught:
             await self.run_op('add', collection_id='111', work_id=POST, before_members=[], receipt_key=key)
-        self.assertEqual('unverified_feature', caught.exception.code)
+        self.assertEqual('layout_changed', caught.exception.code)
         self.assertEqual('READY', read_json(c.receipt_path(key))['state'])
-        with self.assertRaises(VpubError):
-            await self.run_op('items', collection_id='111', work_id=POST)
         self.assertEqual([], self.writes)
+
+    async def test_a_post_that_moved_since_the_last_check_stops_before_any_change(self):
+        self.inside['111'].add(POST)
+        key = self.receipt('add', work_id=POST, before_members=[])
+        with self.assertRaises(VpubError) as caught:
+            await self.run_op('add', collection_id='111', work_id=POST, before_members=[], receipt_key=key)
+        self.assertEqual('collection_changed', caught.exception.code)
+        self.assertEqual([], self.writes)
+
+    async def test_two_folders_with_one_title_stop_before_any_change(self):
+        self.folders = {'111': 'Recipes', '222': 'Recipes'}
+        self.inside['222'] = set()
+        key = self.receipt('add', work_id=POST, before_members=[])
+        with self.assertRaises(VpubError) as caught:
+            await self.run_op('add', collection_id='111', work_id=POST, before_members=[], receipt_key=key)
+        self.assertEqual('layout_changed', caught.exception.code)
+        self.assertEqual('READY', read_json(c.receipt_path(key))['state'])
+        self.assertEqual([], self.writes)
+
+    async def test_a_folder_x_does_not_list_is_refused_first(self):
+        key = self.receipt('add', '999', work_id=POST, before_members=[])
+        with self.assertRaises(VpubError) as caught:
+            await self.run_op('add', collection_id='999', work_id=POST, before_members=[], receipt_key=key)
+        self.assertEqual('collection_not_visible', caught.exception.code)
 
     async def test_an_unhydrated_tab_retries_only_opening_the_menu(self):
         await self.page.route('**/*', lambda route: route.abort())

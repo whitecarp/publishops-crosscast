@@ -220,9 +220,9 @@ def load_plan(path, selected=None):
         if not isinstance(v, dict):
             raise VpubError("invalid_manifest", "Each platform needs an object.")
         permitted = {"account", "title", "description", "tags", "visibility", "ai_generated", "schedule", "content_language", "metadata_language", "metadata_mode", "chapters", "duration_seconds"}
-        permitted |= {"tid", "expected_uid", "method", "season_id"} if platform == "bilibili" else set()
+        permitted |= {"tid", "expected_uid", "method", "season_id", "submission_mode"} if platform == "bilibili" else set()
         permitted |= {"category_id", "made_for_kids", "expected_channel_id", "method", "playlist_ids", "playlist_titles", "create_missing_playlists", "submission_mode"} if platform == "youtube" else set()
-        permitted |= {"method", "expected_identity"} if platform == "douyin" else set()
+        permitted |= {"method", "expected_identity", "submission_mode", "collection_title"} if platform == "douyin" else set()
         permitted |= {"method", "expected_identity", "submission_mode"} if platform in {"x", "instagram"} else set()
         if set(v) - permitted:
             raise VpubError("invalid_manifest", f"Unsupported {platform} options: {sorted(set(v) - permitted)}")
@@ -266,8 +266,17 @@ def load_plan(path, selected=None):
             raise VpubError("invalid_submission_mode", "The API routes have no drafts; use browser or native for draft_only.")
         if platform == "youtube" and v.get("method", "browser") != "browser" and v.get("submission_mode", "publish") != "publish":
             raise VpubError("invalid_submission_mode", "YouTube draft_only needs the browser route.")
-        if platform in {"x", "instagram", "youtube"} and v.get("submission_mode", "publish") not in {"publish", "draft_only"}:
+        if v.get("submission_mode", "publish") not in {"publish", "draft_only"}:
             raise VpubError("invalid_submission_mode", "Use publish or draft_only. Draft-only permits media upload/preview, never Share/Post or scheduling.")
+        if platform in {"bilibili", "douyin"} and v.get("submission_mode") == "draft_only":
+            if v.get("method") == "native":
+                raise VpubError("invalid_submission_mode", f"{platform} draft_only needs CrossCast's own route.")
+            if v.get("schedule") or v.get("chapters") or v.get("season_id") or v.get("collection_title"):
+                raise VpubError("invalid_submission_mode", "A draft keeps the title, description, tags and cover. Choose its schedule, chapters or collection when it is published.")
+        if platform == "douyin" and "collection_title" in v:
+            value = v["collection_title"]
+            if not isinstance(value, str) or not value.strip() or value != value.strip() or len(value) > 20 or v.get("method", "browser") != "browser":
+                raise VpubError("invalid_collection", "Use the exact title of one of the account's Douyin collections, on the browser route.")
         if platform == "x" and v.get("expected_identity") is not None and not re.fullmatch(r"[A-Za-z0-9_]{1,15}", str(v["expected_identity"])):
             raise VpubError("invalid_identity", "Use the X handle without @, as observed in the signed-in profile.")
         if platform == "x" and cover and v.get("method", "browser") == "native":
@@ -307,7 +316,7 @@ def load_plan(path, selected=None):
             raise VpubError("invalid_audience", "YouTube made_for_kids must be explicitly true/false.")
         schedule = v.get("schedule")
         if schedule:
-            if platform in {"douyin", "instagram"} or v.get("method") == "native" or (platform == "x" and v.get("method") == "api"):
+            if platform == "instagram" or v.get("method") == "native" or (platform == "x" and v.get("method") == "api"):
                 raise VpubError("unsupported_schedule", "This route supports immediate publication only.")
             try:
                 when = datetime.fromisoformat(schedule.replace("Z", "+00:00"))

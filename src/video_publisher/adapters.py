@@ -232,6 +232,9 @@ def preflight(platform, options):
 
 
 def publish_bilibili(plan, options, checkpoint):
+    if options.get("submission_mode") == "draft_only":
+        from .drafts_bilibili import save
+        return save(plan, options, checkpoint)
     # bili-cli ticks "含AI生成内容" by default, so ordinary videos must opt out explicitly.
     args = ["upload", "video", plan["video"], "--title", options["title"],
             "--desc", options["description"],
@@ -285,6 +288,9 @@ def publish(platform, plan, options, checkpoint):
 def verify(platform, account, receipt, checkpoint=None):
     if receipt.get("method") == "native":
         return {**receipt, "state": "BROWSER_VERIFICATION_REQUIRED", "note": "Re-open the original work in the same built-in browser and record actual UI evidence. No CLI platform check was performed."}
+    if receipt.get("draft_title"):
+        from .drafts_bilibili import verify as verify_draft
+        return verify_draft(receipt)
     video_id = receipt.get("id")
     if receipt.get("method") == "browser" and platform in {"douyin", "instagram", "x", "youtube"}:
         return browser_call(platform, "verify", account, expected_identity=receipt.get("identity"), receipt=receipt)

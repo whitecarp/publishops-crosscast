@@ -7,8 +7,8 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlsplit
 
 from .categories import STUDIO_CATEGORIES
-from .core import VpubError, douyin_caption
-from .browser_runtime import unique_visible, visible
+from .core import VpubError, douyin_caption, stop_check
+from .browser_runtime import risk_check, unique_visible, visible
 from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, normalize, studio_offsets, studio_read, studio_style,
                                upload_file, wait_until, work_url, works, verify, verify_scheduled_x)
 
@@ -261,6 +261,57 @@ async def publish_douyin(page, tx):
     return await finish_douyin_form(page, tx, before)
 
 
+async def douyin_schedule(page, when):
+    """Fill Creator Center's own date and time box and read it back. Nothing is published here. The box follows this computer's clock."""
+    local = when.astimezone()
+    stamp = local.strftime('%Y-%m-%d %H:%M')
+    # The word sits in a label that takes the click, so the label is what gets pressed.
+    choice = await unique_visible(page.locator('label').filter(has_text=re.compile(r'^\s*定时发布\s*$')), 'Douyin schedule choice')
+    await choice.click(timeout=15000)
+    boxes = page.locator('input[placeholder="日期和时间"]')
+    try:
+        await boxes.first.wait_for(state='visible', timeout=15000)
+    except Exception:
+        raise VpubError('schedule_unverified', 'Douyin did not show its date and time box. Nothing was published.') from None
+    box = await unique_visible(boxes, 'Douyin date and time')
+    await box.click(timeout=10000)
+    await box.select_text(timeout=5000)
+    await page.keyboard.type(stamp)
+    await page.keyboard.press('Enter')
+    await page.wait_for_timeout(1000)
+    if (await box.input_value()).strip() != stamp:
+        raise VpubError('schedule_unverified', 'Douyin did not keep this date and time. Nothing was published.', 'Douyin may limit how soon or how far ahead a post can be scheduled. Choose another time and make a new plan.')
+    return {'at': when.isoformat(), 'local': local.isoformat(), 'stamp': stamp, 'date': [local.year, local.month, local.day], 'time': [local.hour, local.minute], 'timezone_basis': 'computer'}
+
+
+async def douyin_collection(page, title):
+    """Choose one of the account's own collections by its exact title and read the choice back. Nothing is published here."""
+    trigger = await unique_visible(page.locator('[class*="select-collection-"] .semi-select-selection'), 'Douyin collection list')
+    await trigger.click(timeout=15000)
+    options = page.locator('.semi-select-option').filter(has=page.locator('[class*="option-title-"]', has_text=re.compile(r'^\s*' + re.escape(title) + r'\s*$')))
+    try:
+        await options.first.wait_for(state='visible', timeout=15000)
+    except Exception:
+        raise VpubError('collection_not_found', 'Douyin did not offer a collection with exactly this title. Nothing was published.') from None
+    await (await unique_visible(options, 'Douyin collection')).click(timeout=10000)
+    await page.wait_for_timeout(800)
+    if normalize(await trigger.inner_text()) != normalize(title):
+        raise VpubError('collection_unverified', 'Douyin did not keep this collection. Nothing was published.')
+    return {'title': title, 'state': 'UI_ACCEPTED'}
+
+
+async def douyin_keep_draft(page, tx):
+    """Douyin's own 暂存离开 keeps the form for later and publishes nothing. It shows no list of drafts to read this back from."""
+    leave = await unique_visible(page.get_by_role('button', name='暂存离开', exact=True), 'Douyin 暂存离开')
+    await risk_check(page)
+    stop_check('douyin')
+    tx.save(phase='saving_draft')
+    await leave.click(timeout=15000)
+    await page.wait_for_timeout(3000)
+    await risk_check(page)
+    return tx.save(state='PREVIEW_READY', phase='draft_saved', note='Pressed Douyin\'s 暂存离开 once; nothing was published. Douyin shows no list of drafts, so this is not read back. Look for it on the upload page.')
+
+
 async def finish_douyin_form(page, tx, before):
     """Complete this already-uploaded form; never select the video again."""
     caption = douyin_caption(tx.options['description'], tx.options['tags'])
@@ -310,9 +361,16 @@ async def finish_douyin_form(page, tx, before):
     await radio.check()
     if not await radio.is_checked():
         raise VpubError('visibility_unverified', 'Could not verify the requested visibility.')
+    # Chosen on every pass: a form that was reloaded has forgotten them, and publishing it then would go out now and outside its collection.
+    if tx.options.get('collection_title'):
+        tx.save(collection=await douyin_collection(page, tx.options['collection_title']))
+    if tx.options.get('schedule'):
+        tx.save(schedule=await douyin_schedule(page, datetime.fromisoformat(tx.options['schedule'].replace('Z', '+00:00'))))
     if await title.input_value() != tx.options['title'] or normalize(await editor.inner_text()).replace('\u200b','') != normalize(caption):
         raise VpubError('metadata_mismatch', 'Douyin title or description differs from the manifest.')
     tx.save(phase='preview', metadata_readback=True, ai_disclosure='native_control', visibility=tx.options['visibility'])
+    if tx.options.get('submission_mode') == 'draft_only':
+        return await douyin_keep_draft(page, tx)
     post = await unique_visible(page.get_by_role('button', name='发布', exact=True), 'Douyin final publish')
     await tx.submit(page, post)
     await page.wait_for_url(re.compile(r'/content/manage'), timeout=60000)

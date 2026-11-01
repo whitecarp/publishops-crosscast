@@ -152,7 +152,7 @@ class WorkflowTests(unittest.TestCase):
         self.value["platforms"] = {"douyin": {"method": "native", "visibility": "private", "ai_generated": True,
                                              "submission_mode": "draft_only"}}
         self.save()
-        self.code("invalid_manifest", self.plan)
+        self.code("invalid_submission_mode", self.plan)
 
     def test_init_draft_only_is_explicit_and_scoped(self):
         output = self.root / "draft-init.json"
@@ -161,10 +161,10 @@ class WorkflowTests(unittest.TestCase):
         cli.execute(args)
         plan = load_plan(output)
         self.assertTrue(all(o["submission_mode"] == "draft_only" for o in plan["platforms"].values()))
-        args.out = str(self.root / "invalid-init.json")
-        args.platforms = "douyin,x"
-        self.code("invalid_submission_mode", cli.execute, args)
-        self.assertFalse(Path(args.out).exists())
+        args.out = str(self.root / "other-init.json")
+        args.platforms = "douyin,bilibili"
+        cli.execute(args)
+        self.assertTrue(all(o["submission_mode"] == "draft_only" for o in read_json(args.out)["platforms"].values()))
 
     def test_retry_requires_rejection_and_fresh_matching_absence_evidence(self):
         self.value["platforms"] = {"instagram": {"method":"native", "visibility":"account", "ai_generated":True, "expected_identity":"demo"}}
