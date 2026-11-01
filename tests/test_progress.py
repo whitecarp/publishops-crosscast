@@ -111,6 +111,8 @@ class Page:
 
     async def goto(self, url, **options):
         await asyncio.sleep(float(os.environ.get("FAKE_BROWSER_SLOW", 0)))
+        if os.environ.get("FAKE_BROWSER_FAILS") and url.rstrip("/") != "https://x.com/home":
+            raise ValueError(f"Could not open {url}: {PRIVATE} {OWNER}")
         self.url = url.rstrip("/") + f"/channel/{CHANNEL}" if url.rstrip("/") == "https://studio.youtube.com" else url
 
     async def wait_for_timeout(self, value):
@@ -535,6 +537,18 @@ class RealProcessTests(Temporary):
         self.assertNotIn("starting the browser", stages_of(second.stderr))
         self.assertIn("opening the page", stages_of(second.stderr))
         self.assertEqual(1, len(read_json(self.state)["desktops"]))
+
+    def test_a_command_that_fails_still_gives_one_answer_and_keeps_its_details_off_stderr(self):
+        for idle in (0, None):
+            with self.subTest(idle=idle):
+                env = dict(self.env, FAKE_BROWSER_FAILS="1")
+                if idle is not None:
+                    env["VPUB_BROWSER_IDLE_SECONDS"] = str(idle)
+                done = subprocess.run([sys.executable, "-m", "video_publisher", "works", "x"], capture_output=True, encoding="utf-8", env=env, timeout=240)
+                self.assertEqual(False, self.assert_one_answer(done)["ok"])
+                self.assert_nothing_private(done.stderr)
+                self.assertIn("opening the page", stages_of(done.stderr))
+                self.assertNotEqual(0, done.returncode)
 
     def test_the_lines_arrive_while_the_page_loads_not_all_at_the_end(self):
         routes = [("x", 0), ("x", None)] + ([("youtube", 0), ("youtube", None)] if os.name == "nt" else [])
