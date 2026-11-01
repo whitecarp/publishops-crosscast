@@ -581,9 +581,9 @@ class CommentTests(Browser):
 
     async def reply_to_first(self):
         path = home() / "reply.json"
-        atomic_json(path, {"state": "REPLY_READY"})
+        atomic_json(path, {"state": "REPLY_READY", "request": {"attempt": "this-attempt"}})
         return await yt.operations(self.page, CHANNEL, {"operation": "reply", "work_id": VIDEO, "reply_receipt_path": str(path),
-                                                        "reply_request": {"expected_identity": CHANNEL, "text": "Thanks", "comment": {"id": "c1", "text": "Nice"}}})
+                                                        "reply_request": {"expected_identity": CHANNEL, "text": "Thanks", "comment": {"id": "c1", "text": "Nice"}, "attempt": "this-attempt"}})
 
     async def test_a_reply_uses_the_box_under_its_comment(self):
         await self.reply_to_first()

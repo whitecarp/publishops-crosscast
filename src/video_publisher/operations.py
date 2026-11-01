@@ -177,6 +177,8 @@ def reply(platform, work, comment_id, text, language='auto', dry_run=False, _tes
                 if previous.get('state')!='REPLY_READY':
                     return {**previous,'reused':True,'platform_writes':0,
                             'hint':'An existing attempt is retained. Use comments verify-reply; never send again on a timeout.'}
+                # Its count goes back now, so that attempt can no longer press, even if this one is refused below.
+                previous['request']={**previous.get('request',{}),'attempt':None};atomic_json(path,previous)
                 safety.reclaim(path,previous)
             ticket=None if _test_key else safety.admit(**limits)
             request={**request,'attempt':uuid.uuid4().hex}
@@ -226,7 +228,9 @@ def verify_reply(key):
         saved=read_json(path)
         result=backend(saved['platform'],'verify_reply',saved['work_id'],reply_request=saved['request'],
                        reply_receipt_path=str(path),existing_reply=saved)
-        saved.update(result);atomic_json(path,saved)
+        # That read can queue behind a killed command's press, so what it finds goes onto the receipt as it stands now.
+        with receipt_turn(path):
+            saved={**read_json(path),**result};atomic_json(path,saved)
         remember_reply(saved)
         return record('reply_verify',saved['platform'],saved['work_id'],saved)
 

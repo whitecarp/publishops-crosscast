@@ -159,14 +159,18 @@ def verify(key):
     path = home() / 'operations/comment-actions' / (key + '.json')
     if not path.exists(): raise VpubError('receipt_required', 'Comment action receipt not found.')
     with publication_lock():
-        saved = read_json(path); r = saved['request']
-        after = gone_for_certain(saved, dispatch({**r, 'verification': True}))
-        if saved['state'] in PENDING | {'COMMENT_VERIFIED'}:
-            saved['state'] = 'COMMENT_VERIFIED' if matches(r, after) else 'COMMENT_UNVERIFIED'
-            if saved['state'] == 'COMMENT_VERIFIED': refresh_snapshot(r)
-        if saved['state']=='COMMENT_VERIFIED' and saved.get('error_code'):
-            saved.setdefault('resolved_errors',[]).append({'code':saved.pop('error_code'),'resolved_at':now()});saved.pop('error_message',None)
-        saved.update(after=after, verified_at=now()); atomic_json(path, saved)
+        r = read_json(path)['request']
+        observed = dispatch({**r, 'verification': True})
+        # That read can queue behind a killed command's press, so what it finds goes onto the receipt as it stands now.
+        with receipt_turn(path):
+            saved = read_json(path)
+            after = gone_for_certain(saved, observed)
+            if saved['state'] in PENDING | {'COMMENT_VERIFIED'}:
+                saved['state'] = 'COMMENT_VERIFIED' if matches(r, after) else 'COMMENT_UNVERIFIED'
+                if saved['state'] == 'COMMENT_VERIFIED': refresh_snapshot(r)
+            if saved['state']=='COMMENT_VERIFIED' and saved.get('error_code'):
+                saved.setdefault('resolved_errors',[]).append({'code':saved.pop('error_code'),'resolved_at':now()});saved.pop('error_message',None)
+            saved.update(after=after, verified_at=now()); atomic_json(path, saved)
         ops.record('comment_management', r['platform'], r['work_id'], saved)
         return {**saved, 'platform_writes': 0}
 
@@ -184,19 +188,24 @@ def resume(key):
         if not index.exists() or read_json(index)['key']!=key:
             raise VpubError('stale_receipt','This is no longer the current action for the comment.')
         current=dispatch({**r,'verification':True})
-        if matches(r,current):
-            saved.update(state='COMMENT_VERIFIED',after=current,verified_at=now());atomic_json(path,saved)
-            return {**saved,'platform_writes':0}
-        field=STATE_FIELD[r['kind']]
-        # Which check it was, and never the words or IDs it compared.
-        stopped=[reason for reason,failed in (('the account differs',current.get('identity')!=r['identity']),('the comment text differs',current.get('text')!=r['comment']['text']),
-                                              ('its state could not be read',current.get(field) is None),
-                                              ('its state differs from before',current.get(field) is not None and current.get(field)!=saved['before'].get(field))) if failed]
-        if stopped:
-            raise VpubError('state_unavailable','Cannot establish the exact original state; no retry was made.','Stopped because '+', and '.join(stopped)+'.')
-        saved.setdefault('recovery_attempts',[]).append({'at':now(),'before':current,'previous_error':saved.get('error_code'),
-                                                       'previous_platform_writes':saved.get('platform_writes')})
-        saved.update(state='COMMENT_READY',platform_writes=0);saved.pop('error_code',None);atomic_json(path,saved)
+        # That read can queue behind a killed command's press, so what it finds goes onto the receipt as it stands now.
+        with receipt_turn(path):
+            saved=read_json(path)
+            if saved['state'] not in PENDING:
+                raise VpubError('resume_unavailable','Only a pending like, pin, hide or moderation change can be explicitly resumed.')
+            if matches(r,current):
+                saved.update(state='COMMENT_VERIFIED',after=current,verified_at=now());atomic_json(path,saved)
+                return {**saved,'platform_writes':0}
+            field=STATE_FIELD[r['kind']]
+            # Which check it was, and never the words or IDs it compared.
+            stopped=[reason for reason,failed in (('the account differs',current.get('identity')!=r['identity']),('the comment text differs',current.get('text')!=r['comment']['text']),
+                                                  ('its state could not be read',current.get(field) is None),
+                                                  ('its state differs from before',current.get(field) is not None and current.get(field)!=saved['before'].get(field))) if failed]
+            if stopped:
+                raise VpubError('state_unavailable','Cannot establish the exact original state; no retry was made.','Stopped because '+', and '.join(stopped)+'.')
+            saved.setdefault('recovery_attempts',[]).append({'at':now(),'before':current,'previous_error':saved.get('error_code'),
+                                                             'previous_platform_writes':saved.get('platform_writes')})
+            saved.update(state='COMMENT_READY',platform_writes=0);saved.pop('error_code',None);atomic_json(path,saved)
         try:
             result=dispatch(r,'set',path)
             saved={**read_json(path),**result}

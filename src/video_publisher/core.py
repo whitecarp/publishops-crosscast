@@ -39,7 +39,8 @@ def reply_pressing(path, request, **details):
     and each attempt writes over the same receipt. So only the attempt the receipt holds now gets past here, and only while it is still waiting."""
     with receipt_turn(path):
         saved = read_json(path)
-        if saved.get("state") != "REPLY_READY" or (saved.get("request") or {}).get("attempt") != request.get("attempt"):
+        mark = request.get("attempt")
+        if saved.get("state") != "REPLY_READY" or not mark or (saved.get("request") or {}).get("attempt") != mark:
             raise VpubError("attempt_exists", "This attempt at the reply has ended, or another got there first, so nothing more was sent.", "Use comments verify-reply; never send again.")
         saved.update(state="REPLY_SUBMITTING", **details)
         atomic_json(path, saved)

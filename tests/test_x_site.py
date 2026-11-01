@@ -325,10 +325,10 @@ class ChangeTests(Site):
 
     async def reply_payload(self, path):
         return {"work_id": POST, "operation": "reply", "reply_receipt_path": path,
-                "reply_request": {"comment": {"id": REPLY, "text": "这首歌叫什么？"}, "text": "测试曲目。", "expected_identity": OWNER}}
+                "reply_request": {"comment": {"id": REPLY, "text": "这首歌叫什么？"}, "text": "测试曲目。", "expected_identity": OWNER, "attempt": "this-attempt"}}
 
     async def test_a_reply_goes_to_the_exact_comment_once_and_stays_until_sent(self):
-        path = self.receipt("reply", state="REPLY_READY")
+        path = self.receipt("reply", state="REPLY_READY", request={"attempt": "this-attempt"})
         result = await ops.execute(self.page, "x", OWNER, await self.reply_payload(path))
         self.assertEqual(("REPLY_UNVERIFIED", 1), (result["state"], result["platform_writes"]))
         self.assertEqual([("reply", REPLY, "测试曲目。")], self.x.writes)
@@ -337,7 +337,7 @@ class ChangeTests(Site):
         self.assertIn(REPLY, saved["before_reply_ids"])
 
     async def test_the_reply_reads_back_by_its_new_id_and_time(self):
-        path = self.receipt("reply", state="REPLY_READY")
+        path = self.receipt("reply", state="REPLY_READY", request={"attempt": "this-attempt"})
         await ops.execute(self.page, "x", OWNER, await self.reply_payload(path))
         saved = {**read_json(path), "at": "2026-01-01T00:00:00+00:00"}
         payload = {**(await self.reply_payload(path)), "operation": "verify_reply", "existing_reply": saved}

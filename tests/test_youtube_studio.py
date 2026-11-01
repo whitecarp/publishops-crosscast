@@ -254,8 +254,8 @@ class ReadingTests(Temporary):
 class ReplyTests(Temporary):
     def payload(self, text="歌名是测试曲目。（AI 回复）", operation="reply", **extra):
         path = self.root / "reply.json"
-        atomic_json(path, {"state": "REPLY_READY"})
-        request = {"text": text, "language": "zh", "expected_identity": CHANNEL, "comment": {"id": "c1", "text": "这首歌叫什么？"}}
+        atomic_json(path, {"state": "REPLY_READY", "request": {"attempt": "this-attempt"}})
+        request = {"text": text, "language": "zh", "expected_identity": CHANNEL, "comment": {"id": "c1", "text": "这首歌叫什么？"}, "attempt": "this-attempt"}
         return {"operation": operation, "work_id": VIDEO, "reply_request": request, "reply_receipt_path": str(path), **extra}
 
     def test_one_click_saved_first_then_read_back(self):

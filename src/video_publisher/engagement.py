@@ -134,10 +134,13 @@ def verify(key):
     with publication_lock():
         saved=read_json(path)
         observed=status(saved['platform'],saved['work_id'],saved['collection'],saved['identity'])
-        if saved['state'] in PENDING|{'ACTION_VERIFIED'}:saved=finish(saved,observed)
-        else:saved['after']=observed
-        if saved['state']=='ACTION_VERIFIED' and saved.get('error_code'):
-            saved.setdefault('resolved_errors',[]).append({'code':saved.pop('error_code'),'resolved_at':now()});saved.pop('error_message',None)
-        atomic_json(path,saved)
+        # That read can queue behind a killed command's press, so what it finds goes onto the receipt as it stands now.
+        with receipt_turn(path):
+            saved=read_json(path)
+            if saved['state'] in PENDING|{'ACTION_VERIFIED'}:saved=finish(saved,observed)
+            else:saved['after']=observed
+            if saved['state']=='ACTION_VERIFIED' and saved.get('error_code'):
+                saved.setdefault('resolved_errors',[]).append({'code':saved.pop('error_code'),'resolved_at':now()});saved.pop('error_message',None)
+            atomic_json(path,saved)
         operations.record('engagement',saved['platform'],saved['work_id'],saved)
         return {**saved,'platform_writes':0}

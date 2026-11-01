@@ -21,6 +21,7 @@ OWNER = "owner"
 WORK = "abcde12345"
 DOUYIN_WORK = "7300000000000000001"
 COMMENT = "111"
+ATTEMPT = "this-attempt"
 QUESTION = "这首歌叫什么？"
 ANSWER = "测试曲目。"
 
@@ -29,7 +30,7 @@ class Pages(SharedBrowser):
     def prepare(self):
         self.sent = []
         self.receipt = self.root / "reply.json"
-        atomic_json(self.receipt, {"state": "REPLY_READY"})
+        atomic_json(self.receipt, {"state": "REPLY_READY", "request": {"attempt": ATTEMPT}})
 
     async def refused(self, code, call=None):
         with self.assertRaises(VpubError) as caught:
@@ -62,7 +63,7 @@ class InstagramTests(Pages):
 
     def payload(self, comment_text=QUESTION, **changes):
         return {"work_id": WORK, "operation": "reply", "reply_receipt_path": str(self.receipt),
-                "reply_request": {"comment": {"id": COMMENT, "text": comment_text, "author": "viewer"}, "text": ANSWER, "expected_identity": OWNER, **changes}}
+                "reply_request": {"comment": {"id": COMMENT, "text": comment_text, "author": "viewer"}, "text": ANSWER, "expected_identity": OWNER, "attempt": ATTEMPT, **changes}}
 
     async def run_it(self):
         return await operations_browser.execute(self.page, "instagram", self.identity, self.payload())
@@ -142,7 +143,7 @@ class DouyinCreatorTests(Pages):
 
     async def run_it(self):
         return await operations_browser.execute(self.page, "douyin", OWNER, {"work_id": DOUYIN_WORK, "operation": "reply", "reply_receipt_path": str(self.receipt),
-                                                                             "reply_request": {"comment": {"id": COMMENT, "text": QUESTION}, "text": ANSWER, "expected_identity": OWNER}})
+                                                                             "reply_request": {"comment": {"id": COMMENT, "text": QUESTION}, "text": ANSWER, "expected_identity": OWNER, "attempt": ATTEMPT}})
 
     async def test_it_marks_the_receipt_then_sends_once_through_creator_center(self):
         result = await self.run_it()
@@ -322,13 +323,47 @@ class TwoAttemptsTests(unittest.TestCase):
 
     def test_only_the_attempt_the_receipt_holds_and_only_while_waiting_can_press(self):
         path, old = self.killed_attempt()
-        for state, attempt in (("REPLY_SUBMITTING", "a"), ("REPLY_UNVERIFIED", "a"), ("REPLY_VERIFIED", "a"), ("REPLY_REJECTED", "a"), ("REPLY_FAILED", "a"), (None, "a"), ("REPLY_READY", "b"), ("REPLY_READY", None)):
+        for state, attempt in (("REPLY_SUBMITTING", "a"), ("REPLY_UNVERIFIED", "a"), ("REPLY_VERIFIED", "a"), ("REPLY_REJECTED", "a"), ("REPLY_FAILED", "a"), (None, "a"), ("REPLY_READY", "b"), ("REPLY_READY", None)):  # And see the next test.
             with self.subTest(state=state, attempt=attempt):
                 atomic_json(path, {"state": state, "request": {"attempt": attempt}})
                 with self.assertRaises(VpubError) as caught:
                     self.press(path, {"attempt": "a", "text": "Answer"})
                 self.assertEqual("attempt_exists", caught.exception.code)
         self.assertEqual([], self.sent)
+
+    def test_a_reply_with_no_mark_on_either_side_belongs_to_nobody(self):
+        path = home() / "operations/replies/old.json"
+        for saved in ({"state": "REPLY_READY", "request": {}}, {"state": "REPLY_READY"}):
+            with self.subTest(saved=saved):
+                atomic_json(path, saved)
+                with self.assertRaises(VpubError) as caught:
+                    reply_pressing(path, {})
+                self.assertEqual("attempt_exists", caught.exception.code)
+
+    def test_a_new_attempt_that_is_refused_still_closes_the_one_it_gave_the_count_back_for(self):
+        """From a review: the old attempt's count went back, the new one hit the daily limit, and the old one could still press, uncounted, with the limit at zero."""
+        path, old = self.killed_attempt()
+        safety.set_limits(replies_per_day=0)
+        with patch.object(ops, "backend") as send, self.assertRaises(VpubError) as caught:
+            self.reply("Answer two")
+        send.assert_not_called()
+        self.assertEqual("daily_limit_reached", caught.exception.code)
+        with self.assertRaises(VpubError) as late:
+            self.press(path, old)
+        self.assertEqual("attempt_exists", late.exception.code)
+        self.assertEqual([], self.sent)
+        self.assertEqual(0, self.counted())
+
+    def test_a_reply_check_that_queued_behind_the_press_keeps_what_the_press_wrote(self):
+        path, old = self.killed_attempt()
+
+        def behind_the_press(platform, action, work, reply_request, reply_receipt_path, existing_reply):
+            reply_pressing(reply_receipt_path, old, submitted_text="What went")
+            return {"state": "REPLY_UNVERIFIED", "platform_writes": 0}
+        with patch.object(ops, "backend", side_effect=behind_the_press):
+            ops.verify_reply(read_json(path)["reply_key"])
+        self.assertEqual("What went", read_json(path)["submitted_text"])
+        self.assertEqual("REPLY_UNVERIFIED", read_json(path)["state"])
 
     def test_a_press_after_its_command_gave_up_sends_nothing_because_its_count_went_back(self):
         """From a review: a late press went out with its count already given back, so the daily cap never saw it."""

@@ -2,7 +2,7 @@
 import re
 from pathlib import Path
 from . import adapters
-from .core import VpubError, atomic_json, digest, error_fields, home, never_sent, now, publication_lock, read_json, stop_check
+from .core import VpubError, atomic_json, digest, error_fields, home, never_sent, now, publication_lock, read_json, receipt_turn, stop_check
 from .direct_messages import identity
 from .progress import stage
 
@@ -144,25 +144,29 @@ def change(platform, action, collection=None, title=None, request_id=None, cover
                     r['collection_id']=result['collection_id'];atomic_json(path,r)
                 r=checked_result(r,call(platform,'list',owner))
         except Exception as exc:
-            r=not_finished(read_json(path),exc)
+            with receipt_turn(path):
+                r=not_finished(read_json(path),exc);atomic_json(path,r)
+            return r
         atomic_json(path,r)
         return r
 
 
 def before_submit(payload, owner):
     """Called in the worker immediately before the irreversible click."""
-    path=receipt_path(payload['receipt_key']);r=read_json(path)
-    expected=(payload['platform'],owner,payload['operation'],payload.get('collection_id'),payload.get('title'))
-    actual=(r['platform'],r['identity'],r['action'],r.get('collection_id'),r.get('title'))
-    if expected!=actual or r['state']!='READY':raise VpubError('receipt_conflict','Receipt does not permit this action.')
-    if r['action'] in {'add','remove'} and (payload.get('work_id')!=r.get('work_id') or payload.get('before_members')!=r.get('before_members')):
-        raise VpubError('receipt_conflict','Wrong collection member or baseline.')
-    if r['platform'] in NEEDS_COVER and r['action']=='create':
-        from .core import file_sha
-        if payload.get('description')!=r['intent']['description'] or file_sha(Path(payload.get('cover','')))!=r['intent']['cover_sha256']:
-            raise VpubError('receipt_conflict','The collection cover or description changed after preparation.')
-    stop_check(r['platform']);r.update(state='SUBMITTING',submitted_at=now(),platform_writes=1)
-    atomic_json(path,r)
+    path=receipt_path(payload['receipt_key'])
+    with receipt_turn(path):
+        r=read_json(path)
+        expected=(payload['platform'],owner,payload['operation'],payload.get('collection_id'),payload.get('title'))
+        actual=(r['platform'],r['identity'],r['action'],r.get('collection_id'),r.get('title'))
+        if expected!=actual or r['state']!='READY':raise VpubError('receipt_conflict','Receipt does not permit this action.')
+        if r['action'] in {'add','remove'} and (payload.get('work_id')!=r.get('work_id') or payload.get('before_members')!=r.get('before_members')):
+            raise VpubError('receipt_conflict','Wrong collection member or baseline.')
+        if r['platform'] in NEEDS_COVER and r['action']=='create':
+            from .core import file_sha
+            if payload.get('description')!=r['intent']['description'] or file_sha(Path(payload.get('cover','')))!=r['intent']['cover_sha256']:
+                raise VpubError('receipt_conflict','The collection cover or description changed after preparation.')
+        stop_check(r['platform']);r.update(state='SUBMITTING',submitted_at=now(),platform_writes=1)
+        atomic_json(path,r)
     stage('pressing')
 
 
@@ -191,5 +195,7 @@ def membership(platform, action, collection, work, request_id):
                 call(platform,action,owner,collection_id=collection,work_id=work,receipt_key=key,before_members=ids)
                 r=read_json(path);r=checked_result(r,members(platform,owner,collection,work))
         except Exception as exc:
-            r=not_finished(read_json(path),exc)
+            with receipt_turn(path):
+                r=not_finished(read_json(path),exc);atomic_json(path,r)
+            return r
         atomic_json(path,r);return r

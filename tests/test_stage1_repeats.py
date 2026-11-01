@@ -252,6 +252,51 @@ class OtherPressesTests(unittest.TestCase):
         self.assertEqual(1, len(self.pressed))
         self.assertEqual(1, self.counted())
 
+    def test_a_like_check_that_queued_behind_the_press_keeps_what_the_press_did(self):
+        """From a review: the check put the receipt back to waiting, so the next command gave the count back for a like that had gone out."""
+        path = self.like_interrupted(KeyboardInterrupt())
+
+        def behind_the_press(platform, action, work=None, **options):
+            if not self.pressed:
+                self.like_press(platform, "set", work, receipt_path=path)
+            return self.like_status(platform, action, work, **options)
+        with patch.object(engagement, "dispatch", side_effect=behind_the_press):
+            self.assertEqual("ACTION_VERIFIED", engagement.verify(Path(path).stem)["state"])
+        self.assertEqual("ACTION_VERIFIED", read_json(path)["state"])
+        with patch.object(engagement, "dispatch", side_effect=self.like_status):
+            self.assertEqual("NO_CHANGE", engagement.set_action("x", self.WORK, "like")["state"])
+        self.assertEqual(1, self.counted())
+
+    def test_a_comment_like_check_that_queued_behind_the_press_keeps_what_the_press_did(self):
+        path = self.comment_interrupted(KeyboardInterrupt())
+
+        def behind_the_press(request, operation="status", receipt_path=None):
+            if not self.pressed:
+                self.comment_press(request, "set", path)
+            return self.comment_status(request)
+        with patch.object(comment_actions, "dispatch", side_effect=behind_the_press):
+            self.assertEqual("COMMENT_VERIFIED", comment_actions.verify(Path(path).stem)["state"])
+        self.assertEqual("COMMENT_VERIFIED", read_json(path)["state"])
+        with patch.object(comment_actions, "dispatch", side_effect=self.comment_status):
+            self.assertEqual("NO_CHANGE", comment_actions.mutate("x", self.WORK, "111", "like")["state"])
+        self.assertEqual(1, self.counted())
+
+    def test_a_retry_that_queued_behind_a_finished_press_reads_it_and_presses_nothing(self):
+        path = self.comment_interrupted(TimeoutError())
+        saved = read_json(path)
+        saved.update(state="COMMENT_UNVERIFIED")
+        atomic_json(path, saved)
+
+        def finished_meanwhile(request, operation="status", receipt_path=None):
+            done = read_json(path)
+            done.update(state="COMMENT_VERIFIED")
+            atomic_json(path, done)
+            return self.comment_status(request)
+        with patch.object(comment_actions, "dispatch", side_effect=finished_meanwhile), self.assertRaises(VpubError) as caught:
+            comment_actions.resume(Path(path).stem)
+        self.assertEqual("resume_unavailable", caught.exception.code)
+        self.assertEqual([], self.pressed)
+
     def test_only_a_press_still_waiting_gets_through(self):
         receipt = home() / "receipt.json"
         for module, ready in ((engagement, "ACTION_READY"), (comment_actions, "COMMENT_READY")):
