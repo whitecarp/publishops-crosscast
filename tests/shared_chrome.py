@@ -10,6 +10,8 @@ import atexit
 import inspect
 import unittest
 
+LONGEST_WAIT = 5000  # Milliseconds.
+
 _loop = None
 _chrome = None  # The driver and the one Chrome, once a test has asked for them.
 _kept = set()  # The driver's own tasks, which no test's clean-up may cancel.
@@ -66,6 +68,23 @@ class ChromeCase(unittest.TestCase):
         self.tearDown()
 
 
+def shorten_waits():
+    """The code under test waits as long as a slow real site might take, up to a minute. The copies of the sites in these tests answer at
+    once or never, so a wait that is going to run out is cut to LONGEST_WAIT and still runs out."""
+    from patchright._impl import _connection
+    if getattr(_connection, "_augment_params", None) is None or getattr(_connection._augment_params, "shortened", False):
+        return
+    asked = _connection._augment_params
+
+    def shorter(params, timeout_calculator):
+        answer = asked(params, timeout_calculator)
+        if answer.get("timeout", 0) > LONGEST_WAIT:
+            answer["timeout"] = LONGEST_WAIT
+        return answer
+    shorter.shortened = True
+    _connection._augment_params = shorter
+
+
 async def chrome():
     global _chrome
     if asyncio.get_running_loop() is not loop():
@@ -80,6 +99,7 @@ async def chrome():
             await started.stop()
             raise
         _kept.update(task for task in asyncio.all_tasks() if task not in before)
+        shorten_waits()
     return _chrome[1]
 
 
