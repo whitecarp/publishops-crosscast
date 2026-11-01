@@ -249,7 +249,7 @@ async def publish_douyin(page, tx):
     tx.save(before_ids=list(before), expected_text=tx.options['title'])
     await page.goto('https://creator.douyin.com/creator-micro/content/upload', wait_until='domcontentloaded', timeout=60000)
     await page.locator('input[type=file]').wait_for(state='attached', timeout=20000)
-    tx.save(draft_offered_before=await douyin_offers_draft(page, 0))
+    tx.save(draft_offered_before=await douyin_offers_draft(page, 3))
     await upload_file(page, tx.media(), accept='video/')
     tx.save(phase='uploading')
     await page.wait_for_url(re.compile(r'/content/(publish|post/video)'), timeout=120000)
@@ -303,7 +303,7 @@ async def douyin_collection(page, title):
 
 
 async def douyin_offers_draft(page, seconds):
-    """Whether the upload page offers a kept draft. A field check found opening it uses it up, so this only looks, and can't say whose draft it is."""
+    """Whether the upload page offers a kept draft. A field check found opening it uses it up, so this only looks. It can't say whose draft it is, and an old one can show late."""
     offer = page.get_by_text('继续编辑', exact=True)
     for _ in range(seconds):
         if await visible(offer):
@@ -324,9 +324,9 @@ async def douyin_keep_draft(page, tx):
     tx.save(phase='draft_saved')
     await page.goto('https://creator.douyin.com/creator-micro/content/upload', wait_until='domcontentloaded', timeout=60000)
     await risk_check(page)
-    offered = await douyin_offers_draft(page, 10) and tx.receipt.get('draft_offered_before') is False
-    note = 'Its upload page now offers a kept draft under 继续编辑, which is this one unless something else made one meanwhile.' if offered else 'This is not read back: its upload page offers no draft that is new since this upload began. Look for it there.'
-    return tx.save(state='PREVIEW_READY', phase='draft_saved', draft_offered=offered, note='Pressed Douyin\'s 暂存离开 once; nothing was published. ' + note + ' Opening it uses it up.')
+    seen = await douyin_offers_draft(page, 10) and tx.receipt.get('draft_offered_before') is False
+    note = 'Its upload page now offers a draft under 继续编辑 that it did not offer before, which may be this one.' if seen else 'Its upload page offers no draft that is new since this upload began.'
+    return tx.save(state='PREVIEW_READY', phase='draft_saved', draft_offer_seen=seen, note='Pressed Douyin\'s 暂存离开 once; nothing was published. This is not read back as this draft. ' + note + ' Opening one uses it up.')
 
 
 async def finish_douyin_form(page, tx, before):

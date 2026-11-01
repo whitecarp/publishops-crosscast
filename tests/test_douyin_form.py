@@ -193,7 +193,7 @@ class WholeFormTests(Base):
         tx = StubTx(submission_mode="draft_only")
         result = await self.run_form(tx)
         self.assertEqual(["keep"], [write["word"] for write in self.writes])
-        self.assertEqual(("PREVIEW_READY", "draft_saved", False), (result["state"], result["phase"], result["draft_offered"]))
+        self.assertEqual(("PREVIEW_READY", "draft_saved", False), (result["state"], result["phase"], result["draft_offer_seen"]))
         self.assertIn("not read back", result["note"])
 
     OFFERS = '<!doctype html><meta charset="utf-8"><body><input type=file><button>继续编辑</button><button>放弃</button>'
@@ -205,17 +205,22 @@ class WholeFormTests(Base):
         tx.receipt["draft_offered_before"] = before
         return await self.run_form(tx)
 
-    async def test_the_upload_page_offering_a_new_draft_is_its_read_back_and_nothing_is_opened(self):
+    async def test_a_newly_offered_draft_is_reported_as_seen_and_nothing_is_opened(self):
         result = await self.draft(False)
-        self.assertIs(True, result["draft_offered"])
+        self.assertIs(True, result["draft_offer_seen"])
         self.assertIn("继续编辑", result["note"])
+        self.assertIn("not read back", result["note"])
         self.assertEqual(["keep"], [write["word"] for write in self.writes])
 
-    async def test_a_draft_already_on_offer_before_the_upload_proves_nothing(self):
-        self.assertIs(False, (await self.draft(True))["draft_offered"])
+    async def test_a_draft_already_on_offer_before_the_upload_is_not_called_new(self):
+        self.assertIs(False, (await self.draft(True))["draft_offer_seen"])
 
-    async def test_a_receipt_from_before_this_check_proves_nothing_either(self):
-        self.assertIs(False, (await self.draft(None))["draft_offered"])
+    async def test_a_receipt_from_before_this_check_is_not_called_new_either(self):
+        self.assertIs(False, (await self.draft(None))["draft_offer_seen"])
+
+    async def test_an_old_offer_that_shows_late_is_still_seen_before_the_upload(self):
+        await self.page.set_content('<!doctype html><meta charset="utf-8"><body><script>setTimeout(() => { const b = document.createElement("button"); b.textContent = "继续编辑"; document.body.append(b); }, 1500);</script>')
+        self.assertIs(True, await browser_forms.douyin_offers_draft(self.page, 3))
 
     async def test_a_stop_holds_the_draft_too(self):
         await self.open()

@@ -176,11 +176,11 @@ class PlanTests(unittest.TestCase):
         result = self.run_plan("PREVIEW_READY")
         self.assertEqual((True, []), (result["all_drafts_ready"], result["drafts_read_back"]))
 
-    def test_a_draft_the_platform_is_seen_offering_counts_as_kept(self):
+    def test_seeing_an_offer_of_a_draft_does_not_count_as_reading_this_one_back(self):
         self.plan(submission_mode="draft_only")
         loaded = load_plan(self.path)
-        with patch.object(adapters, "preflight", return_value={"identity": "owner"}), patch.object(adapters, "publish", return_value={"state": "PREVIEW_READY", "draft_offered": True}):
-            self.assertEqual(["bilibili"], cli.publish_plan(loaded, loaded["confirmation"])["drafts_read_back"])
+        with patch.object(adapters, "preflight", return_value={"identity": "owner"}), patch.object(adapters, "publish", return_value={"state": "PREVIEW_READY", "draft_offer_seen": True}):
+            self.assertEqual([], cli.publish_plan(loaded, loaded["confirmation"])["drafts_read_back"])
 
     def test_a_draft_that_did_not_stop_cleanly_has_not_finished(self):
         self.assertIs(False, self.run_plan("SUBMITTED_UNVERIFIED")["all_drafts_ready"])
