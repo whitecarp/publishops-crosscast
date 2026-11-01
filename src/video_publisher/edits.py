@@ -6,7 +6,7 @@ from .core import Ledger, VpubError, atomic_json, digest, douyin_caption, file_s
 from .language_policy import route
 
 
-def validate_patch(platform, value):
+def validate_patch(platform, value, verifying=False):
     allowed={'expected_identity','title','description','tags','content_language','metadata_language','metadata_mode','portrait','chapters','duration_seconds','cover'}
     if not isinstance(value,dict) or set(value)-allowed or not isinstance(value.get('expected_identity'),str) or not value['expected_identity']:
         raise VpubError('invalid_edit','Provide expected_identity and supported correction fields only; privacy/media replacement/deletion are forbidden.')
@@ -27,7 +27,8 @@ def validate_patch(platform, value):
             raise VpubError('wrong_metadata_language','Use the automatic source-plus-target language policy.')
         if not isinstance(p.get('description'),str) or not p['description'].strip() or '\x00' in p['description']:
             raise VpubError('invalid_description','Provide complete replacement text.')
-        if re.search(r'https?://|www\.',p['description'],re.I):
+        # Only new copy leaves links out. A read-back compares what the work already says, links and all.
+        if not verifying and re.search(r'https?://|www\.',p['description'],re.I):
             raise VpubError('links_disabled','Correction copy excludes external URLs.')
         if platform=='youtube' and len(p['description'].encode())>5000:
             raise VpubError('description_too_long','YouTube description exceeds the local 5000-byte budget.')
@@ -101,7 +102,7 @@ def run_adopted(platform, work, patch_path, dry_run=False, verify_only=False):
     with publication_lock():
         adopted=binding(platform,work)
         if not adopted: raise VpubError('work_identity_required','Adopt this work first, so its owner is checked; nothing changed.',f'Run vpub ops adopt {platform} {work}.')
-        patch=validate_patch(platform,read_json(patch_path))
+        patch=validate_patch(platform,read_json(patch_path),verify_only)
         if platform=='douyin' and 'caption' not in patch and not adopted.get('title'):
             raise VpubError('unsupported_edit','Douyin covers and chapters find the work by its title, and this adoption recorded none; nothing changed.')
         receipt={'id':work,'identity':adopted['identity'],'title':adopted.get('title')}
@@ -120,7 +121,7 @@ def run(key, patch_path, dry_run=False, verify_only=False):
             if not row: raise VpubError('receipt_required','Use the key of an existing recorded publication.')
             record=row['data'];receipt=record.get('receipt',{});work_id=receipt.get('id')
             if not work_id: raise VpubError('work_id_required','Verify the existing work ID first; never infer an ID from a title or upload again.')
-            patch=validate_patch(row['platform'],read_json(patch_path))
+            patch=validate_patch(row['platform'],read_json(patch_path),verify_only)
             actual=record.get('identity',{}).get('identity') or receipt.get('identity')
             result=send(row['platform'],row['account'],actual,receipt,key,patch,dry_run,verify_only)
             if dry_run: return result

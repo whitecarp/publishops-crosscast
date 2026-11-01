@@ -10,6 +10,7 @@ import sys
 
 from . import __version__, adapters
 from .core import Ledger, PLATFORMS, VpubError, atomic_json, config, file_sha, home, load_plan, now, publication_lock, read_json, snapshot_file, stop_check, platform_check
+from .overview import DRAFTS
 from .safety import pushed_back
 
 # The command finished, but the work it was asked to do did not.
@@ -141,10 +142,15 @@ def publish_plan(plan, confirm):
             ledger.close()
     for p in plan["platforms"]:
         results.setdefault(p, {"state": "NOT_STARTED", "code": "stopped"})
+    drafts = {p for p, o in plan["platforms"].items() if o.get("submission_mode") == "draft_only"}
     verified = all(v["state"] == "SUBMISSION_VERIFIED" or
                    (v["state"] == "SKIPPED_EXISTING" and v.get("previous_state") in {"SUBMISSION_VERIFIED", "EXISTING_VERIFIED"})
-                   for v in results.values())
-    return {"all_submissions_verified": verified, "results": results}
+                   for p, v in results.items() if p not in drafts)
+    # A saved draft is where a draft plan finishes, and it says nothing was published: null, not true, when no platform was meant to publish.
+    answer = {"all_submissions_verified": verified if len(drafts) < len(results) else None, "results": results}
+    if drafts:
+        answer["all_drafts_saved"] = all((results[p].get("previous_state") if results[p]["state"] == "SKIPPED_EXISTING" else results[p]["state"]) in DRAFTS for p in drafts)
+    return answer
 
 
 def separate_bili_agent():
@@ -957,7 +963,7 @@ def main():
     try:
         args = parser().parse_args()
         value = execute(args)
-        ok = not (isinstance(value, dict) and (value.get("all_submissions_verified") is False or value.get("state") in UNFINISHED_STATES))
+        ok = not (isinstance(value, dict) and (value.get("all_submissions_verified") is False or value.get("all_drafts_saved") is False or value.get("state") in UNFINISHED_STATES))
         print(json.dumps({"ok": ok, "data": value}, ensure_ascii=False))
         raise SystemExit(0 if ok else 4)
     except VpubError as e:

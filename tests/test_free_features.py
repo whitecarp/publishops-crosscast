@@ -272,6 +272,27 @@ class AdoptedWorkTests(Temporary):
             edits.run_adopted("douyin", "123", patch_path)
         self.assertEqual("unsupported_edit", caught.exception.code)
 
+    def test_checking_text_that_already_holds_a_link_reads_it_and_writes_nothing(self):
+        self.adopt()
+        linked = {**TEXT, "description": "More at https://example.com/a"}
+        self.bili.archive.update(title=linked["title"], desc=linked["description"])
+        result = self.run_it(linked, verify_only=True)
+        self.assertEqual(("EDIT_VERIFIED", 0), (result["state"], result["platform_writes"]))
+        self.assertEqual([], self.bili.writes())
+
+    def test_checking_different_text_with_a_link_still_writes_nothing(self):
+        self.adopt()
+        result = self.run_it({**TEXT, "description": "More at https://example.com/a"}, verify_only=True)
+        self.assertEqual(("EDIT_MISMATCH", 0), (result["state"], result["platform_writes"]))
+        self.assertEqual([], self.bili.writes())
+
+    def test_saving_new_text_with_a_link_is_still_refused(self):
+        self.adopt()
+        with self.assertRaises(VpubError) as caught:
+            self.run_it({**TEXT, "description": "More at https://example.com/a"})
+        self.assertEqual("links_disabled", caught.exception.code)
+        self.assertEqual([], self.bili.calls)
+
     def test_the_command_line_reaches_it(self):
         args = cli.parser().parse_args(["edit-work", "bilibili", WORK, "patch.json", "--verify-only"])
         self.assertEqual(("bilibili", WORK, "patch.json", True), (args.platform, args.work, args.patch, args.verify_only))

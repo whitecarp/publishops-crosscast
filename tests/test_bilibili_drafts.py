@@ -3,6 +3,7 @@
 The request's address and fields come from what Bilibili's own upload page sent in a field check. The answers' shapes have not
 been seen yet, so anything unexpected stays unconfirmed. Nothing here contacts Bilibili.
 """
+import io
 import json
 import os
 from pathlib import Path
@@ -157,6 +158,47 @@ class PlanTests(unittest.TestCase):
         self.refused(submission_mode="draft_only", schedule="2030-01-01T00:00:00+00:00")
         self.refused(submission_mode="draft_only", method="native")
         self.refused(submission_mode="something")
+
+    def run_plan(self, state, others=None):
+        self.plan(submission_mode="draft_only")
+        self.value["platforms"].update(others or {})
+        atomic_json(self.path, self.value)
+        loaded = load_plan(self.path)
+        with patch.object(adapters, "preflight", return_value={"identity": "owner"}), patch.object(adapters, "publish", side_effect=lambda platform, *_: {"state": state if platform == "bilibili" else "SUBMISSION_VERIFIED"}):
+            return cli.publish_plan(loaded, loaded["confirmation"])
+
+    def test_a_saved_draft_finishes_the_plan_without_claiming_anything_was_published(self):
+        result = self.run_plan("DRAFT_SAVED")
+        self.assertIs(True, result["all_drafts_saved"])
+        self.assertIsNone(result["all_submissions_verified"])
+
+    def test_a_draft_not_read_back_has_not_finished(self):
+        self.assertIs(False, self.run_plan("SUBMITTED_UNVERIFIED")["all_drafts_saved"])
+
+    def test_running_it_again_finds_the_same_draft_and_saves_nothing_more(self):
+        self.run_plan("DRAFT_SAVED")
+        result = self.run_plan("DRAFT_SAVED")
+        self.assertEqual("SKIPPED_EXISTING", result["results"]["bilibili"]["state"])
+        self.assertIs(True, result["all_drafts_saved"])
+
+    def test_a_plan_with_a_draft_and_a_publication_answers_for_each(self):
+        result = self.run_plan("DRAFT_SAVED", {"douyin": {"account": "default", "method": "browser", "visibility": "public", "ai_generated": True, "title": "标题"}})
+        self.assertEqual((True, True), (result["all_drafts_saved"], result["all_submissions_verified"]))
+
+    def test_a_plan_with_no_drafts_says_nothing_about_them(self):
+        self.plan()
+        loaded = load_plan(self.path)
+        with patch.object(adapters, "preflight", return_value={"identity": "owner"}), patch.object(adapters, "publish", return_value={"state": "SUBMISSION_VERIFIED"}):
+            result = cli.publish_plan(loaded, loaded["confirmation"])
+        self.assertIs(True, result["all_submissions_verified"])
+        self.assertNotIn("all_drafts_saved", result)
+
+    def test_the_exit_code_follows_the_draft_and_the_publication(self):
+        for value, code in (({"all_submissions_verified": None, "all_drafts_saved": True}, 0), ({"all_submissions_verified": None, "all_drafts_saved": False}, 4),
+                            ({"all_submissions_verified": False, "all_drafts_saved": True}, 4), ({"all_submissions_verified": True}, 0), ({"all_submissions_verified": False}, 4)):
+            with self.subTest(value=value), patch.object(cli, "execute", return_value=value), patch.object(sys, "argv", ["vpub", "status"]), patch.object(sys, "stdout", io.StringIO()), self.assertRaises(SystemExit) as stopped:
+                cli.main()
+            self.assertEqual(code, stopped.exception.code)
 
 
 class HelperTests(unittest.TestCase):
