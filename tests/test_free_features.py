@@ -568,9 +568,21 @@ class CommentDeleteTests(Temporary):
         with self.stand_in(VpubError("not_found", "No such comment.")), self.assertRaises(VpubError):
             api.execute(self.request(), "status")
 
-    def test_a_reply_gone_from_its_page_reads_as_deleted(self):
-        with self.stand_in({"root": {"rpid": 1, "content": {"message": "Root"}}, "replies": []}):
-            self.assertIs(True, api.execute({**self.request(parent_id="1"), "verification": True}, "status")["deleted"])
+    def checked(self, **data):
+        with self.stand_in({"root": {"rpid": 1, "content": {"message": "Root"}}, **data}):
+            return api.execute({**self.request(parent_id="1"), "verification": True}, "status")
+
+    def test_a_reply_missing_from_a_page_that_holds_them_all_reads_as_deleted(self):
+        self.assertIs(True, self.checked(replies=[], page={"count": 0})["deleted"])
+        self.assertIs(True, self.checked(replies=[{"rpid": 8}], page={"count": 1})["deleted"])
+
+    def test_a_reply_missing_from_a_page_that_holds_only_some_proves_nothing(self):
+        result = self.checked(replies=[{"rpid": 8}], page={"count": 25})
+        self.assertIsNone(result["deleted"])
+        self.assertIs(True, result["absent_from_loaded_list"])
+
+    def test_a_reply_page_that_does_not_say_how_many_there_are_proves_nothing(self):
+        self.assertIsNone(self.checked(replies=[])["deleted"])
 
     def snapshot(self, **comment):
         atomic_json(home() / "operations/comments" / (digest(["bilibili", WORK]) + ".json"), {"identity": OWNER, "items": [{"id": "7", "text": "Hi", **comment}]})

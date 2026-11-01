@@ -26,7 +26,11 @@ def execute(request, operation, receipt_path=None):
         raise
     rows = [data.get('root') or {}, *(data.get('replies') or [])]
     found = [c for c in rows if str(c.get('rpid')) == cid]
-    if not found and checking: return gone
+    if not found and checking:
+        # This reads one page of replies, so a reply missing from it has gone only if the page holds all of them.
+        total = (data.get('page') or {}).get('count')
+        if type(total) is int and total <= len(data.get('replies') or []): return gone
+        return {**gone, 'deleted': None, 'absent_from_loaded_list': True}
     if len(found) != 1: raise VpubError('comment_not_visible', 'Exact comment not found in the bounded reply page.')
     c = found[0]; action = c.get('action')
     observed = {'identity': identity, 'text': (c.get('content') or {}).get('message'), 'deleted': False,
