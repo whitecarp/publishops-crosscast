@@ -179,6 +179,7 @@ def reply(platform, work, comment_id, text, language='auto', dry_run=False, _tes
                             'hint':'An existing attempt is retained. Use comments verify-reply; never send again on a timeout.'}
                 safety.reclaim(path,previous)
             ticket=None if _test_key else safety.admit(**limits)
+            request={**request,'attempt':uuid.uuid4().hex}
             # Durable before any backend can submit; even a lost response prevents duplicates.
             attempt={'state':'REPLY_READY','reply_key':key,'platform':platform,'work_id':work,
                      'identity':snapshot['identity'],'request':request,'at':now(),'test':bool(_test_key),'safety_ticket':ticket}
@@ -195,7 +196,8 @@ def reply(platform, work, comment_id, text, language='auto', dry_run=False, _tes
                 if durable.get('state')=='REPLY_SUBMITTING' and not never_sent(e):
                     durable['state']='REPLY_UNVERIFIED';atomic_json(path,durable)
                 elif durable.get('state') in {'REPLY_READY','REPLY_SUBMITTING'}:
-                    durable['state']='REPLY_READY';atomic_json(path,durable);safety.reclaim(path,durable)
+                    # Its count goes back now and its work may still be running, so this attempt can no longer press. A new one can.
+                    durable.update(state='REPLY_READY',request={**durable['request'],'attempt':None});atomic_json(path,durable);safety.reclaim(path,durable)
             record('reply',platform,work,{'state':durable.get('state'),'reply_key':key,'test':bool(_test_key),
                                         'code':e.code if isinstance(e,VpubError) else type(e).__name__})
             raise

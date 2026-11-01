@@ -2,7 +2,7 @@
 import re
 import uuid
 from . import adapters, operations as ops, safety
-from .core import VpubError, atomic_json, digest, error_fields, home, never_sent, now, publication_lock, read_json, stop_check
+from .core import VpubError, atomic_json, digest, error_fields, home, never_sent, now, publication_lock, read_json, receipt_turn, stop_check
 from .progress import stage
 
 SUPPORTED = {'bilibili': {'like', 'pin', 'delete', 'remove'}, 'instagram': {'like', 'delete'}, 'x': {'like', 'hide', 'delete'}, 'youtube': {'like', 'pin', 'edit', 'delete', 'remove', 'moderate'}, 'douyin': {'like', 'delete'}}
@@ -67,8 +67,12 @@ def status(platform, work, comment_id):
 
 
 def submitting(path):
-    saved = read_json(path); saved.update(state='COMMENT_SUBMITTING', submitted_at=now())
-    atomic_json(path, saved)
+    """A press's last step. Only an attempt still waiting gets past here: one that a newer attempt closed, or whose command has given up and given its count back, presses nothing."""
+    with receipt_turn(path):
+        saved = read_json(path)
+        if saved.get('state') != 'COMMENT_READY': raise VpubError('attempt_replaced', 'A newer attempt took this over, or this one had already ended, so this one pressed nothing.')
+        saved.update(state='COMMENT_SUBMITTING', submitted_at=now())
+        atomic_json(path, saved)
     stage('pressing')
 
 
@@ -101,11 +105,15 @@ def mutate(platform, work, comment_id, kind, desired=True, dry_run=False, test_i
         index = home() / 'operations/comment-targets' / (digest([platform, request['identity'], work, comment_id]) + '.json')
         if index.exists():
             prior_path = home() / 'operations/comment-actions' / (read_json(index)['key'] + '.json')
-            prior = read_json(prior_path)
-            if prior['state'] in PENDING:
-                again = ' If it is unchanged, comments resume-action KEY tries once more.' if prior['request']['kind'] in RESUMABLE else ' If it is unchanged, look at it on the site.'
-                return {**prior, 'platform_writes': 0, 'reused': True, 'hint': 'Use comments verify-action KEY; no automatic resend or reversal.' + again}
-            if prior['state'] == 'COMMENT_READY': safety.reclaim(prior_path, prior)
+            with receipt_turn(prior_path):
+                prior = read_json(prior_path)
+                if prior['state'] in PENDING:
+                    again = ' If it is unchanged, comments resume-action KEY tries once more.' if prior['request']['kind'] in RESUMABLE else ' If it is unchanged, look at it on the site.'
+                    return {**prior, 'platform_writes': 0, 'reused': True, 'hint': 'Use comments verify-action KEY; no automatic resend or reversal.' + again}
+                if prior['state'] == 'COMMENT_READY':
+                    # A command killed part way can still be running in the shared background browser, so this attempt closes as its count goes back.
+                    prior['state'] = 'COMMENT_REPLACED'; atomic_json(prior_path, prior)
+                    safety.reclaim(prior_path, prior)
         before = dispatch(request)
         if matches(request, before): return {'state': 'NO_CHANGE', 'platform_writes': 0, 'observed': before}
         if before.get('deleted'): raise VpubError('comment_missing', 'The comment is no longer present.')
@@ -136,9 +144,11 @@ def mutate(platform, work, comment_id, kind, desired=True, dry_run=False, test_i
             saved.update(after=after, state=state)
             if state == 'COMMENT_VERIFIED': refresh_snapshot(request)
         except Exception as exc:
-            saved = read_json(path)
-            saved.update(state='COMMENT_UNVERIFIED' if saved['state'] in PENDING and not never_sent(exc) else 'COMMENT_FAILED', **error_fields(exc, 'error_code'))
-            saved['platform_writes'] = None if saved['state'] == 'COMMENT_UNVERIFIED' else 0
+            with receipt_turn(path):
+                saved = read_json(path)
+                saved.update(state='COMMENT_UNVERIFIED' if saved['state'] in PENDING and not never_sent(exc) else 'COMMENT_FAILED', **error_fields(exc, 'error_code'))
+                saved['platform_writes'] = None if saved['state'] == 'COMMENT_UNVERIFIED' else 0
+                atomic_json(path, saved)
             if saved['state'] == 'COMMENT_FAILED': safety.release(ticket)
         atomic_json(path, saved)
         return ops.record('comment_management', platform, work, saved)
@@ -193,8 +203,10 @@ def resume(key):
             after=dispatch({**r,'verification':True})
             saved.update(after=after,state='COMMENT_VERIFIED' if matches(r,after) else 'COMMENT_UNVERIFIED')
         except Exception as exc:
-            saved=read_json(path)
-            saved.update(state='COMMENT_UNVERIFIED' if saved['state'] in PENDING else 'COMMENT_FAILED',**error_fields(exc,'error_code'))
-            saved['platform_writes']=None if saved['state']=='COMMENT_UNVERIFIED' else 0
+            with receipt_turn(path):
+                saved=read_json(path)
+                saved.update(state='COMMENT_UNVERIFIED' if saved['state'] in PENDING else 'COMMENT_FAILED',**error_fields(exc,'error_code'))
+                saved['platform_writes']=None if saved['state']=='COMMENT_UNVERIFIED' else 0
+                atomic_json(path,saved)
         atomic_json(path,saved)
         return ops.record('comment_management',r['platform'],r['work_id'],saved)

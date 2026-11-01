@@ -224,87 +224,144 @@ class TwoAttemptsTests(unittest.TestCase):
             {"id": COMMENT, "text": "Question", "author": "V", "author_id": "viewer", "is_owner": False, "owner_replied": False, "language_hint": "en"}]})
         self.sent = []
 
-    def press(self, path):
+    def press(self, path, request):
         """The last steps a real worker takes for a reply, whichever platform it is on."""
-        saved = reply_pressing(path)
-        self.sent.append("reply")
+        saved = reply_pressing(path, request)
+        self.sent.append(request["text"])
         saved["state"] = "REPLY_UNVERIFIED"
         atomic_json(path, saved)
         return {"state": "REPLY_UNVERIFIED", "platform_writes": 1}
 
-    def test_the_second_attempt_sends_nothing_when_the_first_got_there_while_it_queued(self):
-        def killed(platform, action, work, reply_receipt_path, **options):
-            raise KeyboardInterrupt  # The first command is killed here, and its work carries on in the session.
+    def reply(self, words="Answer"):
+        return ops.reply("x", "1234567890", COMMENT, words, "en")
 
-        with patch.object(ops, "backend", side_effect=killed), self.assertRaises(KeyboardInterrupt):
-            ops.reply("x", "1234567890", COMMENT, "Answer", "en")
-        path = next((home() / "operations/replies").glob("*.json"))
+    def backend_that(self, act):
+        def backend(platform, action, work, reply_receipt_path, reply_request):
+            return act(reply_receipt_path, reply_request)
+        return patch.object(ops, "backend", side_effect=backend)
+
+    def killed_attempt(self, words="Answer"):
+        """The command is killed here, and its work carries on in the session."""
+        taken = {}
+
+        def killed(path, request):
+            taken.update(path=path, request=request)
+            raise KeyboardInterrupt
+        with self.backend_that(killed), self.assertRaises(KeyboardInterrupt):
+            self.reply(words)
+        return taken["path"], taken["request"]
+
+    def counted(self):
+        return safety.status()["used_today"]["x"]["replies_per_day"]
+
+    def test_a_killed_attempt_that_presses_after_a_new_one_began_sends_nothing(self):
+        path, old = self.killed_attempt()
         self.assertEqual("REPLY_READY", read_json(path)["state"])
 
-        def second(platform, action, work, reply_receipt_path, **options):
-            self.press(reply_receipt_path)  # The session finishes the first command.
-            return self.press(reply_receipt_path)  # Then the second command's turn comes.
-
-        with patch.object(ops, "backend", side_effect=second), self.assertRaises(VpubError) as caught:
-            ops.reply("x", "1234567890", COMMENT, "Answer", "en")
-        self.assertEqual("attempt_exists", caught.exception.code)
-        self.assertEqual(["reply"], self.sent)
+        def second(where, request):
+            with self.assertRaises(VpubError) as caught:
+                self.press(path, old)  # The session finishes the first command before this one's turn comes.
+            self.assertEqual("attempt_exists", caught.exception.code)
+            return self.press(where, request)
+        with self.backend_that(second):
+            self.assertEqual("REPLY_UNVERIFIED", self.reply()["state"])
+        self.assertEqual(1, len(self.sent))
         self.assertEqual("REPLY_UNVERIFIED", read_json(path)["state"])
-        self.assertEqual(1, safety.status()["used_today"]["x"]["replies_per_day"])
+        self.assertEqual(1, self.counted())
 
-    def killed_attempt(self):
-        def killed(platform, action, work, reply_receipt_path, **options):
-            raise KeyboardInterrupt
-        with patch.object(ops, "backend", side_effect=killed), self.assertRaises(KeyboardInterrupt):
-            ops.reply("x", "1234567890", COMMENT, "Answer", "en")
-        return next((home() / "operations/replies").glob("*.json"))
+    def test_a_killed_attempt_never_sends_its_old_words_in_a_new_attempts_turn(self):
+        """From a review: the first attempt's work ran first, sent its old words on the second's count, and the receipt said the second's words had gone."""
+        path, old = self.killed_attempt("Answer one")
 
-    def test_the_first_attempt_finishing_during_the_second_ones_look_still_goes_once(self):
+        def second(where, request):
+            with self.assertRaises(VpubError):
+                self.press(path, old)
+            return self.press(where, request)
+        with self.backend_that(second):
+            self.reply("Answer two")
+        self.assertEqual(1, len(self.sent))
+        self.assertIn("Answer two", self.sent[0])
+        self.assertEqual(self.sent[0], read_json(path)["request"]["text"])
+
+    def test_the_first_attempt_arriving_during_the_second_ones_look_sends_nothing(self):
         """From a review: the old command finished after the new one had read its receipt and before it wrote a fresh one over it, so the record of that press was lost and a second reply went."""
-        path = self.killed_attempt()
-        old = threading.Thread(target=lambda: self.press(path))
+        path, old = self.killed_attempt()
+        refused = []
+
+        def old_command():
+            try:
+                self.press(path, old)
+            except VpubError as caught:
+                refused.append(caught.code)
+        late = threading.Thread(target=old_command)
         reclaim = safety.reclaim
 
         def during_the_look(saved_path, saved):
-            old.start()
+            late.start()
             time.sleep(0.5)  # It is now at this receipt's door.
             return reclaim(saved_path, saved)
 
-        def second(platform, action, work, reply_receipt_path, **options):
-            old.join(30)  # The session finishes the first command before this one's turn comes.
-            return self.press(reply_receipt_path)
-        with patch.object(safety, "reclaim", side_effect=during_the_look), patch.object(ops, "backend", side_effect=second), self.assertRaises(VpubError) as caught:
-            ops.reply("x", "1234567890", COMMENT, "Answer", "en")
-        self.assertEqual("attempt_exists", caught.exception.code)
-        self.assertEqual(["reply"], self.sent)
+        def second(where, request):
+            late.join(30)
+            return self.press(where, request)
+        with patch.object(safety, "reclaim", side_effect=during_the_look), self.backend_that(second):
+            self.reply()
+        self.assertEqual(["attempt_exists"], refused)
+        self.assertEqual(1, len(self.sent))
         self.assertEqual("REPLY_UNVERIFIED", read_json(path)["state"])
+        self.assertEqual(1, self.counted())
 
     def test_a_first_attempt_already_pressed_is_kept_not_written_over(self):
-        path = self.killed_attempt()
-        self.press(path)
+        path, old = self.killed_attempt()
+        self.press(path, old)
         with patch.object(ops, "backend") as send:
-            result = ops.reply("x", "1234567890", COMMENT, "Answer", "en")
+            result = self.reply()
         send.assert_not_called()
         self.assertTrue(result["reused"])
-        self.assertEqual(["reply"], self.sent)
+        self.assertEqual(1, len(self.sent))
 
-    def test_only_a_reply_still_waiting_can_be_pressed(self):
-        path = self.killed_attempt()
-        for state in ("REPLY_SUBMITTING", "REPLY_UNVERIFIED", "REPLY_VERIFIED", "REPLY_REJECTED", "REPLY_FAILED", None):
-            with self.subTest(state=state):
-                atomic_json(path, {"state": state})
+    def test_only_the_attempt_the_receipt_holds_and_only_while_waiting_can_press(self):
+        path, old = self.killed_attempt()
+        for state, attempt in (("REPLY_SUBMITTING", "a"), ("REPLY_UNVERIFIED", "a"), ("REPLY_VERIFIED", "a"), ("REPLY_REJECTED", "a"), ("REPLY_FAILED", "a"), (None, "a"), ("REPLY_READY", "b"), ("REPLY_READY", None)):
+            with self.subTest(state=state, attempt=attempt):
+                atomic_json(path, {"state": state, "request": {"attempt": attempt}})
                 with self.assertRaises(VpubError) as caught:
-                    self.press(path)
+                    self.press(path, {"attempt": "a", "text": "Answer"})
                 self.assertEqual("attempt_exists", caught.exception.code)
         self.assertEqual([], self.sent)
 
-    def test_a_failed_attempt_never_writes_over_a_press_that_got_in(self):
-        """The command is told it failed in the same moment its still-running work presses. The press must not be lost."""
-        path = self.killed_attempt()
-        failing, started = [], threading.Event()
-        old = threading.Thread(target=lambda: (started.wait(30), self.press(path)))
+    def test_a_press_after_its_command_gave_up_sends_nothing_because_its_count_went_back(self):
+        """From a review: a late press went out with its count already given back, so the daily cap never saw it."""
+        taken = {}
 
-        def failed(platform, action, work, reply_receipt_path, **options):
+        def gave_up(path, request):
+            taken.update(path=path, request=request)
+            raise TimeoutError
+        with self.backend_that(gave_up), self.assertRaises(TimeoutError):
+            self.reply()
+        self.assertEqual(0, self.counted())
+        with self.assertRaises(VpubError) as caught:
+            self.press(taken["path"], taken["request"])
+        self.assertEqual("attempt_exists", caught.exception.code)
+        self.assertEqual([], self.sent)
+        with self.backend_that(self.press):
+            self.reply()
+        self.assertEqual(1, len(self.sent))
+        self.assertEqual(1, self.counted())
+
+    def test_a_press_arriving_while_its_command_gives_up_sends_nothing(self):
+        taken, refused, failing, started = {}, [], [], threading.Event()
+
+        def late_press():
+            started.wait(30)
+            try:
+                self.press(taken["path"], taken["request"])
+            except VpubError as caught:
+                refused.append(caught.code)
+        late = threading.Thread(target=late_press)
+
+        def gave_up(path, request):
+            taken.update(path=path, request=request)
             failing.append(True)
             raise TimeoutError
         real = ops.read_json
@@ -315,12 +372,29 @@ class TwoAttemptsTests(unittest.TestCase):
                 started.set()
                 time.sleep(0.5)  # It is now at this receipt's door.
             return saved
-        old.start()
-        with patch.object(ops, "backend", side_effect=failed), patch.object(ops, "read_json", side_effect=during_the_failure), self.assertRaises(TimeoutError):
-            ops.reply("x", "1234567890", COMMENT, "Answer", "en")
-        old.join(30)
-        self.assertEqual(["reply"], self.sent)
-        self.assertEqual("REPLY_UNVERIFIED", read_json(path)["state"])
+        late.start()
+        with self.backend_that(gave_up), patch.object(ops, "read_json", side_effect=during_the_failure), self.assertRaises(TimeoutError):
+            self.reply()
+        late.join(30)
+        self.assertEqual(["attempt_exists"], refused)
+        self.assertEqual([], self.sent)
+        self.assertEqual(0, self.counted())
+
+    def test_a_press_that_got_in_before_its_command_gave_up_is_kept_and_counted(self):
+        taken = {}
+
+        def pressed_then_gave_up(path, request):
+            taken.update(path=path)
+            reply_pressing(path, request)
+            self.sent.append(request["text"])
+            raise TimeoutError
+        with self.backend_that(pressed_then_gave_up), self.assertRaises(TimeoutError):
+            self.reply()
+        self.assertEqual("REPLY_UNVERIFIED", read_json(taken["path"])["state"])
+        self.assertEqual(1, self.counted())
+        with patch.object(ops, "backend") as send:
+            self.assertTrue(self.reply()["reused"])
+        send.assert_not_called()
 
 
 class ManyAtOnceTests(unittest.TestCase):
@@ -329,14 +403,14 @@ class ManyAtOnceTests(unittest.TestCase):
         "import sys, time\n"
         "from video_publisher.core import VpubError, reply_pressing\n"
         "while time.time() < float(sys.argv[2]):\n    time.sleep(0.001)\n"
-        "try:\n    reply_pressing(sys.argv[1]); print('pressed')\n"
+        "try:\n    reply_pressing(sys.argv[1], {'attempt': 'a'}); print('pressed')\n"
         "except VpubError as caught:\n    print(caught.code)\n"
     )
 
     def test_one_of_many_processes_gets_to_press(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "reply.json"
-            atomic_json(path, {"state": "REPLY_READY"})
+            atomic_json(path, {"state": "REPLY_READY", "request": {"attempt": "a"}})
             start = str(time.time() + 3)
             env = {**os.environ, "VPUB_HOME": temp, "PYTHONPATH": os.pathsep.join(sys.path)}
             runs = [subprocess.Popen([sys.executable, "-c", self.SCRIPT, str(path), start], env=env, stdout=subprocess.PIPE, text=True) for _ in range(6)]

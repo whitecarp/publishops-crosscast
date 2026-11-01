@@ -337,7 +337,7 @@ async def execute(page,platform,identity,payload):
     path=Path(payload['reply_receipt_path'])
     submitted_text=await editor.input_value() if await editor.evaluate('e=>e.tagName')=='TEXTAREA' else await editor.inner_text()
     await button.click(trial=True,timeout=10000)
-    saved=reply_pressing(path,before_reply_ids=[c['id'] for c in current['items']],submitted_text=submitted_text)
+    saved=reply_pressing(path,request,before_reply_ids=[c['id'] for c in current['items']],submitted_text=submitted_text)
     stage('pressing')
     await button.click(timeout=20000)
     # A successful click alone is not confirmed visibility. Keep this durable

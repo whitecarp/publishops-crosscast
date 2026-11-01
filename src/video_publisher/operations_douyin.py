@@ -80,7 +80,7 @@ async def reply(page, identity, payload):
     await risk_check(page);stop_check('douyin')
     await button.click(trial=True,timeout=10000)
     path=Path(payload['reply_receipt_path'])
-    saved=reply_pressing(path,submitted_text=request['text'],
+    saved=reply_pressing(path,request,submitted_text=request['text'],
                          before_reply_ids=[str(c['cid']) for c in data.get('comments',[])],send_surface='creator_center')
     stage('pressing')
     from patchright.async_api import TimeoutError as BrowserTimeout

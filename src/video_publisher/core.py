@@ -34,12 +34,13 @@ def part_left_undone(receipt):
     return receipt.get("chapters_state") not in {None, "VERIFIED"} or (isinstance(season, dict) and season.get("added") is False)
 
 
-def reply_pressing(path, **details):
-    """A reply's last step before its click. A command killed part way can still be running in the shared background browser, with a second attempt queued behind it, so only a reply still waiting gets past here."""
+def reply_pressing(path, request, **details):
+    """A reply's last step before its click. A command killed part way can still be running in the shared background browser, with a second attempt behind it,
+    and each attempt writes over the same receipt. So only the attempt the receipt holds now gets past here, and only while it is still waiting."""
     with receipt_turn(path):
         saved = read_json(path)
-        if saved.get("state") != "REPLY_READY":
-            raise VpubError("attempt_exists", "An earlier attempt at this reply got there first, so nothing more was sent.", "Use comments verify-reply; never send again.")
+        if saved.get("state") != "REPLY_READY" or (saved.get("request") or {}).get("attempt") != request.get("attempt"):
+            raise VpubError("attempt_exists", "This attempt at the reply has ended, or another got there first, so nothing more was sent.", "Use comments verify-reply; never send again.")
         saved.update(state="REPLY_SUBMITTING", **details)
         atomic_json(path, saved)
     return saved

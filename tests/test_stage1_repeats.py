@@ -7,8 +7,8 @@ import time
 import unittest
 from unittest.mock import patch
 
-from video_publisher import direct_messages as dm, safety
-from video_publisher.core import VpubError, atomic_json, home, read_json
+from video_publisher import comment_actions, direct_messages as dm, engagement, safety
+from video_publisher.core import VpubError, atomic_json, digest, home, read_json
 
 OWNER = "owner"
 
@@ -144,6 +144,123 @@ class SecondAttemptTests(unittest.TestCase):
         with patch.object(dm, "dispatch", side_effect=self.worker):
             self.assertEqual("DM_VISIBLE", dm.send("x", "viewer", "Hello", "en")["state"])
         self.assertEqual(1, len(self.sent))
+
+
+class OtherPressesTests(unittest.TestCase):
+    """A like counts towards the daily caps too, so one that goes out after its count went back would never be seen by them."""
+    WORK = "1234567890"
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        env = patch.dict(os.environ, {"VPUB_HOME": str(Path(temp.name) / "runtime")})
+        env.start()
+        self.addCleanup(env.stop)
+        atomic_json(home() / "operations/comments" / (digest(["x", self.WORK]) + ".json"), {"identity": OWNER, "items": [{"id": "111", "text": "Nice", "author": "V", "author_id": "viewer", "is_owner": False}]})
+        self.pressed = []
+
+    def counted(self):
+        return safety.status()["used_today"]["x"]["likes_per_day"]
+
+    def like_status(self, platform, action, work=None, **options):
+        return {"identity": OWNER, "liked": bool(self.pressed), "saved": False, "collection": None}
+
+    def like_press(self, platform, action, work=None, **options):
+        if action != "set":
+            return self.like_status(platform, action, work, **options)
+        engagement.submitting(options["receipt_path"])
+        self.pressed.append(options["receipt_path"])
+        return {"state": "ACTION_SUBMITTING"}
+
+    def like_interrupted(self, stop):
+        taken = {}
+
+        def stopped(platform, action, work=None, **options):
+            if action != "set":
+                return self.like_status(platform, action, work, **options)
+            taken.update(options)
+            raise stop
+        with patch.object(engagement, "dispatch", side_effect=stopped):
+            try:
+                engagement.set_action("x", self.WORK, "like")
+            except KeyboardInterrupt:
+                pass
+        return taken["receipt_path"]
+
+    def comment_status(self, request, operation="status", receipt_path=None):
+        return {"identity": OWNER, "text": "Nice", "liked": bool(self.pressed), "deleted": False}
+
+    def comment_press(self, request, operation="status", receipt_path=None):
+        if operation != "set":
+            return self.comment_status(request)
+        comment_actions.submitting(receipt_path)
+        self.pressed.append(receipt_path)
+        return {"state": "COMMENT_SUBMITTING"}
+
+    def comment_interrupted(self, stop):
+        taken = []
+
+        def stopped(request, operation="status", receipt_path=None):
+            if operation != "set":
+                return self.comment_status(request)
+            taken.append(receipt_path)
+            raise stop
+        with patch.object(comment_actions, "dispatch", side_effect=stopped):
+            try:
+                comment_actions.mutate("x", self.WORK, "111", "like")
+            except KeyboardInterrupt:
+                pass
+        return taken[0]
+
+    def test_a_like_after_its_command_gave_up_presses_nothing_because_its_count_went_back(self):
+        path = self.like_interrupted(TimeoutError())
+        self.assertEqual("ACTION_FAILED", read_json(path)["state"])
+        self.assertEqual(0, self.counted())
+        with self.assertRaises(VpubError) as caught:
+            engagement.submitting(path)
+        self.assertEqual("attempt_replaced", caught.exception.code)
+
+    def test_a_new_like_attempt_closes_a_killed_one_so_only_one_counts_and_goes(self):
+        path = self.like_interrupted(KeyboardInterrupt())
+        self.assertEqual("ACTION_READY", read_json(path)["state"])
+        with patch.object(engagement, "dispatch", side_effect=self.like_press):
+            self.assertEqual("ACTION_VERIFIED", engagement.set_action("x", self.WORK, "like")["state"])
+        self.assertEqual("ACTION_REPLACED", read_json(path)["state"])
+        with self.assertRaises(VpubError) as caught:
+            engagement.submitting(path)
+        self.assertEqual("attempt_replaced", caught.exception.code)
+        self.assertEqual(1, len(self.pressed))
+        self.assertEqual(1, self.counted())
+
+    def test_a_comment_like_after_its_command_gave_up_presses_nothing_because_its_count_went_back(self):
+        path = self.comment_interrupted(TimeoutError())
+        self.assertEqual("COMMENT_FAILED", read_json(path)["state"])
+        self.assertEqual(0, self.counted())
+        with self.assertRaises(VpubError) as caught:
+            comment_actions.submitting(path)
+        self.assertEqual("attempt_replaced", caught.exception.code)
+
+    def test_a_new_comment_like_attempt_closes_a_killed_one_so_only_one_counts_and_goes(self):
+        path = self.comment_interrupted(KeyboardInterrupt())
+        self.assertEqual("COMMENT_READY", read_json(path)["state"])
+        with patch.object(comment_actions, "dispatch", side_effect=self.comment_press):
+            self.assertEqual("COMMENT_VERIFIED", comment_actions.mutate("x", self.WORK, "111", "like")["state"])
+        self.assertEqual("COMMENT_REPLACED", read_json(path)["state"])
+        with self.assertRaises(VpubError) as caught:
+            comment_actions.submitting(path)
+        self.assertEqual("attempt_replaced", caught.exception.code)
+        self.assertEqual(1, len(self.pressed))
+        self.assertEqual(1, self.counted())
+
+    def test_only_a_press_still_waiting_gets_through(self):
+        receipt = home() / "receipt.json"
+        for module, ready in ((engagement, "ACTION_READY"), (comment_actions, "COMMENT_READY")):
+            for state in (ready.replace("READY", "SUBMITTING"), ready.replace("READY", "UNVERIFIED"), ready.replace("READY", "FAILED"), ready.replace("READY", "REPLACED"), None):
+                with self.subTest(module=module.__name__, state=state):
+                    atomic_json(receipt, {"state": state})
+                    with self.assertRaises(VpubError) as caught:
+                        module.submitting(receipt)
+                    self.assertEqual("attempt_replaced", caught.exception.code)
 
 
 if __name__ == "__main__":

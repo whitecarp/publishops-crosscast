@@ -2,7 +2,7 @@
 import re
 import uuid
 from . import adapters, operations, safety
-from .core import VpubError, atomic_json, digest, error_fields, home, never_sent, now, publication_lock, read_json, stop_check
+from .core import VpubError, atomic_json, digest, error_fields, home, never_sent, now, publication_lock, read_json, receipt_turn, stop_check
 from .progress import stage
 
 PENDING={'ACTION_SUBMITTING','ACTION_UNVERIFIED'}
@@ -52,8 +52,12 @@ def status(platform,work,collection=None,expected_identity=None):
 
 
 def submitting(path):
-    saved=read_json(path);saved.update(state='ACTION_SUBMITTING',submitted_at=now())
-    atomic_json(path,saved)
+    """A press's last step. Only an attempt still waiting gets past here: one that a newer attempt closed, or whose command has given up and given its count back, presses nothing."""
+    with receipt_turn(path):
+        saved=read_json(path)
+        if saved.get('state')!='ACTION_READY':raise VpubError('attempt_replaced','A newer attempt took this over, or this one had already ended, so this one pressed nothing.')
+        saved.update(state='ACTION_SUBMITTING',submitted_at=now())
+        atomic_json(path,saved)
     stage('pressing')
 
 
@@ -79,15 +83,19 @@ def set_action(platform,work,kind,desired=True,collection=None,dry_run=False,tes
         index=home()/'engagement/targets'/(digest([platform,before['identity'],work,kind,selected])+'.json')
         if index.exists():
             prior_path=home()/'engagement/receipts'/(read_json(index)['key']+'.json')
-            prior=read_json(prior_path)
-            if prior['state'] in PENDING:
-                if prior['desired']==desired and current is desired:
-                    final=finish(prior,before)
-                    atomic_json(prior_path,final)
-                    operations.record('engagement',platform,work,final)
-                    return {**final,'platform_writes':0,'reused':True}
-                return {**prior,'platform_writes':0,'reused':True,'hint':'Use engage verify KEY; unresolved attempts are never toggled or automatically resent.'}
-            if prior['state']=='ACTION_READY':safety.reclaim(prior_path,prior)
+            with receipt_turn(prior_path):
+                prior=read_json(prior_path)
+                if prior['state'] in PENDING:
+                    if prior['desired']==desired and current is desired:
+                        final=finish(prior,before)
+                        atomic_json(prior_path,final)
+                        operations.record('engagement',platform,work,final)
+                        return {**final,'platform_writes':0,'reused':True}
+                    return {**prior,'platform_writes':0,'reused':True,'hint':'Use engage verify KEY; unresolved attempts are never toggled or automatically resent.'}
+                if prior['state']=='ACTION_READY':
+                    # A command killed part way can still be running in the shared background browser, so this attempt closes as its count goes back.
+                    prior['state']='ACTION_REPLACED';atomic_json(prior_path,prior)
+                    safety.reclaim(prior_path,prior)
         if current is desired:return {'state':'NO_CHANGE','platform_writes':0,'platform':platform,'work_id':work,'kind':kind,'desired':desired,'observed':before}
         counted=desired
         if dry_run:
@@ -108,11 +116,12 @@ def set_action(platform,work,kind,desired=True,collection=None,dry_run=False,tes
             else:saved=finish(saved,observed)
             atomic_json(path,saved)
         except Exception as exc:
-            saved=read_json(path)
-            saved['state']='ACTION_UNVERIFIED' if saved['state'] in PENDING and not never_sent(exc) else 'ACTION_FAILED'
-            saved.update(error_fields(exc,'error_code'))
-            saved['platform_writes']=None if saved['state']=='ACTION_UNVERIFIED' else 0
-            atomic_json(path,saved)
+            with receipt_turn(path):
+                saved=read_json(path)
+                saved['state']='ACTION_UNVERIFIED' if saved['state'] in PENDING and not never_sent(exc) else 'ACTION_FAILED'
+                saved.update(error_fields(exc,'error_code'))
+                saved['platform_writes']=None if saved['state']=='ACTION_UNVERIFIED' else 0
+                atomic_json(path,saved)
             if saved['state']=='ACTION_FAILED':safety.release(ticket)
         operations.record('engagement',platform,work,saved)
         return saved

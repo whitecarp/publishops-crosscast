@@ -313,7 +313,7 @@ async def operations(page, identity, payload):
     if not await button.is_enabled():
         raise VpubError("reply_not_ready", "YouTube has not enabled reply submission.")
     path = Path(payload["reply_receipt_path"])
-    saved = reply_pressing(path, before_reply_ids=[c["id"] for c in current], submitted_text=request["text"])
+    saved = reply_pressing(path, request, before_reply_ids=[c["id"] for c in current], submitted_text=request["text"])
     stage("pressing")
     await act_and_settle(page, lambda: button.click(timeout=20000))
     saved["state"] = "REPLY_UNVERIFIED"
