@@ -615,7 +615,7 @@ class HiddenDesktopTests(Temporary):
         hidden.assert_called_once()
         plain.assert_not_called()
         broker.assert_not_called()
-        with patch.object(adapters.os, "name", "posix"), patch.object(adapters, "hidden_desktop_call") as hidden, \
+        with patch.object(adapters, "stop_check"), patch.object(adapters.os, "name", "posix"), patch.object(adapters, "hidden_desktop_call") as hidden, \
                 patch.object(adapters, "worker_call", return_value=answer) as plain:
             adapters.browser_call("youtube", "status", "default")
         hidden.assert_not_called()

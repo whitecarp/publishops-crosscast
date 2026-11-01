@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from video_publisher import browser_backends, browser_forms, cli
+from video_publisher import browser_backends, browser_forms, cli, x_pages
 from video_publisher.core import VpubError, atomic_json, load_plan
 
 OWNER = "owner"
@@ -150,33 +150,89 @@ class ReadBackTests(unittest.IsolatedAsyncioTestCase):
         page.get_by_text = lambda *a, **k: AsyncMock(all=AsyncMock(return_value=[]))
         return page
 
-    async def test_before_its_time_it_is_read_from_the_schedule_page(self):
-        result = await browser_backends.verify_scheduled_x(self.page("Scheduled posts My title Words"), OWNER, self.receipt())
-        self.assertEqual(("SUBMISSION_VERIFIED", "scheduled", "scheduled"), (result["state"], result["phase"], result["visibility"]))
+    async def test_before_its_time_words_on_the_schedule_page_are_reported_and_prove_nothing(self):
+        for body, mentions in (("Scheduled posts My title Words", 1), ("My title at 3pm. My title at 5pm.", 2), ("Nothing scheduled", 0)):
+            with self.subTest(body=body):
+                result = await browser_backends.verify_scheduled_x(self.page(body), OWNER, self.receipt())
+                self.assertEqual(("SUBMITTED_UNVERIFIED", "readback_pending", "scheduled", mentions), (result["state"], result["phase"], result["visibility"], result["schedule_page_mentions"]))
+                self.assertIn("Do not post again", result["note"])
 
-    async def test_not_on_the_schedule_page_stays_unconfirmed(self):
-        result = await browser_backends.verify_scheduled_x(self.page("Nothing scheduled"), OWNER, self.receipt())
-        self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
+    async def after_its_time(self, posts, **extra):
+        moment = datetime.now(timezone.utc) - timedelta(minutes=5)
+        receipt = self.receipt(schedule={"at": moment.isoformat()}, **extra)
+        rows = [{"published_at": moment.isoformat(), "has_video": True, **post} for post in posts]
+        with patch.object(browser_backends, "works", new=AsyncMock()), patch.object(browser_backends, "own_posts", new=AsyncMock(return_value=rows)), \
+                patch.object(browser_backends, "verify", new=AsyncMock(return_value={"state": "SUBMISSION_VERIFIED", "id": "found"})) as read:
+            return await browser_backends.verify_scheduled_x(self.page(""), OWNER, receipt), read
 
-    async def test_after_its_time_it_is_found_among_the_accounts_posts(self):
-        receipt = self.receipt(schedule={"at": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()})
-        posts = {"1": {"id": "1", "text": "My title", "url": "u1"}, "2": {"id": "2", "text": "My title words", "url": "u2"}}
-        with patch.object(browser_backends, "works", new=AsyncMock(return_value=posts)), patch.object(browser_backends, "verify", new=AsyncMock(return_value={"state": "SUBMISSION_VERIFIED", "id": "2"})) as read:
-            result = await browser_backends.verify_scheduled_x(self.page(""), OWNER, receipt)
-        self.assertEqual("2", result["id"])
+    async def test_after_its_time_one_new_post_with_exactly_its_words_at_about_that_time_settles_it(self):
+        result, read = await self.after_its_time([{"id": "1", "text": "My title"}, {"id": "2", "text": "My title"}])
+        self.assertEqual("found", result["id"])
         self.assertEqual("2", read.await_args.args[3]["id"])
 
-    async def test_after_its_time_with_no_new_post_it_says_to_look_and_not_to_post_again(self):
-        receipt = self.receipt(schedule={"at": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()})
-        with patch.object(browser_backends, "works", new=AsyncMock(return_value={})):
-            result = await browser_backends.verify_scheduled_x(self.page(""), OWNER, receipt)
+    async def test_the_words_it_was_given_decide_when_it_has_them(self):
+        result, read = await self.after_its_time([{"id": "2", "text": "My post text"}], expected_text="My post text")
+        self.assertEqual("2", read.await_args.args[3]["id"])
+
+    async def assert_not_settled(self, posts):
+        result, read = await self.after_its_time(posts)
         self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
         self.assertIn("do not post again", result["note"])
+        read.assert_not_awaited()
+
+    async def test_a_post_that_only_contains_its_words_does_not_settle_it(self):
+        await self.assert_not_settled([{"id": "2", "text": "My title and some more"}])
+
+    async def test_a_post_from_a_different_time_does_not_settle_it(self):
+        early = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        await self.assert_not_settled([{"id": "2", "text": "My title", "published_at": early}])
+
+    async def test_a_post_with_no_video_does_not_settle_it(self):
+        await self.assert_not_settled([{"id": "2", "text": "My title", "has_video": False}])
+
+    async def test_a_post_from_before_the_upload_does_not_settle_it(self):
+        await self.assert_not_settled([{"id": "1", "text": "My title"}])
+
+    async def test_a_post_with_no_readable_time_does_not_settle_it(self):
+        for unreadable in (None, "yesterday", "2026-11-03T15:07:00"):
+            with self.subTest(published_at=unreadable):
+                await self.assert_not_settled([{"id": "2", "text": "My title", "published_at": unreadable}])
+
+    async def test_two_posts_that_could_both_be_it_do_not_settle_it(self):
+        await self.assert_not_settled([{"id": "2", "text": "My title"}, {"id": "3", "text": "My title"}])
+
+    async def test_after_its_time_with_no_new_post_it_says_to_look_and_not_to_post_again(self):
+        await self.assert_not_settled([])
 
     async def test_verify_uses_this_path_only_for_a_scheduled_post_with_no_address(self):
         with patch.object(browser_backends, "verify_scheduled_x", new=AsyncMock(return_value={"state": "X"})) as scheduled:
             self.assertEqual("X", (await browser_backends.verify(self.page(""), "x", OWNER, self.receipt()))["state"])
         scheduled.assert_awaited_once()
+
+
+class OwnPostsTests(unittest.IsolatedAsyncioTestCase):
+    """The words and the moment come from each post's own row, not from everything the row shows."""
+    ROW = """<article><a href="/{author}/status/{post}"><time datetime="2026-11-03T15:07:00.000Z">Nov 3</time></a><div data-testid="User-Name">Someone</div>
+      <div data-testid="tweetText">{words}</div><div role="group" aria-label="3 likes"><a href="/compose/post?in_reply_to={post}">Reply</a></div>{extra}</article>"""
+    VIDEO = '<div data-testid="videoPlayer"><video></video></div>'
+
+    async def asyncSetUp(self):
+        from patchright.async_api import async_playwright
+        self.pw = await async_playwright().start()
+        self.browser = await self.pw.chromium.launch(channel="chrome", headless=True)
+        self.page = await self.browser.new_page()
+
+    async def asyncTearDown(self):
+        await self.browser.close()
+        await self.pw.stop()
+
+    async def test_only_this_accounts_posts_with_their_own_words_and_moment(self):
+        rows = [self.ROW.format(author=OWNER, post="1", words="Exactly these words", extra=self.VIDEO), self.ROW.format(author="other", post="2", words="Not mine", extra=self.VIDEO),
+                self.ROW.format(author=OWNER.upper(), post="3", words="Ad words", extra="<span>Ad</span>"), self.ROW.format(author=OWNER, post="4", words="No video here", extra="")]
+        await self.page.set_content("<main>" + "".join(rows) + "</main>")
+        posts = await x_pages.own_posts(self.page, OWNER)
+        self.assertEqual([("1", "Exactly these words", "2026-11-03T15:07:00.000Z", True), ("4", "No video here", "2026-11-03T15:07:00.000Z", False)],
+                         [(post["id"], post["text"], post["published_at"], post["has_video"]) for post in posts])
 
 
 class PlanTests(unittest.TestCase):

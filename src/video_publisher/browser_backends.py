@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import re
 import time
 from pathlib import Path
@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 from .core import VpubError, atomic_json, file_sha, home, now, read_json, snapshot_file, stop_check
 from .browser_runtime import risk_check, unique_visible, visible
+from .x_pages import own_posts
 
 MANAGE = "https://creator.douyin.com/creator-micro/content/manage"
 STUDIO_VISIBILITY = {"public": {"Public", "公开", "公開"}, "unlisted": {"Unlisted", "不公开列出", "不公開"}, "private": {"Private", "私享", "私人"}}
@@ -276,20 +277,32 @@ async def verify_youtube(page, receipt):
 
 
 async def verify_scheduled_x(page, identity, receipt):
-    """A scheduled post has no address until it goes out: Studio's schedule page before its time, the account's own posts after."""
-    if datetime.now(timezone.utc) >= datetime.fromisoformat(receipt["schedule"]["at"]):
-        found = await works(page, "x", identity)
-        matches = [v for k, v in found.items() if k not in receipt.get("before_ids", []) and normalize(receipt["title"]) in normalize(v["text"])]
+    """A scheduled post has no address until it goes out. Words on Studio's schedule page don't prove which post that is, its time
+    or its video, so before its time this only reports them. After its time, one new post with exactly its words, at about that time
+    and showing a video, settles it. X shows nothing that identifies the video itself, so which video it is stays unproven."""
+    moment = datetime.fromisoformat(receipt["schedule"]["at"])
+    if datetime.now(timezone.utc) >= moment:
+        words = normalize(receipt.get("expected_text") or receipt["title"])
+        await works(page, "x", identity)  # Opens the account's page and waits for its posts.
+        matches = [post for post in await own_posts(page, identity) if post["id"] not in receipt.get("before_ids", []) and normalize(post["text"] or "") == words and post["has_video"] and posted_around(post, moment)]
         if len(matches) == 1:
-            return await verify(page, "x", identity, {**receipt, "id": matches[0]["id"], "url": matches[0]["url"]})
-        return {**receipt, "state": "SUBMITTED_UNVERIFIED", "phase": "readback_pending", "note": "Its time has passed and no matching post was found on the first page. Inspect the account; do not post again."}
+            return await verify(page, "x", identity, {**receipt, "id": matches[0]["id"], "url": work_url("x", identity, matches[0]["id"])})
+        return {**receipt, "state": "SUBMITTED_UNVERIFIED", "phase": "readback_pending", "note": f"Its time has passed and {len(matches)} posts on the first page match it exactly. Inspect the account; do not post again."}
     await page.goto("https://studio.x.com/schedule", wait_until="domcontentloaded", timeout=60000)
     await page.wait_for_timeout(4000)
     await risk_check(page)
-    listed = normalize(receipt["title"]) in normalize(await page.locator("body").inner_text())
-    return {**receipt, "state": "SUBMISSION_VERIFIED" if listed else "SUBMITTED_UNVERIFIED", "phase": "scheduled" if listed else "readback_pending", "visibility": "scheduled",
+    mentions = normalize(await page.locator("body").inner_text()).count(normalize(receipt["title"]))
+    return {**receipt, "state": "SUBMITTED_UNVERIFIED", "phase": "readback_pending", "visibility": "scheduled", "schedule_page_mentions": mentions,
             "verification_source": "studio_schedule_page", "verified_at": now(),
-            "note": "Listed on Studio's schedule page; X posts it at that time." if listed else "Not found on Studio's schedule page yet. Inspect it; do not post again."}
+            "note": f"Studio's schedule page shows this title {mentions} time(s). That does not prove the post, its time or its video, so check them there. Do not post again."}
+
+
+def posted_around(post, moment):
+    """X publishes a scheduled post within minutes of its time. A post with no readable time is not evidence."""
+    try:
+        return timedelta(minutes=-1) <= datetime.fromisoformat(str(post.get("published_at")).replace("Z", "+00:00")) - moment <= timedelta(minutes=30)
+    except (ValueError, TypeError):
+        return False
 
 
 async def verify(page, platform, identity, receipt):

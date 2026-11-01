@@ -31,6 +31,9 @@ class Element:
         return Element(self.page, self.selector + " " + selector)
 
     def exists(self):
+        # A comment's reply box opens only once its Reply is pressed.
+        if "ytcp-commentbox" in self.selector and not self.page.box_open:
+            return False
         return "verifycenter" not in self.selector and not any(part in self.selector for part in self.page.missing)
 
     async def all(self):
@@ -51,6 +54,8 @@ class Element:
 
     async def click(self, timeout=None):
         self.page.log.append(("click", self.selector))
+        if "#reply-button" in self.selector:
+            self.page.box_open = True
         if "#submit-button" in self.selector:
             self.page.at_submit = dict(read_json(self.page.receipt)) if self.page.receipt else None
             if self.page.post_reply:
@@ -85,11 +90,13 @@ class Element:
         return ""
 
     async def get_attribute(self, name):
-        return self.page.pressed if name == "aria-pressed" else None
+        return {"aria-pressed": self.page.pressed, "comment-id": "c1"}.get(name)
 
     async def evaluate(self, script):
         if script == "e => e.hasAttribute('disabled')":
             return self.page.no_replies
+        if "closest('ytcp-comment')" in script:
+            return "c1"
         return self.page.save_ready
 
     async def evaluate_all(self, script):
@@ -114,6 +121,7 @@ class FakePage:
         self.fields, self.saved_fields = {"title": "Old title", "description": "Old text"}, None
         self.url, self.pressed, self.post_reply, self.drop_text, self.save_ready = "https://studio.youtube.com/", "false", True, False, False
         self.no_replies = True
+        self.box_open = False
         self.mouse = MagicMock(wheel=AsyncMock())
         for name, value in options.items():
             setattr(self, name, value)

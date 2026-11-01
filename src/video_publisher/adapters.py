@@ -138,7 +138,17 @@ def worker_call(payload, timeout):
 
 
 def browser_call(platform, action, account, **kwargs):
+    """Every browser route ends here, so a platform's warning always stops what follows, whichever route brought it."""
+    stop_check(platform)
     payload = {"platform": platform, "action": action, "account": account, **kwargs}
+    try:
+        return browser_answer(platform, action, account, payload)
+    except VpubError as exc:
+        safety.pushed_back(platform, exc.code)
+        raise
+
+
+def browser_answer(platform, action, account, payload):
     from . import browser_broker
     # YouTube's background browser is a real Chrome window, so it closes after each command instead of lingering.
     if platform != "youtube" and browser_broker.enabled():
@@ -151,7 +161,6 @@ def browser_call(platform, action, account, **kwargs):
     result = hidden_desktop_call(payload, browser_timeout(action)) if platform == "youtube" and os.name == "nt" else worker_call(payload, browser_timeout(action))
     if not result.get("ok"):
         e = result["error"]
-        safety.pushed_back(platform, e["code"])
         raise VpubError(e["code"], e["message"], e.get("hint", ""))
     return result["data"]
 
@@ -193,7 +202,7 @@ def auth_status(platform, account, method=None):
 
 def auth_login(platform, account, client_json=None, method=None):
     platform_check(platform)
-    stop_check(platform)
+    stop_check(platform, signing_in=True)
     method = method or default_method(platform)
     if method == "native":
         from .native_browser import login
@@ -251,20 +260,7 @@ def publish_bilibili(plan, options, checkpoint):
     if options.get("chapters"):
         receipt.update(pending_chapters=options["chapters"], chapters_state="PENDING")
     checkpoint(receipt)
-    return verify("bilibili", options["account"], receipt)
-
-
-def finish_bilibili_chapters(receipt):
-    """Bilibili takes chapters once the work exists, so they follow the upload. Setting them replaces the list, so a repeat cannot stack."""
-    if not receipt.get("pending_chapters") or receipt.get("chapters_state") == "VERIFIED":
-        return receipt
-    from .edits_bilibili import set_chapters
-    try:
-        saved = set_chapters(receipt["id"], receipt["pending_chapters"])
-    except VpubError as exc:
-        return {**receipt, "chapters_state": "NOT_APPLIED", "chapters_error": exc.code, "chapters_reason": exc.message,
-                "next": "Run vpub verify for this receipt to try the chapters again; the video is not uploaded again."}
-    return {**receipt, "chapters_state": "VERIFIED" if saved else "SAVE_UNVERIFIED"}
+    return verify("bilibili", options["account"], receipt, checkpoint)
 
 
 def publish(platform, plan, options, checkpoint):
@@ -286,7 +282,7 @@ def publish(platform, plan, options, checkpoint):
     return result
 
 
-def verify(platform, account, receipt):
+def verify(platform, account, receipt, checkpoint=None):
     if receipt.get("method") == "native":
         return {**receipt, "state": "BROWSER_VERIFICATION_REQUIRED", "note": "Re-open the original work in the same built-in browser and record actual UI evidence. No CLI platform check was performed."}
     video_id = receipt.get("id")
@@ -307,5 +303,6 @@ def verify(platform, account, receipt):
             result.update(state="SUBMITTED_UNVERIFIED", declaration_mismatch=True,
                           note="Bilibili recorded a different AI-content declaration. Correct it on this existing work "
                                "(bili upload edit with --ai-declare or --no-ai-declare); do not upload again.")
-        return finish_bilibili_chapters(result)
+        from .edits_bilibili import finish_chapters
+        return finish_chapters(result, checkpoint)
     return youtube_api().verify_video(account, receipt, video_id)

@@ -147,7 +147,7 @@ def douyin_caption(description, tags):
     return "\n\n".join(p for p in (description, " ".join("#" + t.lstrip("#") for t in tags)) if p)
 
 
-def stop_check(platform=None):
+def stop_check(platform=None, signing_in=False):
     candidates = [home() / "STOP.json"]
     external = config().get("external_stop_file")
     if external:
@@ -155,15 +155,18 @@ def stop_check(platform=None):
     for index, path in enumerate(candidates):
         # Presence stops publication; malformed stop files also stop it.
         if path.exists():
+            try:
+                signal = read_json(path)
+            except (OSError, ValueError):
+                signal = None
             if index == 1 and platform and platform != "bilibili":
-                try:
-                    signal = read_json(path)
-                except (OSError, ValueError):
-                    signal = None
                 # Recognize only this exact, explicit scope. Unknown/malformed
                 # signals and this tool's own STOP remain global and fail closed.
                 if isinstance(signal, dict) and signal.get("state") == "STOP_ALL_BILIBILI_READ_WRITE":
                     continue
+            # A platform's check is passed in its own sign-in window, so that window is the one thing its warning still allows.
+            if index == 0 and signing_in and isinstance(signal, dict) and signal.get("source") == "safety" and signal.get("platform") == platform:
+                continue
             raise VpubError("stopped", f"Publication stop file exists: {path}",
                             "Inspect the stop reason. Only the operator may clear it.")
 

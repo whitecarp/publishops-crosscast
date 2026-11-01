@@ -69,7 +69,7 @@ async def dispatch(page, platform, actual, payload):
 async def run(payload):
     from patchright.async_api import async_playwright
     platform, account = payload["platform"], payload.get("account", "default")
-    stop_check(platform)
+    stop_check(platform, signing_in=payload["action"] == "login")
     if payload['action'] == 'operations_batch':
         from .operations_batch import validate
         validate(payload)

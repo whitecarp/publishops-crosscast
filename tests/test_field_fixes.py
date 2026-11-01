@@ -7,7 +7,11 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from video_publisher import adapters, browser_runtime as rt, cli
-from video_publisher.core import VpubError, atomic_json, read_json
+from video_publisher.core import VpubError, atomic_json, home, read_json
+
+
+def home_stop():
+    return home() / "STOP.json"
 
 
 class Home(unittest.TestCase):
@@ -42,6 +46,16 @@ class ClosingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((rt.EXIT_SECONDS, os._exit), timer.call_args.args[:2])
         timer.return_value.start.assert_called_once()
         self.assertTrue(timer.return_value.daemon)
+
+    async def test_a_save_that_never_answers_reports_itself_instead_of_waiting(self):
+        async def forever(*args):
+            await asyncio.Event().wait()
+        with patch.object(rt, "CLOSE_SECONDS", 0.05), patch.object(rt, "save_session", forever):
+            self.assertIs(False, await asyncio.wait_for(rt.keep_session(MagicMock(), "x", "default"), 2))
+
+    async def test_a_save_that_works_says_so(self):
+        with patch.object(rt, "save_session", new=AsyncMock()):
+            self.assertIs(True, await rt.keep_session(MagicMock(), "x", "default"))
 
     def test_the_next_command_waits_longer_than_a_session_can_take_to_end(self):
         from video_publisher import browser_broker
@@ -99,16 +113,16 @@ class LoginTests(Home, unittest.IsolatedAsyncioTestCase):
         async def identity(page, platform):
             return page.who
 
-        async def visible(locator):
-            return locator if locator.labels else None
+        async def challenge_shown(page):
+            return page.labels
 
         async def tick(seconds):
             looks["count"] += 1
             if steps and looks["count"] <= len(steps):
                 steps[looks["count"] - 1](context)
-            if looks["count"] > 8:
+            if looks["count"] > 12:
                 raise AssertionError("the sign-in never ended")
-        with patch.object(rt, "open_context", new=AsyncMock(return_value=context)), patch.object(rt, "identity", identity), patch.object(rt, "visible", visible), \
+        with patch.object(rt, "open_context", new=AsyncMock(return_value=context)), patch.object(rt, "identity", identity), patch.object(rt, "challenge_shown", challenge_shown), \
                 patch.object(rt.asyncio, "sleep", tick), patch.object(rt, "save_session", new=AsyncMock()):
             result = await rt.login(None, {"platform": "youtube", "account": "default", "job_path": str(job)})
         return result, context, job
@@ -145,9 +159,66 @@ class LoginTests(Home, unittest.IsolatedAsyncioTestCase):
         def look_then_finish(context):
             seen.update(read_json(self.root / "job.json"))
             page.who = "UC1"
-        await self.run_login([page], [look_then_finish])
+        await self.run_login([page], [look_then_finish, self.clear(page)])
         self.assertEqual("VERIFICATION_REQUIRED", seen["state"])
         self.assertIn("yourself", seen["hint"])
+
+    def clear(self, page):
+        def clear(context):
+            page.labels = False
+        return clear
+
+    def not_done(self, seen):
+        def look(context):
+            seen.update(read_json(self.root / "job.json"))
+        return look
+
+    async def test_a_signed_in_menu_behind_a_check_is_not_a_finished_sign_in(self):
+        page, seen = FakePage("UC1", labels=True), {}
+        result, _, _ = await self.run_login([page], [self.not_done(seen), self.clear(page)])
+        self.assertEqual("VERIFICATION_REQUIRED", seen["state"])
+        self.assertEqual("UC1", result["identity"])
+        page.reload.assert_awaited_once()
+
+    async def test_a_check_that_appears_on_the_reload_is_not_a_finished_sign_in(self):
+        page, seen = FakePage("UC1"), {}
+
+        async def reload(**options):
+            if page.reload.await_count == 1:
+                page.labels = True
+        page.reload.side_effect = reload
+        result, _, _ = await self.run_login([page], [lambda context: None, lambda context: None, lambda context: None, self.not_done(seen), self.clear(page)])
+        self.assertEqual("VERIFICATION_REQUIRED", seen["state"])
+        self.assertEqual(2, page.reload.await_count)
+        self.assertEqual("UC1", result["identity"])
+
+    async def test_a_check_on_another_tab_holds_the_sign_in_too(self):
+        signed_in, checking, seen = FakePage("UC1"), FakePage(labels=True), {}
+        result, _, _ = await self.run_login([signed_in, checking], [self.not_done(seen), self.clear(checking)])
+        self.assertEqual("VERIFICATION_REQUIRED", seen["state"])
+        self.assertEqual("UC1", result["identity"])
+
+    async def test_a_tab_that_closes_during_the_check_does_not_end_the_sign_in(self):
+        self.assertFalse(await rt.any_challenge([MagicMock(url="https://x.com/", locator=MagicMock(side_effect=RuntimeError("closed")))]))
+
+    async def test_signing_in_does_not_clear_a_stop_and_says_so(self):
+        atomic_json(home_stop(), {"platform": "youtube", "source": "safety", "code": "human_verification_required"})
+        result, _, _ = await self.run_login([FakePage("UC1")])
+        self.assertIn("vpub stop --clear", result["next"])
+        self.assertTrue(home_stop().exists())
+
+    async def test_a_sign_in_with_no_stop_says_nothing_more(self):
+        result, _, _ = await self.run_login([FakePage("UC1")])
+        self.assertNotIn("next", result)
+
+    async def test_a_save_that_never_answers_does_not_hold_the_sign_in(self):
+        async def forever(*args):
+            await asyncio.Event().wait()
+        context = FakeContext([FakePage("UC1")])
+        with patch.object(rt, "CLOSE_SECONDS", 0.05), patch.object(rt, "open_context", new=AsyncMock(return_value=context)), patch.object(rt, "identity", new=AsyncMock(return_value="UC1")), \
+                patch.object(rt, "challenge_shown", new=AsyncMock(return_value=False)), patch.object(rt, "save_session", forever):
+            result = await asyncio.wait_for(rt.login(None, {"platform": "x", "account": "default", "job_path": str(self.root / "job.json")}), 20)
+        self.assertEqual("UC1", result["identity"])
 
 
 class RecoveryLabelTests(unittest.TestCase):

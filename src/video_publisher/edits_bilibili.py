@@ -27,10 +27,40 @@ def chapter_args(work, chapters):
     return args
 
 
-def set_chapters(work, chapters):
-    """Replaces the whole list, so repeating it cannot stack chapters. True once a fresh read shows them."""
-    adapters.bili(chapter_args(work, chapters))
-    return saved_chapters(work) == chapters
+def finish_chapters(receipt, checkpoint=None):
+    """Chapters chosen at upload, which Bilibili takes once the work exists. Always reads first, and sends again only after
+    Bilibili said no: an unclear ending is only ever read again, and a list someone else set is left alone."""
+    wanted, state = receipt.get("pending_chapters"), receipt.get("chapters_state")
+    if not wanted or state == "VERIFIED":
+        return receipt
+    work = receipt["id"]
+    clean = {key: value for key, value in receipt.items() if key not in {"chapters_error", "chapters_reason", "next"}}
+    unclear = {"chapters_state": "SAVE_UNVERIFIED", "next": "These chapters may already have reached Bilibili, which reviews them before they show. Run vpub verify later; it only reads. To send them again, use vpub edit."}
+    try:
+        saved = saved_chapters(work)
+    except VpubError as exc:
+        return {**receipt, "chapters_error": exc.code, "chapters_reason": exc.message, "next": "The chapters could not be read, and nothing was sent. Run vpub verify again later."}
+    if saved == wanted:
+        return {**clean, "chapters_state": "VERIFIED"}
+    if state not in {"PENDING", "NOT_APPLIED"}:
+        return {**clean, **unclear}
+    if saved:
+        return {**clean, "chapters_state": "CONFLICT", "next": "The work already has other chapters, so these were not sent. To replace them, use vpub edit."}
+    if checkpoint is None:
+        return receipt  # With nowhere to record the attempt first, it only reads.
+    checkpoint({**clean, "chapters_state": "SUBMITTING"})
+    try:
+        adapters.bili(chapter_args(work, wanted))
+    except VpubError as exc:
+        if exc.code in REFUSED or exc.code == "stopped":
+            return {**clean, "chapters_state": "NOT_APPLIED", "chapters_error": exc.code, "chapters_reason": exc.message,
+                    "next": "Bilibili did not take the chapters. Run vpub verify for this receipt to try them again; the video is not uploaded again."}
+        return {**clean, **unclear, "chapters_error": exc.code, "chapters_reason": exc.message}
+    try:
+        saved = saved_chapters(work)
+    except VpubError as exc:
+        return {**clean, **unclear, "chapters_error": exc.code, "chapters_reason": exc.message}
+    return {**clean, "chapters_state": "VERIFIED"} if saved == wanted else {**clean, **unclear}
 
 
 def text_of(found):

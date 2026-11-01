@@ -40,6 +40,7 @@ POST_FIELDS = r"""article => {
     : [...article.querySelectorAll('div[dir="auto"]')].find(e => outside(e) && !e.querySelector('a[href*="/status/"]') && e.innerText.trim());
   return {href: own ? own.getAttribute('href') : null, text: block ? block.innerText : null,
           time: own?.querySelector('time')?.getAttribute('datetime') || null,
+          video: !!article.querySelector('video, [data-testid="videoPlayer"], [data-testid="videoComponent"]'),
           lines: article.innerText.split('\n').map(line => line.trim())};
 }"""
 
@@ -79,7 +80,13 @@ async def post_fields(article):
     if not found:
         return None
     return {"author": found[1], "id": found[2], "href": data["href"], "text": data["text"], "published_at": data["time"] or post_time(found[2]),
-            "is_ad": bool(AD_LINES & set(data["lines"]))}
+            "has_video": bool(data.get("video")), "is_ad": bool(AD_LINES & set(data["lines"]))}
+
+
+async def own_posts(page, identity):
+    """This account's posts on the page now open, each read from its own row: its words, its moment and its address."""
+    posts = [await post_fields(row) for row in await page.locator("main article").all()]
+    return [post for post in posts if post and post["author"].casefold() == identity.casefold() and not post["is_ad"]]
 
 
 async def views_of(row):

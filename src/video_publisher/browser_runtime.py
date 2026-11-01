@@ -16,9 +16,19 @@ BROWSER_PLATFORMS = {"douyin", "instagram", "x", "youtube"}
 URLS = {"douyin": "https://creator.douyin.com/creator-micro/home",
         "instagram": "https://www.instagram.com/", "x": "https://x.com/home",
         "youtube": "https://studio.youtube.com/"}
-HUMAN_LABELS = re.compile(r"安全验证|请完成验证|滑块验证|操作频繁|验证是你本人|Confirm it's you|Verify it's you|Verify your identity|Authenticate your account|Confirm your identity|Unusual activity"
+HUMAN_LABELS = re.compile(r"安全验证|請完成驗證|请完成验证|滑块验证|滑塊驗證|操作频繁|操作頻繁|验证是你本人|驗證是你本人|确认是你本人|確認是你本人|验证你的身份|驗證你的身分|确认你的身份|確認你的身分"
+                          r"|Confirm it's you|Verify it's you|Verify your identity|Authenticate your account|Confirm your identity|Unusual activity"
                           # A locked account's recovery page. A person answers it; CrossCast never presses anything on it.
-                          r"|Choose a way to recover|Get help from friends", re.I)
+                          r"|Choose a way to recover|Get help from friends|选择恢复方式|選擇復原方式|向好友求助|向朋友求助", re.I)
+# Addresses that only ever mean the platform is asking for a check, whatever the page says.
+CHALLENGE_ADDRESSES = {"instagram.com": r"/(challenge|checkpoint|auth_platform|accounts/(suspended|disabled))(/|$)",
+                       "x.com": r"/account/access(/|$)",
+                       "google.com": r"(/v\d)?/signin(/v\d)?/(challenge|rejected)(/|$)"}
+# Where other people's words show. A viewer writing "Confirm it's you" in a comment is not the platform asking,
+# and it must not be able to stop the whole tool. A place missing from this list means a stop a person clears, never a missed check.
+OTHER_PEOPLES_WORDS = ('article, li, [role="article"], [role="listitem"], [role="row"], [role="gridcell"], [data-testid="cellInnerDiv"], [class*="comment" i], '
+                       'ytcp-comment-thread, ytcp-comment, ytd-comment-thread-renderer, ytd-comment-view-model, ytcp-video-row, ytd-watch-metadata')
+SITES = {"x": ("x.com", "twitter.com"), "instagram": ("instagram.com",), "douyin": ("douyin.com", "bytedance.com"), "youtube": ("youtube.com", "google.com")}
 # Chrome can stop answering, and this process holds the profile lock until it ends.
 CLOSE_SECONDS = 30
 EXIT_SECONDS = 90
@@ -52,10 +62,36 @@ async def unique_visible(locator, label):
     return items[0]
 
 
+def on_site(host, site):
+    return host == site or host.endswith("." + site)
+
+
+def platform_at(address):
+    host = urlsplit(str(address)).hostname or ""
+    return next((name for name, sites in SITES.items() if any(on_site(host, site) for site in sites)), "unknown")
+
+
+def challenge_address(address):
+    parts = urlsplit(str(address))
+    return any(on_site(parts.hostname or "", site) and re.match(path, parts.path) for site, path in CHALLENGE_ADDRESSES.items())
+
+
+async def challenge_shown(page):
+    """Whether the platform itself is asking for a check or an account recovery on this page."""
+    if challenge_address(page.url) or await visible(page.locator('iframe[src*="/verifycenter/captcha/"]')):
+        return True
+    for item in await page.get_by_text(HUMAN_LABELS).all():
+        if await item.is_visible() and not await item.evaluate("(e, others) => !!e.closest(others)", OTHER_PEOPLES_WORDS):
+            return True
+    return False
+
+
 async def risk_check(page):
-    challenge=page.locator('iframe[src*="/verifycenter/captcha/"]')
-    if await visible(challenge) or await visible(page.get_by_text(HUMAN_LABELS)):
-        raise VpubError("human_verification_required", "The platform requires human verification.", "Run auth login for this platform and complete the official verification; inspect any existing draft before retrying.")
+    if await challenge_shown(page):
+        from .safety import pushed_back
+        # Recorded where it is seen: a batch or a multi-step read catches the error below so it can report its other steps.
+        pushed_back(platform_at(page.url), "human_verification_required")
+        raise VpubError("human_verification_required", "The platform requires human verification.", "Run auth login for this platform and complete the official verification, then vpub stop --clear; inspect any existing draft before retrying.")
 
 
 async def identity(page, platform):
@@ -146,48 +182,73 @@ async def login(pw, payload):
             pages = [item for item in context.pages if not item.is_closed()]
             if not pages:
                 raise VpubError("login_cancelled", "Login window was closed before account verification.")
+            # A signed-in menu can still show behind a check, so a check on any tab comes before who the account is.
+            if await any_challenge(pages):
+                if not asked:
+                    asked = True
+                    atomic_json(job, {"state": "VERIFICATION_REQUIRED", **waiting, "window_opened": True,
+                                      "hint": "The platform is asking for a check or account recovery. Finish it yourself in the CrossCast Chrome window; the CLI never answers it."})
+                await asyncio.sleep(2)
+                continue
             for page in pages:
                 try:
                     actual = await identity(page, platform)
                     if not actual:
-                        if not asked and await visible(page.get_by_text(HUMAN_LABELS)):
-                            asked = True
-                            atomic_json(job, {"state": "VERIFICATION_REQUIRED", **waiting, "window_opened": True,
-                                              "hint": "The platform is asking for a check or account recovery. Finish it yourself in the CrossCast Chrome window; the CLI never answers it."})
                         continue
                     # Wait for the login redirect to settle and prove a fresh load.
                     await asyncio.sleep(3)
                     await page.reload(wait_until="domcontentloaded")
                     await asyncio.sleep(2)
-                    if await identity(page, platform) != actual:
+                    if await any_challenge(pages) or await identity(page, platform) != actual:
                         continue
                 except Exception as exc:
                     if isinstance(exc, VpubError):
                         raise
                     continue  # This tab closed or moved on while it was being read; the next pass looks again.
-                await save_session(context, platform, account)
+                await keep_session(context, platform, account)
                 remember_identity(platform, account, actual)
-                return {"logged_in": True, "platform": platform, "account": account,
-                        "identity": actual, "method": "browser"}
+                result = {"logged_in": True, "platform": platform, "account": account, "identity": actual, "method": "browser"}
+                if (home() / "STOP.json").exists():
+                    result["next"] = "CrossCast is still stopped because of a platform's warning. Once its check is done, run vpub stop --clear."
+                return result
             await asyncio.sleep(2)
         raise VpubError("login_timeout", "Login was not completed within 15 minutes; saved profile is retained.")
     finally:
         await close_context(context)
 
 
+async def any_challenge(pages):
+    for page in pages:
+        try:
+            if await challenge_shown(page):
+                return True
+        except Exception:
+            pass  # This tab closed or moved on while it was being read.
+    return False
+
+
+async def keep_session(context, platform, account):
+    """Save with a limit. A session that cannot be saved must not cost a finished command its answer. False means this browser should not be used again."""
+    try:
+        await asyncio.wait_for(save_session(context, platform, account), CLOSE_SECONDS)
+        return True
+    except Exception:
+        return False
+
+
 async def close_context(context, platform=None, account=None):
     """Save and close, each with a limit. A session that cannot be saved or closed must not fail the finished command."""
-    steps = [save_session(context, platform, account)] if platform else []
-    for step in [*steps, context.close()]:
-        try:
-            await asyncio.wait_for(step, CLOSE_SECONDS)
-        except Exception:
-            pass
+    if platform:
+        await keep_session(context, platform, account)
+    try:
+        await asyncio.wait_for(context.close(), CLOSE_SECONDS)
+    except Exception:
+        pass
 
 
-def exit_soon():
-    """The last resort once a session is done: its process ends, which lets go of the profile lock, even if closing hangs."""
-    timer = threading.Timer(EXIT_SECONDS, os._exit, args=(0,))
+def exit_soon(seconds=EXIT_SECONDS):
+    """The last resort: this process ends, which lets go of the profile lock, even if something it is waiting for never answers."""
+    timer = threading.Timer(seconds, os._exit, args=(0,))
     timer.daemon = True
     timer.start()
 
@@ -207,9 +268,7 @@ async def save_session(context, platform, account):
     if platform == "youtube":
         return
     state = await context.storage_state()
-    domains = {"x": ("x.com", "twitter.com"), "instagram": ("instagram.com",),
-               "douyin": ("douyin.com", "bytedance.com")}[platform]
-    cookies = [c for c in state["cookies"] if any(c["domain"].lstrip(".") == d or c["domain"].endswith("." + d) for d in domains)]
+    cookies = [c for c in state["cookies"] if any(on_site(c["domain"].lstrip("."), site) for site in SITES[platform])]
     atomic_json(profile_dir(platform, account).parent / (platform + "-browser-session.json"), {"cookies": cookies})
 
 

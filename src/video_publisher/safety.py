@@ -251,7 +251,7 @@ def pushed_back(platform, code):
     path = home() / "STOP.json"
     if not path.exists():
         atomic_json(path, {"platform": platform, "code": code, "at": now(), "source": "safety",
-                           "hint": "Pass the platform's check, then run vpub stop --clear."})
+                           "hint": "Pass the platform's check (vpub auth login for this platform still opens its window), then run vpub stop --clear."})
     return True
 
 

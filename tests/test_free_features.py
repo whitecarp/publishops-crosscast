@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 from urllib.parse import urlsplit
 
 from video_publisher import adapters, browser_edits, chapters, cli, comment_actions, comment_actions_api as api, edits, edits_bilibili
-from video_publisher.core import VpubError, atomic_json, digest, home, load_plan, read_json
+from video_publisher.core import Ledger, VpubError, atomic_json, digest, home, load_plan, read_json
 
 WORK = "BV1xx411c7mD"
 OWNER = "42"
@@ -21,6 +21,8 @@ class FakeBili:
         self.chapters = []
         self.calls = []
         self.fail = None
+        self.fail_after = None  # The platform took it, and then the answer never came.
+        self.read_fail = None
         self.keep = True
         self.drop_tags = set()
         self.upload = {"bvid": WORK, "season_added": True}
@@ -30,6 +32,8 @@ class FakeBili:
         if args[:2] == ["upload", "status"]:
             return {"archive": dict(self.archive)}
         if args[:3] == ["upload", "chapters", "show"]:
+            if self.read_fail:
+                raise VpubError(self.read_fail, "Could not read.")
             return {"chapters": [{"from": row["start_seconds"], "to": 0, "title": row["title"]} for row in self.chapters]}
         if args[:2] == ["upload", "video"]:
             return dict(self.upload)
@@ -37,6 +41,8 @@ class FakeBili:
             raise VpubError(self.fail, "No.")
         if self.keep:
             self.apply(args)
+        if self.fail_after:
+            raise VpubError(self.fail_after, "No answer.")
         return {}
 
     def apply(self, args):
@@ -288,22 +294,122 @@ class BilibiliUploadTests(Temporary):
         self.assertEqual("SUBMISSION_VERIFIED", result["state"])
         self.assertEqual({"id": 7, "added": False, "error": "No."}, result["season"])
 
+    def verify(self, receipt):
+        marks = []
+        result = adapters.verify("bilibili", "default", receipt, marks.append)
+        return result, marks
+
+    def sent(self):
+        return len([call for call in self.bili.writes() if call[:3] == ["upload", "chapters", "set"]])
+
     def test_chapters_follow_the_upload_and_are_read_back(self):
         result, marks = self.publish(chapters=LONG)
         self.assertEqual("VERIFIED", result["chapters_state"])
-        self.assertEqual("PENDING", marks[0]["chapters_state"])
+        self.assertEqual(["PENDING", "SUBMITTING"], [mark["chapters_state"] for mark in marks])
+        self.assertEqual(1, self.sent())
 
-    def test_chapters_bilibili_refuses_leave_the_work_and_say_why(self):
+    def test_verifying_reads_before_anything_could_be_sent(self):
+        self.verify({"id": WORK, "state": "SUBMITTED", "pending_chapters": LONG, "chapters_state": "PENDING"})
+        chapters = [call[2] for call in self.bili.calls if call[1] == "chapters"]
+        self.assertEqual(["show", "set", "show"], chapters)
+
+    def test_the_attempt_is_recorded_before_anything_is_sent(self):
+        seen = []
+
+        def mark(value):
+            seen.append((value["chapters_state"], self.sent()))
+        receipt = {"id": WORK, "state": "SUBMITTED", "pending_chapters": LONG, "chapters_state": "PENDING"}
+        adapters.verify("bilibili", "default", receipt, mark)
+        self.assertEqual([("SUBMITTING", 0)], seen)
+
+    def test_chapters_bilibili_refuses_leave_the_work_say_why_and_can_be_tried_again(self):
         self.bili.fail = "invalid_argument"
         result, _ = self.publish(chapters=LONG)
         self.assertEqual(("SUBMISSION_VERIFIED", "NOT_APPLIED", "invalid_argument"), (result["state"], result["chapters_state"], result["chapters_error"]))
         self.bili.fail = None
-        self.assertEqual("VERIFIED", adapters.verify("bilibili", "default", result)["chapters_state"])
+        again, _ = self.verify(result)
+        self.assertEqual("VERIFIED", again["chapters_state"])
+        self.assertNotIn("chapters_error", again)
+        self.assertEqual(2, self.sent())  # The one Bilibili refused, and the one it took.
+
+    def test_an_unclear_ending_is_only_ever_read_again(self):
+        self.bili.fail_after = "backend_timeout"
+        result, _ = self.publish(chapters=LONG)
+        self.assertEqual(("SAVE_UNVERIFIED", "backend_timeout"), (result["chapters_state"], result["chapters_error"]))
+        self.assertEqual(1, self.sent())
+        self.bili.fail_after = None
+        again, marks = self.verify(result)
+        self.assertEqual("VERIFIED", again["chapters_state"])
+        self.assertEqual(1, self.sent())
+        self.assertEqual([], marks)
+
+    def test_a_read_back_that_is_slow_is_waited_for_without_sending_again(self):
+        self.bili.keep = False
+        result, _ = self.publish(chapters=LONG)
+        self.assertEqual("SAVE_UNVERIFIED", result["chapters_state"])
+        for _ in range(2):
+            result, _ = self.verify(result)
+            self.assertEqual("SAVE_UNVERIFIED", result["chapters_state"])
+        self.assertEqual(1, self.sent())
+        self.bili.chapters = list(LONG)
+        self.assertEqual("VERIFIED", self.verify(result)[0]["chapters_state"])
+        self.assertEqual(1, self.sent())
+
+    def test_a_process_that_died_after_recording_the_attempt_never_sends_again(self):
+        receipt = {"id": WORK, "state": "SUBMISSION_VERIFIED", "pending_chapters": LONG, "chapters_state": "SUBMITTING"}
+        result, _ = self.verify(receipt)
+        self.assertEqual("SAVE_UNVERIFIED", result["chapters_state"])
+        self.assertEqual(0, self.sent())
+
+    def test_a_list_someone_else_set_is_left_alone(self):
+        other = [{"start_seconds": 0, "title": "Mine"}]
+        self.bili.chapters = list(other)
+        for state, expected in (("PENDING", "CONFLICT"), ("NOT_APPLIED", "CONFLICT"), ("SUBMITTING", "SAVE_UNVERIFIED"), ("SAVE_UNVERIFIED", "SAVE_UNVERIFIED")):
+            with self.subTest(state=state):
+                result, _ = self.verify({"id": WORK, "state": "SUBMISSION_VERIFIED", "pending_chapters": LONG, "chapters_state": state})
+                self.assertEqual(expected, result["chapters_state"])
+        self.assertEqual(0, self.sent())
+        self.assertEqual(other, self.bili.chapters)
+
+    def test_a_read_that_fails_sends_nothing_and_leaves_the_state_as_it_was(self):
+        self.bili.read_fail = "backend_timeout"
+        result, marks = self.verify({"id": WORK, "state": "SUBMISSION_VERIFIED", "pending_chapters": LONG, "chapters_state": "PENDING"})
+        self.assertEqual(("PENDING", "backend_timeout"), (result["chapters_state"], result["chapters_error"]))
+        self.assertEqual(0, self.sent())
+        self.assertEqual([], marks)
+
+    def test_a_stop_during_the_send_counts_as_not_sent(self):
+        self.bili.fail = "stopped"
+        result, _ = self.verify({"id": WORK, "state": "SUBMISSION_VERIFIED", "pending_chapters": LONG, "chapters_state": "PENDING"})
+        self.assertEqual("NOT_APPLIED", result["chapters_state"])
+
+    def test_with_nowhere_to_record_the_attempt_it_only_reads(self):
+        receipt = {"id": WORK, "state": "SUBMITTED", "pending_chapters": LONG, "chapters_state": "PENDING"}
+        self.assertEqual("PENDING", adapters.verify("bilibili", "default", receipt)["chapters_state"])
+        self.assertEqual(0, self.sent())
 
     def test_chapters_already_verified_are_not_sent_again(self):
         receipt = {"id": WORK, "pending_chapters": LONG, "chapters_state": "VERIFIED"}
-        adapters.verify("bilibili", "default", receipt)
+        self.verify(receipt)
         self.assertEqual([], self.bili.writes())
+
+    def test_the_verify_command_saves_the_attempt_in_the_ledger_before_sending(self):
+        ledger = Ledger()
+        key = ledger.claim("bilibili", "default", "a" * 64, {})
+        ledger.save(key, "SUBMITTED", {"receipt": {"id": WORK, "state": "SUBMITTED", "pending_chapters": LONG, "chapters_state": "PENDING"}})
+        ledger.close()
+        seen = []
+
+        def write(args, timeout=210, program=None):
+            if args[:3] == ["upload", "chapters", "set"]:
+                check = Ledger()
+                seen.append(check.get(key)["data"]["receipt"]["chapters_state"])
+                check.close()
+            return self.bili(args, timeout, program)
+        with patch.object(adapters, "bili", write):
+            result = cli.run_command(cli.parser().parse_args(["verify", key]))
+        self.assertEqual(["SUBMITTING"], seen)
+        self.assertEqual("VERIFIED", result["chapters_state"])
 
 
 class PlanTests(unittest.TestCase):

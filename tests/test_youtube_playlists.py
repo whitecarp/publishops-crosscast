@@ -42,7 +42,12 @@ class FakeYouTube:
         self.confirm = True
         self.keep = True
         self.dialog_title = None
-        self.other_box = False
+        self.other_box = True  # Studio's general comment box, which a real channel's page always shows outside every comment.
+        self.box_place = "comment"  # Where a reply or edit box opens: comment, thread, sibling, page or nowhere. Studio opens it in the comment.
+        self.box_delay = 0
+        self.boxes = 1
+        self.box_button = True
+        self.open_box = False
         self.says_empty = True
 
     async def html(self, route, body):
@@ -171,11 +176,13 @@ class FakeYouTube:
                         <ytcp-menu-service-item-renderer onclick="removing('{row['id']}')">删除</ytcp-menu-service-item-renderer>""" if row["own"]
                      else pin + f"""<ytcp-menu-service-item-renderer onclick="act('comment-remove/{row['id']}')">移除</ytcp-menu-service-item-renderer><ytcp-menu-service-item-renderer>举报</ytcp-menu-service-item-renderer>""")
             pinned_label = '<span class="pinned">置顶者：mychannel</span>' if row.get("pinned") else ""
-            rows += f"""<ytcp-comment-thread><ytcp-comment comment-id="{row['id']}">{pinned_label}<a id="name" href="http://www.youtube.com/@{handle}"><span class="author-text">{handle}</span></a><span class="published-time-text">now</span>
+            sibling = f'<ytcp-comment class="sibling" comment-id="{row["id"]}-reply"><div id="content-text">A reply</div></ytcp-comment>' if self.box_place == "sibling" else ""
+            already = '<ytcp-commentbox><textarea id="textarea"></textarea></ytcp-commentbox>' if self.open_box else ""
+            rows += f"""<ytcp-comment-thread><ytcp-comment comment-id="{row['id']}">{already}{pinned_label}<a id="name" href="http://www.youtube.com/@{handle}"><span class="author-text">{handle}</span></a><span class="published-time-text">now</span>
               <div id="content-text">{row['text']}</div>
               <ytcp-comment-toggle-button id="like-button"><ytcp-icon-button aria-label="赞" onclick="fetch('/youtubei/v1/comment/perform_comment_action?write=comment-like/{row['id']}', {{method: 'POST', body: '{{}}'}}); this.parentElement.isToggled = !this.parentElement.isToggled"></ytcp-icon-button></ytcp-comment-toggle-button>
               <div id="reply-button"><button onclick="replying(this.closest('ytcp-comment'))">回复</button></div>
-              <ytcp-icon-button id="action-menu-button" data-opens="menu-{row['id']}"></ytcp-icon-button><div id="menu-{row['id']}" hidden>{items}</div></ytcp-comment></ytcp-comment-thread>"""
+              <ytcp-icon-button id="action-menu-button" data-opens="menu-{row['id']}"></ytcp-icon-button><div id="menu-{row['id']}" hidden>{items}</div></ytcp-comment>{sibling}</ytcp-comment-thread>"""
         if self.other_box:
             rows += '<ytcp-commentbox><textarea id="textarea"></textarea><div id="submit-button"><button onclick="fetch(\'/youtubei/v1/comment/create_comment_reply?write=comment-reply/other\', {method: \'POST\', body: \'{\\"text\\": \\"wrong box\\"}\'})">Send</button></div></ytcp-commentbox>'
         states = json.dumps({row["id"]: row["liked"] for row in self.comments})
@@ -187,11 +194,20 @@ class FakeYouTube:
             for (const button of document.querySelectorAll('#like-button')) button.isToggled = states[button.closest('ytcp-comment').getAttribute('comment-id')];
             function removing(id) {{ {confirm} }}
             function act(write) {{ fetch('/youtubei/v1/comment/perform_comment_action?write=' + write, {{method: 'POST', body: '{{}}'}}); }}
-            function replying(row) {{ const box = document.createElement('ytcp-commentbox'); box.innerHTML = '<textarea id="textarea"></textarea><div id="submit-button"><button>Send</button></div>'; row.append(box);
-              box.querySelector('button').onclick = () => {{ fetch('/youtubei/v1/comment/create_comment_reply?write=comment-reply/' + row.getAttribute('comment-id'), {{method: 'POST', body: JSON.stringify({{text: box.querySelector('textarea').value}})}}); box.remove(); }}; }}
+            function openBox(row, word, send) {{
+              const homes = {{comment: row, thread: row.closest('ytcp-comment-thread'), sibling: row.closest('ytcp-comment-thread').querySelector('.sibling'), page: document.getElementById('box')}};
+              setTimeout(() => {{
+                if (!homes[{json.dumps(self.box_place)}]) return;
+                for (let i = 0; i < {self.boxes}; i++) {{
+                  const box = document.createElement('ytcp-commentbox'); box.innerHTML = '<textarea id="textarea"></textarea>' + ({json.dumps(self.box_button)} ? '<div id="submit-button"><button>' + word + '</button></div>' : '');
+                  homes[{json.dumps(self.box_place)}].append(box);
+                  if ({json.dumps(self.box_button)}) box.querySelector('button').onclick = () => {{ send(box.querySelector('textarea').value); box.remove(); }};
+                }}
+              }}, {self.box_delay});
+            }}
+            function replying(row) {{ openBox(row, 'Send', text => fetch('/youtubei/v1/comment/create_comment_reply?write=comment-reply/' + row.getAttribute('comment-id'), {{method: 'POST', body: JSON.stringify({{text}})}})); }}
             document.addEventListener('keydown', event => {{ if (event.key === 'Escape') for (const menu of document.querySelectorAll('[id^="menu-"]')) menu.hidden = true; }});
-            function editing(id) {{ document.getElementById('box').innerHTML = '<ytcp-commentbox><textarea id="textarea"></textarea><div id="submit-button"><button>Save</button></div></ytcp-commentbox>';
-              document.querySelector('#submit-button button').onclick = () => {{ fetch('/youtubei/v1/comment/update_comment?write=comment-edit/' + id, {{method: 'POST', body: JSON.stringify({{text: document.getElementById('textarea').value}})}}); document.getElementById('box').innerHTML = ''; }}; }}
+            function editing(id) {{ openBox(document.querySelector('ytcp-comment[comment-id="' + id + '"]'), 'Save', text => fetch('/youtubei/v1/comment/update_comment?write=comment-edit/' + id, {{method: 'POST', body: JSON.stringify({{text}})}})); }}
             </script>"""
 
 
@@ -210,7 +226,7 @@ class Browser(unittest.IsolatedAsyncioTestCase):
         self.page.set_default_timeout(8000)
         self.site = FakeYouTube()
         await self.page.route("**/*", self.site.handle)
-        for target in (patch.object(yt, "appears", side_effect=self.fast_appears), patch.object(yt, "QUIET_TICKS", 6)):
+        for target in (patch.object(yt, "appears", side_effect=self.fast_appears), patch.object(yt, "QUIET_TICKS", 6), patch.object(yt, "BOX_TICKS", 10)):
             target.start()
             self.addCleanup(target.stop)
 
@@ -515,6 +531,59 @@ class CommentTests(Browser):
         self.site.other_box = True
         await self.reply_to_first()
         self.assertEqual([("comment-reply", "c1", "Thanks")], self.site.writes)
+
+    async def test_a_box_that_is_slow_to_open_is_waited_for_and_another_box_is_not_taken_meanwhile(self):
+        self.site.other_box, self.site.box_delay = True, 1500
+        await self.reply_to_first()
+        self.assertEqual([("comment-reply", "c1", "Thanks")], self.site.writes)
+
+    async def assert_no_reply(self):
+        with self.assertRaises(VpubError) as caught:
+            await self.reply_to_first()
+        self.assertEqual("layout_changed", caught.exception.code)
+        self.assertEqual([], self.site.writes)
+        return caught.exception
+
+    async def test_a_box_that_never_opens_stops_even_with_one_elsewhere_on_the_page(self):
+        self.site.other_box, self.site.box_place = True, "nowhere"
+        error = await self.assert_no_reply()
+        self.assertIn("found 0, with 1 on the page", error.message)
+
+    async def test_a_box_elsewhere_on_the_page_is_never_taken_for_this_comments(self):
+        self.site.box_place = "page"
+        await self.assert_no_reply()
+
+    async def test_a_box_that_opens_under_another_comment_in_the_thread_is_never_used(self):
+        self.site.box_place = "sibling"
+        await self.assert_no_reply()
+
+    async def test_a_box_in_the_thread_but_outside_this_comment_is_never_used(self):
+        self.site.box_place = "thread"
+        await self.assert_no_reply()
+
+    async def test_two_boxes_for_this_comment_stop_it(self):
+        self.site.boxes = 2
+        error = await self.assert_no_reply()
+        self.assertIn("found 2", error.message)
+
+    async def test_a_box_with_no_send_button_of_its_own_never_borrows_another(self):
+        self.site.other_box, self.site.box_button = True, False
+        await self.assert_no_reply()
+
+    async def test_a_box_already_open_in_this_comment_stops_before_anything_is_pressed(self):
+        self.site.open_box = True
+        with self.assertRaises(VpubError) as caught:
+            await self.reply_to_first()
+        self.assertEqual("layout_changed", caught.exception.code)
+        self.assertIn("already open", caught.exception.message)
+        self.assertEqual([], self.site.writes)
+
+    async def test_an_edit_box_elsewhere_on_the_page_is_never_used(self):
+        self.site.box_place = "page"
+        with self.assertRaises(VpubError) as caught:
+            await yt.comment_action(self.page, CHANNEL, self.payload("edit", "c2", "New", text="Mine", receipt=self.receipt_file()))
+        self.assertEqual("layout_changed", caught.exception.code)
+        self.assertEqual([], self.site.writes)
 
     async def test_the_pin_state_is_read_from_the_comments_own_menu(self):
         self.assertIs(False, (await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])

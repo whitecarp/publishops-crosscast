@@ -2,14 +2,15 @@
 import asyncio
 from multiprocessing.connection import Client, Listener
 import os
+import subprocess
 import sys
 import tempfile
 from threading import Event, Thread
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from video_publisher import adapters, browser_broker as broker
+from video_publisher import adapters, browser_broker as broker, browser_runtime as rt
 from video_publisher.browser_runtime import profile_lock
 from video_publisher.core import VpubError, atomic_json, home
 
@@ -252,6 +253,165 @@ class BrokerTests(unittest.TestCase):
         self.assertEqual({}, broker.call(self.payload(), 5))
         server.wait()
         self.assertEqual("idle", server.exit)
+
+    def test_a_session_that_says_it_cannot_go_on_answers_first_and_then_ends(self):
+        server = Server(self.ok, usable=lambda: False)
+        self.assertEqual({"n": 1}, broker.call(self.payload(), 5))
+        server.wait()
+        self.assertEqual("error", server.exit)
+
+
+class HangingBrowserTests(unittest.TestCase):
+    """The whole session with a browser that stops answering. Only Chrome is replaced."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        env = patch.dict(os.environ, {"VPUB_HOME": temp.name})
+        env.start()
+        self.addCleanup(env.stop)
+        self.closing = []
+        self.done = {}
+
+    def session(self, context, signed_in=None, opened=None, dispatch=None):
+        """Runs the real session on a thread until it ends by itself, with only the browser's own calls faked."""
+        pw = MagicMock(__aenter__=AsyncMock(return_value=MagicMock()), __aexit__=AsyncMock(return_value=False))
+        self.dispatch = dispatch or AsyncMock(return_value={"finished": True})
+        targets = [patch("patchright.async_api.async_playwright", return_value=pw), patch.object(rt, "open_context", opened or AsyncMock(return_value=context)),
+                   patch.object(rt, "signed_in_page", signed_in or AsyncMock(return_value=(MagicMock(), "owner"))),
+                   patch("video_publisher.browser_worker.dispatch", self.dispatch),
+                   patch.object(rt, "CLOSE_SECONDS", 0.1), patch.object(broker, "SIGN_IN_SECONDS", 0.2)]
+        for target in targets:
+            target.start()
+            self.addCleanup(target.stop)
+
+        def main():
+            try:
+                asyncio.run(broker.run("x", "default", lambda: self.closing.append(True)))
+            except Exception as exc:
+                self.done["error"] = exc
+        thread = Thread(target=main, daemon=True)
+        thread.start()
+        return thread
+
+    def wait_for_session(self):
+        deadline = time.monotonic() + 10
+        while not broker.state_path("x", "default").exists():
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.01)
+
+    def lock_is_free(self):
+        return broker.wait_for_lock("x", "default", 0)
+
+    def test_a_save_that_never_answers_keeps_the_commands_answer_and_ends_the_session(self):
+        async def forever():
+            await asyncio.Event().wait()
+        context = MagicMock(storage_state=forever, close=AsyncMock())
+        thread = self.session(context)
+        self.wait_for_session()
+        self.assertEqual({"finished": True}, broker.call({"platform": "x", "account": "default", "action": "operations"}, 5))
+        thread.join(10)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual([True], self.closing)
+        self.dispatch.assert_awaited_once()
+        context.close.assert_awaited_once()
+        self.assertTrue(self.lock_is_free())
+        self.assertFalse(broker.state_path("x", "default").exists())
+
+    def test_a_client_that_gives_up_leaves_a_session_that_still_ends_by_itself_without_repeating_the_command(self):
+        seen = []
+
+        async def never(*args):
+            seen.append(args)
+            await asyncio.Event().wait()
+        context = MagicMock(close=AsyncMock(), storage_state=AsyncMock(return_value={"cookies": []}))
+        with patch("video_publisher.browser_worker.action_timeout", return_value=0.5):
+            thread = self.session(context, dispatch=never)
+            self.wait_for_session()
+            with self.assertRaises(VpubError) as caught:
+                broker.call({"platform": "x", "account": "default", "action": "operations"}, 0.1)
+            self.assertEqual("browser_session_interrupted", caught.exception.code)
+            thread.join(10)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(1, len(seen))
+        self.assertEqual([True], self.closing)
+        self.assertTrue(self.lock_is_free())
+
+    def test_a_sign_in_check_that_never_answers_at_the_start_ends_the_session(self):
+        async def forever(*args):
+            await asyncio.Event().wait()
+        context = MagicMock(close=AsyncMock())
+        thread = self.session(context, signed_in=forever)
+        thread.join(10)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual([True], self.closing)
+        context.close.assert_awaited_once()
+        self.assertTrue(self.lock_is_free())
+
+    def test_a_sign_in_check_that_never_answers_later_fails_that_command_and_ends_the_session(self):
+        answers = [(MagicMock(), "owner")]
+
+        async def first_then_never(*args):
+            if answers:
+                return answers.pop()
+            await asyncio.Event().wait()
+        context = MagicMock(close=AsyncMock(), storage_state=AsyncMock(return_value={"cookies": []}))
+        thread = self.session(context, signed_in=first_then_never)
+        self.wait_for_session()
+        with self.assertRaises(VpubError) as caught:
+            broker.call({"platform": "x", "account": "default", "action": "operations"}, 5)
+        self.assertEqual("browser_error", caught.exception.code)
+        thread.join(10)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual([True], self.closing)
+        self.assertTrue(self.lock_is_free())
+
+    def test_chrome_that_never_starts_ends_the_session_too(self):
+        async def forever(*args, **kwargs):
+            await asyncio.Event().wait()
+        thread = self.session(MagicMock(), opened=forever)
+        thread.join(10)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual([True], self.closing)
+        self.assertTrue(self.lock_is_free())
+
+
+class RealProcessHangTests(unittest.TestCase):
+    """A real separate process that hangs in every last step: only its exit guard can end it, and that lets go of the profile."""
+    SCRIPT = """
+import asyncio, sys
+from unittest.mock import AsyncMock, MagicMock, patch
+from video_publisher import browser_broker as broker, browser_runtime as rt
+
+async def forever(*args, **kwargs):
+    await asyncio.Event().wait()
+
+pw = MagicMock(__aenter__=AsyncMock(return_value=MagicMock()), __aexit__=forever)
+context = MagicMock(storage_state=forever, close=forever)
+with patch("patchright.async_api.async_playwright", return_value=pw), patch.object(rt, "open_context", new=AsyncMock(return_value=context)), \\
+        patch.object(rt, "signed_in_page", new=AsyncMock(return_value=(MagicMock(), "owner"))), \\
+        patch("video_publisher.browser_worker.dispatch", new=AsyncMock(return_value={"finished": True})), patch.object(rt, "CLOSE_SECONDS", 0.2):
+    asyncio.run(broker.run("x", "default", lambda: rt.exit_soon(1)))
+"""
+
+    def test_the_next_command_gets_the_answer_the_profile_and_a_clean_start(self):
+        with tempfile.TemporaryDirectory() as temp:
+            env = patch.dict(os.environ, {"VPUB_HOME": temp})
+            env.start()
+            self.addCleanup(env.stop)
+            process = subprocess.Popen([sys.executable, "-c", self.SCRIPT], env=dict(os.environ))
+            self.addCleanup(process.kill)
+            deadline = time.monotonic() + 60
+            while not broker.state_path("x", "default").exists():
+                self.assertLess(time.monotonic(), deadline)
+                self.assertIsNone(process.poll())
+                time.sleep(0.05)
+            self.assertEqual({"finished": True}, broker.call({"platform": "x", "account": "default", "action": "operations"}, 30))
+            process.wait(30)
+            self.assertTrue(broker.wait_for_lock("x", "default", 5))
+            with patch.object(broker, "start", return_value=MagicMock(poll=lambda: 1)) as start:
+                self.assertIsNone(broker.call({"platform": "x", "account": "default", "action": "operations"}, 5))
+            start.assert_called_once()
 
 
 if __name__ == "__main__":

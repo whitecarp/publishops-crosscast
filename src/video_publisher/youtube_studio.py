@@ -18,6 +18,8 @@ SAVE_TITLES = "rows => rows.map(row => (row.innerText || '').split('\\n').map(li
 CREATE_BUTTON = 'button[aria-label="Create"], button[aria-label="创建"], button[aria-label="建立"]'
 CONFIRM_BUTTON = "ytcp-confirmation-dialog #confirm-button, ytcp-dialog #confirm-button, tp-yt-paper-dialog #confirm-button"
 EMPTY_PLAYLIST = ".no-content.ytcp-playlist-video-section-content"
+COMMENT_EDITOR = "ytcp-commentbox textarea#textarea"
+BOX_TICKS = 40  # How long a comment's box gets to open, in quarters of a second.
 PRIVACY = {"private": "PRIVATE", "unlisted": "UNLISTED", "public": "PUBLIC"}
 EDIT_ITEM = re.compile(r"^\s*(Edit|修改|編輯)\s*$")
 DELETE_ITEM = re.compile(r"^\s*(Delete|删除|刪除)\s*$")
@@ -219,20 +221,33 @@ def find_reply(items, text, before, parent):
     return [c for c in items if c["is_owner"] and c["id"] not in before and normalize(c["text"]) == normalize(text) and c["parent_id"] == parent]
 
 
-async def comment_box(page, row, label):
-    """The reply or edit box that belongs to this comment, and its own send button. Studio can show other boxes on the page."""
-    thread = row.locator("xpath=ancestor::ytcp-comment-thread[1]")
+async def shown_boxes(scope):
+    return [editor for editor in await scope.locator(COMMENT_EDITOR).all() if await editor.is_visible()]
+
+
+async def boxes_in(row, target):
+    """The boxes whose nearest comment is this one. A reply nested inside it has boxes of its own."""
+    return [editor for editor in await shown_boxes(row) if await editor.evaluate("e => e.closest('ytcp-comment')?.getAttribute('comment-id') ?? null") == target]
+
+
+async def comment_box(page, row, label, press):
+    """Press this comment's own control, then take the box that opened inside this comment and that box's own send button.
+
+    Studio nests each reply and edit box in its comment and keeps a general comment box elsewhere on the page. No other
+    box is ever used, so one that does not appear stops the command."""
+    target = await row.get_attribute("comment-id")
+    if await boxes_in(row, target):
+        raise VpubError("layout_changed", f"A box was already open in this comment, so the {label} could not be told apart; nothing was sent.", "Inspect the existing page before retrying.")
+    await press()
     found = []
-    for _ in range(20):
-        for scope in (row, thread, page):
-            found = [editor for editor in await scope.locator("ytcp-commentbox textarea#textarea").all() if await editor.is_visible()]
-            if found:
-                break
+    for _ in range(BOX_TICKS):
+        found = await boxes_in(row, target)
         if found:
             break
         await page.wait_for_timeout(250)
     if len(found) != 1:
-        raise VpubError("layout_changed", f"Expected one visible {label}; found {len(found)}.", "Inspect the existing page before retrying. No final submission is repeated.")
+        raise VpubError("layout_changed", f"Expected one visible {label} in this comment; found {len(found)}, with {len(await shown_boxes(page))} on the page. Nothing was sent.",
+                        "Inspect the existing page before retrying. No final submission is repeated.")
     box = found[0].locator("xpath=ancestor::ytcp-commentbox[1]")
     return found[0], await unique_visible(box.locator("#submit-button button"), label + " send")
 
@@ -268,8 +283,7 @@ async def operations(page, identity, payload):
     if len([c for c in current if c["id"] == target["id"] and normalize(c["text"]) == normalize(target["text"])]) != 1:
         raise VpubError("comment_changed", "The exact comment is not visible or changed; collect it again.")
     row = page.locator(f'ytcp-comment[comment-id="{target["id"]}"]').first
-    await row.locator("#reply-button button").first.click(timeout=15000)
-    editor, button = await comment_box(page, row, "reply editor")
+    editor, button = await comment_box(page, row, "reply editor", lambda: row.locator("#reply-button button").first.click(timeout=15000))
     await editor.fill(request["text"])
     if await editor.input_value() != request["text"]:
         raise VpubError("metadata_mismatch", "The reply box did not keep the intended text; nothing was sent.")
@@ -697,8 +711,7 @@ async def comment_action(page, identity, payload):
         return sent()
     if kind == "edit":
         item = await comment_menu_item(page, row, EDIT_ITEM)
-        await item.click(timeout=10000)
-        editor, button = await comment_box(page, row, "comment editor")
+        editor, button = await comment_box(page, row, "comment editor", lambda: item.click(timeout=10000))
         await editor.fill(request["desired"])
         if await editor.input_value() != request["desired"]:
             raise VpubError("metadata_mismatch", "The comment box did not keep the intended text; nothing was sent.")

@@ -31,9 +31,11 @@ IDLE_SECONDS = 300
 MAX_LIFETIME_SECONDS = 3600
 CONNECT_SECONDS = 15
 BUSY_SECONDS = 180  # How long a command waits for the one the session is running now.
+SIGN_IN_SECONDS = 140  # The slowest sign-in check. A browser that takes longer has stopped answering.
 START_SECONDS = 150  # Longer than the slowest sign-in check, so a slow start is not mistaken for a failure.
 CLOSING_SECONDS = 100  # A session that just ended may still be closing Chrome and holding the profile lock; it ends by itself within this.
 RELEASE_SECONDS = 30
+LAST_COMMAND_SECONDS = 900  # What a command started just before the lifetime limit can still take, including closing.
 
 
 def enabled():
@@ -204,8 +206,8 @@ def accept_later(listener):
     return future
 
 
-async def serve(listener, handle, platform, *, idle=None, lifetime=MAX_LIFETIME_SECONDS, poll_seconds=5):
-    """Answer one client at a time. Return after idle, lifetime, stop, shutdown or any error."""
+async def serve(listener, handle, platform, *, idle=None, lifetime=MAX_LIFETIME_SECONDS, poll_seconds=5, usable=lambda: True):
+    """Answer one client at a time. Return after idle, lifetime, stop, shutdown, any error, or once the browser is no longer usable."""
     idle = idle_seconds() if idle is None else idle
     started = last = time.monotonic()
     pending = None
@@ -240,7 +242,7 @@ async def serve(listener, handle, platform, *, idle=None, lifetime=MAX_LIFETIME_
                                               "message": exc.message if isinstance(exc, VpubError) else failure_message(exc),
                                               "hint": exc.hint if isinstance(exc, VpubError) else "Inspect the original work and receipt before retrying; no automatic resubmission."}}
             conn.send_bytes(json.dumps(out, ensure_ascii=False).encode("utf-8"))
-            if failed:
+            if failed or not usable():
                 return "error"  # the page state is unknown, so the next command starts clean
         except (OSError, EOFError, ValueError):
             return "error"
@@ -260,13 +262,14 @@ async def run(platform, account, on_closing=None):
     stop_check(platform)
     with runtime.profile_lock(platform, account):
         async with async_playwright() as pw:
-            context = await runtime.open_context(pw, platform, account)
+            context, usable = None, True
             try:
-                page, owner = await runtime.signed_in_page(context, platform)
+                context = await asyncio.wait_for(runtime.open_context(pw, platform, account), SIGN_IN_SECONDS)
+                page, owner = await asyncio.wait_for(runtime.signed_in_page(context, platform), SIGN_IN_SECONDS)
                 checked = time.monotonic()
 
                 async def handle(payload):
-                    nonlocal owner, checked, page
+                    nonlocal owner, checked, page, usable
                     stop_check(platform)
                     if (payload.get("platform"), payload.get("account"), payload.get("action") in REUSABLE) != (platform, account, True):
                         raise VpubError("session_scope", "This session cannot run that command.")
@@ -275,15 +278,15 @@ async def run(platform, account, on_closing=None):
                         validate(payload)
                     action = payload["action"]
                     if action not in CACHED_IDENTITY or time.monotonic() - checked > IDENTITY_SECONDS:
-                        page, owner = await runtime.signed_in_page(context, platform)
+                        page, owner = await asyncio.wait_for(runtime.signed_in_page(context, platform), SIGN_IN_SECONDS)
                         checked = time.monotonic()
                     else:
-                        await runtime.risk_check(page)
+                        await asyncio.wait_for(runtime.risk_check(page), SIGN_IN_SECONDS)
                     runtime.check_identity(owner, payload.get("expected_identity"))
                     if action == "status":
                         return {"logged_in": True, "identity": owner, "account": account, "method": "browser"}
                     result = await asyncio.wait_for(dispatch(page, platform, owner, payload), timeout=action_timeout(action))
-                    await runtime.save_session(context, platform, account)
+                    usable = await runtime.keep_session(context, platform, account)
                     return result
 
                 key = secrets.token_bytes(32)
@@ -293,13 +296,14 @@ async def run(platform, account, on_closing=None):
                     atomic_json(path, {"address": address, "key": key.hex(), "pid": os.getpid()})
                     if sys.platform != "win32":
                         path.chmod(0o600)
-                    await serve(listener, handle, platform)
+                    await serve(listener, handle, platform, usable=lambda: usable)
                 finally:
                     path.unlink(missing_ok=True)
             finally:
                 if on_closing:
                     on_closing()
-                await runtime.close_context(context, platform, account)
+                if context is not None:
+                    await runtime.close_context(context, platform, account)
 
 
 def main():
@@ -315,4 +319,7 @@ def main():
 
 
 if __name__ == "__main__":
+    from .browser_runtime import exit_soon
+    # For anything not foreseen: no session outlives its limit and keeps the profile locked.
+    exit_soon(MAX_LIFETIME_SECONDS + LAST_COMMAND_SECONDS)
     main()
