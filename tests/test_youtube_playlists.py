@@ -49,6 +49,9 @@ class FakeYouTube:
         self.box_button = True
         self.open_box = False
         self.keep_row = False  # Whether a deleted comment stays on the open page.
+        # From a field check: pinning opens Studio's confirmation, whose own element holds a real button.
+        self.pin_ready_after = 0
+        self.pin_sent_after = 0
         self.says_empty = True
 
     async def html(self, route, body):
@@ -172,7 +175,8 @@ class FakeYouTube:
         rows = ""
         for row in self.comments:
             handle = "mychannel" if row["own"] else "viewer"
-            pin = f"""<ytcp-menu-service-item-renderer onclick="act('comment-pin/{row['id']}')">{'取消置顶' if row.get('pinned') else '置顶'}</ytcp-menu-service-item-renderer>"""
+            pin_choice = f"act('comment-pin/{row['id']}')" if row.get("pinned") else f"pinning('{row['id']}')"
+            pin = f"""<ytcp-menu-service-item-renderer onclick="{pin_choice}">{'取消置顶' if row.get('pinned') else '置顶'}</ytcp-menu-service-item-renderer>"""
             items = (pin + f"""<ytcp-menu-service-item-renderer onclick="editing('{row['id']}')">修改</ytcp-menu-service-item-renderer>
                         <ytcp-menu-service-item-renderer onclick="removing('{row['id']}')">删除</ytcp-menu-service-item-renderer>""" if row["own"]
                      else pin + f"""<ytcp-menu-service-item-renderer onclick="act('comment-remove/{row['id']}')">移除</ytcp-menu-service-item-renderer><ytcp-menu-service-item-renderer>举报</ytcp-menu-service-item-renderer>""")
@@ -190,7 +194,15 @@ class FakeYouTube:
         confirm = "document.getElementById('sure').hidden = false; document.getElementById('sure').dataset.comment = id" if self.confirm else "fetch('/youtubei/v1/comment/perform_comment_action?write=comment-delete/' + id, {method: 'POST', body: '{}'})"
         return f"""{rows}<div id="box"></div>
             <ytcp-confirmation-dialog id="sure" hidden><button id="confirm-button" onclick="fetch('/youtubei/v1/comment/perform_comment_action?write=comment-delete/' + document.getElementById('sure').dataset.comment, {{method: 'POST', body: '{{}}'}}); document.getElementById('sure').hidden = true; leave(document.getElementById('sure').dataset.comment)">Delete</button></ytcp-confirmation-dialog>
+            <ytcp-confirmation-dialog id="pin-sure" hidden><tp-yt-paper-dialog id="dialog" role="dialog"><ytcp-button id="cancel-button"><button>取消</button></ytcp-button><ytcp-button id="confirm-button"><button id="pin-go">置顶</button></ytcp-button></tp-yt-paper-dialog></ytcp-confirmation-dialog>
             <script>{menu_script()}
+            function pinning(id) {{
+              const dialog = document.getElementById('pin-sure'), go = document.getElementById('pin-go');
+              dialog.hidden = false;
+              go.disabled = {json.dumps(self.pin_ready_after > 0)};
+              setTimeout(() => {{ go.disabled = false; }}, {self.pin_ready_after});
+              go.onclick = () => {{ dialog.hidden = true; setTimeout(() => act('comment-pin/' + id), {self.pin_sent_after}); }};
+            }}
             const states = {states};
             for (const button of document.querySelectorAll('#like-button')) button.isToggled = states[button.closest('ytcp-comment').getAttribute('comment-id')];
             function removing(id) {{ {confirm} }}
@@ -228,7 +240,7 @@ class Browser(unittest.IsolatedAsyncioTestCase):
         self.page.set_default_timeout(8000)
         self.site = FakeYouTube()
         await self.page.route("**/*", self.site.handle)
-        for target in (patch.object(yt, "appears", side_effect=self.fast_appears), patch.object(yt, "QUIET_TICKS", 6), patch.object(yt, "BOX_TICKS", 10)):
+        for target in (patch.object(yt, "appears", side_effect=self.fast_appears), patch.object(yt, "QUIET_TICKS", 6), patch.object(yt, "PIN_TICKS", 6), patch.object(yt, "BOX_TICKS", 10)):
             target.start()
             self.addCleanup(target.stop)
 
@@ -608,6 +620,24 @@ class CommentTests(Browser):
         result = await yt.comment_action(self.page, CHANNEL, self.payload("pin", receipt=path))
         self.assertEqual(("COMMENT_UNVERIFIED", 1), (result["state"], result["platform_writes"]))
         self.assertEqual([("comment-pin", "c1")], self.site.writes)
+        self.assertEqual(["/youtubei/v1/comment/perform_comment_action"], result["page_requests"])
+
+    async def test_a_confirmation_that_is_not_ready_yet_is_waited_for(self):
+        self.site.pin_ready_after = 800
+        await yt.comment_action(self.page, CHANNEL, self.payload("pin", receipt=self.receipt_file()))
+        self.assertEqual([("comment-pin", "c1")], self.site.writes)
+
+    async def test_it_stays_long_enough_for_a_pin_that_goes_out_late(self):
+        self.site.pin_sent_after = 1500
+        with patch.object(yt, "QUIET_TICKS", 2):
+            await yt.comment_action(self.page, CHANNEL, self.payload("pin", receipt=self.receipt_file()))
+        self.assertEqual([("comment-pin", "c1")], self.site.writes)
+
+    async def test_a_pin_with_no_confirmation_is_not_called_sent(self):
+        with patch.object(yt, "CONFIRM_BUTTON", "#never"), self.assertRaises(VpubError) as caught:
+            await yt.comment_action(self.page, CHANNEL, self.payload("pin", receipt=self.receipt_file()))
+        self.assertEqual("layout_changed", caught.exception.code)
+        self.assertEqual([], self.site.writes)
 
     async def test_unpinning_uses_the_other_menu_item(self):
         self.site.comments[0]["pinned"] = True

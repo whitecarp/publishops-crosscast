@@ -33,6 +33,8 @@ TABLE_PAGES = 20
 PAGE_REQUESTS = "/youtubei/v1/"
 QUIET_TICKS = 10
 MOST_TICKS = 90
+# A pin may go out with nothing else in flight, so the page gets this many half-seconds first: twice the longest delay seen from Studio.
+PIN_TICKS = 24
 METRICS = {"views": {"Views", "观看次数", "觀看次數"},
            "watch_time_hours": {"Watch time (hours)", "观看时长（小时）", "觀看時長（小時）", "觀看時間 (小時)"},
            "subscribers": {"Subscribers", "订阅人数", "訂閱人數"}}
@@ -108,18 +110,20 @@ async def appears(page, target, seconds):
     return False
 
 
-async def act_and_settle(page, act):
-    """Do something, then stay until the page has finished its own requests. Whether it worked is for the read-back to say.
+async def act_and_settle(page, act, least=0):
+    """Do something, then stay until the page has finished its own requests, and for at least `least` half-seconds.
+    Whether it worked is for the read-back to say. Returns the addresses of the requests it saw, without their queries.
 
     On a real channel Studio greyed Save out at once and sent the change about 6 seconds later, after its own checks.
     A delete was answered at once, then sent again after those checks. Leaving at either point cancelled the change.
     """
-    busy = {"open": 0, "seen": 0}
+    busy = {"open": 0, "seen": 0, "paths": set()}
 
     def sent(request):
         if PAGE_REQUESTS in request.url:
             busy["open"] += 1
             busy["seen"] += 1
+            busy["paths"].add(urlsplit(request.url).path)
 
     def ended(request):
         if PAGE_REQUESTS in request.url:
@@ -131,12 +135,13 @@ async def act_and_settle(page, act):
     try:
         await act()
         quiet, last = 0, busy["seen"]
-        for _ in range(MOST_TICKS):
+        for tick in range(1, MOST_TICKS + 1):
             await page.wait_for_timeout(500)
             quiet = quiet + 1 if not busy["open"] and busy["seen"] == last else 0
             last = busy["seen"]
-            if quiet >= QUIET_TICKS:
-                return
+            if quiet >= QUIET_TICKS and tick >= least:
+                break
+        return sorted(busy["paths"])
     finally:
         for event, listener in listeners:
             page.remove_listener(event, listener)
@@ -436,14 +441,17 @@ async def playlist_title(page, identity, playlist):
     return found[0]["title"]
 
 
-async def studio_confirm(page):
-    """Studio may ask once more before deleting. Confirms it if it does."""
+async def studio_confirm(page, needed=False):
+    """Studio may ask once more before a change. Confirms it if it does, on the real button inside Studio's own, because only that one can say it isn't ready yet."""
+    real = ", ".join(f"{place} button" for place in CONFIRM_BUTTON.split(", "))
     for _ in range(12):
-        button = await visible(page.locator(CONFIRM_BUTTON))
+        button = await visible(page.locator(real)) or await visible(page.locator(CONFIRM_BUTTON))
         if button:
             await button.click(timeout=10000)
             return
         await page.wait_for_timeout(500)
+    if needed:
+        raise VpubError("layout_changed", "YouTube did not ask for the confirmation it normally asks for here, so this was not confirmed.")
 
 
 async def wait_ready(page, button, tries=20):
@@ -735,11 +743,14 @@ async def comment_action(page, identity, payload):
 
         async def choose():
             await item.click(timeout=10000)
-            await studio_confirm(page)
+            # Pinning was seen to ask. Unpinning has not been seen yet, so it may or may not.
+            await studio_confirm(page, needed=kind == "pin" and request["desired"])
 
-        await act_and_settle(page, choose)
+        requests = await act_and_settle(page, choose, PIN_TICKS if kind == "pin" else 0)
         result = sent()
-        if kind != "pin":
+        if kind == "pin":
+            result["page_requests"] = requests
+        else:
             # Whether it left this page after the one press, which says more than a later read of a list that only loads in part.
             for _ in range(10):
                 result["gone_from_page"] = not await row.count()
