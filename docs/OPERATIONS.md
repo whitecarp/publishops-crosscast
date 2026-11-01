@@ -21,7 +21,7 @@
 ## 0.16.0：升級時的變化
 
 - **官方 API 路徑改為獨立的付費附加元件。** 涵蓋 X、Instagram 與 YouTube。未安裝時，YouTube、抖音、Instagram 與 X 都使用背景瀏覽器。
-- **YouTube 作品、數據、留言與編輯可透過其官方頁面免費使用。** 未安裝附加元件時，`vpub works`、`vpub stats`、`vpub comments list`、`vpub comments reply`、`vpub comments like`、`vpub engage like`、`vpub engage save`、`vpub playlist` 與 `vpub edit` 會在背景瀏覽器中執行，頻道自己留言的 `vpub comments edit` 與 `vpub comments delete` 也一樣。讀取，建立、重新命名、刪除私人播放清單並在其中新增和移除影片，替影片按讚和收藏、替留言按讚（都已復原），回覆留言，以及修改自己的留言再改回去，都已在真實頻道上檢查過。置頂留言試過一次，沒能確認成功；修改播放清單的說明或公開範圍在儲存前就失敗了，之後還沒重試；刪除留言還沒用現在更嚴格的「確實刪掉了」檢查試過；其他會造成變更的操作尚未試過。留言為 Studio 載入的內容，並非完整歷史。調整播放清單順序與待審核留言佇列需要附加元件。
+- **YouTube 作品、數據、留言與編輯可透過其官方頁面免費使用。** 未安裝附加元件時，`vpub works`、`vpub stats`、`vpub comments list`、`vpub comments reply`、`vpub comments like`、`vpub engage like`、`vpub engage save`、`vpub playlist` 與 `vpub edit` 會在背景瀏覽器中執行，頻道自己留言的 `vpub comments edit` 與 `vpub comments delete` 也一樣。讀取；建立、重新命名、刪除私人播放清單並在其中新增和移除影片；替影片按讚和收藏、替留言按讚（都已復原）；回覆留言；以及修改自己的留言再改回去，都已在真實頻道上檢查過。置頂留言試過一次，沒能確認成功；修改播放清單的說明或公開範圍在儲存前就失敗了，之後還沒重試；刪除留言還沒用現在更嚴格的「確實刪掉了」檢查試過；其他會造成變更的操作尚未試過。留言為 Studio 載入的內容，並非完整歷史。調整播放清單順序與待審核留言佇列需要附加元件。
 - **YouTube 新增免費背景路徑。** `vpub auth login youtube --method browser` 在專用 Chrome 視窗登入一次；之後經由 YouTube Studio 在背景發布，Windows 上使用隱藏桌面，不會出現視窗；設計上也不會留下工作列圖示，但工作列尚未在真實機器上檢查過。可依確切標題加入播放清單（`playlist_titles`），也可設定排程（依 Studio 顯示的時區，沒有顯示時依這台電腦的時區）；兩者都在最後儲存前讀回確認。第一次真實嘗試停在播放清單選擇器，之後已修改，兩者都還沒在真實帳號上確認過。播放清單 ID（`playlist_ids`）只能走付費 API。`--draft-only` 會在最後儲存前停止。
 - **同樣移至附加元件：** 營運匯報（`vpub report`）、完整讀取（`vpub read-all`）與郵件提醒（`vpub notify`）。
 - **內含 bili-cli。** 安裝 CrossCast 時會一併提供 `bili` 指令，版本為 1.2.1。如果仍裝有舊版獨立的 `bili-agent`，`vpub doctor` 會說明如何移除。
@@ -160,7 +160,7 @@ vpub ops sync --platforms youtube,douyin,instagram,x --full
 
 `discover` 按頁數、數量預算探索已登入帳號的作品；B站／YouTube 使用原有分頁介面，另外三站使用官方頁面的翻頁或捲動。瀏覽器結果保留 `complete: false` 與停止原因，不把沒有可見續頁當成完整歷史。它只建立本機目錄，不自動接管全部作品。
 
-`adopt` 重新核驗指定作品的歸屬，再加入追蹤清單。YouTube／B站使用原有帳號核驗；抖音核對創作者作品卡與確切詳情 ID；Instagram 核對指定作品的作者編輯入口；X 核對確切帖文連結與作者。可接管以前手動發布的作品，單獨保存接管證據，沒有偽造上傳回執或重新發布。這是評論／數據營運接管，不會自動授權刪除或修改影片。
+`adopt` 重新核驗指定作品的歸屬，再加入追蹤清單。YouTube／B站使用原有帳號核驗；抖音核對創作者作品卡與確切詳情 ID；Instagram 核對指定作品的作者編輯入口；X 核對確切帖文連結與作者。可接管以前手動發布的作品，單獨保存接管證據，沒有偽造上傳回執或重新發布。這會啟用評論和數據操作，以及用 `vpub edit-work` 做的修改，不會自動授權刪除，也不會更動影片本身。在真實帳號上，接管一部 B站作品和一則 X 貼文已確認；接管一部抖音作品時以 `works_layout_unverified` 停下（作品清單沒有及時載入），之後的修正還沒試過。
 
 `ops sync` 預設在 **300 秒**內復用相同帳號、作品、讀取範圍的成功結果。`CACHED` 保留實際觀察時間，不表示剛查過平台；`--min-interval 0` 或 `--full` 強制讀取。`changes` 列出本輪新觀察及正文變動的評論；首次觀察是基線，不代表剛收到。既有評論的處理標記與歷史仍保留。數據比較沿用來源、單位與精確數值檢查。這是有時效的增量巡檢，不是平台推送或完整歷史同步。
 
