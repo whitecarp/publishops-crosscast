@@ -70,7 +70,7 @@ def home():
 
 def when_the_file_is_free(step):
     """On Windows a file being replaced refuses to open for a moment, and one being read refuses to be replaced. A CI run saw a second attempt at a message stop on this while a press was being recorded. Neither lasts."""
-    for pause in (0.02, 0.05, 0.1, 0.2, 0.5, 1):
+    for pause in (0.02, 0.05, 0.1, 0.2, 0.5, 1, 2):
         try:
             return step()
         except PermissionError:
