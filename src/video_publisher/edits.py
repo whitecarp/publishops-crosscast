@@ -123,6 +123,24 @@ def run_adopted(platform, work, patch_path, dry_run=False, verify_only=False, pe
         return {'platform':platform,'work_id':work,**result}
 
 
+def found_after_edit(platform, patch):
+    """What the next check of this work should find, now an edit is confirmed. A review found YouTube's next check still looked for the old description. What it said before stays in the edit's history."""
+    return {'title':patch['title'],
+            **({'expected_text':patch['post_text']} if 'post_text' in patch else {}),
+            **({'expected_text':patch['description']} if platform=='youtube' else {}),
+            **({'expected_text':patch['title'],'expected_caption':patch['caption']} if platform=='douyin' else {})}
+
+
+def keep_resume_in_step(record, platform, work, owner, changes):
+    """A browser attempt keeps its own copy of its receipt, which resume reads, so it must not go back to the old words. What it says about the upload and the press stays as it is."""
+    plan_hash=record.get('plan_hash') or record.get('approved_plan',{}).get('confirmation')
+    durable=home()/'browser-receipts'/f'{plan_hash}-{platform}.json'
+    if plan_hash and record['receipt'].get('method')=='browser' and durable.exists():
+        saved=read_json(durable)
+        if saved.get('id')==work and saved.get('identity')==owner:
+            atomic_json(durable,{**saved,**changes})
+
+
 def run(key, patch_path, dry_run=False, verify_only=False, person_approved=False):
     with publication_lock():
         ledger=Ledger()
@@ -136,11 +154,13 @@ def run(key, patch_path, dry_run=False, verify_only=False, person_approved=False
             result=send(row['platform'],row['account'],actual,receipt,key,patch,dry_run,verify_only,person_approved)
             if dry_run: return result
             edit_id=digest([key,patch])
-            record.setdefault('edits',[]).append({'edit_id':edit_id,'patch':patch,'result':result,'at':now()})
-            if result.get('state')=='EDIT_VERIFIED' and 'description' in patch:
+            record.setdefault('edits',[]).append({'edit_id':edit_id,'patch':patch,'result':result,'at':now(),'previous_receipt':deepcopy(receipt)})
+            confirmed=result.get('state')=='EDIT_VERIFIED' and 'description' in patch
+            changes=found_after_edit(row['platform'],patch) if confirmed else {}
+            if confirmed:
                 record['options'].update({k:v for k,v in patch.items() if k!='expected_identity'})
-                if 'post_text' in patch: record['receipt']['expected_text']=patch['post_text']
-                record['receipt']['title']=patch['title']
+                record['receipt'].update(changes)
             ledger.save(key,row['state'],record)
+            if confirmed: keep_resume_in_step(record,row['platform'],work_id,actual,changes)
             return {'key':key,**result}
         finally: ledger.close()

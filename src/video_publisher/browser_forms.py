@@ -11,8 +11,8 @@ from .categories import STUDIO_CATEGORIES
 from .core import VpubError, douyin_caption, stop_check
 from .browser_runtime import risk_check, unique_visible, visible
 from .progress import stage
-from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, before_a_file_goes_up, normalize, studio_offsets, studio_read, studio_style,
-                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, douyin_card_stamp, douyin_card_status, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
+from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style,
+                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, douyin_card_stamp, douyin_card_status, douyin_new_card_unprovable, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
 
 X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
 YT_DIALOG = 'ytcp-uploads-dialog'
@@ -49,7 +49,7 @@ async def finish(page, tx, before):
                 return tx.save(**DOUYIN_SCHEDULED)
         fresh = [v for k, v in found.items() if k not in before]
         matches = [v for v in fresh if tx.options['title'] in v.get('text', '')]
-        candidates = matches
+        candidates = [] if douyin_new_card_unprovable(tx.platform, tx.receipt) else matches
         if len(candidates) == 1:
             item = candidates[0]
             receipt = tx.save(state='SUBMITTED_UNVERIFIED', phase='readback', id=item['id'], url=item['url'])
@@ -185,7 +185,7 @@ async def publish_x(page, tx):
         inp = page.locator('input[type=file][accept="image/jpeg,image/jpg,image/png"]')
         if await inp.count() != 1:
             raise VpubError('layout_changed', 'Media Studio thumbnail input is ambiguous.')
-        await inp.set_input_files(tx.cover())
+        await choose_file(page, inp, tx.cover())
         choose = page.locator('button').filter(has_text=re.compile(r'^\s*Choose\s*$'))
         # Uploaded images are saved immediately; Choose is for a video frame.
         await choose.wait_for(state='hidden', timeout=30000)
@@ -250,9 +250,7 @@ async def publish_instagram(page, tx):
     if tx.cover():
         cover_button = page.get_by_text('Select from computer', exact=True)
         await cover_button.wait_for(state='visible', timeout=60000)
-        async with page.expect_file_chooser(timeout=15000) as chosen:
-            await cover_button.click()
-        await (await chosen.value).set_files(tx.cover())
+        await choose_in_picker(page, cover_button, tx.cover())
         await page.wait_for_timeout(2000)
         tx.save(cover={'state':'UI_ACCEPTED', 'source':'production_artwork', 'remote_pixels_verified':False})
     await page.get_by_role('button', name='Next', exact=True).click()
@@ -404,7 +402,7 @@ async def finish_douyin_form(page, tx, before):
         dialog = await unique_visible(page.locator('[role=dialog]'), 'Douyin cover editor')
         await dialog.get_by_text('上传封面', exact=True).wait_for(timeout=20000)
         area = await unique_visible(dialog.locator('.semi-upload').filter(has_text='点击上传文件或拖拽文件到这里'), 'Douyin cover upload area')
-        await area.locator('input.semi-upload-hidden-input').set_input_files(path)
+        await choose_file(page, area.locator('input.semi-upload-hidden-input'), path)
         await page.wait_for_timeout(1500)
         done = dialog.get_by_role('button', name='完成', exact=True)
         await wait_until(page, lambda: enabled(done), seconds=90, label='Douyin cover ready')
@@ -644,8 +642,7 @@ async def publish_youtube(page, tx):
     await page.goto(f'https://studio.youtube.com/channel/{tx.identity}/videos/upload?d=ud', wait_until='domcontentloaded', timeout=60000)
     picker = page.locator('ytcp-uploads-file-picker input[type="file"]')
     await wait_until(page, picker.count, seconds=60, label='YouTube upload dialog')
-    await before_a_file_goes_up(page)
-    await picker.first.set_input_files(str(tx.media()), timeout=60000)
+    await choose_file(page, picker.first, tx.media())
     tx.save(phase='uploading')
     title_box = page.locator(f'{YT_DIALOG} #title-textarea #textbox')
     await wait_until(page, lambda: visible(title_box), seconds=180, label='YouTube details form')
@@ -661,7 +658,7 @@ async def publish_youtube(page, tx):
         if not await page.locator(f'{YT_DIALOG} input#file-loader').count():
             raise VpubError('cover_unavailable', 'YouTube offers no custom thumbnail on this channel yet. The upload is kept as a draft; nothing was published.',
                             'Custom thumbnails need a verified channel. Verify it in YouTube Studio, or plan without a cover.')
-        await page.locator(f'{YT_DIALOG} input#file-loader').first.set_input_files(tx.cover(), timeout=60000)
+        await choose_file(page, page.locator(f'{YT_DIALOG} input#file-loader').first, tx.cover())
         await page.wait_for_timeout(2000)
         tx.save(cover={'state': 'UI_ACCEPTED', 'source': 'production_artwork', 'remote_pixels_verified': False})
     await yt_radio(page, 'VIDEO_MADE_FOR_KIDS_MFK' if options['made_for_kids'] else 'VIDEO_MADE_FOR_KIDS_NOT_MFK', 'audience_unverified', 'audience')

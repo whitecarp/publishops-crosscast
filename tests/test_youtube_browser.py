@@ -479,7 +479,7 @@ class ReadBackTests(Temporary):
         self.assertEqual(["visibility"], self.verify(page)["readback_differs"])
 
     def test_a_schedule_and_playlists_are_part_of_the_read_back(self):
-        receipt = {**self.receipt, "schedule": {"date": [2030, 1, 1], "time": [8, 0]}, "playlists": ["Trips"]}
+        receipt = {**self.receipt, "schedule": {"at": "2099-01-01T08:00:00+00:00", "date": [2030, 1, 1], "time": [8, 0]}, "playlists": ["Trips"]}
         page = self.studio(playlists=["Trips"], ticked={0})
         page.visibility_text = "已安排\n2030年1月1日 08:00"
         self.assertEqual("SUBMISSION_VERIFIED", self.verify(page, receipt)["state"])

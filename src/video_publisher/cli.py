@@ -979,7 +979,7 @@ def finished(value):
         return True
     results = value.get("results")
     parts = [part for part in results.values() if isinstance(part, dict)] if isinstance(results, dict) else []
-    return not (value.get("all_submissions_verified") is False or value.get("all_drafts_ready") is False or value.get("state") in UNFINISHED_STATES or part_left_undone(value) or any(part_left_undone(part) for part in parts))
+    return not (value.get("ready") is False or value.get("all_submissions_verified") is False or value.get("all_drafts_ready") is False or value.get("state") in UNFINISHED_STATES or part_left_undone(value) or any(part_left_undone(part) for part in parts))
 
 
 def main():

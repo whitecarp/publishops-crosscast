@@ -188,6 +188,8 @@ vpub doctor
 vpub onboard --platforms bilibili,douyin,youtube
 ```
 
+pip 安裝不會留下程式碼目錄，所以 `SKILL.md` 在該 Python 環境的資料夾裡：`share/publishops-crosscast/skills/publishops-crosscast/SKILL.md`。`vpub doctor` 發現需要處理的問題時，會以結束代碼 4 和 `ok: false` 結束，`issues` 裡的每一項都說明怎麼處理。
+
 **登入各平台**
 
 ```sh

@@ -4,7 +4,8 @@ from urllib.parse import urlsplit
 from . import x_pages
 from .core import VpubError, stop_check
 from .browser_runtime import risk_check, unique_visible
-from .browser_backends import MANAGE, douyin_card_is_waiting, douyin_card_status, links, work_url
+from .browser_backends import MANAGE, douyin_card_id, douyin_card_is_waiting, douyin_card_status, douyin_editor_address, links, work_url
+from .browser_edits import douyin_fields
 
 EMPTY_LIST = re.compile(r'暂无作品|暂无内容|No posts yet|hasn.t posted', re.I)
 
@@ -37,17 +38,9 @@ async def scan(page, platform, identity, limit, pages):
                 text=await title.inner_text()
                 card=title.locator('xpath=ancestor::div[starts-with(@class,"video-card-content-")]')
                 if douyin_card_is_waiting(await douyin_card_status(card)): omitted+=1; continue
-                try:
-                    async with page.expect_popup(timeout=15000) as opened: await title.click()
-                    detail=await opened.value
-                except Exception:
-                    omitted+=1; continue
-                try:
-                    await detail.wait_for_url(re.compile(r'/work-detail/\d+'),timeout=15000,wait_until='commit')
-                    u=urlsplit(detail.url); match=re.fullmatch(r'/creator-micro/work-management/work-detail/(\d+)',u.path)
-                    if u.hostname=='creator.douyin.com' and match:
-                        k=match[1]; rows[k]={'id':k,'text':text,'url':work_url(platform,identity,k)}
-                finally: await detail.close()
+                k=await douyin_card_id(page,title,card)
+                if not k: omitted+=1; continue
+                rows[k]={'id':k,'text':text,'url':work_url(platform,identity,k)}
         if len(rows)>=limit: reason='item_budget'; break
         if index+1>=pages: break
         stalled=stalled+1 if len(rows)==before else 0
@@ -73,6 +66,18 @@ async def scan(page, platform, identity, limit, pages):
             'source':'official_profile_or_creator_list','platform_writes':0}
 
 
+async def douyin_title(page,work):
+    """A card's title node goes on to hold the caption, so a work's title alone comes from its edit page. Covers and chapters compare it, and refuse a work with none on record."""
+    from patchright.async_api import Error as BrowserError
+    try:
+        box,_=await douyin_fields(page,douyin_editor_address(work),work)
+        return await box.input_value() or None
+    except BrowserError: return None
+    except VpubError as failure:
+        if failure.code not in {'layout_changed','wrong_work'}: raise
+        return None
+
+
 async def execute(page,platform,identity,payload):
     from .operations import work_id
     if payload['action']=='discover_works':
@@ -83,7 +88,7 @@ async def execute(page,platform,identity,payload):
         result=await scan(page,platform,identity,200,payload['pages'])
         matches=[v for v in result['items'] if v['id']==work]
         if len(matches)!=1: raise VpubError('owner_unverified','Work not found in this account’s bounded creator list; increase --pages if needed.')
-        title=matches[0].get('text'); evidence='authenticated_creator_card_and_exact_detail_id'
+        title=await douyin_title(page,work); evidence='authenticated_creator_card_and_exact_work_id'
     else:
         from .operations_browser import open_work, x_root
         await open_work(page,platform,identity,work)

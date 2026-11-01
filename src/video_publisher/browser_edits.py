@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 from . import x_pages
 from .core import VpubError, atomic_json, file_sha, now, stop_check
 from .browser_runtime import risk_check, unique_visible, visible
-from .browser_backends import douyin_card_words, douyin_type_caption, normalize, work_url
+from .browser_backends import choose_file, douyin_card_words, douyin_editor_address, douyin_editor_boxes, douyin_type_caption, normalize, work_url
 from .progress import stage
 
 READ_BACKS = 4
@@ -112,7 +112,7 @@ async def execute(page, platform, identity, payload):
     if platform=='douyin':
         if not str(work_id).isdigit(): raise VpubError('invalid_id','Invalid Douyin ID.')
         if 'portrait' in patch:
-            url=f'https://creator.douyin.com/creator-micro/content/post/video?mid={work_id}&enter_from=edit_item'
+            url=douyin_editor_address(work_id)
             await page.goto(url,wait_until='domcontentloaded',timeout=60000)
             title=page.locator('input[placeholder*="填写作品标题"]')
             await title.wait_for(timeout=45000)
@@ -125,7 +125,7 @@ async def execute(page, platform, identity, payload):
             dialog=await unique_visible(page.locator('[role=dialog]'),'cover editor')
             area=await unique_visible(dialog.locator('.semi-upload').filter(has_text='点击上传文件或拖拽文件到这里'),'cover file picker')
             if file_sha(patch['portrait'])!=patch['portrait_sha256']: raise VpubError('source_changed','Shared portrait changed before upload.')
-            await area.locator('input.semi-upload-hidden-input').set_input_files(patch['portrait'])
+            await choose_file(page,area.locator('input.semi-upload-hidden-input'),patch['portrait'])
             await page.wait_for_timeout(1500)
             await dialog.get_by_role('button',name='完成',exact=True).click()
             await dialog.wait_for(state='hidden',timeout=30000)
@@ -149,19 +149,12 @@ async def execute(page, platform, identity, payload):
 
 async def douyin_fields(page,url,work_id):
     await page.goto(url,wait_until='domcontentloaded',timeout=60000)
-    title=page.locator('input[placeholder*="填写作品标题"]')
-    await title.wait_for(timeout=45000)
-    await risk_check(page)
-    if f'mid={work_id}' not in urlsplit(page.url).query: raise VpubError('wrong_work','Douyin opened another page instead of this work; nothing changed.')
-    for _ in range(20):
-        if normalize(await title.input_value()): break
-        await page.wait_for_timeout(500)
-    return title,await unique_visible(page.locator('[contenteditable=true]'),'Douyin description')
+    return await douyin_editor_boxes(page,work_id)
 
 
 async def douyin_text(page,work_id,patch,save,submit,verify_only=False):
     """Title and description on the work's own edit page, the one its cover uses. Saved once, then read back from a fresh load."""
-    url=f'https://creator.douyin.com/creator-micro/content/post/video?mid={work_id}&enter_from=edit_item'
+    url=douyin_editor_address(work_id)
     wanted=normalize(patch['title']),douyin_card_words(patch['caption'])
     async def current(title,editor): return normalize(await title.input_value()),douyin_card_words(await editor.inner_text())
     title,editor=await douyin_fields(page,url,work_id)

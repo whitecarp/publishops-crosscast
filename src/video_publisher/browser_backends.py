@@ -7,7 +7,7 @@ import re
 import time
 from pathlib import Path
 import unicodedata
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from .core import VpubError, atomic_json, file_sha, home, now, read_json, snapshot_file, stop_check
 from .browser_runtime import failure_message, failure_record, look_until, plain_address, platform_at, risk_check, unique_visible, visible
@@ -74,6 +74,21 @@ async def before_a_file_goes_up(page):
     stop_check(platform_at(page.url))
 
 
+async def choose_file(page, box, path):
+    """Every file reaches a page here or in choose_in_picker, the video and the covers alike. A review found a stop could arrive while a cover's dialog opened, and the cover still went up."""
+    await before_a_file_goes_up(page)
+    await box.set_input_files(str(path), timeout=60000)
+
+
+async def choose_in_picker(page, opener, path):
+    """Opening the picker takes time too, so the check comes once it is open."""
+    async with page.expect_file_chooser(timeout=15000) as chosen:
+        await opener.click(timeout=15000)
+    picker = await chosen.value
+    await before_a_file_goes_up(page)
+    await picker.set_files(str(path), timeout=60000)
+
+
 async def upload_file(page, path, trigger=None, accept=None):
     await before_a_file_goes_up(page)
     inputs = page.locator('input[type="file"]')
@@ -83,11 +98,9 @@ async def upload_file(page, path, trigger=None, accept=None):
         if accept is None or accept in value:
             candidates.append(item)
     if len(candidates) == 1:
-        await candidates[0].set_input_files(str(path), timeout=60000)
+        await choose_file(page, candidates[0], path)
     elif trigger:
-        async with page.expect_file_chooser(timeout=15000) as chosen:
-            await trigger.click(timeout=15000)
-        await (await chosen.value).set_files(str(path), timeout=60000)
+        await choose_in_picker(page, trigger, path)
     else:
         raise VpubError("layout_changed", "Could not identify a unique file input for this upload.")
 
@@ -171,7 +184,6 @@ async def links(page, platform, identity):
         else:
             match = re.fullmatch(r"/video/(\d+)", u.path) if u.hostname in {"www.douyin.com", "douyin.com"} else None
             if not match and u.hostname == "creator.douyin.com":
-                from urllib.parse import parse_qs
                 mid = parse_qs(u.query).get("mid", [""])[0]
                 if mid.isdigit():
                     result[mid] = {"id": mid, "url": work_url(platform, identity, mid), "text": row["text"]}
@@ -218,15 +230,23 @@ async def douyin_type_caption(page, editor, caption):
             await page.keyboard.insert_text(line)
 
 
-async def douyin_cards_titled(page, title, caption=''):
-    """The Creator Center cards with exactly this title, or exactly this title and then this caption, which a field check found a card's title node holds, with a star where each new paragraph begins. A longer title or another caption is another work."""
-    wanted = {douyin_card_words(title), douyin_card_words(title + ' ' + caption), douyin_card_words(title + ' ' + re.sub(r'\s*\n\s*', ' *', caption.strip()))}
+def douyin_card_says(title, caption):
+    """What a card's title node shows for this title and caption: a field check found it holds both, with a star where each new paragraph begins if the caption was set in one go."""
+    return {douyin_card_words(title + ' ' + caption), douyin_card_words(title + ' ' + re.sub(r'\s*\n\s*', ' *', caption.strip()))}
+
+
+async def douyin_cards_saying(page, wanted):
     cards = []
     for card in await page.locator(DOUYIN_CARD).all():
         names = card.locator('[class^="info-title-text-"]')
         if await names.count() and douyin_card_words(await names.first.inner_text()) in wanted:
             cards.append(card)
     return cards
+
+
+async def douyin_cards_titled(page, title, caption=''):
+    """The Creator Center cards with exactly this title, or exactly this title and then this caption, which a field check found a card's title node holds, with a star where each new paragraph begins. A longer title or another caption is another work."""
+    return await douyin_cards_saying(page, {douyin_card_words(title)} | douyin_card_says(title, caption))
 
 
 def douyin_card_stamp(when):
@@ -264,6 +284,99 @@ async def douyin_scheduled_card(page, receipt):
     return receipt.get('visibility') != 'private' or await matching[0].locator('[class*="private-mark-"]').count() > 0
 
 
+def douyin_editor_address(work_id):
+    return f'https://creator.douyin.com/creator-micro/content/post/video?mid={work_id}&enter_from=edit_item'
+
+
+def douyin_editor_work(address):
+    """The work whose edit page this address is, or None."""
+    parts = urlsplit(address)
+    found = parse_qs(parts.query).get('mid', [''])[0]
+    return found if parts.hostname == 'creator.douyin.com' and parts.path == '/creator-micro/content/post/video' and re.fullmatch('[0-9]{1,40}', found) else None
+
+
+async def douyin_editor_boxes(page, work_id):
+    """The title and description boxes of a work's edit page, once this is that page and its title has come."""
+    title = page.locator('input[placeholder*="填写作品标题"]')
+    await title.wait_for(timeout=45000)
+    await risk_check(page)
+    if douyin_editor_work(page.url) != str(work_id):
+        raise VpubError('wrong_work', 'Douyin opened another page instead of this work; nothing changed.')
+    for _ in range(20):
+        if normalize(await title.input_value()):
+            break
+        await page.wait_for_timeout(500)
+    return title, await unique_visible(page.locator('[contenteditable=true]'), 'Douyin description')
+
+
+async def douyin_id_from_menu(page, shown):
+    """A private work's title opens nothing, a field run found, and its card's own 编辑作品 menu opens its edit page, whose address names it.
+    This looks in a tab of its own, so the list being read stays where it is, and presses only that menu item; nothing is saved. What opens has to say what the card says, or the answer is None."""
+    from patchright.async_api import Error as BrowserError
+    tabs = list(page.context.pages)
+    side = await page.context.new_page()
+    try:
+        await side.goto(MANAGE, wait_until='domcontentloaded', timeout=60000)
+        await side.locator('[class^="info-title-text-"]').first.wait_for(state='visible', timeout=20000)
+        await risk_check(side)
+        cards = await douyin_cards_saying(side, {shown})
+        label = cards[0].get_by_text('编辑作品', exact=True) if len(cards) == 1 else None
+        if label is None or await label.count() != 1:
+            return None
+        await label.hover(timeout=10000)
+        item = side.locator('.semi-dropdown-item').filter(has_text=re.compile(r'^\s*编辑作品\s*$'))
+        await look_until(side, lambda: visible(item), 5000)
+        await (await unique_visible(item, 'Douyin edit menu item')).click(timeout=10000)
+
+        async def opened():
+            found = [tab for tab in page.context.pages if tab not in tabs and douyin_editor_work(tab.url)]
+            return found[0] if len(found) == 1 else None
+        editor_page = await look_until(side, opened, 10000)
+        if not editor_page:
+            return None
+        work = douyin_editor_work(editor_page.url)
+        title, words = await douyin_editor_boxes(editor_page, work)
+
+        async def same():
+            return shown in douyin_card_says(await title.input_value(), await words.inner_text())
+        return work if await look_until(editor_page, same, 5000) else None
+    except BrowserError:
+        return None
+    except VpubError as failure:
+        if failure.code != 'layout_changed':
+            raise
+        return None
+    finally:
+        for tab in page.context.pages:
+            if tab not in tabs:
+                await tab.close()
+
+
+def douyin_new_card_unprovable(platform, receipt):
+    """A private work's ID takes its card's menu to read, which can work for a card one time and not another, so the list read before an upload may have left out an older private work. Only no card saying the same beforehand proves a matching one now is new. From Codex's review."""
+    return platform == 'douyin' and receipt.get('visibility') == 'private' and receipt.get('same_title_cards_before') != 0
+
+
+async def douyin_card_id(page, name, card):
+    """The ID behind a card of the works list, or None if it can't be told, which says nothing about the other cards."""
+    if not await card.get_by_text('私密', exact=True).count():
+        try:
+            async with page.expect_popup(timeout=POPUP_MS) as opened:
+                await name.click()
+            detail = await opened.value
+        except Exception:
+            detail = None
+        if detail:
+            try:
+                # Its address is all this needs, and a field run saw this page not finish loading in 15 seconds.
+                await detail.wait_for_url(re.compile(r'/work-detail/\d+'), timeout=15000, wait_until='commit')
+                match = re.fullmatch(r'/creator-micro/work-management/work-detail/(\d+)', urlsplit(detail.url).path)
+                return match[1] if match and urlsplit(detail.url).hostname == 'creator.douyin.com' else None
+            finally:
+                await detail.close()
+    return await douyin_id_from_menu(page, douyin_card_words(await name.inner_text()))
+
+
 async def works(page, platform, identity):
     if platform == "youtube":
         from .youtube_studio import works as studio_works
@@ -278,7 +391,7 @@ async def works(page, platform, identity):
             return found
         if platform == 'douyin':
             # Creator Center cards use click handlers rather than hrefs.
-            # Opening a work detail is read-only; never enter edit/delete here.
+            # Opening a work's own page or edit page is read-only; nothing is saved or deleted here.
             titles = page.locator('[class^="info-title-text-"]')
             if await titles.count():
                 for title in (await titles.all())[:10]:
@@ -286,21 +399,9 @@ async def works(page, platform, identity):
                     card = title.locator('xpath=ancestor::div[starts-with(@class,"video-card-content-")]')
                     if douyin_card_is_waiting(await douyin_card_status(card)):
                         continue
-                    try:
-                        async with page.expect_popup(timeout=POPUP_MS) as opened:
-                            await title.click()
-                        detail = await opened.value
-                    except Exception:
-                        continue  # One card that opens nothing says nothing about the others.
-                    try:
-                        # Its address is all this needs, and a field run saw this page not finish loading in 15 seconds.
-                        await detail.wait_for_url(re.compile(r'/work-detail/\d+'), timeout=15000, wait_until='commit')
-                        match = re.fullmatch(r'/creator-micro/work-management/work-detail/(\d+)', urlsplit(detail.url).path)
-                        if match and urlsplit(detail.url).hostname == 'creator.douyin.com':
-                            k = match[1]
-                            found[k] = {'id': k, 'url': work_url(platform, identity, k), 'text': text}
-                    finally:
-                        await detail.close()
+                    k = await douyin_card_id(page, title, card)
+                    if k:
+                        found[k] = {'id': k, 'url': work_url(platform, identity, k), 'text': text}
                 return found
     return {}
 
@@ -339,12 +440,22 @@ def studio_offsets(text):
             for sign, hours, minutes in re.findall(r"GMT\s*([+\-−])\s*(\d{1,2})(?::?(\d{2}))?", text or "")}
 
 
+def youtube_schedule_passed(schedule):
+    """Whether a scheduled video's time has come, or None if its record can't say."""
+    try:
+        return datetime.now(timezone.utc) >= datetime.fromisoformat(schedule["at"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 async def verify_youtube(page, receipt):
     # Studio opens this page only for the signed-in channel's own videos, so reading it also proves ownership.
     url = work_url("youtube", None, receipt["id"])
     await page.goto(f"https://studio.youtube.com/video/{receipt['id']}/edit", wait_until="domcontentloaded", timeout=60000)
     title = page.locator("#title-textarea #textbox").first
     seen = {}
+    schedule = receipt.get("schedule")
+    passed = youtube_schedule_passed(schedule) if schedule else None
     try:
         await title.wait_for(state="visible", timeout=30000)
         for _ in range(20):
@@ -355,9 +466,9 @@ async def verify_youtube(page, receipt):
         seen["description"] = normalize(await page.locator("#description-textarea #textbox").first.inner_text())
         shown = await page.locator("ytcp-video-metadata-visibility #visibility-text").first.inner_text()
         seen["visibility"] = studio_visibility(shown)
-        if receipt.get("schedule"):
+        if schedule:
             dates, times = studio_moments(shown)
-            if tuple(receipt["schedule"]["date"]) in dates and tuple(receipt["schedule"]["time"]) in times:
+            if seen["visibility"] != "public" and tuple(schedule["date"]) in dates and tuple(schedule["time"]) in times:
                 seen["visibility"] = "scheduled"
         if receipt.get("playlists"):
             listed = normalize(await page.locator("ytcp-video-metadata-playlists").first.inner_text())
@@ -367,14 +478,20 @@ async def verify_youtube(page, receipt):
     await risk_check(page)
     expected = {"title": normalize(receipt["title"]) if receipt.get("title") else None,
                 "description": normalize(receipt["expected_text"]) if "expected_text" in receipt else None,
-                "visibility": "scheduled" if receipt.get("schedule") else receipt.get("visibility"),
+                # A scheduled video shows its date and time until then, and afterwards it is public like any other.
+                "visibility": ("public" if passed else "scheduled") if schedule else receipt.get("visibility"),
                 "playlists": True if receipt.get("playlists") else None}
     differs = sorted(name for name, value in expected.items() if value is not None and seen.get(name) != value)
+    if schedule and passed is None:
+        differs.append("schedule_time")
     present = bool(seen.get("title")) and not differs
+    note = ("Current title, description and public visibility read back after the intended schedule; actual publication time and on-time release were not established." if present and passed else
+            "Title, description, visibility or schedule, and playlists read back from the channel's own Studio page; cover pixels and playback are separate." if present else
+            "Expected work/text not yet verified; do not upload again.")
     return {**receipt, "url": url, "state": "SUBMISSION_VERIFIED" if present else "SUBMITTED_UNVERIFIED",
             "phase": "complete" if present else "readback_pending", "error": None if present else receipt.get("error"),
-            "verification_source": "independent_browser_dom", "verified_at": now(), "readback_differs": differs,
-            "note": "Title, description, visibility or schedule, and playlists read back from the channel's own Studio page; cover pixels and playback are separate." if present else "Expected work/text not yet verified; do not upload again."}
+            "verification_source": "independent_browser_dom", "verified_at": now(), "readback_differs": differs, "note": note,
+            **({"schedule_evidence": {"intended_at": schedule.get("at"), "scheduled_time_elapsed": passed, "on_time_publication_verified": False}} if schedule else {})}
 
 
 async def verify_scheduled_x(page, identity, receipt):
@@ -420,7 +537,7 @@ async def verify(page, platform, identity, receipt):
         found = await works(page, platform, identity)
         matches = [v for k,v in found.items() if k not in receipt['before_ids'] and
                    receipt.get('title') and normalize(receipt['title']) in normalize(v['text'])]
-        if len(matches) == 1:
+        if len(matches) == 1 and not douyin_new_card_unprovable(platform, receipt):
             receipt = {**receipt, 'id':matches[0]['id'], 'url':matches[0]['url']}
     if not receipt.get("id"):
         if platform == 'douyin' and await douyin_scheduled_card(page, receipt):
@@ -469,6 +586,9 @@ async def verify(page, platform, identity, receipt):
             present = present and normalize(expected) in actual
     if platform == 'douyin' and receipt.get('expected_text'):
         present = present and receipt['expected_text'] in found.get(str(receipt['id']), {}).get('text', '')
+    if platform == 'douyin' and present and receipt.get('visibility') == 'private' and 'expected_caption' in receipt:
+        # Its card and its edit page are all there is to compare, so the whole text has to be right.
+        present = douyin_card_words(found[str(receipt['id'])]['text']) in douyin_card_says(receipt.get('title') or '', receipt['expected_caption'])
     if platform == 'douyin' and present and receipt.get('schedule') and datetime.now(timezone.utc) < datetime.fromisoformat(receipt['schedule']['at']):
         # Before its time, only the work showing that time proves the schedule took, rather than it having gone out already.
         present = receipt['schedule']['stamp'] in found.get(str(receipt['id']), {}).get('text', '')

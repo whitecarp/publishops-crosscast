@@ -140,9 +140,37 @@ class FileGoingUpTests(SharedBrowser):
         self.assertEqual("stopped", caught.exception.code)
         self.assertIsNone(await self.chosen())
 
-    async def test_youtubes_form_checks_at_the_same_moment(self):
-        source = Path(browser_forms.__file__).read_text(encoding="utf-8")
-        self.assertIn("await before_a_file_goes_up(page)\n    await picker.first.set_input_files", source.replace("\r\n", "\n"))
+    PICKER = """<button onclick="document.querySelector('input').click()">Open</button><input type="file" accept="image/png" onchange="document.body.dataset.chosen = this.files.length">"""
+
+    async def open_picker(self, while_opening=lambda: None):
+        """Nothing on this page takes a video directly, so the file goes through a picker that the button opens."""
+        self.body = self.PICKER
+        await self.page.goto("https://studio.x.com/library")
+        button = self.page.locator("button")
+
+        class Opener:
+            async def click(self, **options):
+                while_opening()
+                await button.click(**options)
+        await browser_backends.upload_file(self.page, self.clip, trigger=Opener(), accept="video/")
+
+    async def test_a_picker_gets_the_file_when_nothing_is_wrong(self):
+        await self.open_picker()
+        self.assertEqual("1", await self.chosen())
+
+    async def test_a_stop_that_comes_while_a_picker_opens_holds_it_back(self):
+        with self.assertRaises(VpubError) as caught:
+            await self.open_picker(self.stop)
+        self.assertEqual("stopped", caught.exception.code)
+        self.assertIsNone(await self.chosen())
+
+    async def test_a_warning_that_shows_once_a_form_is_ready_holds_a_cover_back(self):
+        await self.page.goto("https://studio.x.com/library")
+        await self.page.evaluate("document.body.insertAdjacentHTML('beforeend', '<div role=alert>Verify your identity</div>')")
+        with self.assertRaises(VpubError) as caught:
+            await browser_backends.choose_file(self.page, self.page.locator("input"), self.clip)
+        self.assertEqual("human_verification_required", caught.exception.code)
+        self.assertIsNone(await self.chosen())
 
 
 class XFormTests(Form):

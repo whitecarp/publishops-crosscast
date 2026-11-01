@@ -188,6 +188,8 @@ vpub doctor
 vpub onboard --platforms bilibili,douyin,youtube
 ```
 
+A pip install leaves no checkout, so `SKILL.md` is in that Python environment's folder, at `share/publishops-crosscast/skills/publishops-crosscast/SKILL.md`. When `vpub doctor` finds something to fix, it ends with exit code 4 and `ok: false`, and each item under `issues` says how.
+
 **Sign in to each platform**
 
 ```sh

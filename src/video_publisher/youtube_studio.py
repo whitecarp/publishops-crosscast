@@ -3,7 +3,7 @@ from pathlib import Path
 import re
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from .browser_backends import normalize, studio_visibility, work_url
+from .browser_backends import choose_file, normalize, studio_visibility, work_url
 from .browser_runtime import acknowledged, look_until, risk_check, unique_visible, visible, write_answers
 from .core import NOT_ON_SALE, VpubError, atomic_json, file_sha, home, now, read_json, reply_pressing, stop_check
 from .operations_api import metric
@@ -673,6 +673,11 @@ async def playlists(page, identity, payload):
         await act_and_settle(page, lambda: row.click(timeout=15000))
         await risk_check(page)
         return {"identity": identity, "submitted": True, "collection_id": playlist}
+    if operation == "details":
+        title, notes = await playlist_fields(page, playlist)
+        return {"identity": identity, "items": [{"id": playlist, "title": normalize(await title.inner_text()), "description": normalize(await notes.inner_text()),
+                                                 "visibility": studio_visibility(await visibility_trigger(page).inner_text())}],
+                "complete": False, "scope": "one_playlist", "coverage": "studio_playlist_editor", "platform_writes": 0, "observed_at": now()}
     if operation == "create":
         return await create_playlist(page, identity, payload, before_submit)
     if operation == "rename":
@@ -862,7 +867,7 @@ async def edit(page, payload, save, submit):
         inputs = page.locator("input#file-loader")
         if not await inputs.count():
             raise VpubError("cover_unavailable", "YouTube offers no custom thumbnail on this channel yet; nothing changed.", "Custom thumbnails need a verified channel.")
-        await inputs.first.set_input_files(patch["cover"], timeout=60000)
+        await choose_file(page, inputs.first, patch["cover"])
         changes = None
     else:
         if "chapters" in patch:

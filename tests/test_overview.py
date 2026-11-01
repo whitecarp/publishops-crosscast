@@ -1,4 +1,6 @@
 """vpub status, cleanup and doctor. Offline; no platform or browser is contacted."""
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -314,6 +316,26 @@ class OperatorCommandTests(OverviewFixture):
         self.assertEqual([], result["issues"])
         self.assertTrue(result["ready"])
         self.assertEqual("chrome.exe", result["google_chrome"])
+
+    def doctor_command(self, chrome):
+        out = io.StringIO()
+        with patch.object(overview, "chrome_path", return_value=chrome), patch.object(cli, "separate_bili_agent", return_value=None), patch("sys.argv", ["vpub", "doctor"]), contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as ended:
+            cli.main()
+        return ended.exception.code, json.loads(out.getvalue())
+
+    def test_a_doctor_with_something_to_fix_does_not_end_as_a_success(self):
+        """From a first-run review: missing Chrome showed only inside the answer, so anything looking at the exit code went on without it."""
+        code, answer = self.doctor_command(None)
+        self.assertEqual((4, False, False), (code, answer["ok"], answer["data"]["ready"]))
+        self.assertEqual("vpub setup --install-browser", answer["data"]["issues"][0]["fix"])
+
+    def test_a_ready_doctor_ends_as_a_success(self):
+        code, answer = self.doctor_command("chrome.exe")
+        self.assertEqual((0, True, True), (code, answer["ok"], answer["data"]["ready"]))
+
+    def test_the_installer_says_where_the_command_is_even_when_the_check_finds_something(self):
+        source = (Path(cli.__file__).parents[2] / "install.ps1").read_text(encoding="utf-8")
+        self.assertLess(source.index("Write-Output ('Command: '"), source.index("found something to fix"))
 
     def test_doctor_reports_an_active_stop(self):
         atomic_json(home() / "STOP.json", {"reason": "test"})

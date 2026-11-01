@@ -346,6 +346,13 @@ class PlaylistTests(Browser):
         self.assertEqual("PLnewnewnewnewnewnewnew", result["collection_id"])
         self.assertEqual(("private", "About food"), (self.site.playlists[result["collection_id"]]["visibility"], self.site.playlists[result["collection_id"]]["description"]))
 
+    async def test_a_playlists_own_page_says_what_the_list_does_not_and_saves_nothing(self):
+        self.site.playlists[FIRST]["description"] = "Some notes"
+        result = await self.run_op("details", collection_id=FIRST)
+        row = result["items"][0]
+        self.assertEqual((FIRST, "Recipes", "Some notes", "public"), (row["id"], row["title"], row["description"], row["visibility"]))
+        self.assertEqual([], self.site.writes)
+
     async def test_an_empty_playlist_is_complete_only_when_the_page_says_it_is_empty(self):
         self.assertEqual(([], True), (lambda r: (r["items"], r["complete"]))(await self.run_op("items", collection_id=SECOND)))
         self.site.says_empty = False
@@ -812,6 +819,7 @@ class CommandTests(unittest.TestCase):
         self.rows = [{"id": FIRST, "title": "Recipes"}]
         self.members = []
         self.calls = []
+        self.kept = {}
         for target in (patch.object(c, "call", side_effect=self.fake), patch.object(adapters, "addon_installed", return_value=False)):
             target.start()
             self.addCleanup(target.stop)
@@ -822,7 +830,10 @@ class CommandTests(unittest.TestCase):
             return {"identity": owner, "items": [dict(row) for row in self.rows], "complete": True}
         if operation == "items":
             return {"identity": owner, "collection_id": options["collection_id"], "items": [{"id": video} for video in self.members], "complete": True}
+        if operation == "details":
+            return {"identity": owner, "items": [{**row, "description": self.kept.get("description"), "visibility": self.kept.get("privacy")} for row in self.rows if row["id"] == options["collection_id"]], "complete": False}
         c.before_submit(dict(platform=platform, operation=operation, **options), owner)
+        self.kept = options
         if operation == "create":
             self.rows.append({"id": SECOND, "title": options["title"]})
             return {"collection_id": SECOND}

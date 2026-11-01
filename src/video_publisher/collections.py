@@ -49,6 +49,23 @@ def not_finished(r, exc):
     return r
 
 
+def playlist_differs(r, row):
+    """A change is done only when everything it asked for shows. A review found a playlist's title alone confirmed a change of who can see it."""
+    asked=r.get('description')
+    same={'privacy':not r.get('privacy') or row.get('visibility')==r['privacy'],
+          'description':asked is None or (isinstance(row.get('description'),str) and row['description'].split()==asked.split())}
+    return [name for name,good in same.items() if not good]
+
+
+def read_back(r):
+    """What a change is checked against. YouTube's list doesn't show a playlist's description, so whatever was asked beyond the title is read from the playlist's own page, which changes nothing."""
+    if r['action'] in {'add','remove'}:
+        return members(r['platform'],r['identity'],r['collection_id'],r['work_id'])
+    if r['platform']=='youtube' and r['action']!='delete' and r.get('collection_id') and (r.get('description') is not None or r.get('privacy')):
+        return call('youtube','details',r['identity'],collection_id=r['collection_id'])
+    return call(r['platform'],'list',r['identity'])
+
+
 def checked_result(r, observed):
     if observed.get('identity') != r['identity']:
         raise VpubError('wrong_account', 'Collection readback belongs to another account.')
@@ -63,7 +80,11 @@ def checked_result(r, observed):
         return r
     matches=[x for x in rows if x['id']==target]
     if action=='delete':good=not matches and observed.get('complete') is True
-    else:good=len(matches)==1 and matches[0]['title']==r['title']
+    else:
+        good=len(matches)==1 and matches[0]['title']==r['title']
+        if r['platform']=='youtube':
+            r['readback_differs']=playlist_differs(r,matches[0] if len(matches)==1 else {})
+            good=good and not r['readback_differs']
     r.update(state='CONFIRMED' if good else 'UNVERIFIED', checked_at=now(), observed=observed)
     return r
 
@@ -77,7 +98,7 @@ def verify(key):
         if r['state'] in {'READY','FAILED_BEFORE_SUBMIT'}:
             return {**r, 'platform_writes':0, 'hint':'No submit was recorded. Verify the platform before creating a new request.'}
         try:
-            r=checked_result(r,members(r['platform'],r['identity'],r['collection_id'],r['work_id']) if r['action'] in {'add','remove'} else call(r['platform'],'list',r['identity']))
+            r=checked_result(r,read_back(r))
             if r['state']=='CONFIRMED':r.pop('error',None);r.pop('error_message',None)
         except Exception as exc:r.update(state='UNVERIFIED',**error_fields(exc))
         atomic_json(path,r)
@@ -133,7 +154,7 @@ def change(platform, action, collection=None, title=None, request_id=None, cover
                state='READY',started_at=now(),platform_writes=0,next_command='vpub collection verify '+key,**extra)
         atomic_json(path,r)
         try:
-            if action=='rename' and matches[0]['title']==title and not any(extra.values()):
+            if action=='rename' and matches[0]['title']==title and all(v is None for v in extra.values()):
                 r=checked_result(r,before)
             else:
                 result=call(platform,action,owner,collection_id=collection,title=title,receipt_key=key,**extra)
@@ -142,7 +163,7 @@ def change(platform, action, collection=None, title=None, request_id=None, cover
                     validate(platform,result['collection_id'])
                     if result['collection_id'] in r['before_ids']:raise VpubError('wrong_collection','Creation returned a pre-existing collection.')
                     r['collection_id']=result['collection_id'];atomic_json(path,r)
-                r=checked_result(r,call(platform,'list',owner))
+                r=checked_result(r,read_back(r))
         except Exception as exc:
             with receipt_turn(path):
                 r=not_finished(read_json(path),exc);atomic_json(path,r)
