@@ -12,7 +12,7 @@ from .core import VpubError, douyin_caption, stop_check
 from .browser_runtime import risk_check, unique_visible, visible
 from .progress import stage
 from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style,
-                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, douyin_card_stamp, douyin_card_status, douyin_new_card_unprovable, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
+                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
 
 X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
 YT_DIALOG = 'ytcp-uploads-dialog'
@@ -49,7 +49,7 @@ async def finish(page, tx, before):
                 return tx.save(**DOUYIN_SCHEDULED)
         fresh = [v for k, v in found.items() if k not in before]
         matches = [v for v in fresh if tx.options['title'] in v.get('text', '')]
-        candidates = [] if douyin_new_card_unprovable(tx.platform, tx.receipt) else matches
+        candidates = douyin_new_works(tx.platform, tx.receipt, matches)
         if len(candidates) == 1:
             item = candidates[0]
             receipt = tx.save(state='SUBMITTED_UNVERIFIED', phase='readback', id=item['id'], url=item['url'])

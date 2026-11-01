@@ -7,7 +7,7 @@ from unittest.mock import patch
 from urllib.parse import urlsplit
 
 from video_publisher import work_discovery_browser as discovery
-from video_publisher.core import VpubError
+from video_publisher.core import VpubError, atomic_json, home
 from shared_chrome import ChromeCase, async_playwright
 
 
@@ -117,9 +117,11 @@ class PrivateCardTests(unittest.IsolatedAsyncioTestCase):
         env.start()
         self.addCleanup(env.stop)
         self.title, self.caption, self.extra = "Secret test", "First line<br><br>Second line", ""
-        self.cards = self.card("Secret test First line Second line")
         self.opens = f"location.href='{self.EDITOR}'"
-        self.pressed, self.editors = [], []
+        self.hover = "this.parentElement.classList.add('semi-dropdown-showing'); document.getElementById('menu').hidden = false"
+        self.menu_hidden = "hidden"
+        self.cards = self.card("Secret test First line Second line")
+        self.pressed, self.editors, self.tabs = [], [], []
         self.pw = await async_playwright().start()
         self.browser = await self.pw.chromium.launch(channel="chrome", headless=True)
         self.context = await self.browser.new_context()
@@ -130,11 +132,17 @@ class PrivateCardTests(unittest.IsolatedAsyncioTestCase):
             if path == "/pressed":
                 self.pressed.append(1)
                 return await route.fulfill(status=200, body="")
+            if path == "/stop-now":
+                atomic_json(home() / "STOP.json", {"reason": "A person paused it."})
+                return await route.fulfill(status=200, body="")
+            if path == "/another-tab":
+                self.tabs.append(await self.context.new_page())
+                return await route.fulfill(status=200, body="")
             if path == "/creator-micro/content/post/video":
                 self.editors.append(route.request.url)
                 body = f'<input placeholder="填写作品标题，为作品获得更多流量" value="{self.title}"><div contenteditable="true">{self.caption}</div>{self.extra}'
             else:
-                body = f"""{self.cards}<ul class="semi-dropdown-menu" id="menu" hidden><li class="semi-dropdown-item" onclick="{self.opens}">编辑作品</li></ul>"""
+                body = f"""{self.cards}<ul class="semi-dropdown-menu edit-menu-1" id="menu" {self.menu_hidden}><li class="drop-item-1 semi-dropdown-item" onclick="{self.opens}">编辑作品</li></ul>"""
             await route.fulfill(status=200, content_type="text/html; charset=utf-8", body="<!doctype html><body>" + body)
         await self.context.route("**/*", answer)
 
@@ -144,7 +152,7 @@ class PrivateCardTests(unittest.IsolatedAsyncioTestCase):
 
     def card(self, words, private=True, menu=True):
         return (f"""<div class="video-card-content-1"><div class="info-title-text-1" onclick="fetch('/pressed')">{words}</div>""" + ("<span>私密</span>" if private else "") +
-                ("""<div class="edit-btn-1"><span onmouseenter="document.getElementById('menu').hidden = false">编辑作品</span></div>""" if menu else "") + "</div>")
+                (f"""<div class="edit-btn-1"><span onmouseenter="{self.hover}">编辑作品</span></div>""" if menu else "") + "</div>")
 
     async def works(self):
         from video_publisher.browser_backends import MANAGE, works
@@ -209,16 +217,91 @@ class PrivateCardTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("id", result)
 
     async def test_no_count_from_before_the_upload_proves_nothing(self):
-        for missing in (None, "0"):
+        for missing in (None, "0", False, 0.0):
             with self.subTest(missing=missing):
-                self.assertEqual("SUBMITTED_UNVERIFIED", (await self.verify(same_title_cards_before=missing))["state"])
+                result = await self.verify(same_title_cards_before=missing)
+                self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
+                self.assertNotIn("id", result)
 
     async def test_a_private_work_already_listed_before_the_upload_is_not_new(self):
         self.assertNotIn("id", await self.verify(before_ids=[self.WORK]))
+        self.assertNotIn("id", await self.verify(before_ids=[int(self.WORK)]))  # Not the same ID, so it proves nothing either way.
 
     async def test_a_private_work_with_another_caption_is_not_verified(self):
+        """From a review: left unconfirmed, it still put that other work's ID on this upload's receipt."""
         result = await self.verify(expected_caption="Something else")
         self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
+        self.assertNotIn("id", result)
+
+    async def test_a_private_receipt_that_already_has_its_id_is_still_held_to_its_words(self):
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.verify(id=self.WORK))["state"])
+        self.assertEqual("SUBMITTED_UNVERIFIED", (await self.verify(id=self.WORK, expected_caption="Something else"))["state"])
+        self.assertEqual("SUBMITTED_UNVERIFIED", (await self.verify(id=int(self.WORK)))["state"])
+
+    async def test_a_tab_the_press_did_not_open_is_neither_believed_nor_closed(self):
+        """From a review: words that match don't prove a page came from this card's menu."""
+        from video_publisher.browser_backends import works
+        self.opens = "fetch('/another-tab')"
+        unrelated = await self.context.new_page()
+        self.assertEqual({}, await works(self.page, "douyin", "me"))
+        self.assertEqual([self.page, unrelated] + self.tabs, self.context.pages)
+        self.assertEqual(1, len(self.tabs))
+
+    async def test_an_extra_tab_beside_the_edit_page_means_no_answer(self):
+        from video_publisher.browser_backends import works
+        self.opens = f"fetch('/another-tab').then(() => {{ location.href = '{self.EDITOR}'; }})"
+        self.assertEqual({}, await works(self.page, "douyin", "me"))
+        self.assertEqual([self.page] + self.tabs, self.context.pages)
+
+    async def test_a_menu_already_open_is_not_taken_for_this_cards(self):
+        self.menu_hidden = ""
+        self.assertEqual({}, await self.works())
+        self.assertEqual([], self.editors)
+
+    async def test_a_menu_no_trigger_claims_is_not_pressed(self):
+        self.hover = "document.getElementById('menu').hidden = false"
+        self.cards = self.card("Secret test First line Second line")
+        self.assertEqual({}, await self.works())
+        self.assertEqual([], self.editors)
+
+    async def test_a_card_with_two_title_nodes_is_left_alone(self):
+        self.cards = self.card("Secret test First line Second line").replace("<span>私密</span>", '<div class="info-title-text-2">Secret test First line Second line</div><span>私密</span>')
+        self.assertEqual({}, await self.works())
+        self.assertEqual([], self.editors)
+
+    async def test_a_warning_that_shows_while_the_menu_opens_stops_it_before_the_press(self):
+        self.hover += "; document.body.insertAdjacentHTML('beforeend', '<div role=alert>Verify your identity</div>')"
+        self.cards = self.card("Secret test First line Second line")
+        with self.assertRaises(VpubError) as caught:
+            await self.works()
+        self.assertEqual("human_verification_required", caught.exception.code)
+        self.assertEqual([], self.editors)
+
+    async def test_a_stop_that_comes_while_the_menu_opens_stops_it_before_the_press(self):
+        self.hover = "const box = this.parentElement; fetch('/stop-now').then(() => { box.classList.add('semi-dropdown-showing'); document.getElementById('menu').hidden = false; })"
+        self.cards = self.card("Secret test First line Second line")
+        with self.assertRaises(VpubError) as caught:
+            await self.works()
+        self.assertEqual("stopped", caught.exception.code)
+        self.assertEqual([], self.editors)
+
+    async def test_an_error_about_the_account_is_not_taken_for_a_title_that_opens_nothing(self):
+        from video_publisher.browser_backends import works
+        self.cards = self.card("Secret test First line Second line", private=False)
+        with patch.object(self.page, "expect_popup", side_effect=VpubError("wrong_account", "Another account.")):
+            with self.assertRaises(VpubError) as caught:
+                await works(self.page, "douyin", "me")
+        self.assertEqual("wrong_account", caught.exception.code)
+        self.assertEqual([], self.editors)
+
+    def test_only_the_exact_address_of_an_edit_page_names_a_work(self):
+        from video_publisher.browser_backends import douyin_editor_address, douyin_editor_work
+        self.assertEqual(self.WORK, douyin_editor_work(douyin_editor_address(self.WORK)))
+        base = f"https://creator.douyin.com/creator-micro/content/post/video?mid={self.WORK}&enter_from=edit_item"
+        for address in (base.replace("https:", "http:"), base.replace("creator.douyin.com", "creator.douyin.com.example.org"), base.replace("creator.douyin.com", "someone@creator.douyin.com"),
+                        base.replace("creator.douyin.com", "creator.douyin.com:8443"), base.replace("/post/video", "/manage"), base + "&mid=1", base + "#mid=1", base.replace("&enter_from=edit_item", ""), base.replace("mid=" + self.WORK, "mid=12a")):
+            with self.subTest(address=address):
+                self.assertIsNone(douyin_editor_work(address))
 
     async def test_a_warning_on_the_edit_page_stops_everything(self):
         self.extra = '<div role="alert">Verify your identity</div>'

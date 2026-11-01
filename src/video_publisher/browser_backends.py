@@ -196,6 +196,7 @@ async def links(page, platform, identity):
 POPUP_MS = 15000
 DOUYIN_CARD_TIME = re.compile(r"(\d{4})年(\d{2})月(\d{2})日 (\d{2}):(\d{2})")
 DOUYIN_CARD = '[class^="video-card-content-"]'
+DOUYIN_NAME = '[class^="info-title-text-"]'
 DOUYIN_SCHEDULED = {'state': 'SUBMISSION_VERIFIED', 'phase': 'scheduled', 'error': None, 'verification_source': 'creator_card_title_and_time',
                     'note': 'Douyin shows this new card with its title and scheduled time, and no ID until the time comes. Verify again after that time.'}
 
@@ -236,11 +237,13 @@ def douyin_card_says(title, caption):
 
 
 async def douyin_cards_saying(page, wanted):
+    """The cards with a title node saying one of these. A card with more than one counts if any of them does, so a count of what was already there can't come out low."""
     cards = []
     for card in await page.locator(DOUYIN_CARD).all():
-        names = card.locator('[class^="info-title-text-"]')
-        if await names.count() and douyin_card_words(await names.first.inner_text()) in wanted:
-            cards.append(card)
+        for name in await card.locator(DOUYIN_NAME).all():
+            if douyin_card_words(await name.inner_text()) in wanted:
+                cards.append(card)
+                break
     return cards
 
 
@@ -289,10 +292,13 @@ def douyin_editor_address(work_id):
 
 
 def douyin_editor_work(address):
-    """The work whose edit page this address is, or None."""
+    """The work whose edit page this address is, or None. Only the exact address a field run saw counts, with one work named."""
     parts = urlsplit(address)
-    found = parse_qs(parts.query).get('mid', [''])[0]
-    return found if parts.hostname == 'creator.douyin.com' and parts.path == '/creator-micro/content/post/video' and re.fullmatch('[0-9]{1,40}', found) else None
+    asked = parse_qs(parts.query, keep_blank_values=True)
+    found = asked.get('mid', [])
+    usable = (parts.scheme == 'https' and parts.netloc == 'creator.douyin.com' and parts.path == '/creator-micro/content/post/video' and not parts.fragment
+              and asked.get('enter_from') == ['edit_item'] and len(found) == 1 and re.fullmatch('[0-9]{1,40}', found[0]))
+    return found[0] if usable else None
 
 
 async def douyin_editor_boxes(page, work_id):
@@ -311,35 +317,48 @@ async def douyin_editor_boxes(page, work_id):
 
 async def douyin_id_from_menu(page, shown):
     """A private work's title opens nothing, a field run found, and its card's own 编辑作品 menu opens its edit page, whose address names it.
-    This looks in a tab of its own, so the list being read stays where it is, and presses only that menu item; nothing is saved. What opens has to say what the card says, or the answer is None."""
+    This looks in a tab of its own, so the list being read stays where it is, and presses only that menu item; nothing is saved. What opens has to be that tab or one tab it opened, and say what the card says, or the answer is None. A review found matching words alone could take another tab's page for it."""
     from patchright.async_api import Error as BrowserError
     tabs = list(page.context.pages)
     side = await page.context.new_page()
+
+    async def target():
+        others = [tab for tab in page.context.pages if tab not in tabs and tab is not side]
+        if not others:
+            return side if douyin_editor_work(side.url) else None
+        return others[0] if len(others) == 1 and await others[0].opener() is side and douyin_editor_work(others[0].url) and not douyin_editor_work(side.url) else None
     try:
         await side.goto(MANAGE, wait_until='domcontentloaded', timeout=60000)
-        await side.locator('[class^="info-title-text-"]').first.wait_for(state='visible', timeout=20000)
+        await side.locator(DOUYIN_NAME).first.wait_for(state='visible', timeout=20000)
         await risk_check(side)
         cards = await douyin_cards_saying(side, {shown})
-        label = cards[0].get_by_text('编辑作品', exact=True) if len(cards) == 1 else None
-        if label is None or await label.count() != 1:
+        if len(cards) != 1 or await cards[0].locator(DOUYIN_NAME).count() != 1:
             return None
+        label = cards[0].get_by_text('编辑作品', exact=True)
+        item = side.locator('ul.semi-dropdown-menu[class*="edit-menu-"] > li.semi-dropdown-item').filter(has_text=re.compile(r'^\s*编辑作品\s*$'))
+        if await label.count() != 1 or await visible(item):
+            return None  # A menu already open is no card's in particular.
         await label.hover(timeout=10000)
-        item = side.locator('.semi-dropdown-item').filter(has_text=re.compile(r'^\s*编辑作品\s*$'))
-        await look_until(side, lambda: visible(item), 5000)
-        await (await unique_visible(item, 'Douyin edit menu item')).click(timeout=10000)
+        # The menu sits outside the card, and only the trigger it marks as showing says whose it is.
+        trigger = cards[0].locator('[class*="edit-btn-"].semi-dropdown-showing')
 
-        async def opened():
-            found = [tab for tab in page.context.pages if tab not in tabs and douyin_editor_work(tab.url)]
-            return found[0] if len(found) == 1 else None
-        editor_page = await look_until(side, opened, 10000)
-        if not editor_page:
+        async def its_menu():
+            return await trigger.count() == 1 and await visible(item)
+        if not await look_until(side, its_menu, 5000) or await side.locator('.semi-dropdown-showing').count() != 1:
             return None
-        work = douyin_editor_work(editor_page.url)
-        title, words = await douyin_editor_boxes(editor_page, work)
+        press = await unique_visible(item, 'Douyin edit menu item')
+        await risk_check(side)
+        stop_check('douyin')
+        await press.click(timeout=10000)
+        opened = await look_until(side, target, 10000)
+        if not opened:
+            return None
+        work = douyin_editor_work(opened.url)
+        title, words = await douyin_editor_boxes(opened, work)
 
         async def same():
             return shown in douyin_card_says(await title.input_value(), await words.inner_text())
-        return work if await look_until(editor_page, same, 5000) else None
+        return work if await look_until(opened, same, 5000) and await target() is opened else None
     except BrowserError:
         return None
     except VpubError as failure:
@@ -347,24 +366,33 @@ async def douyin_id_from_menu(page, shown):
             raise
         return None
     finally:
-        for tab in page.context.pages:
-            if tab not in tabs:
-                await tab.close()
+        # Only what this opened: another tab is not its to close, and a tab whose opener has closed no longer says so, so this looks first.
+        owned = [tab for tab in page.context.pages if tab is side or (tab not in tabs and await tab.opener() is side)]
+        for tab in owned:
+            await tab.close()
 
 
-def douyin_new_card_unprovable(platform, receipt):
-    """A private work's ID takes its card's menu to read, which can work for a card one time and not another, so the list read before an upload may have left out an older private work. Only no card saying the same beforehand proves a matching one now is new. From Codex's review."""
-    return platform == 'douyin' and receipt.get('visibility') == 'private' and receipt.get('same_title_cards_before') != 0
+def douyin_new_works(platform, receipt, works):
+    """Of the works new since an upload began and carrying its title, those that can be that upload.
+    A private work's ID takes its card's menu to read, which can work for a card one time and not another, so the list read before the upload may have left out an older private work. Only no card saying the same beforehand proves a matching one now is new, and its whole text has to match. Otherwise another work's ID goes on this upload's receipt, even if the receipt stays unconfirmed. From Codex's reviews."""
+    if platform != 'douyin' or receipt.get('visibility') != 'private':
+        return works
+    count, before = receipt.get('same_title_cards_before'), receipt.get('before_ids')
+    if type(count) is not int or count != 0 or 'expected_caption' not in receipt or type(before) is not list or not all(type(known) is str for known in before):
+        return []
+    wanted = douyin_card_says(receipt.get('title') or '', receipt['expected_caption'])
+    return [work for work in works if douyin_card_words(work.get('text')) in wanted]
 
 
 async def douyin_card_id(page, name, card):
     """The ID behind a card of the works list, or None if it can't be told, which says nothing about the other cards."""
+    from patchright.async_api import Error as BrowserError
     if not await card.get_by_text('私密', exact=True).count():
         try:
             async with page.expect_popup(timeout=POPUP_MS) as opened:
                 await name.click()
             detail = await opened.value
-        except Exception:
+        except BrowserError:
             detail = None
         if detail:
             try:
@@ -535,9 +563,9 @@ async def verify(page, platform, identity, receipt):
         return await verify_scheduled_x(page, identity, receipt)
     if not receipt.get('id') and receipt.get('final_submit_attempted') and 'before_ids' in receipt:
         found = await works(page, platform, identity)
-        matches = [v for k,v in found.items() if k not in receipt['before_ids'] and
-                   receipt.get('title') and normalize(receipt['title']) in normalize(v['text'])]
-        if len(matches) == 1 and not douyin_new_card_unprovable(platform, receipt):
+        matches = douyin_new_works(platform, receipt, [v for k,v in found.items() if k not in receipt['before_ids'] and
+                                                       receipt.get('title') and normalize(receipt['title']) in normalize(v['text'])])
+        if len(matches) == 1:
             receipt = {**receipt, 'id':matches[0]['id'], 'url':matches[0]['url']}
     if not receipt.get("id"):
         if platform == 'douyin' and await douyin_scheduled_card(page, receipt):
@@ -588,7 +616,7 @@ async def verify(page, platform, identity, receipt):
         present = present and receipt['expected_text'] in found.get(str(receipt['id']), {}).get('text', '')
     if platform == 'douyin' and present and receipt.get('visibility') == 'private' and 'expected_caption' in receipt:
         # Its card and its edit page are all there is to compare, so the whole text has to be right.
-        present = douyin_card_words(found[str(receipt['id'])]['text']) in douyin_card_says(receipt.get('title') or '', receipt['expected_caption'])
+        present = type(receipt['id']) is str and douyin_card_words(found[receipt['id']]['text']) in douyin_card_says(receipt.get('title') or '', receipt['expected_caption'])
     if platform == 'douyin' and present and receipt.get('schedule') and datetime.now(timezone.utc) < datetime.fromisoformat(receipt['schedule']['at']):
         # Before its time, only the work showing that time proves the schedule took, rather than it having gone out already.
         present = receipt['schedule']['stamp'] in found.get(str(receipt['id']), {}).get('text', '')
