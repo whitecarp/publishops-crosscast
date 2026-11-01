@@ -1,6 +1,6 @@
 """YouTube playlists on YouTube's own pages, free. Reordering stays in the paid add-on."""
 from . import collections
-from .core import VpubError
+from .core import NOT_ON_SALE, VpubError
 
 
 def listing(playlist=None, cursor=None, limit=50):
@@ -22,7 +22,7 @@ def current_title(playlist):
 
 def change(action, playlist=None, title=None, description=None, privacy=None, video=None, item=None, position=None, request_id=None):
     if action == 'move':
-        raise VpubError('paid_feature_required', 'Reordering a playlist is part of the paid CrossCast add-on.', 'Everything else keeps working without it.')
+        raise VpubError('paid_feature_required', 'Reordering a playlist is part of the paid CrossCast add-on.', f'{NOT_ON_SALE} Everything else keeps working without it.')
     if action == 'add':
         return collections.membership('youtube', 'add', playlist, video, request_id)
     if action == 'remove':

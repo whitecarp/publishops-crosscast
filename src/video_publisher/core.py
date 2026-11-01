@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 
 PLATFORMS = ("bilibili", "youtube", "douyin", "instagram", "x")
 HELD_BACK = "write_spacing"
+# The free version ships first. When the add-on can be bought, this is the one place its messages change.
+NOT_ON_SALE = "The add-on isn't on sale yet."
 
 
 class VpubError(Exception):
@@ -266,7 +268,7 @@ def load_plan(path, selected=None):
                 if v["category_id"] not in STUDIO_CATEGORIES:
                     raise VpubError("invalid_category", "YouTube Studio's list does not offer this category ID.")
                 if v.get("playlist_ids"):
-                    raise VpubError("unsupported_playlist", "Studio's playlist picker shows titles, not IDs.", "Use playlist_titles with the exact titles, or playlist_ids with the paid add-on.")
+                    raise VpubError("unsupported_playlist", "Studio's playlist picker shows titles, not IDs.", "Use playlist_titles with the exact titles.")
             for field in ("playlist_ids", "playlist_titles"):
                 values = v.get(field, [])
                 if not isinstance(values, list) or len(values) > 20 or not all(isinstance(x, str) and x.strip() and len(x) <= 150 for x in values) or len(set(values)) != len(values):

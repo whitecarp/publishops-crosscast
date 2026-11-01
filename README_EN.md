@@ -97,7 +97,7 @@ Every release starts with a plan that spells out platforms, accounts, visibility
 
 ### 📮 Sign in once, then publish in the background
 
-After the first sign-in, the CLI does the uploading itself: Bilibili through bili-cli, and YouTube, Douyin, Instagram and X through a dedicated Chrome the CLI runs in the background. The official API routes for YouTube, X and Instagram need the paid add-on. Uploads can carry chapters (Bilibili, YouTube, Douyin) and join a playlist (YouTube) or a collection (Bilibili, Douyin). Bilibili, YouTube, Douyin and X can schedule a future time; Instagram cannot, and a plan that asks for it is refused. `vpub init --draft-only` uploads without publishing: Bilibili and YouTube keep an unpublished draft, Douyin presses its own save-and-leave button, and its upload page may then offer the draft under 继续编辑 (CrossCast only looks, because it can't show whose draft that is and opening it may use it up), and Instagram and X stop at a preview that may not last, so it is never called saved.
+After the first sign-in, the CLI does the uploading itself: Bilibili through bili-cli, and YouTube, Douyin, Instagram and X through a dedicated Chrome the CLI runs in the background. The official API routes for YouTube, X and Instagram need the paid add-on, which isn't on sale yet; everything else here works without it. Uploads can carry chapters (Bilibili, YouTube, Douyin) and join a playlist (YouTube) or a collection (Bilibili, Douyin). Bilibili, YouTube, Douyin and X can schedule a future time; Instagram cannot, and a plan that asks for it is refused. `vpub init --draft-only` uploads without publishing: Bilibili and YouTube keep an unpublished draft, Douyin presses its own save-and-leave button, and its upload page may then offer the draft under 继续编辑 (CrossCast only looks, because it can't show whose draft that is and opening it may use it up), and Instagram and X stop at a preview that may not last, so it is never called saved.
 
 ### 🔁 Pick up where it stopped
 
@@ -121,7 +121,7 @@ See plays and engagement for a single work, and scan several platforms for new c
 
 ### 📧 Email when it needs you (optional)
 
-*Part of the paid add-on.*
+*Part of the paid add-on, which isn't on sale yet.*
 
 When a platform needs you to scan a QR code or verify, CrossCast can email you a reminder. Gmail only; off by default and turned on only when you ask.
 

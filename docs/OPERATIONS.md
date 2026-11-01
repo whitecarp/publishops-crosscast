@@ -20,7 +20,7 @@
 
 ## 0.16.0：升級時的變化
 
-- **官方 API 路徑改為獨立的付費附加元件。** 涵蓋 X、Instagram 與 YouTube。未安裝時，YouTube、抖音、Instagram 與 X 都使用背景瀏覽器。
+- **官方 API 路徑改為獨立的付費附加元件，目前還沒有開賣。** 涵蓋 X、Instagram 與 YouTube。未安裝時，YouTube、抖音、Instagram 與 X 都使用背景瀏覽器。
 - **YouTube 作品、數據、留言與編輯可透過其官方頁面免費使用。** 未安裝附加元件時，`vpub works`、`vpub stats`、`vpub comments list`、`vpub comments reply`、`vpub comments like`、`vpub engage like`、`vpub engage save`、`vpub playlist` 與 `vpub edit` 會在背景瀏覽器中執行，頻道自己留言的 `vpub comments edit` 與 `vpub comments delete` 也一樣。讀取；建立、修改（名稱、說明、公開範圍）、刪除私人播放清單並在其中新增和移除影片；替影片按讚和收藏、替留言按讚（都已復原）；回覆留言；以及修改自己的留言再改回去，都已在真實頻道上檢查過。置頂留言在真實頻道上試過，置頂生效了（影片自己的頁面把它排在最前面，並帶有置頂標記），但 CrossCast 因為去 Studio 裡看（Studio 的列和選單仍然只提供「置頂」）而回報為未確認；現在它改在影片自己的頁面上讀取置頂狀態，這個版本還沒在真實頻道上完整跑過一遍；刪除自己的一則回覆試過一次，結果停在 `COMMENT_UNVERIFIED`（回覆從頁面上消失了，但平台的回覆沒有帶預期的成功字樣）；其他會造成變更的操作尚未試過。留言為 Studio 載入的內容，並非完整歷史。調整播放清單順序與待審核留言佇列需要附加元件。
 - **YouTube 新增免費背景路徑。** `vpub auth login youtube --method browser` 在專用 Chrome 視窗登入一次；之後經由 YouTube Studio 在背景發布，Windows 上使用隱藏桌面，不會出現視窗；設計上也不會留下工作列圖示，但工作列尚未在真實機器上檢查過。可依確切標題加入播放清單（`playlist_titles`），也可設定排程（依 Studio 顯示的時區，沒有顯示時依這台電腦的時區）；兩者都在最後儲存前讀回確認。真實嘗試停在播放清單選擇器兩次（第二次是因為 Studio 的勾選框被它自己的容器蓋住了）；選擇器現在會點選勾選框外面的容器，若 5 秒後點擊仍被拒絕，就改用鍵盤勾選，這還沒重新試過，所以兩者都還沒在真實帳號上確認過。播放清單 ID（`playlist_ids`）只能走付費 API。`--draft-only` 會在最後儲存前停止。
 - **同樣移至附加元件：** 營運匯報（`vpub report`）、完整讀取（`vpub read-all`）與郵件提醒（`vpub notify`）。

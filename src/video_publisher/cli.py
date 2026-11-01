@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 from . import __version__, adapters
-from .core import Ledger, PLATFORMS, VpubError, atomic_json, config, file_sha, home, load_plan, never_sent, now, part_left_undone, publication_lock, read_json, snapshot_file, stop_check, platform_check
+from .core import Ledger, NOT_ON_SALE, PLATFORMS, VpubError, atomic_json, config, file_sha, home, load_plan, never_sent, now, part_left_undone, publication_lock, read_json, snapshot_file, stop_check, platform_check
 from .overview import DRAFTS
 from .safety import pushed_back
 
@@ -905,7 +905,7 @@ def platform_routes(platform):
     addon = adapters.addon_installed()
     return {"default_method": adapters.default_method(platform), "native_login": True,
             "publish_backend": "bili-cli" if platform == "bilibili" else "official API through the paid add-on" if platform == "youtube" and addon else "dedicated persistent background browser",
-            "optional_api_route": ("Installed (method: api)." if addon else "Needs the paid CrossCast API add-on (method: api).") if platform in {"youtube", "x", "instagram"} else None,
+            "optional_api_route": ("Installed (method: api)." if addon else f"Needs the paid CrossCast API add-on (method: api). {NOT_ON_SALE}") if platform in {"youtube", "x", "instagram"} else None,
             "standalone_cli_publish": True,
             "live_upload_verified": platform in {"youtube", "x", "instagram", "douyin"}}
 
@@ -935,6 +935,7 @@ def capabilities():
             "cover_fitting": "Landscape contain fitting; Douyin and Instagram share identical dedicated portrait bytes. No landscape-to-portrait padding fallback. covers portrait builds that image with no AI from parts the agent chooses, inside the central 3:4 safe area, and refuses a layout that would only fill a band. Grid cropping, small text and aesthetics require separate visual checks.",
             "instagram_media": "Instagram preparation preserves original video bytes and ratio. Use a separate upload cover and shared Douyin portrait through the mobile camera-roll picker; no inserted lead-in or transcoding.",
             "instagram_deletion": "Explicit native deletion request, UI result/absence evidence, retained history, and separately authorized same-video cover replacement. No standalone deletion API.",
+            "paid_add_on": f"{NOT_ON_SALE} Anything here that needs it is unavailable until it is, so don't offer it as something to buy. Everything else works without it.",
             "email": "Paid add-on. Gmail only, disabled by default. Enable only on explicit request; no ordinary-setup prompt. Host verifies the exact account and live send tool, helps install/connect a missing plugin or leaves email off. Self-send only. Works with any assistant's connected Gmail send tool: claim with its exact name, then call it once with the returned message. No Outlook, QQ, NetEase, SMTP or SMS. A TEST does not enable ongoing alerts.",
             "chapters": "Bilibili's CLI route sets planned chapters right after the upload and Bilibili reviews them; a refusal leaves the upload in place and vpub verify tries again. Verify reads first: an unclear ending is only read again and another person's list is never overwritten. YouTube's browser route adds them to the description as timestamped lines: at least three, each at least 10 seconds. Neither has been tried on a real account. Douyin CLI applies planned chapters after a durable published work ID is available; verify/resume completes a pending chapter step without reupload. Exact timing/title read-back; platform suggestions are not accepted automatically. Native Bilibili/Douyin/YouTube handoffs retained.",
             "youtube_studio_operations": "Without the paid add-on, YouTube works, stats, comments, replies, video and comment likes, comment pins, removing a viewer's comment, saves, playlists, edits (title, description, thumbnail, chapters), and editing or deleting the channel's own comments run on YouTube's own pages in the background browser. Comments are those Studio loaded; reordering a playlist and the held-for-review queue need the add-on. Reads, playlist create, rename, add, remove and delete, a video like and save with their undo, a reply, an edit of the channel's own comment, and a pin and its removal were checked on a real channel. A pin is read and removed on the video's own page, because Studio's row and menu do not change. A new thumbnail is reported as unconfirmed, because Studio shows nothing to compare it with. A delete of the channel's own reply removed it, but CrossCast can't confirm one until a real delete's answer is known. Other changes have not been tried on one.",

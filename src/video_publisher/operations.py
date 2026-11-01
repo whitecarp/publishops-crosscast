@@ -241,7 +241,7 @@ def self_test(platform, work, test_id):
     from . import adapters
     if platform=='youtube' and not adapters.addon_installed():
         raise VpubError('unsupported_operation','The self-test posts its own comment first, which the free YouTube route cannot do; nothing was sent.',
-                        'Reply to an existing comment with vpub comments reply, or install the add-on.')
+                        'Reply to an existing comment with vpub comments reply.')
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,80}',test_id):
         raise VpubError('invalid_test_id','Use a stable alphanumeric test ID; reruns reuse it.')
     key=digest([platform,work,test_id]);path=home()/'operations/tests'/(key+'.json')

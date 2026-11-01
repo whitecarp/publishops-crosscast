@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from .browser_backends import normalize, studio_visibility, work_url
 from .browser_runtime import acknowledged, look_until, risk_check, unique_visible, visible, write_answers
-from .core import VpubError, atomic_json, file_sha, home, now, read_json, reply_pressing, stop_check
+from .core import NOT_ON_SALE, VpubError, atomic_json, file_sha, home, now, read_json, reply_pressing, stop_check
 from .operations_api import metric
 from .progress import stage
 
@@ -281,7 +281,7 @@ async def operations(page, identity, payload):
         if payload.get("cursor"):
             raise VpubError("cursor_unsupported", "Studio comments expose the loaded page only; no fabricated page cursor.")
         if payload.get("moderation_status"):
-            raise VpubError("unsupported_operation", "The held-for-review queue needs the paid API add-on.")
+            raise VpubError("unsupported_operation", "The held-for-review queue needs the paid API add-on.", NOT_ON_SALE)
         result = await read_comments(page, identity, work, payload.get("limit", 20))
         if action == "replies":
             result["items"] = [c for c in result["items"] if payload.get("comment_id") in (c["id"], c["parent_id"])]
@@ -816,7 +816,7 @@ async def comment_action(page, identity, payload):
                     break
                 await page.wait_for_timeout(500)
         return result
-    raise VpubError("paid_feature_required", "This comment action needs the paid CrossCast add-on for now.", "Comment likes and pins, removing a viewer's comment, and editing or deleting the channel's own, are free.")
+    raise VpubError("paid_feature_required", "This comment action needs the paid CrossCast add-on for now.", f"{NOT_ON_SALE} Comment likes and pins, removing a viewer's comment, and editing or deleting the channel's own, are free.")
 
 
 async def edit_fields(page, url):

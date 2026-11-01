@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 from . import progress, safety
-from .core import HELD_BACK, VpubError, stop_check, platform_check
+from .core import HELD_BACK, NOT_ON_SALE, VpubError, stop_check, platform_check
 
 ROUTES = {"bilibili": {"cli"}, "douyin": {"browser"}, "youtube": {"browser", "api"}, "x": {"browser", "api"}, "instagram": {"browser", "api"}}
 BILI_MAIN = "from bili_cli.main import main; main()"
@@ -49,7 +49,7 @@ def paid_api():
         import crosscast_api
     except ImportError:
         raise VpubError("paid_route_required", "Official API routes for X, Instagram and YouTube need the paid CrossCast API add-on.",
-                        "Use the free default route, or install the add-on.") from None
+                        f"Use the free default route. {NOT_ON_SALE}") from None
     return crosscast_api
 
 
@@ -60,7 +60,7 @@ def paid_feature(module, label):
     except ModuleNotFoundError as error:
         if not (error.name or "").startswith("crosscast_api"):
             raise
-    raise VpubError("paid_feature_required", f"{label} is part of the paid CrossCast add-on.", "Everything else keeps working without it.")
+    raise VpubError("paid_feature_required", f"{label} is part of the paid CrossCast add-on.", f"{NOT_ON_SALE} Everything else keeps working without it.")
 
 
 def email_reminder(key, platform, episode):
@@ -72,7 +72,7 @@ def email_reminder(key, platform, episode):
 
 def email_status():
     if not addon_installed():
-        return {"enabled": False, "available": False, "note": "Email reminders are part of the paid CrossCast add-on."}
+        return {"enabled": False, "available": False, "note": f"Email reminders are part of the paid CrossCast add-on. {NOT_ON_SALE}"}
     return paid_feature("notifications", "Email reminders").onboarding()
 
 
