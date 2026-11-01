@@ -5,7 +5,7 @@ import uuid
 
 from . import safety
 from .core import (Ledger, VpubError, atomic_json, config, digest, home,
-                   language_tag, never_sent, now, observation_lock, platform_check, publication_lock, read_json, stop_check)
+                   language_tag, never_sent, now, observation_lock, platform_check, publication_lock, read_json, receipt_turn, stop_check)
 
 NAMES={'bilibili':'B站','youtube':'YouTube','douyin':'抖音','instagram':'Instagram','x':'X'}
 
@@ -169,30 +169,33 @@ def reply(platform, work, comment_id, text, language='auto', dry_run=False, _tes
     key=digest([platform,snapshot['identity'],work,comment_id])
     path=home()/'operations/replies'/(key+'.json')
     with publication_lock():
-        previous={}
-        if path.exists():
-            previous=read_json(path)
-            if previous.get('state')!='REPLY_READY':
-                return {**previous,'reused':True,'platform_writes':0,
-                        'hint':'An existing attempt is retained. Use comments verify-reply; never send again on a timeout.'}
-            safety.reclaim(path,previous)
-        ticket=None if _test_key else safety.admit(**limits)
-        # Durable before any backend can submit; even a lost response prevents duplicates.
-        attempt={'state':'REPLY_READY','reply_key':key,'platform':platform,'work_id':work,
-                 'identity':snapshot['identity'],'request':request,'at':now(),'test':bool(_test_key),'safety_ticket':ticket}
-        if ticket and ticket['possible_same_person']: attempt['possible_same_person']=ticket['possible_same_person']
-        # An explicitly prepared repair must retain earlier failed attempts.
-        for field in ('recovery_history','recovery_reason','creator_repair_prepared'):
-            if field in previous:attempt[field]=previous[field]
-        atomic_json(path,attempt)
+        # A killed command's reply can still be going out in the shared background browser, so this look and this write are one step.
+        with receipt_turn(path):
+            previous={}
+            if path.exists():
+                previous=read_json(path)
+                if previous.get('state')!='REPLY_READY':
+                    return {**previous,'reused':True,'platform_writes':0,
+                            'hint':'An existing attempt is retained. Use comments verify-reply; never send again on a timeout.'}
+                safety.reclaim(path,previous)
+            ticket=None if _test_key else safety.admit(**limits)
+            # Durable before any backend can submit; even a lost response prevents duplicates.
+            attempt={'state':'REPLY_READY','reply_key':key,'platform':platform,'work_id':work,
+                     'identity':snapshot['identity'],'request':request,'at':now(),'test':bool(_test_key),'safety_ticket':ticket}
+            if ticket and ticket['possible_same_person']: attempt['possible_same_person']=ticket['possible_same_person']
+            # An explicitly prepared repair must retain earlier failed attempts.
+            for field in ('recovery_history','recovery_reason','creator_repair_prepared'):
+                if field in previous:attempt[field]=previous[field]
+            atomic_json(path,attempt)
         try:
             result=backend(platform,'reply',work,reply_request=request,reply_receipt_path=str(path))
         except Exception as e:
-            durable=read_json(path)
-            if durable.get('state')=='REPLY_SUBMITTING' and not never_sent(e):
-                durable['state']='REPLY_UNVERIFIED';atomic_json(path,durable)
-            elif durable.get('state') in {'REPLY_READY','REPLY_SUBMITTING'}:
-                durable['state']='REPLY_READY';atomic_json(path,durable);safety.reclaim(path,durable)
+            with receipt_turn(path):
+                durable=read_json(path)
+                if durable.get('state')=='REPLY_SUBMITTING' and not never_sent(e):
+                    durable['state']='REPLY_UNVERIFIED';atomic_json(path,durable)
+                elif durable.get('state') in {'REPLY_READY','REPLY_SUBMITTING'}:
+                    durable['state']='REPLY_READY';atomic_json(path,durable);safety.reclaim(path,durable)
             record('reply',platform,work,{'state':durable.get('state'),'reply_key':key,'test':bool(_test_key),
                                         'code':e.code if isinstance(e,VpubError) else type(e).__name__})
             raise

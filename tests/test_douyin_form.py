@@ -243,8 +243,8 @@ class ScheduledCardTests(Base):
     async def show(self, *cards):
         await self.page.set_content('<!doctype html><meta charset="utf-8"><body>' + "".join(cards))
 
-    def receipt(self, before=0, visibility="private", card_stamp=STAMP):
-        return {"title": TITLE, "visibility": visibility, "same_title_cards_before": before, "schedule": {"card_stamp": card_stamp}}
+    def receipt(self, before=0, visibility="private", card_stamp=STAMP, same_time=0):
+        return {"title": TITLE, "visibility": visibility, "same_title_cards_before": before, "same_time_cards_before": same_time, "schedule": {"card_stamp": card_stamp}}
 
     async def test_one_new_card_with_this_title_time_and_privacy_is_this_one(self):
         await self.show(self.card(), self.card("Another work"))
@@ -257,6 +257,35 @@ class ScheduledCardTests(Base):
             with self.subTest(cards=cards, receipt=receipt):
                 await self.show(*cards)
                 self.assertIs(False, await browser_backends.douyin_scheduled_card(self.page, receipt))
+
+    async def test_an_older_card_with_this_title_and_time_never_stands_in_for_the_new_one(self):
+        """From a review: the old card matched, the new one showed the wrong time, and the count of cards was right, so it passed."""
+        await self.show(self.card(), self.card(when="2030年03月05日 15:07"))
+        self.assertIs(False, await browser_backends.douyin_scheduled_card(self.page, self.receipt(before=1, same_time=1)))
+        await self.show(self.card(), self.card())
+        self.assertIs(False, await browser_backends.douyin_scheduled_card(self.page, self.receipt(before=1, same_time=1)))
+
+    async def test_an_older_card_with_this_title_at_another_time_is_told_apart(self):
+        await self.show(self.card(when="2030年03月05日 15:07"), self.card())
+        self.assertIs(True, await browser_backends.douyin_scheduled_card(self.page, self.receipt(before=1)))
+        await self.show(self.card(when="2030年03月05日 15:07"), self.card(when="2030年03月06日 15:07"))
+        self.assertIs(False, await browser_backends.douyin_scheduled_card(self.page, self.receipt(before=1)))
+
+    async def test_a_receipt_that_never_looked_for_an_older_card_stays_unverified(self):
+        await self.show(self.card())
+        receipt = self.receipt()
+        del receipt["same_time_cards_before"]
+        self.assertIs(False, await browser_backends.douyin_scheduled_card(self.page, receipt))
+
+    async def test_the_upload_counts_cards_with_this_title_and_time_before_it_starts(self):
+        self.html = '<!doctype html><meta charset="utf-8"><body>' + self.card() + self.card(when="2030年03月05日 15:07") + self.card("Another work")
+        tx = StubTx(schedule=datetime(2030, 3, 4, 15, 7).astimezone().isoformat())
+        tx.media = lambda: "clip.mp4"
+        await self.page.goto("https://creator.douyin.com/creator-micro/content/manage")
+        with patch.object(browser_forms, "works", new=AsyncMock(return_value={})), patch.object(browser_forms, "douyin_caption", return_value="Words"), \
+                patch.object(browser_forms, "upload_file", new=AsyncMock(side_effect=RuntimeError("selected"))), self.assertRaises(RuntimeError):
+            await browser_forms.publish_douyin(self.page, tx)
+        self.assertEqual((2, 1), (tx.receipt["same_title_cards_before"], tx.receipt["same_time_cards_before"]))
 
     async def test_a_public_one_needs_no_private_mark(self):
         await self.show(self.card(private=""))

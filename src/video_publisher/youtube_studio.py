@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from .browser_backends import normalize, studio_visibility, work_url
 from .browser_runtime import acknowledged, look_until, risk_check, unique_visible, visible, write_answers
-from .core import VpubError, atomic_json, file_sha, home, now, read_json, reply_still_open, stop_check
+from .core import VpubError, atomic_json, file_sha, home, now, read_json, reply_pressing, stop_check
 from .operations_api import metric
 from .progress import stage
 
@@ -32,7 +32,7 @@ DELETE_ITEM = re.compile(r"^\s*(Delete|删除|刪除)\s*$")
 PIN_ITEM = re.compile(r"^\s*(Pin|置顶|置頂)\s*$")
 UNPIN_ITEM = re.compile(r"^\s*(Unpin|取消置顶|取消置頂)\s*$")
 REMOVE_ITEM = re.compile(r"^\s*(Remove|移除)\s*$")
-WATCH_TICKS = 20  # How long the video's page gets to load its comments, in seconds of scrolling.
+WATCH_TICKS = 20  # How long the video's page gets to load its comments, in seconds.
 # What a thread's own top-level comment says, leaving out the replies under it: its exact ID, from its link's lc value, and whether it has a badge.
 WATCH_ROOT = """thread => {
   const own = selector => [...thread.querySelectorAll(selector)].filter(e => !e.closest('#replies'));
@@ -313,10 +313,7 @@ async def operations(page, identity, payload):
     if not await button.is_enabled():
         raise VpubError("reply_not_ready", "YouTube has not enabled reply submission.")
     path = Path(payload["reply_receipt_path"])
-    saved = read_json(path)
-    reply_still_open(saved)
-    saved.update(before_reply_ids=[c["id"] for c in current], submitted_text=request["text"], state="REPLY_SUBMITTING")
-    atomic_json(path, saved)
+    saved = reply_pressing(path, before_reply_ids=[c["id"] for c in current], submitted_text=request["text"])
     stage("pressing")
     await act_and_settle(page, lambda: button.click(timeout=20000))
     saved["state"] = "REPLY_UNVERIFIED"
@@ -683,29 +680,32 @@ async def comment_menu_item(page, row, words):
 
 
 async def watch_first_thread(page, work):
-    """The first comment thread on the video's own page, which loads its comments once scrolled to. None if it shows none."""
+    """The first comment thread on the video's own page, which loads its comments once they are in view. None if it shows none.
+    Their section is brought into view, which is how a field check read a real pin. Twenty seconds of the wheel on that page once saw no comments."""
     await page.goto(f"https://www.youtube.com/watch?v={work}", wait_until="domcontentloaded", timeout=60000)
     await risk_check(page)
     threads = page.locator("ytd-comment-thread-renderer")
+    section = page.locator("ytd-comments#comments")
     for _ in range(WATCH_TICKS):
         if await threads.count():
             return threads.first
-        await page.mouse.wheel(0, 1200)
+        if await section.count():
+            await section.first.evaluate("e => e.scrollIntoView()")
         await page.wait_for_timeout(1000)
     return threads.first if await threads.count() else None
 
 
 async def watch_pin(page, work, comment):
     """Which comment is pinned, from the video's own page. A field check found a pin that held changes nothing in Studio's row or menu,
-    while this page shows it first with its badge. None if the page shows no comments to say."""
+    while this page shows it first with its badge. Without an answer, `pinned` is None and `unread` says why."""
     first = await watch_first_thread(page, work)
     if first is None:
-        return None
+        return {"pinned": None, "unread": "the video's page showed no comments in time"}
     root = await first.evaluate(WATCH_ROOT)
     if not root["badge"]:
         return {"pinned": False, "other": False}
     if not root["id"]:
-        return None
+        return {"pinned": None, "unread": "the pinned comment shows no ID to compare"}
     return {"pinned": root["id"] == comment, "other": root["id"] != comment}
 
 
@@ -745,8 +745,10 @@ async def comment_action(page, identity, payload):
     liked = await like.evaluate("e => e.isToggled", isolated_context=False) if await like.count() else None
     observed = {"identity": identity, "text": found[0]["text"], "liked": liked if type(liked) is bool else None, "deleted": False, "source": "studio_comment_list"}
     if kind == "pin":
-        observed["pinned"] = pin["pinned"] if pin else None
+        observed["pinned"] = pin["pinned"]
         observed["source"] = "watch_page_badge"
+        if "unread" in pin:
+            observed["pin_unread"] = pin["unread"]
     if payload["operation"] == "status":
         return observed
     if payload["operation"] != "set":
@@ -874,9 +876,12 @@ async def edit(page, payload, save, submit):
     else:
         raise VpubError("edit_not_ready", "Studio did not enable Save; nothing was saved.")
     save(state="EDIT_PREPARED")
-    await act_and_settle(page, lambda: submit(button))
+    requests = await act_and_settle(page, lambda: submit(button))
     if changes is None:
-        return save(state="EDIT_VERIFIED", platform_writes=1, cover={"state": "UI_ACCEPTED", "remote_pixels_verified": False}, **evidence)
+        # Studio shows nothing that says which thumbnail it saved, so a pressed Save is all that is known. The answers it gave are kept to learn from.
+        return save(state="EDIT_SUBMITTED_UNVERIFIED", platform_writes=1, cover={"state": "UI_ACCEPTED", "remote_pixels_verified": False},
+                    page_requests=sorted({urlsplit(item.url).path for item in requests}), write_answers=await write_answers(requests, work),
+                    note="Save was pressed, but Studio shows nothing to compare the thumbnail with. Look at it in Studio.", **evidence)
     title, description = await edit_fields(page, url)
     after = {"title": normalize(await title.inner_text()), "description": normalize(await description.inner_text())}
     return save(state="EDIT_VERIFIED" if after == changes else "EDIT_SUBMITTED_UNVERIFIED", platform_writes=1, **evidence)

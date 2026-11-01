@@ -99,6 +99,7 @@ class TryingAgainTests(Base):
             comment_actions.resume(key)
         self.assertEqual("state_unavailable", caught.exception.code)
         self.assertEqual(1, sent.call_count)
+        self.assertEqual("Stopped because the comment text differs.", caught.exception.hint)
 
     def test_a_pin_state_it_cannot_read_is_left_alone(self):
         key = self.stuck()
@@ -106,6 +107,14 @@ class TryingAgainTests(Base):
             comment_actions.resume(key)
         self.assertEqual("state_unavailable", caught.exception.code)
         self.assertEqual(1, sent.call_count)
+        self.assertEqual("Stopped because its state could not be read.", caught.exception.hint)
+
+    def test_the_reason_a_try_stopped_never_holds_words_or_ids(self):
+        key = self.stuck()
+        with patch.object(comment_actions, "dispatch", return_value={"identity": "someone-else", "text": "Private words", "pinned": True}), \
+                patch.object(comment_actions, "matches", return_value=False), self.assertRaises(VpubError) as caught:
+            comment_actions.resume(key)
+        self.assertEqual("Stopped because the account differs, and the comment text differs, and its state differs from before.", caught.exception.hint)
 
     def test_a_like_can_be_tried_again_too(self):
         before = {"identity": OWNER, "text": "Mine", "liked": False}

@@ -701,10 +701,30 @@ class CommentTests(Browser):
         self.site.comments[1]["pinned"] = True
         self.assertIs(False, (await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
 
+    async def test_a_slow_page_gets_its_comments_in_view_once_they_are_ready(self):
+        """Comments load once their section is in view. A field check's read could not see them after scrolling on every second, and could after bringing the section into view."""
+        self.site.watch_threads = """<div style="height:1500px"></div><ytd-comments id="comments-holder"></ytd-comments><div style="height:30000px"></div>
+            <script>window.pending = (window.pending || 0) + 1;
+            setTimeout(() => {
+              const section = document.getElementById('comments-holder');
+              section.id = 'comments';
+              section.style.display = 'block';
+              section.style.height = '50px';
+              new IntersectionObserver((seen, watcher) => {
+                if (!seen.some(entry => entry.isIntersecting)) return;
+                watcher.disconnect();
+                section.innerHTML = '<ytd-comment-thread-renderer><div id="pinned-comment-badge">Pinned</div><a href="/watch?v=%s&lc=c1">now</a></ytd-comment-thread-renderer>';
+              }).observe(section);
+              window.pending -= 1;
+            }, 2500);</script>""" % VIDEO
+        self.assertIs(True, (await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
+
     async def test_a_page_showing_no_comments_says_nothing_about_a_pin(self):
         self.site.watch_comments = False
         with patch.object(yt, "WATCH_TICKS", 2):
-            self.assertIsNone((await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
+            observed = await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status"))
+            self.assertIsNone(observed["pinned"])
+            self.assertEqual("the video's page showed no comments in time", observed["pin_unread"])
             with self.assertRaises(VpubError) as caught:
                 await yt.comment_action(self.page, CHANNEL, self.payload("pin", receipt=self.receipt_file()))
         self.assertEqual("state_unavailable", caught.exception.code)

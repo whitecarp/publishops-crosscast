@@ -198,15 +198,26 @@ async def douyin_cards_titled(page, title):
     return cards
 
 
+def douyin_card_stamp(when):
+    """Its upload form writes the time one way and its works list another, as a field check found."""
+    local = when.astimezone()
+    return f'{local.year}年{local.month:02d}月{local.day:02d}日 {local.hour:02d}:{local.minute:02d}'
+
+
+async def douyin_cards_at(cards, stamp):
+    return [card for card in cards if stamp in normalize(await card.inner_text())]
+
+
 async def douyin_scheduled_card(page, receipt):
-    """Before its time a scheduled work has a card and no ID anywhere. One more card than before with exactly this title, showing this time, and marked private if it was meant to be, is this one."""
+    """Before its time a scheduled work has a card and no ID anywhere. One more card than before with exactly this title, the only one showing this time, and marked private if it was meant to be, is this one.
+    An older card with this title and time could pass for it, so unless none was there before the upload, this stays unverified."""
     schedule = receipt.get('schedule') or {}
-    if not schedule.get('card_stamp') or 'same_title_cards_before' not in receipt:
+    if not schedule.get('card_stamp') or 'same_title_cards_before' not in receipt or receipt.get('same_time_cards_before') != 0:
         return False
     cards = await douyin_cards_titled(page, receipt.get('title') or '')
     if len(cards) != receipt['same_title_cards_before'] + 1:
         return False
-    matching = [card for card in cards if schedule['card_stamp'] in normalize(await card.inner_text())]
+    matching = await douyin_cards_at(cards, schedule['card_stamp'])
     if len(matching) != 1:
         return False
     return receipt.get('visibility') != 'private' or await matching[0].locator('[class*="private-mark-"]').count() > 0

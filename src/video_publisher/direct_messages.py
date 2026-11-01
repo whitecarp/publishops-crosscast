@@ -2,7 +2,7 @@
 import re
 import uuid
 from . import adapters, safety
-from .core import VpubError, atomic_json, digest, error_fields, home, never_sent, now, publication_lock, read_json, stop_check
+from .core import VpubError, atomic_json, digest, error_fields, home, never_sent, now, publication_lock, read_json, receipt_turn, stop_check
 from .progress import stage
 
 PENDING = {'DM_SUBMITTING', 'DM_UNVERIFIED'}
@@ -75,13 +75,14 @@ def send(platform, who, text, language, dry_run=False, test_id=None, written_by=
         target_path = home() / 'operations/dm-targets' / (digest([platform, expected, canonical]) + '.json')
         if target_path.exists():
             prior_path = home() / 'operations/dm-actions' / (read_json(target_path)['key'] + '.json')
-            prior = read_json(prior_path)
-            if prior['state'] in PENDING or (safety.comparable(prior['request']['text']) == safety.comparable(text) and prior['state'] == 'DM_VISIBLE'):
-                return {**prior, 'reused': True, 'platform_writes': 0, 'hint': 'Use dm verify KEY; no automatic resend.'}
-            if prior['state'] == 'DM_READY':
-                # A command killed part way can still be running in the shared background browser, so this attempt closes before another opens.
-                prior['state'] = 'DM_REPLACED'; atomic_json(prior_path, prior)
-                safety.reclaim(prior_path, prior)
+            with receipt_turn(prior_path):
+                prior = read_json(prior_path)
+                if prior['state'] in PENDING or (safety.comparable(prior['request']['text']) == safety.comparable(text) and prior['state'] == 'DM_VISIBLE'):
+                    return {**prior, 'reused': True, 'platform_writes': 0, 'hint': 'Use dm verify KEY; no automatic resend.'}
+                if prior['state'] == 'DM_READY':
+                    # A command killed part way can still be running in the shared background browser, so this attempt closes before another opens.
+                    prior['state'] = 'DM_REPLACED'; atomic_json(prior_path, prior)
+                    safety.reclaim(prior_path, prior)
         request = {'platform': platform, 'identity': expected, 'recipient': who, 'text': text, 'language': language}
         before = dispatch(platform, 'read', expected, recipient=who, limit=20)
         if before.get('identity') != expected or before.get('recipient') != who:
@@ -103,18 +104,21 @@ def send(platform, who, text, language, dry_run=False, test_id=None, written_by=
             atomic_json(path, saved)
             return _verify(path)
         except Exception as exc:
-            saved = read_json(path)
-            saved.update(state='DM_UNVERIFIED' if saved['state'] in PENDING and not never_sent(exc) else 'DM_FAILED', **error_fields(exc, 'error_code'))
-            saved['platform_writes'] = None if saved['state'] == 'DM_UNVERIFIED' else 0
-            atomic_json(path, saved)
+            with receipt_turn(path):
+                saved = read_json(path)
+                saved.update(state='DM_UNVERIFIED' if saved['state'] in PENDING and not never_sent(exc) else 'DM_FAILED', **error_fields(exc, 'error_code'))
+                saved['platform_writes'] = None if saved['state'] == 'DM_UNVERIFIED' else 0
+                atomic_json(path, saved)
             if saved['state'] == 'DM_FAILED': safety.release(ticket)
             return record(saved)
 
 
 def submitting(path):
-    saved = read_json(path)
-    if saved.get('state') == 'DM_REPLACED': raise VpubError('attempt_replaced', 'A newer attempt took this message over, so this one sent nothing.')
-    saved.update(state='DM_SUBMITTING', submitted_at=now()); atomic_json(path, saved)
+    """A message's last step before its click. Only an attempt still waiting gets past here: one a newer attempt closed, or whose command has already reported failure, sends nothing."""
+    with receipt_turn(path):
+        saved = read_json(path)
+        if saved.get('state') != 'DM_READY': raise VpubError('attempt_replaced', 'A newer attempt took this message over, or this one had already ended, so this one sent nothing.')
+        saved.update(state='DM_SUBMITTING', submitted_at=now()); atomic_json(path, saved)
     stage('pressing')
 
 
@@ -122,12 +126,15 @@ def _verify(path):
     saved = read_json(path); r = saved['request']
     after = dispatch(r['platform'], 'verify', r['identity'], recipient=r['recipient'],
                      receipt=saved, limit=50)
-    if saved['state'] in PENDING | {'DM_VISIBLE'}:
-        matched = (after.get('matching_outgoing_message') is True and after.get('identity') == r['identity']
-                   and after.get('recipient') == r['recipient'])
-        saved['state'] = 'DM_VISIBLE' if matched else 'DM_UNVERIFIED'
-    saved.update(after=after, verified_at=now(), delivery='Recipient receipt/read status is not established.')
-    atomic_json(path, saved)
+    # That read can queue behind a killed command's send, so what it finds goes onto the receipt as it stands now.
+    with receipt_turn(path):
+        saved = read_json(path)
+        if saved['state'] in PENDING | {'DM_VISIBLE'}:
+            matched = (after.get('matching_outgoing_message') is True and after.get('identity') == r['identity']
+                       and after.get('recipient') == r['recipient'])
+            saved['state'] = 'DM_VISIBLE' if matched else 'DM_UNVERIFIED'
+        saved.update(after=after, verified_at=now(), delivery='Recipient receipt/read status is not established.')
+        atomic_json(path, saved)
     return record(saved)
 
 

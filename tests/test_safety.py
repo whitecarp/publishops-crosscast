@@ -272,7 +272,7 @@ class ReplyFlowTests(Temporary):
             self.refused("unsafe_reply", ops.reply, "youtube", WORK, "comment123", "密码：123456")
             self.refused("contact_in_reply", ops.reply, "youtube", WORK, "comment123", "请看 example.com")
         send.assert_not_called()
-        self.assertFalse((home() / "operations/replies").exists())
+        self.assertEqual([], list((home() / "operations/replies").glob("*.json")))
 
     def test_a_failure_before_sending_gives_the_count_back(self):
         with patch.object(ops, "backend", side_effect=VpubError("layout_changed", "x")):

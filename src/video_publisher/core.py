@@ -34,10 +34,15 @@ def part_left_undone(receipt):
     return receipt.get("chapters_state") not in {None, "VERIFIED"} or (isinstance(season, dict) and season.get("added") is False)
 
 
-def reply_still_open(saved):
-    """A reply's last check before its click. A command killed part way can still be running in the shared background browser, with a second attempt queued behind it."""
-    if saved.get("state") in {"REPLY_SUBMITTING", "REPLY_UNVERIFIED", "REPLY_VERIFIED", "REPLY_REJECTED"}:
-        raise VpubError("attempt_exists", "An earlier attempt at this reply got there first, so nothing more was sent.", "Use comments verify-reply; never send again.")
+def reply_pressing(path, **details):
+    """A reply's last step before its click. A command killed part way can still be running in the shared background browser, with a second attempt queued behind it, so only a reply still waiting gets past here."""
+    with receipt_turn(path):
+        saved = read_json(path)
+        if saved.get("state") != "REPLY_READY":
+            raise VpubError("attempt_exists", "An earlier attempt at this reply got there first, so nothing more was sent.", "Use comments verify-reply; never send again.")
+        saved.update(state="REPLY_SUBMITTING", **details)
+        atomic_json(path, saved)
+    return saved
 
 
 def error_fields(exc, name="error"):
@@ -462,13 +467,24 @@ def publication_lock():
         yield
 
 
-@contextlib.contextmanager
 def observation_lock(seconds=30):
     """Saving what a read found touches only local files for a moment, so it never waits for a publish or a change on another platform."""
+    return brief_lock(home() / 'observations.lock', 'busy', 'Another command is saving what it read.', seconds)
+
+
+def receipt_turn(path, seconds=10):
+    """Read a receipt and move it on as one step. Replacing the file is atomic, but what was read before it can be out of date:
+    a state someone else wrote in between would be lost, and both sides would carry on as if they had got there first."""
+    return brief_lock(Path(str(path) + '.turn'), 'attempt_busy', 'Another step is moving this attempt on, so nothing was sent.', seconds)
+
+
+@contextlib.contextmanager
+def brief_lock(path, code, message, seconds):
+    """A lock held for a moment over local files, so the other side waits for it instead of giving up."""
     from .process_lock import hold
     deadline = time.monotonic() + seconds
     while True:
-        held = hold(home() / 'observations.lock', 'busy', 'Another command is saving what it read.')
+        held = hold(path, code, message)
         try:
             held.__enter__()
             break

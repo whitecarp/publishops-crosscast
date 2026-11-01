@@ -3,7 +3,10 @@ import json
 import os
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlsplit
@@ -12,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from stage_browser import SharedBrowser
 
 from video_publisher import operations as ops, operations_browser, safety, youtube_studio
-from video_publisher.core import VpubError, atomic_json, digest, home, read_json
+from video_publisher.core import VpubError, atomic_json, digest, home, read_json, reply_pressing
 
 OWNER = "owner"
 WORK = "abcde12345"
@@ -223,11 +226,7 @@ class TwoAttemptsTests(unittest.TestCase):
 
     def press(self, path):
         """The last steps a real worker takes for a reply, whichever platform it is on."""
-        from video_publisher.core import reply_still_open
-        saved = read_json(path)
-        reply_still_open(saved)
-        saved["state"] = "REPLY_SUBMITTING"
-        atomic_json(path, saved)
+        saved = reply_pressing(path)
         self.sent.append("reply")
         saved["state"] = "REPLY_UNVERIFIED"
         atomic_json(path, saved)
@@ -252,6 +251,97 @@ class TwoAttemptsTests(unittest.TestCase):
         self.assertEqual(["reply"], self.sent)
         self.assertEqual("REPLY_UNVERIFIED", read_json(path)["state"])
         self.assertEqual(1, safety.status()["used_today"]["x"]["replies_per_day"])
+
+    def killed_attempt(self):
+        def killed(platform, action, work, reply_receipt_path, **options):
+            raise KeyboardInterrupt
+        with patch.object(ops, "backend", side_effect=killed), self.assertRaises(KeyboardInterrupt):
+            ops.reply("x", "1234567890", COMMENT, "Answer", "en")
+        return next((home() / "operations/replies").glob("*.json"))
+
+    def test_the_first_attempt_finishing_during_the_second_ones_look_still_goes_once(self):
+        """From a review: the old command finished after the new one had read its receipt and before it wrote a fresh one over it, so the record of that press was lost and a second reply went."""
+        path = self.killed_attempt()
+        old = threading.Thread(target=lambda: self.press(path))
+        reclaim = safety.reclaim
+
+        def during_the_look(saved_path, saved):
+            old.start()
+            time.sleep(0.5)  # It is now at this receipt's door.
+            return reclaim(saved_path, saved)
+
+        def second(platform, action, work, reply_receipt_path, **options):
+            old.join(30)  # The session finishes the first command before this one's turn comes.
+            return self.press(reply_receipt_path)
+        with patch.object(safety, "reclaim", side_effect=during_the_look), patch.object(ops, "backend", side_effect=second), self.assertRaises(VpubError) as caught:
+            ops.reply("x", "1234567890", COMMENT, "Answer", "en")
+        self.assertEqual("attempt_exists", caught.exception.code)
+        self.assertEqual(["reply"], self.sent)
+        self.assertEqual("REPLY_UNVERIFIED", read_json(path)["state"])
+
+    def test_a_first_attempt_already_pressed_is_kept_not_written_over(self):
+        path = self.killed_attempt()
+        self.press(path)
+        with patch.object(ops, "backend") as send:
+            result = ops.reply("x", "1234567890", COMMENT, "Answer", "en")
+        send.assert_not_called()
+        self.assertTrue(result["reused"])
+        self.assertEqual(["reply"], self.sent)
+
+    def test_only_a_reply_still_waiting_can_be_pressed(self):
+        path = self.killed_attempt()
+        for state in ("REPLY_SUBMITTING", "REPLY_UNVERIFIED", "REPLY_VERIFIED", "REPLY_REJECTED", "REPLY_FAILED", None):
+            with self.subTest(state=state):
+                atomic_json(path, {"state": state})
+                with self.assertRaises(VpubError) as caught:
+                    self.press(path)
+                self.assertEqual("attempt_exists", caught.exception.code)
+        self.assertEqual([], self.sent)
+
+    def test_a_failed_attempt_never_writes_over_a_press_that_got_in(self):
+        """The command is told it failed in the same moment its still-running work presses. The press must not be lost."""
+        path = self.killed_attempt()
+        failing, started = [], threading.Event()
+        old = threading.Thread(target=lambda: (started.wait(30), self.press(path)))
+
+        def failed(platform, action, work, reply_receipt_path, **options):
+            failing.append(True)
+            raise TimeoutError
+        real = ops.read_json
+
+        def during_the_failure(where):
+            saved = real(where)
+            if failing and not started.is_set():
+                started.set()
+                time.sleep(0.5)  # It is now at this receipt's door.
+            return saved
+        old.start()
+        with patch.object(ops, "backend", side_effect=failed), patch.object(ops, "read_json", side_effect=during_the_failure), self.assertRaises(TimeoutError):
+            ops.reply("x", "1234567890", COMMENT, "Answer", "en")
+        old.join(30)
+        self.assertEqual(["reply"], self.sent)
+        self.assertEqual("REPLY_UNVERIFIED", read_json(path)["state"])
+
+
+class ManyAtOnceTests(unittest.TestCase):
+    """Real processes all reaching the same receipt at the same moment: one gets through."""
+    SCRIPT = (
+        "import sys, time\n"
+        "from video_publisher.core import VpubError, reply_pressing\n"
+        "while time.time() < float(sys.argv[2]):\n    time.sleep(0.001)\n"
+        "try:\n    reply_pressing(sys.argv[1]); print('pressed')\n"
+        "except VpubError as caught:\n    print(caught.code)\n"
+    )
+
+    def test_one_of_many_processes_gets_to_press(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "reply.json"
+            atomic_json(path, {"state": "REPLY_READY"})
+            start = str(time.time() + 3)
+            env = {**os.environ, "VPUB_HOME": temp, "PYTHONPATH": os.pathsep.join(sys.path)}
+            runs = [subprocess.Popen([sys.executable, "-c", self.SCRIPT, str(path), start], env=env, stdout=subprocess.PIPE, text=True) for _ in range(6)]
+            answers = sorted(run.communicate(timeout=60)[0].strip() for run in runs)
+        self.assertEqual(["attempt_exists"] * 5 + ["pressed"], answers)
 
 
 if __name__ == "__main__":

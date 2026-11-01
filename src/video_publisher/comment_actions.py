@@ -178,9 +178,12 @@ def resume(key):
             saved.update(state='COMMENT_VERIFIED',after=current,verified_at=now());atomic_json(path,saved)
             return {**saved,'platform_writes':0}
         field=STATE_FIELD[r['kind']]
-        if (current.get('identity')!=r['identity'] or current.get('text')!=r['comment']['text']
-            or current.get(field) is None or current.get(field)!=saved['before'].get(field)):
-            raise VpubError('state_unavailable','Cannot establish the exact original state; no retry was made.')
+        # Which check it was, and never the words or IDs it compared.
+        stopped=[reason for reason,failed in (('the account differs',current.get('identity')!=r['identity']),('the comment text differs',current.get('text')!=r['comment']['text']),
+                                              ('its state could not be read',current.get(field) is None),
+                                              ('its state differs from before',current.get(field) is not None and current.get(field)!=saved['before'].get(field))) if failed]
+        if stopped:
+            raise VpubError('state_unavailable','Cannot establish the exact original state; no retry was made.','Stopped because '+', and '.join(stopped)+'.')
         saved.setdefault('recovery_attempts',[]).append({'at':now(),'before':current,'previous_error':saved.get('error_code'),
                                                        'previous_platform_writes':saved.get('platform_writes')})
         saved.update(state='COMMENT_READY',platform_writes=0);saved.pop('error_code',None);atomic_json(path,saved)

@@ -2,7 +2,7 @@
 from pathlib import Path
 import re
 from . import adapters
-from .core import VpubError, atomic_json, read_json, stop_check
+from .core import VpubError, atomic_json, read_json, reply_pressing, stop_check
 
 from contextlib import contextmanager
 from threading import local
@@ -141,7 +141,7 @@ def bilibili(action,work,**kw):
     if found: raise VpubError('already_replied','An identical owner reply already exists.')
     path=Path(kw['reply_receipt_path']);text_path=path.with_suffix('.txt');text_path.write_text(request['text'],encoding='utf-8')
     stop_check('bilibili')
-    saved=read_json(path);saved['state']='REPLY_SUBMITTING';atomic_json(path,saved)
+    saved=reply_pressing(path)
     args=['comment','reply',work,target['id'],'--file',str(text_path)]
     if target.get('parent_id'): args+=['--root',root]
     posted=adapters.bili(args)

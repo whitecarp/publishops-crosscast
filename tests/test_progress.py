@@ -424,12 +424,12 @@ class PressTests(Temporary):
         return path
 
     def test_each_receipt_step_says_pressing_only_once_the_receipt_is_saved(self):
-        for module, state in ((comment_actions, "COMMENT_SUBMITTING"), (engagement, "ACTION_SUBMITTING"), (direct_messages, "DM_SUBMITTING")):
+        for module, state, ready in ((comment_actions, "COMMENT_SUBMITTING", "COMMENT_READY"), (engagement, "ACTION_SUBMITTING", "ACTION_READY"), (direct_messages, "DM_SUBMITTING", "DM_READY")):
             with self.subTest(module=module.__name__):
                 stages = self.stages_file()
                 stages.write_text("")
                 receipt = self.root / "receipt.json"
-                atomic_json(receipt, {"state": "READY"})
+                atomic_json(receipt, {"state": ready})
                 seen = []
                 real = module.stage
                 with patch.object(module, "stage", lambda word: (seen.append(read_json(receipt)["state"]), real(word))):

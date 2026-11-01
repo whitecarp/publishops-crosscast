@@ -400,6 +400,8 @@ class EditTests(Temporary):
         result = self.run_edit(page, {"cover": str(cover), "cover_sha256": file_sha(cover)})
         self.assertIn(("files", "input#file-loader", str(cover)), page.log)
         self.assertFalse(result["cover"]["remote_pixels_verified"])
+        # A pressed Save is not a saved thumbnail, so this never reads as confirmed.
+        self.assertEqual("EDIT_SUBMITTED_UNVERIFIED", result["state"])
         cover.write_bytes(b"changed")
         with self.assertRaises(VpubError) as caught:
             self.run_edit(FakePage(), {"cover": str(cover), "cover_sha256": "old"})

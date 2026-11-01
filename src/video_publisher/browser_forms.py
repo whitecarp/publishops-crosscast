@@ -11,7 +11,7 @@ from .core import VpubError, douyin_caption, stop_check
 from .browser_runtime import risk_check, unique_visible, visible
 from .progress import stage
 from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, normalize, studio_offsets, studio_read, studio_style,
-                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, douyin_cards_titled, douyin_scheduled_card, DOUYIN_SCHEDULED)
+                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, douyin_card_stamp, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, DOUYIN_SCHEDULED)
 
 X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
 YT_DIALOG = 'ytcp-uploads-dialog'
@@ -249,7 +249,11 @@ async def publish_douyin(page, tx):
     caption = douyin_caption(tx.options['description'], tx.options['tags'])
     if len(caption.encode('utf-16-le')) // 2 > 1000:
         raise VpubError('description_too_long', 'Douyin description plus hashtags exceeds 1000 UTF-16 units. No video uploaded.')
-    tx.save(before_ids=list(before), expected_text=tx.options['title'], same_title_cards_before=len(await douyin_cards_titled(page, tx.options['title'])))
+    same_title = await douyin_cards_titled(page, tx.options['title'])
+    tx.save(before_ids=list(before), expected_text=tx.options['title'], same_title_cards_before=len(same_title))
+    if tx.options.get('schedule'):
+        stamp = douyin_card_stamp(datetime.fromisoformat(tx.options['schedule'].replace('Z', '+00:00')))
+        tx.save(same_time_cards_before=len(await douyin_cards_at(same_title, stamp)))
     await page.goto('https://creator.douyin.com/creator-micro/content/upload', wait_until='domcontentloaded', timeout=60000)
     await page.locator('input[type=file]').wait_for(state='attached', timeout=20000)
     # Selecting a video here could replace a draft the person kept, and only they can say whether it matters.
@@ -290,9 +294,7 @@ async def douyin_schedule(page, when):
     await page.wait_for_timeout(1000)
     if (await box.input_value()).strip() != stamp:
         raise VpubError('schedule_unverified', 'Douyin did not keep this date and time. Nothing was published.', 'Douyin may limit how soon or how far ahead a post can be scheduled. Choose another time and make a new plan.')
-    # Its upload form writes the time one way and its works list another, as a field check found.
-    card_stamp = f'{local.year}年{local.month:02d}月{local.day:02d}日 {local.hour:02d}:{local.minute:02d}'
-    return {'at': when.isoformat(), 'local': local.isoformat(), 'stamp': stamp, 'card_stamp': card_stamp, 'date': [local.year, local.month, local.day], 'time': [local.hour, local.minute], 'timezone_basis': 'computer'}
+    return {'at': when.isoformat(), 'local': local.isoformat(), 'stamp': stamp, 'card_stamp': douyin_card_stamp(when), 'date': [local.year, local.month, local.day], 'time': [local.hour, local.minute], 'timezone_basis': 'computer'}
 
 
 async def douyin_collection(page, title):

@@ -34,13 +34,17 @@ CHALLENGE_ADDRESSES = {"instagram.com": r"/(challenge|checkpoint|auth_platform|a
 OTHER_PEOPLES_WORDS = ('article, [role="article"], [data-testid="cellInnerDiv"], [data-testid="tweetText"], [data-dm-message-row], [data-testid^="dm-conversation-item-"], [data-testid="dm-message-list"], '
                        '[data-pagelet^="IGD"], [aria-roledescription="message"], [data-crosscast-comment-row], [data-crosscast-mentions-panel], '
                        '[data-e2e="comment-list"], [data-e2e="listDlgTest-container"], [data-stack-layer="chat"], li[role="list-item"], [class*="comment" i], '
-                       # A message opens from the other person's profile, which holds their name and their own words.
-                       'main > header, main header section, [data-e2e="user-info"], '
+                       # A message opens from the other person's profile, which holds their name and their own words, and a banner of the site's own can sit beside them.
+                       'main header section :is(h1, h2, [dir="auto"]):not([role="dialog"] *), [data-e2e="user-info"], '
                        'ytcp-comment-thread, ytcp-comment, ytd-comment-thread-renderer, ytd-comment-view-model, ytcp-video-row, ytd-watch-metadata')
+# An alert is the site's own, wherever it is put: only the site gives something that role. A window can hold people's words, so whichever is closer owns them:
+# a viewer's comment inside a window is the viewer's, and a window inside a viewer's profile is the platform's.
 # A small row with an author's link and a time is someone's post or comment, however the site builds it. A window is the edge of the search.
 SOMEONES_WORDS = """(e, others) => {
-  if (e.closest(others)) return true;
-  for (let row = e.parentElement, depth = 0; row && depth < 8 && row !== document.body && !row.matches('[role="dialog"],[role="alertdialog"],main'); row = row.parentElement, depth++) {
+  if (e.closest('[role="alert"],[role="alertdialog"]')) return false;
+  const place = e.closest(others), dialog = e.closest('[role="dialog"]');
+  if (place && !(dialog && place.contains(dialog))) return true;
+  for (let row = e, depth = 0; row && depth < 9 && row !== document.body && !row.matches('[role="dialog"],main'); row = row.parentElement, depth++) {
     if (row.innerText.length > 2000) return false;
     if (row.querySelector('time') && row.querySelector('a[href]')) return true;
   }

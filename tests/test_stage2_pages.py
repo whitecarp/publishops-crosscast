@@ -43,7 +43,9 @@ class ViewerWordsTests(Shown):
                 self.assertFalse(await self.shown(self.DOUYIN_CHAT.format(name, words), "https://www.douyin.com/user/MS4wLjABAAAAviewer12345"))
 
     async def test_a_viewers_profile_is_the_viewers(self):
-        for body, address in (('<main><header><section><h2>viewer</h2><div>Confirm it\'s you</div></section></header><button>Message</button></main>', "https://www.instagram.com/viewer/"),
+        for body, address in (('<main><header><section><h2>viewer</h2><span dir="auto">Confirm it\'s you</span></section></header><button>Message</button></main>', "https://www.instagram.com/viewer/"),
+                              ('<main><header><section><h2>Action Blocked</h2></section></header><button>Message</button></main>', "https://www.instagram.com/viewer/"),
+                              ('<main><header><section><div><h1 dir="auto">Unusual activity</h1></div></section></header></main>', "https://www.instagram.com/viewer/"),
                               ('<div data-e2e="user-info"><h1>安全验证</h1><p>Unusual activity</p></div><button>私信</button>', "https://www.douyin.com/user/MS4wLjABAAAAviewer12345")):
             with self.subTest(address=address):
                 self.assertFalse(await self.shown(body, address))
@@ -63,6 +65,31 @@ class PlatformWordsTests(Shown):
 
     async def test_a_check_on_a_profile_page_still_counts(self):
         self.assertTrue(await self.shown("<main><header>viewer</header><section><h1>Confirm it's you</h1></section></main>", "https://www.instagram.com/viewer/"))
+
+    async def test_an_alert_or_window_belongs_to_the_platform_wherever_it_is_put(self):
+        """From a review: an alert inside a profile's header passed as the viewer's own words."""
+        for body in ('<main><header><div role="alert">Action Blocked</div></header></main>',
+                     '<main><header><section><h2>viewer</h2><div role="alert"><span dir="auto">Action Blocked</span></div></section></header></main>',
+                     '<main><header><section><div role="alertdialog"><h1 dir="auto">Confirm it\'s you</h1></div></section></header></main>',
+                     '<main><header><section><div role="dialog"><h2 dir="auto">Confirm it\'s you</h2></div></section></header></main>',
+                     '<article><div role="alert">Action Blocked</div></article>',
+                     '<div role="alert"><span class="comment-note">Action Blocked</span></div>',
+                     '<div data-e2e="user-info"><div role="alert">操作过于频繁</div></div>',
+                     '<div><a href="/viewer/">viewer</a><time>1h</time><div role="dialog">Confirm it\'s you</div></div>',
+                     '<div><a href="/viewer/">viewer</a><time>1h</time><div role="alert">Action Blocked</div></div>'):
+            with self.subTest(body=body):
+                self.assertTrue(await self.shown(body, "https://www.instagram.com/viewer/"))
+
+    async def test_a_banner_of_the_sites_own_in_a_profile_header_still_counts(self):
+        self.assertTrue(await self.shown("<main><header><div>Action Blocked</div></header></main>", "https://www.instagram.com/viewer/"))
+        self.assertTrue(await self.shown("<main><header><section><h2>viewer</h2><div>Confirm it's you</div></section></header></main>", "https://www.instagram.com/viewer/"))
+
+    async def test_a_viewers_words_in_a_window_are_still_the_viewers(self):
+        for body in ('<div role="dialog"><article>Confirm it\'s you</article></div>',
+                     '<div role="dialog"><div><a href="/viewer/">viewer</a><time>1h</time><span>Action Blocked</span></div></div>',
+                     '<div role="dialog"><div data-e2e="comment-list"><p>Unusual activity</p></div></div>'):
+            with self.subTest(body=body):
+                self.assertFalse(await self.shown(body, "https://www.instagram.com/p/x/"))
 
     async def test_a_platform_saying_too_much_too_fast_counts_however_it_says_it(self):
         for words, address in (("操作过于频繁，请稍后再试", "https://creator.douyin.com/x"), ("操作太频繁了", "https://www.douyin.com/video/1"), ("评论太频繁", "https://www.douyin.com/video/1"), ("發送過於頻繁", "https://www.douyin.com/video/1"),
