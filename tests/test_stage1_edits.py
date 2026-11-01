@@ -18,6 +18,16 @@ OWNER = "owner"
 TEXT = {"expected_identity": OWNER, "title": "New title", "description": "New text", "content_language": "en", "metadata_language": "en", "metadata_mode": "target_only"}
 
 
+class Temporary(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        env = patch.dict(os.environ, {"VPUB_HOME": str(self.root / "runtime")})
+        env.start()
+        self.addCleanup(env.stop)
+
+
 class LastMomentTests(SharedBrowser):
     def prepare(self):
         self.saves = []
@@ -50,6 +60,41 @@ class LastMomentTests(SharedBrowser):
     async def test_with_no_stop_the_save_goes_once(self):
         self.assertEqual("EDIT_VERIFIED", (await self.edit())["state"])
         self.assertEqual(1, len(self.saves))
+
+
+class CheckingTests(Temporary):
+    def run_send(self, answer, verify_only):
+        patch_value = edits.validate_patch("x", TEXT)
+
+        def worker(platform, action, account, **options):
+            atomic_json(options["edit_receipt_path"], answer)
+            return answer
+        with patch.object(adapters, "browser_call", side_effect=worker) as call:
+            result = edits.send("x", "default", OWNER, {"id": "1234567890"}, "key", patch_value, False, verify_only)
+        return result, call
+
+    def test_a_check_that_finds_other_words_does_not_look_like_a_save_that_was_tried(self):
+        result, _ = self.run_send({"state": "EDIT_SUBMITTED_UNVERIFIED", "platform_writes": 0}, True)
+        self.assertEqual("EDIT_MISMATCH", result["state"])
+        saved, call = self.run_send({"state": "EDIT_VERIFIED", "platform_writes": 1}, False)
+        self.assertEqual("EDIT_VERIFIED", saved["state"])
+        call.assert_called_once()
+
+    def test_a_check_after_a_save_that_really_was_tried_keeps_blocking_a_repeat(self):
+        patch_value = edits.validate_patch("x", TEXT)
+        path = home() / "edits" / (digest(["key", patch_value]) + ".json")
+        atomic_json(path, {"state": "EDIT_SUBMITTING"})
+        result, _ = self.run_send({"state": "EDIT_SUBMITTED_UNVERIFIED", "platform_writes": 0}, True)
+        self.assertEqual("EDIT_SUBMITTED_UNVERIFIED", result["state"])
+        with self.assertRaises(VpubError) as caught:
+            self.run_send({"state": "EDIT_VERIFIED", "platform_writes": 1}, False)
+        self.assertEqual("inspect_existing_edit", caught.exception.code)
+
+    def test_a_check_that_finds_the_words_there_clears_an_earlier_unclear_save(self):
+        patch_value = edits.validate_patch("x", TEXT)
+        atomic_json(home() / "edits" / (digest(["key", patch_value]) + ".json"), {"state": "EDIT_SUBMITTING"})
+        self.assertEqual("EDIT_VERIFIED", self.run_send({"state": "EDIT_VERIFIED", "platform_writes": 0}, True)[0]["state"])
+        self.assertEqual("EDIT_VERIFIED", self.run_send({"state": "EDIT_VERIFIED", "platform_writes": 1}, False)[0]["state"])
 
 
 if __name__ == "__main__":

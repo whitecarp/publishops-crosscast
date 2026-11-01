@@ -73,11 +73,13 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only):
     stop_check(platform)
     edit_id=digest([key,patch]);path=home()/'edits'/(edit_id+'.json')
     if dry_run: return {'key':key,'id':work_id,'patch':patch,'platform_writes':0,'edit_id':edit_id}
+    tried=False
     if path.exists():
         saved=read_json(path)
         # A prior success is history, not current platform state. The backend
         # reads the existing work and skips saving only when it still matches.
-        if saved.get('state') in {'EDIT_SUBMITTING','EDIT_SUBMITTED_UNVERIFIED'} and not verify_only:
+        tried=saved.get('state') in {'EDIT_SUBMITTING','EDIT_SUBMITTED_UNVERIFIED'}
+        if tried and not verify_only:
             raise VpubError('inspect_existing_edit','A save was already attempted; inspect the existing work before any retry.')
     def checkpoint(data): atomic_json(path,{'key':key,'edit_id':edit_id,'at':now(),**data})
     if not verify_only: checkpoint({'state':'EDIT_PREPARING','id':work_id})
@@ -91,6 +93,8 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only):
     else:
         result=adapters.browser_call(platform,'edit',account,expected_identity=actual,
             receipt=receipt,patch=patch,edit_receipt_path=str(path),verify_only=verify_only)
+    # A check changes nothing, so it must not leave what reads as a save that was tried and block the real one.
+    if verify_only and not tried and result.get('state')=='EDIT_SUBMITTED_UNVERIFIED': result={**result,'state':'EDIT_MISMATCH'}
     checkpoint(result)
     return result
 
