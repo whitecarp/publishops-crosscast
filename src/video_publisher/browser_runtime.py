@@ -48,6 +48,10 @@ FORM_FIELDS = "input,textarea,select,[contenteditable=true]"
 # A command's quoted arguments can hold a viewer's or a person's own words. Only a selector made of nothing but page structure stays.
 QUOTED = re.compile(r""""(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'""")
 PLAIN_SELECTOR = re.compile(r"[\w\s#.>:,*()\[\]-]*")
+# How far into a site's answer to look, and the part that describes the page rather than the change. A field name holds no words of anyone's.
+ANSWER_DEPTH = 8
+ABOUT_THE_PAGE = {"responseContext"}
+FIELD_NAME = re.compile(r"[A-Za-z_]\w{0,40}")
 # Why a press was refused, in Playwright's own fixed words.
 REFUSED_PRESS = re.compile(r"element is not \w+|element is outside of the viewport|element was detached|intercepts pointer events")
 # The page's words with its form fields taken out first, so even a record a person asked for holds nothing typed into one.
@@ -337,7 +341,7 @@ def names_target(request, target):
 
 def objected(value, depth=0):
     """Whether a site's answer says it refused, in the ways sites say so: an error field, or a status that says it failed."""
-    if depth >= 4:
+    if depth >= ANSWER_DEPTH:
         return False
     if isinstance(value, list):
         return any(objected(item, depth + 1) for item in value)
@@ -346,19 +350,36 @@ def objected(value, depth=0):
     status = value.get("status")
     if value.get("error") or value.get("errors") or (isinstance(status, str) and re.search("fail|error|denied|reject", status, re.I)):
         return True
-    return any(objected(item, depth + 1) for item in value.values())
+    return any(objected(item, depth + 1) for key, item in value.items() if key not in ABOUT_THE_PAGE)
 
 
 def status_words(value, depth=0):
-    """The status words in a site's answer, at any of its first few levels. These are the site's own fixed words."""
-    if depth >= 4:
+    """The status words in a site's answer, at any of its levels. These are the site's own fixed words."""
+    if depth >= ANSWER_DEPTH:
         return []
     if isinstance(value, list):
         return [word for item in value for word in status_words(item, depth + 1)]
     if not isinstance(value, dict):
         return []
     own = [value["status"]] if isinstance(value.get("status"), str) and re.fullmatch(r"[\w-]{1,40}", value["status"]) else []
-    return own + [word for item in value.values() for word in status_words(item, depth + 1)]
+    return own + [word for key, item in value.items() if key not in ABOUT_THE_PAGE for word in status_words(item, depth + 1)]
+
+
+def answer_shape(value, depth=0):
+    """The names of an answer's fields, nested, and never what they hold, so a receipt can show what a site really sends."""
+    if depth >= ANSWER_DEPTH:
+        return []
+    if isinstance(value, list):
+        return sorted({name for item in value for name in answer_shape(item, depth + 1)})
+    if not isinstance(value, dict):
+        return []
+    names = set()
+    for key, item in value.items():
+        if FIELD_NAME.fullmatch(key):
+            names.add(key)
+            if key not in ABOUT_THE_PAGE:
+                names |= {f"{key}.{inner}" for inner in answer_shape(item, depth + 1)}
+    return sorted(names)
 
 
 async def write_answers(requests, target):
@@ -367,12 +388,13 @@ async def write_answers(requests, target):
     for request in requests:
         if request.method != "POST":
             continue
-        answer = {"path": urlsplit(request.url).path, "names_target": names_target(request, target), "http": None, "fields": [], "statuses": [], "objected": False}
+        answer = {"path": urlsplit(request.url).path, "names_target": names_target(request, target), "http": None, "fields": [], "shape": [], "statuses": [], "objected": False}
         try:
             response = await asyncio.wait_for(request.response(), 5)
             answer["http"] = response.status
             body = await asyncio.wait_for(response.json(), 5)
-            answer["fields"] = sorted(key for key in body if re.fullmatch(r"[A-Za-z_]\w{0,40}", key))[:12] if isinstance(body, dict) else []
+            answer["fields"] = sorted(key for key in body if FIELD_NAME.fullmatch(key))[:12] if isinstance(body, dict) else []
+            answer["shape"] = answer_shape(body)[:60]
             answer["statuses"] = status_words(body)[:8]
             answer["objected"] = objected(body)
         except Exception:

@@ -20,16 +20,19 @@ LABEL = "(AI reply)"
 
 # What a stranger's message may try, or what a person should answer themselves. A keyword list catches the
 # common cases and is not a guarantee, so the agent must still treat all viewer text as data.
-ASK = (r"(?:send|give|share|tell|show|provide|reveal|post|paste|return|print|dump|output|export|display|read|open|copy|upload|encode|email"
+ASK = (r"(?:send|give|share|tell|show|provide|reveal|post|paste|return|print|dump|output|export|display|read|open|copy|upload|encode|email|forward"
        r"|发|给|告诉|提供|透露|分享|贴出|把|复制|複製|打开|打開|读取|讀取|导出|匯出|输出|輸出)")
 # Where an account's keys live, as well as the keys themselves.
-SECRET_WORDS = (r"password|passcode|api[ _-]?key|(?:access|refresh|session|auth\w*|bearer)\s+tokens?|cookies?\b|verification\s+code|one[- ]time\s+code|\botp\b|private\s+key|credentials?"
+SECRET_WORDS = (r"password|passcode|api[ _-]?key|(?:local|stored|saved|account|all)\s+secrets?\b|(?:access|refresh|session|auth\w*|bearer)\s+tokens?|cookies?\b|verification\s+code|one[- ]time\s+code|\botp\b|private\s+key|credentials?"
                 r"|config(?:uration)?\s+files?|\.env\b|environment\s+variables?|local\s+files?|keychain|browser\s+(?:profile|session|login|state)"
                 r"|密码|密碼|口令|验证码|驗證碼|令牌|密钥|密鑰|私钥|私鑰|登录态|登錄態|登入狀態|登录状态|登錄狀態|配置文件|設定檔|本地文件|本地檔案|环境变量|環境變數")
 INCOMING = {
     "instructions": re.compile(
         r"(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+|the\s+)?(?:previous|prior|above|earlier|your|system)\b.{0,30}(?:instruction|prompt|rule)"
         r"|system\s+prompt|developer\s+mode|jailbreak|you\s+are\s+now\s+(?:a|an|in)\b|new\s+instructions?\s*:"
+        r"|(?:^|\n)\s*[\[(]?\s*system\s*[\])]?\s*[:：]|the\s+(?:user|owner)\s+(?:has\s+)?(?:approved|authori[sz]ed|allowed)"
+        r"|(?:disable|turn\s+off|bypass|ignore|remove)\s+(?:\w+\s+){0,2}(?:safety|limits?|guardrails?|restrictions?)"
+        r"|(?:关闭|關閉|解除|绕过|繞過|禁用|忽略|无视|無視).{0,6}(?:安全|限制|防护|防護)"
         r"|(?:忽略|无视|忘记|忽視|無視|忘記).{0,12}(?:指令|提示|规则|規則|要求|设定|設定)|系统提示|系統提示|提示词|提示詞", re.I | re.S),
     "secrets": re.compile(
         ASK + r".{0,30}(?:" + SECRET_WORDS + r")"

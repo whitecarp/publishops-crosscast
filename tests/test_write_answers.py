@@ -58,7 +58,8 @@ class AnswerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_it_keeps_the_shape_and_nothing_the_request_or_answer_held(self):
         answers = await self.answers(FakeRequest(body=json.dumps({"actions": [TARGET], "words": "PRIVATE-WORDS"}), answer={"actionResults": [{"status": "STATUS_SUCCEEDED", "text": "PRIVATE-WORDS"}]}))
-        self.assertEqual([{"path": "/youtubei/v1/comment/perform_comment_action", "names_target": True, "http": 200, "fields": ["actionResults"], "statuses": ["STATUS_SUCCEEDED"], "objected": False}], answers)
+        self.assertEqual([{"path": "/youtubei/v1/comment/perform_comment_action", "names_target": True, "http": 200, "fields": ["actionResults"],
+                           "shape": ["actionResults", "actionResults.status", "actionResults.text"], "statuses": ["STATUS_SUCCEEDED"], "objected": False}], answers)
         self.assertNotIn("SECRET", json.dumps(answers))
 
     async def test_a_field_name_that_looks_like_someones_words_is_left_out(self):
@@ -68,6 +69,25 @@ class AnswerTests(unittest.IsolatedAsyncioTestCase):
     async def test_a_status_that_is_not_one_of_the_sites_own_words_is_left_out(self):
         answers = await self.answers(FakeRequest(body=TARGET, answer={"status": "ok", "item": {"status": "a viewer's words here"}}))
         self.assertEqual(["ok"], answers[0]["statuses"])
+
+    async def test_its_shape_names_nested_fields_but_nothing_they_hold(self):
+        real = {"responseContext": {"visitorData": "SECRET-VISITOR"}, "actions": [{"removeCommentAction": {"commentId": "PRIVATE-ID", "words": {"text": "PRIVATE-WORDS"}}}, {"other": 1}]}
+        answer = (await self.answers(FakeRequest(body=TARGET, answer=real)))[0]
+        self.assertEqual(["actions", "actions.other", "actions.removeCommentAction", "actions.removeCommentAction.commentId", "actions.removeCommentAction.words", "actions.removeCommentAction.words.text", "responseContext"], answer["shape"])
+        self.assertNotIn("PRIVATE", json.dumps(answer))
+        self.assertNotIn("SECRET", json.dumps(answer))
+
+    async def test_a_field_name_that_looks_like_someones_words_stays_out_of_its_shape(self):
+        answer = (await self.answers(FakeRequest(body=TARGET, answer={"a": {"a viewer's words": 1, "ok": 2}})))[0]
+        self.assertEqual(["a", "a.ok"], answer["shape"])
+
+    async def test_a_status_deep_inside_an_action_is_seen(self):
+        answer = (await self.answers(FakeRequest(body=TARGET, answer={"actions": [{"removeCommentAction": {"actionResult": {"status": "STATUS_FAILED"}}}]})))[0]
+        self.assertEqual((["STATUS_FAILED"], True), (answer["statuses"], answer["objected"]))
+
+    async def test_the_part_about_the_page_says_nothing_about_the_change(self):
+        answer = (await self.answers(FakeRequest(body=TARGET, answer={"responseContext": {"status": "fail"}, "actions": []})))[0]
+        self.assertEqual(([], False), (answer["statuses"], answer["objected"]))
 
     async def test_only_post_requests_count(self):
         self.assertEqual([], await self.answers(FakeRequest(body=TARGET, method="GET")))
