@@ -523,7 +523,7 @@ async def ensure_playlists(page, identity, titles):
         raise VpubError("read_incomplete", "Studio's playlist list could not be read to its end, so a missing playlist is not proven; nothing was uploaded.")
     made = []
     for title in missing:
-        result = await create_playlist(page, identity, {"title": title, "privacy": "private"}, lambda *_: None, known=[row["id"] for row in rows])
+        result = await create_playlist(page, identity, {"title": title, "privacy": "private"}, lambda *_: stop_check("youtube"), known=[row["id"] for row in rows])
         if not result.get("collection_id"):
             raise VpubError("playlist_unverified", f'Studio did not show the new playlist "{title}"; nothing was uploaded.')
         made.append({"id": result["collection_id"], "title": title})
