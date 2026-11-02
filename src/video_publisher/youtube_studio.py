@@ -58,6 +58,8 @@ COMMENT_ROWS = """threads => threads.map(thread => [...thread.querySelectorAll('
     author: row.querySelector('.author-text')?.innerText || '',
     href: row.querySelector('a#name')?.getAttribute('href') || '',
     time: row.querySelector('.published-time-text')?.innerText || ''})))"""
+STUDIO_LISTS = ("upload", "short")
+STUDIO_LIST_EMPTY = re.compile("No content available|没有可显示的内容")
 WORK_ROWS = """rows => rows.map(row => {
     const link = row.querySelector('a#video-title');
     const cell = name => row.querySelector('.tablecell-' + name)?.innerText || '';
@@ -183,12 +185,32 @@ async def own_handle(page, identity):
     return handle
 
 
-async def works(page, identity):
-    """The newest videos on Studio's first page of the channel's content."""
-    await page.goto(f"{STUDIO}/channel/{identity}/videos/upload", wait_until="domcontentloaded", timeout=60000)
+async def content_rows(page, identity, tab):
+    """One of Studio's lists, once it has rows or says it has none."""
+    await page.goto(f"{STUDIO}/channel/{identity}/videos/{tab}", wait_until="domcontentloaded", timeout=60000)
     rows = page.locator("ytcp-video-row")
-    await appears(page, rows, 20)
-    return work_items(await rows.evaluate_all(WORK_ROWS), identity)
+    await appears(page, rows.or_(page.get_by_text(STUDIO_LIST_EMPTY).locator("visible=true")), 20)
+    return rows
+
+
+async def works(page, identity):
+    """The newest videos on the first page of each of Studio's lists of the channel's content. A vertical video is listed under Shorts, not Videos. A draft has no link to an edit page, so no ID to list it by."""
+    items = {}
+    for tab in STUDIO_LISTS:
+        rows = await content_rows(page, identity, tab)
+        items.update(work_items(await rows.evaluate_all(WORK_ROWS), identity))
+    return items
+
+
+async def uploads_named(page, identity, file_name):
+    """The rows Studio named after this file, with the page left on their list. A field read found a stopped upload's draft under Shorts, with its file's hyphen written as a space."""
+    wanted = file_name.replace("-", " ")
+    for tab in STUDIO_LISTS:
+        rows = await content_rows(page, identity, tab)
+        found = [at for at, row in enumerate(await rows.evaluate_all(WORK_ROWS)) if normalize(row["title"]).replace("-", " ") == wanted]
+        if found:
+            return [rows.nth(at) for at in found]
+    return []
 
 
 async def stats(page, identity, work):

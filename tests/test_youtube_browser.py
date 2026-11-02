@@ -36,6 +36,9 @@ class Element:
     def filter(self, **options):
         return self
 
+    def get_by_text(self, pattern, **options):
+        return Element(self.page, self.selector + " edit-draft")
+
     def locator(self, selector):
         return Element(self.page, self.selector + " " + selector)
 
@@ -92,7 +95,7 @@ class Element:
     async def evaluate_all(self, script):
         if self.key.endswith('[role="checkbox"]'):
             return [{"lines": [title, "Private"], "checked": i in self.page.ticked} for i, title in enumerate(self.page.playlists)]
-        return [f"https://youtu.be/{VIDEO}"] if self.page.has_link else []
+        return [self.page.link] if self.page.has_link else []
 
     async def fill(self, value, **options):
         self.page.log.append(("fill", self.key, value))
@@ -159,6 +162,7 @@ class FakeStudio:
         self.playlists, self.ticked, self.picker_open, self.refuse_tick = [], set(), False, False
         self.date_text, self.time_text, self.scheduler_text, self.refuse_schedule = "2026年10月31日", "18:00", "", False
         self.url = "https://studio.youtube.com/channel/" + CHANNEL
+        self.link = f"https://youtu.be/{VIDEO}"
         for name, value in options.items():
             setattr(self, name, value)
 
@@ -361,11 +365,27 @@ class FormTests(FormCase):
 
     def test_no_video_link_means_no_edits_and_no_final_click(self):
         page = FakeStudio(has_link=False)
-        clock = MagicMock(monotonic=MagicMock(side_effect=itertools.count(0, 60)))
+        clock = MagicMock(monotonic=MagicMock(side_effect=itertools.count(0, 10)))
         with patch("video_publisher.browser_backends.time", new=clock), self.assertRaises(VpubError) as caught:
             self.run_form(page)
         self.assertEqual("processing_timeout", caught.exception.code)
+        self.assertIn("YouTube video ID", caught.exception.message)
         self.assertEqual([], page.clicks("#done-button"))
+        self.assertGreater(next(clock.monotonic.side_effect), browser_forms.YT_LINK_SECONDS)
+
+    def test_a_stop_before_the_id_says_what_the_dialog_showed(self):
+        """From a field run: nothing could say whether the upload was slow or its link wasn't one this read."""
+        page = FakeStudio(has_link=False)
+        look = asyncio.run(browser_forms.yt_upload_look(page))
+        self.assertEqual({"progress_shown": 1, "percent": None, "finished": True, "links": []}, look)
+        page = FakeStudio(link=f"https://studio.youtube.com/video/{VIDEO}/edit")
+        self.assertEqual(["studio.youtube.com/video/<id>/edit"], asyncio.run(browser_forms.yt_upload_look(page))["links"])
+
+    def test_a_vertical_videos_shorts_link_counts(self):
+        """A field run's first vertical video stopped here: every test before it was landscape, and this only read the other two kinds of link."""
+        page = FakeStudio(link=f"https://www.youtube.com/shorts/{VIDEO}")
+        _, result = self.run_form(page)
+        self.assertEqual(("SUBMISSION_VERIFIED", VIDEO), (result["state"], result["id"]))
 
 
 class PlaylistTests(FormCase):
@@ -462,6 +482,48 @@ class ResumeTests(Temporary):
             asyncio.run(execute(again, "youtube", CHANNEL, {"action": "resume", "plan": self.plan()}))
         self.assertEqual("inspect_existing_draft", caught.exception.code)
         self.assertEqual([], again.selected_files())
+
+    def stopped_before_its_id(self):
+        tx = Transaction("youtube", CHANNEL, self.plan())
+        tx.save(media_selected=True, upload_filename="crosscast-abc.mp4", state="PREPARATION_INCOMPLETE", phase="blocked")
+
+    def test_an_upload_with_no_id_that_left_nothing_can_upload_again(self):
+        self.stopped_before_its_id()
+        tx = Transaction("youtube", CHANNEL, self.plan(), resume=True)
+        tx.save(hint="Inspect the existing draft", blocked_phase="uploading", error={"code": "processing_timeout"})
+        again = FakeStudio()
+        with patch("video_publisher.youtube_studio.uploads_named", new=AsyncMock(return_value=[])):
+            result = asyncio.run(execute(again, "youtube", CHANNEL, {"action": "resume", "plan": self.plan()}))
+        self.assertEqual("SUBMISSION_VERIFIED", result["state"])
+        self.assertEqual(1, len(again.selected_files()))
+        self.assertEqual((None, None, None), (result.get("hint"), result.get("blocked_phase"), result.get("error")))
+
+    def test_an_upload_with_no_id_that_left_a_draft_is_finished_from_it(self):
+        """From a field run: its first vertical video stopped before its ID, and was in Studio as a draft named after the file."""
+        self.stopped_before_its_id()
+        again = FakeStudio()
+        with patch("video_publisher.youtube_studio.uploads_named", new=AsyncMock(return_value=[again.locator("ytcp-video-row")])) as named:
+            result = asyncio.run(execute(again, "youtube", CHANNEL, {"action": "resume", "plan": self.plan()}))
+        named.assert_awaited_once_with(again, CHANNEL, "crosscast-abc")
+        self.assertEqual(("SUBMISSION_VERIFIED", VIDEO), (result["state"], result["id"]))
+        self.assertEqual([], again.selected_files())
+        self.assertEqual((1, 1), (len(again.clicks("edit-draft")), len(again.clicks("#done-button"))))
+
+    def test_two_drafts_of_one_file_are_left_for_a_person(self):
+        self.stopped_before_its_id()
+        again = FakeStudio()
+        row = again.locator("ytcp-video-row")
+        with patch("video_publisher.youtube_studio.uploads_named", new=AsyncMock(return_value=[row, row])):
+            result = asyncio.run(execute(again, "youtube", CHANNEL, {"action": "resume", "plan": self.plan()}))
+        self.assertEqual(("PREPARATION_INCOMPLETE", "inspect_existing_draft"), (result["state"], result["error"]["code"]))
+        self.assertEqual(([], []), (again.selected_files(), again.clicks("edit-draft")))
+        self.assertEqual([], again.clicks("#done-button"))
+
+    def test_a_first_attempt_never_looks_for_a_draft(self):
+        page = FakeStudio()
+        with patch("video_publisher.youtube_studio.uploads_named", new=AsyncMock(return_value=[])) as named:
+            asyncio.run(execute(page, "youtube", CHANNEL, {"action": "publish", "plan": self.plan()}))
+        named.assert_not_awaited()
 
     def test_after_the_final_click_resume_only_reads(self):
         tx = Transaction("youtube", CHANNEL, self.plan())
@@ -570,7 +632,10 @@ class ReadBackTests(Temporary):
     def test_links_and_ids_must_be_real_video_ids(self):
         self.assertEqual(VIDEO, youtube_link_id(f"https://youtu.be/{VIDEO}"))
         self.assertEqual(VIDEO, youtube_link_id(f"https://www.youtube.com/watch?v={VIDEO}"))
-        for href in ("https://example.com/watch?v=" + VIDEO, "https://youtu.be/short", "https://www.youtube.com/channel/" + CHANNEL, "", None):
+        self.assertEqual(VIDEO, youtube_link_id(f"https://youtube.com/shorts/{VIDEO}"))
+        self.assertEqual(VIDEO, youtube_link_id(f"https://www.youtube.com/shorts/{VIDEO}/"))
+        for href in ("https://example.com/watch?v=" + VIDEO, "https://youtu.be/short", "https://www.youtube.com/channel/" + CHANNEL, "", None,
+                     f"https://example.com/shorts/{VIDEO}", "https://www.youtube.com/shorts/short", f"https://www.youtube.com/shorts/{VIDEO}/more", "https://www.youtube.com/shorts/"):
             with self.subTest(href=href):
                 self.assertIsNone(youtube_link_id(href))
         self.assertEqual(f"https://www.youtube.com/watch?v={VIDEO}", work_url("youtube", CHANNEL, VIDEO))

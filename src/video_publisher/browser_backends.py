@@ -35,15 +35,16 @@ X_SCHEDULE_SECONDS = 15
 X_CLOCK_GRACE = timedelta(minutes=5)
 INSTAGRAM_CAPTION = r"""({words, owner}) => {
   const said = text => (text || '').replace(/\s+/g, ' ').trim();
-  const profile = a => /^\/[^/]+\/$/.test(a.getAttribute('href') || '');
-  return [...document.querySelectorAll('h1, span, div, p')].some(e => {
-    if (!e.getClientRects().length || said(e.innerText) !== words) return false;
-    for (let around = e.parentElement; around; around = around.parentElement) {
-      const people = [...around.querySelectorAll('a[href]')].filter(a => profile(a) && !e.contains(a));
-      if (people.length) return people.every(a => a.getAttribute('href').toLowerCase() === '/' + owner.toLowerCase() + '/');
-    }
-    return false;
-  });
+  const bare = text => (text || '').replace(/\s+/g, '');
+  const people = e => [...e.querySelectorAll('a[href]')].filter(a => /^\/[^/]+\/$/.test(a.getAttribute('href')));
+  let head = [...document.querySelectorAll('time')].find(e => e.getClientRects().length);
+  while (head && !people(head).length) head = head.parentElement;
+  if (!head) return false;
+  while (head.parentElement && bare(head.parentElement.innerText) === bare(head.innerText)) head = head.parentElement;
+  const row = head.parentElement;
+  const rest = row ? [...row.children].filter(e => e !== head && e.getClientRects().length && said(e.innerText)) : [];
+  return rest.length === 1 && said(rest[0].innerText) === words && bare(row.innerText).length === bare(head.innerText).length + bare(rest[0].innerText).length
+    && people(head).every(a => a.getAttribute('href').toLowerCase() === '/' + owner.toLowerCase() + '/');
 }"""
 # Studio writes dates and times in its interface language. Each style is (pattern, read, write).
 STUDIO_DATES = (
@@ -93,7 +94,7 @@ async def wait_until(page, predicate, *, seconds=120, label="page state"):
         if value:
             return value
         await asyncio.sleep(1)
-    raise VpubError("processing_timeout", f"Timed out waiting for {label}; existing upload retained.")
+    raise VpubError("processing_timeout", f"Timed out waiting for {label}.")
 
 
 async def before_a_file_goes_up(page):
@@ -135,7 +136,7 @@ async def upload_file(page, path, trigger=None, accept=None):
 
 class Transaction:
     def __init__(self, platform, identity, plan, resume=False, prior_receipt=None):
-        self.platform, self.identity, self.plan = platform, identity, plan
+        self.platform, self.identity, self.plan, self.resuming = platform, identity, plan, resume
         self.options = plan["options"]
         self.path = home() / "browser-receipts" / (plan["confirmation"] + "-" + platform + ".json")
         if self.path.exists() and not resume:
@@ -428,7 +429,8 @@ def x_new_works(platform, receipt, works):
 
 
 async def instagram_caption_says(page, identity, words):
-    """Whether the post's owner says exactly these words. A review found they passed from anywhere on the page, such as a comment, or inside a longer caption. A field read of a real post found its caption in a span with no list, article or lasting class around it, so what ties it to the owner is the nearest person's link above it. Anything else stays unconfirmed."""
+    """Whether the post's own caption is exactly these words. Reviews found they passed from anywhere on the page, from the owner's own comment, and from inside a longer caption. A field read of a real post found a row holding the owner's link and a time, then the whole caption, with no list, article or lasting class around it. So the row comes from the first time on the page rather than from the words, and all of its words have to match.
+    That the caption's row comes before any comment is how Instagram lays out a post, not something that read showed: it was of a photo page with no comments on it, so a Reel's page is still to be seen. A page that differs stays unconfirmed. A post with no caption, whose first comment is the owner's and says these words, would still pass."""
     return await page.evaluate(INSTAGRAM_CAPTION, {"words": normalize(words), "owner": identity})
 
 
@@ -789,8 +791,10 @@ async def execute(page, platform, identity, payload):
     if tx.receipt['final_submit_attempted']:
         result=await verify(page, platform, identity, tx.receipt)
         return tx.save(**await complete_pending_chapters(page,platform,identity,result))
-    if action == 'resume' and tx.receipt['media_selected'] and platform != 'x':
+    if action == 'resume' and tx.receipt['media_selected'] and platform != 'x' and (platform != 'youtube' or tx.receipt.get('draft_id')):
         raise VpubError('inspect_existing_draft', 'An upload already started. Resume requires inspecting that existing draft; uploading again is prohibited.')
+    for stale in ('hint', 'blocked_phase'):
+        tx.receipt.pop(stale, None)
     tx.save(state='PREPARING', error=None, user_action_required=False)
     try:
         tx.validate_assets()

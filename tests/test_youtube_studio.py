@@ -30,6 +30,9 @@ class Element:
     def locator(self, selector):
         return Element(self.page, self.selector + " " + selector)
 
+    def or_(self, other):
+        return self
+
     def exists(self):
         # A comment's reply box opens only once its Reply is pressed.
         if "ytcp-commentbox" in self.selector and not self.page.box_open:

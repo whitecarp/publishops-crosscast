@@ -26,7 +26,7 @@ This requirement exists because non-subscribers are limited to **140-second, 512
 
 Every other API entry in the YouTube column also needs the paid add-on; `vpub capabilities` shows what this machine has.
 
-Shared: exact-source plans, per-platform account checks, immutable upload snapshots, local receipts and no blind retry after final submission. Browser `works` is limited to the visible first page (up to ten Douyin cards). Review cards without detail IDs remain pending. `vpub status` shows what is unfinished and the next command for each item, and `vpub cleanup` frees the disk space used by copies of finished videos.
+Shared: exact-source plans, per-platform account checks, immutable upload snapshots, local receipts and no blind retry after final submission. Browser `works` is limited to the visible first page (up to ten Douyin cards; on YouTube, of Videos and of Shorts). Review cards without detail IDs remain pending. `vpub status` shows what is unfinished and the next command for each item, and `vpub cleanup` frees the disk space used by copies of finished videos.
 
 Real episode-two uploads and their development limitations are recorded in [validation](VALIDATION_EN.md). Background browser automation is not an official direct API or a speed guarantee. Platform changes, expired sessions and challenges can require intervention. Metadata writing/translation uses the host conversation model through request/apply; it does not translate the video itself.
 

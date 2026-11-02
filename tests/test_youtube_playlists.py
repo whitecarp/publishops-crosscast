@@ -8,11 +8,12 @@ import json
 import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
-from video_publisher import adapters, cli, collections as c, comment_actions, engagement, safety, youtube_playlists as free, youtube_studio as yt
+from video_publisher import adapters, browser_forms, cli, collections as c, comment_actions, engagement, safety, youtube_playlists as free, youtube_studio as yt
 from video_publisher.core import VpubError, atomic_json, digest, home, read_json
 from shared_chrome import ChromeCase, async_playwright
 
@@ -58,6 +59,7 @@ class FakeYouTube:
         self.pin_ready_after = 0
         self.pin_sent_after = 0
         self.says_empty = True
+        self.lists = {}
 
     async def html(self, route, body):
         await route.fulfill(status=200, content_type="text/html; charset=utf-8", body="<!doctype html><title>t</title>" + STYLE + "<body>" + body)
@@ -74,6 +76,8 @@ class FakeYouTube:
             return await self.html(route, self.watch_page())
         if url.hostname != "studio.youtube.com":
             return await route.abort()
+        if path.startswith("/channel/") and "/videos/" in path:
+            return await self.html(route, self.lists.get(path.rsplit("/", 1)[1], ""))
         if path.endswith("/content/playlists"):
             return await self.html(route, self.list_page())
         if path.endswith("/videos") and path.startswith("/playlist/"):
@@ -279,6 +283,70 @@ class Browser(ChromeCase):
 
     async def run_op(self, operation, **payload):
         return await yt.playlists(self.page, CHANNEL, {"platform": "youtube", "operation": operation, **payload})
+
+
+def content_row(video, title):
+    return f"""<ytcp-video-row><a id="video-title" href="/video/{video}/edit">{title}</a></ytcp-video-row>"""
+
+
+DRAFT = """<ytcp-video-row><a id="video-title">crosscast e1bc62c1f38c4234</a><span>草稿</span><ytcp-button><button onclick="window.opened = this.closest('ytcp-video-row').querySelector('a').innerText"><div>编辑草稿</div></button></ytcp-button></ytcp-video-row>"""
+
+
+class ContentListTests(Browser):
+    async def asyncSetUp(self):
+        self.answers = []
+        await super().asyncSetUp()
+
+    async def fast_appears(self, page, target, seconds):
+        self.answers.append(await super().fast_appears(page, target, seconds))
+        return self.answers[-1]
+
+    async def test_a_vertical_video_is_found_under_shorts(self):
+        """From a field run: a vertical video isn't on the list of Videos, which was all this read."""
+        self.site.lists = {"upload": content_row(VIDEO, "Wide"), "short": content_row(OTHER, "Tall")}
+        found = await yt.works(self.page, CHANNEL)
+        self.assertEqual({VIDEO: "Wide", OTHER: "Tall"}, {key: item["title"] for key, item in found.items()})
+
+    async def test_a_stopped_uploads_draft_is_opened_from_the_list_it_is_on(self):
+        """From a field read: under Shorts, with no link to an edit page, and the file's hyphen written as a space."""
+        other = DRAFT.replace("e1bc62c1f38c4234", "aaaaaaaaaaaaaaaa")
+        self.site.lists = {"upload": content_row(VIDEO, "Wide"), "short": other + DRAFT}
+        tx = SimpleNamespace(identity=CHANNEL, receipt={"upload_filename": "crosscast-e1bc62c1f38c4234.mp4"})
+        self.assertTrue(await browser_forms.yt_reopen_stopped_upload(self.page, tx))
+        self.assertEqual("crosscast e1bc62c1f38c4234", await self.page.evaluate("window.opened", isolated_context=False))
+        self.assertEqual({VIDEO}, set(await yt.works(self.page, CHANNEL)))
+
+    async def test_a_reopened_draft_is_finished_only_if_no_bar_says_otherwise(self):
+        bars = '<ytcp-uploads-dialog><div role="progressbar" aria-valuemax="100"></div><div role="progressbar" aria-valuenow="%s" aria-valuemax="100"></div></ytcp-uploads-dialog>'
+        for value, reopened, finished in (("100", True, True), ("40", True, False), ("100", False, False)):
+            with self.subTest(value=value, reopened=reopened):
+                await self.page.set_content(bars % value)
+                self.assertIs(finished, await browser_forms.yt_upload_finished(self.page, reopened))
+
+    async def test_no_draft_of_this_file_means_nothing_is_pressed(self):
+        self.site.lists = {"upload": content_row(VIDEO, "Wide"), "short": DRAFT.replace("e1bc62c1f38c4234", "aaaaaaaaaaaaaaaa")}
+        tx = SimpleNamespace(identity=CHANNEL, receipt={"upload_filename": "crosscast-e1bc62c1f38c4234.mp4"})
+        self.assertFalse(await browser_forms.yt_reopen_stopped_upload(self.page, tx))
+        self.assertIsNone(await self.page.evaluate("window.opened || null", isolated_context=False))
+
+    async def test_two_drafts_of_one_file_are_not_chosen_between(self):
+        self.site.lists = {"short": DRAFT + DRAFT}
+        tx = SimpleNamespace(identity=CHANNEL, receipt={"upload_filename": "crosscast-e1bc62c1f38c4234.mp4"})
+        with self.assertRaises(VpubError) as caught:
+            await browser_forms.yt_reopen_stopped_upload(self.page, tx)
+        self.assertEqual("inspect_existing_draft", caught.exception.code)
+        self.assertIsNone(await self.page.evaluate("window.opened || null", isolated_context=False))
+
+    async def test_a_list_that_says_it_has_nothing_is_not_waited_on(self):
+        self.site.lists = {"upload": "<p>没有可显示的内容</p>", "short": content_row(OTHER, "Tall")}
+        self.assertEqual([OTHER], list(await yt.works(self.page, CHANNEL)))
+        self.assertEqual([True, True], self.answers)
+
+    async def test_that_message_kept_hidden_does_not_end_the_wait(self):
+        row = content_row(VIDEO, "Late")
+        self.site.lists = {"upload": f"""<p hidden>No content available</p><script>{menu_script()} later(() => document.body.insertAdjacentHTML('beforeend', '{row}'), 300);</script>""", "short": ""}
+        self.assertEqual([VIDEO], list(await yt.works(self.page, CHANNEL)))
+        self.assertEqual([True, False], self.answers)
 
 
 class PlaylistTests(Browser):

@@ -69,6 +69,9 @@ class Element:
     def filter(self, **options):
         return self
 
+    def or_(self, other):
+        return self
+
     async def all(self):
         return [self] if self.exists() else []
 
@@ -569,7 +572,7 @@ class RealProcessTests(Temporary):
         answer = self.assert_one_answer(done)
         self.assertEqual(PRIVATE, answer["data"]["items"][0]["title"])
         self.assert_nothing_private(done.stderr)
-        self.assertEqual(["starting the browser", "checking the account", "opening the page", "reading the page", "opening the page", "reading the page", "closing the browser"], stages_of(done.stderr))
+        self.assertEqual(["starting the browser", "checking the account", "opening the page", "reading the page", "opening the page", "reading the page", "opening the page", "reading the page", "closing the browser"], stages_of(done.stderr))
         self.assertEqual(["CrossCastBackground"], read_json(self.state)["desktops"])
         self.assertEqual([], [path for path in (home() / "browser-jobs").iterdir()])
 

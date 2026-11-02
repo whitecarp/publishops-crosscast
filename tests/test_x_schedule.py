@@ -195,6 +195,13 @@ class OpeningMediaTests(ChromeCase):
         self.assertIn("'clicks': 1", message)
         self.assertIn("'names_showing': 3", message)
 
+    async def test_a_resume_has_no_new_upload_to_wait_for(self):
+        with patch.object(browser_forms, "X_FIRST_CLICK_SECONDS", 1000):
+            self.assertEqual("PREVIEW_READY", (await browser_forms.publish_x(self.page, self.Tx()))["state"])
+
+    def test_a_bigger_file_is_left_alone_for_longer(self):
+        self.assertEqual(browser_forms.X_FIRST_CLICK_SECONDS + 56.5, browser_forms.x_first_click_hold(113_000_000))
+
     async def test_after_a_timeout_a_resume_opens_the_file_on_a_fresh_page(self):
         """From a field run: ten minutes on the page it uploaded from, and then a fresh page opened the same file with one click. No second upload."""
         ready = self.LIBRARY

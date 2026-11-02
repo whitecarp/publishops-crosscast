@@ -27,6 +27,12 @@ UNSAFE_OUTPUT = re.compile("[\x7f-\x9f؜​‎‏ -‮⁠-⁩\ud800-\udfff﻿]
 SAVES_RESULT = {"dm", "read-all", "collection", "playlist", "messages", "engage", "ops", "comments", "stats", "report", "works", "status", "cleanup"}
 
 
+def only_a_preview(old, opts):
+    """Whether all that's on record for this video is a draft or preview with nothing pressed, and this plan means to publish it. A field run found a dry run otherwise stopped the real post of the same file."""
+    return (old["state"] in {"DRAFT_SAVED", "PREVIEW_READY"} and opts.get("submission_mode") != "draft_only"
+            and not (old["data"].get("receipt") or {}).get("final_submit_attempted"))
+
+
 def check_upload_copy(plan):
     """The private copy an attempt uploads. Cleanup only removes copies of finished publications."""
     if not Path(plan['video']).is_file():
@@ -70,6 +76,9 @@ def publish_plan(plan, confirm):
                 account = opts["account"]
                 key = ledger.key(platform, account, plan["video_sha256"])
                 old = ledger.get(key)
+                if old and only_a_preview(old, opts):
+                    ledger.forget_preview(key)
+                    old = None
                 if old:
                     results[platform] = {"state": "SKIPPED_EXISTING", "key": key,
                                          "previous_state": old["state"], "receipt": old["data"].get("receipt"),

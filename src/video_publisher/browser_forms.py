@@ -5,6 +5,7 @@ import asyncio
 import re
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .categories import STUDIO_CATEGORIES
@@ -18,6 +19,9 @@ X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
 YT_DIALOG = 'ytcp-uploads-dialog'
 YT_PLAYLISTS = 'ytcp-playlist-dialog'
 YT_TICK_MS = 5000
+YT_UPLOAD_SECONDS = 1500
+YT_LINK_SECONDS = 600
+YT_EDIT_DRAFT = re.compile('^(编辑草稿|Edit draft)$', re.I)
 # Each playlist row's checkbox, its own lines of text and whether it is ticked.
 YT_PLAYLIST_ROWS = """boxes => boxes.map(box => {
     const row = box.closest('li, label, ytcp-ve') || box.parentElement;
@@ -28,6 +32,8 @@ YT_PLAYLIST_ROWS = """boxes => boxes.map(box => {
 
 X_MEDIA_PAGE = re.compile(r'/library/(\d+_\d+)(/.*)?')
 X_OPEN_SECONDS = 15
+X_FIRST_CLICK_SECONDS = 120
+X_UPLOAD_BYTES_PER_SECOND = 2_000_000
 X_DONE_SECONDS = 60
 X_VIDEO_SECONDS = 30
 X_CHANGE_THUMBNAIL = re.compile(r'^\s*Change thumbnail\s*$')
@@ -247,10 +253,15 @@ async def x_names_among_tiles(names, link):
         return []  # The page is still changing, and the next look says what it became.
 
 
-async def x_open_media(page, name, form, filename):
+def x_first_click_hold(size):
+    return X_FIRST_CLICK_SECONDS + size / X_UPLOAD_BYTES_PER_SECOND
+
+
+async def x_open_media(page, name, form, filename, hold=0):
     """Field runs clicked the uploaded file's name as soon as it showed, and the address didn't change in 30 seconds, while 15 seconds on the name showed twice. A click two minutes after an upload opened the form at once.
     So the file is open once its own form shows, and the address is not waited for. A click changes nothing, and comes again only while no form has come.
-    Two field runs in a row clicked five seconds in and got the file's details instead: this file's link and its title box, still on /library, with no Change thumbnail anywhere for ten minutes, while a fresh page's click reached the form. So once those details show, the click comes again on the name out among the tiles. A click can't cut off an upload the way leaving the page could."""
+    Two field runs in a row clicked five seconds in and got the file's details instead: this file's link and its title box, still on /library, with no Change thumbnail anywhere for ten minutes, while a fresh page's click reached the form. So once those details show, the click comes again on the name out among the tiles. A click can't cut off an upload the way leaving the page could.
+    The next field run clicked 36 times on a 113 MB file's tile and got no further than those details. So a new upload's first click waits as well, which is the `hold`: it's a guess at when the upload ends, since nothing on the page has been seen to say."""
     from patchright.async_api import Error as BrowserError
     clicked = None
     began = time.monotonic()
@@ -266,10 +277,11 @@ async def x_open_media(page, name, form, filename):
         # A field run stopped with one click, the name twice and this file's link showing, and a fresh page then opened its form at once. Those counts couldn't say why, so these are for the next one.
         seen.update(names=await name.count(), names_showing=len(showing), links_showing=await link.count(),
                     change_buttons=await change.count(), change_showing=len(await x_names_showing(change)), other_links=await page.locator(f'a[download]:not({x_file_link(filename)})').count(),
+                    progress_showing=await page.locator('[role="progressbar"]:visible').count(),
                     path=re.sub(r'\d+', '<n>', x_studio_path(page.url)))
         if seen['links_showing']:
             seen.setdefault('link_first_at', round(time.monotonic() - began))
-        due = clicked is None or time.monotonic() - clicked >= X_OPEN_SECONDS
+        due = time.monotonic() - began >= hold and (clicked is None or time.monotonic() - clicked >= X_OPEN_SECONDS)
         target = showing if len(showing) == 1 else await x_names_among_tiles(showing, link) if due else []
         if due and len(target) == 1:
             clicked = time.monotonic()
@@ -281,7 +293,7 @@ async def x_open_media(page, name, form, filename):
                 pass  # The next look says what happened.
         return False
     try:
-        await wait_until(page, opened, seconds=600, label="the uploaded file's form in Media Studio")
+        await wait_until(page, opened, seconds=hold + 600, label="the uploaded file's form in Media Studio")
         return seen  # So a run that gets through can show whether a second click was what did it.
     except VpubError as failure:
         if failure.code != 'processing_timeout':
@@ -310,6 +322,7 @@ async def publish_x(page, tx):
     hrefs = await account_link.evaluate_all('es => es.map(e=>e.href)')
     if not any('/user/'+tx.identity.casefold()+'/' in h.casefold() for h in hrefs):
         raise VpubError('wrong_account', 'Media Studio account does not match the signed-in publishing account.')
+    hold = 0
     if tx.receipt.get('media_url'):
         if not re.fullmatch(r'https://studio\.x\.com/library/\d+_\d+/edit', tx.receipt['media_url']):
             raise VpubError('invalid_media_url', 'Resume requires the original Media Studio asset URL.')
@@ -318,11 +331,12 @@ async def publish_x(page, tx):
         media = tx.media()
         await upload_file(page, media, accept='video/')
         tx.save(phase='uploading')
+        hold = x_first_click_hold(Path(media).stat().st_size)
     filename = tx.receipt['upload_filename']
     form = x_media_form(page, filename)
     change = form.locator('button:visible').filter(has_text=X_CHANGE_THUMBNAIL)
     if not tx.receipt.get('media_url'):
-        look = await x_open_media(page, page.get_by_text(filename, exact=True), form, filename)
+        look = await x_open_media(page, page.get_by_text(filename, exact=True), form, filename, hold)
         tx.save(phase='opening_media', open_look=look, **x_media_address(page.url))
     await change.wait_for(state='visible', timeout=300000)
     tx.save(phase='media_ready', **x_media_address(page.url))
@@ -663,6 +677,8 @@ def youtube_link_id(href):
         candidate = address.path.strip('/')
     elif address.hostname in {'www.youtube.com', 'youtube.com'} and address.path == '/watch':
         candidate = parse_qs(address.query).get('v', [''])[0]
+    elif address.hostname in {'www.youtube.com', 'youtube.com'} and address.path.startswith('/shorts/'):
+        candidate = address.path.removeprefix('/shorts/').rstrip('/')
     else:
         return None
     return candidate if re.fullmatch(r'[\w-]{11}', candidate) else None
@@ -674,6 +690,38 @@ async def yt_video_id(page):
         if found:
             return found
     return None
+
+
+def youtube_link_shape(href):
+    """A link with anything that could name a video or a channel taken out, for a record."""
+    address = urlsplit(href or '')
+    return (address.hostname or '') + re.sub(r'[\w-]{11,}', '<id>', address.path)
+
+
+async def yt_upload_look(page):
+    """What Studio's dialog shows of this upload: its progress, and the shape of its links, with no other words from the page. A field run's ID never came, and nothing could say whether the upload was slow or the link was one this didn't read."""
+    from patchright.async_api import Error as BrowserError
+    progress = page.locator(f'{YT_DIALOG} ytcp-video-upload-progress')
+    try:
+        shown = await progress.count()
+        found = re.search(r'(\d{1,3})\s*%', await progress.first.inner_text(timeout=2000)) if shown else None
+        links = await page.locator(f'{YT_DIALOG} a[href]').evaluate_all('es => es.map(e => e.href)')
+        return {'progress_shown': shown, 'percent': int(found[1]) if found else None, 'finished': await yt_upload_finished(page), 'links': sorted({youtube_link_shape(link) for link in links})}
+    except BrowserError:
+        return {'progress_shown': None, 'percent': None, 'finished': None, 'links': None}
+
+
+async def yt_reopen_stopped_upload(page, tx):
+    """Back into this file's own upload dialog, if an upload that stopped before its ID left a draft. A field run's did, listed under its file's name with a button to edit it. Returns whether it did. The file goes up again only if Studio lists nothing of it."""
+    from .youtube_studio import uploads_named
+    rows = await uploads_named(page, tx.identity, Path(tx.receipt['upload_filename']).stem)
+    if len(rows) > 1:
+        raise VpubError('inspect_existing_draft', 'Studio lists more than one draft of this file, so nothing was opened or uploaded.', 'Keep the one you want in YouTube Studio, then run vpub resume again.')
+    if not rows:
+        return False
+    button = await unique_visible(rows[0].get_by_text(YT_EDIT_DRAFT), 'YouTube Edit draft button')
+    await button.click(timeout=15000)
+    return True
 
 
 async def yt_button_ready(button):
@@ -830,10 +878,13 @@ async def yt_schedule(page, when):
             'time': [local.hour, local.minute], 'timezone_basis': 'studio' if offsets else 'computer', 'time_entry': entered}
 
 
-async def yt_upload_finished(page):
+async def yt_upload_finished(page, reopened=False):
     # The upload stops when the page closes, so it has to finish before this command can leave.
     progress = page.locator(f'{YT_DIALOG} ytcp-video-upload-progress')
-    return await progress.count() > 0 and await progress.first.get_attribute('uploading') is None
+    if await progress.count():
+        return await progress.first.get_attribute('uploading') is None
+    # This page isn't uploading a reopened draft. A field read of one found its progress bars at 100, or with no value at all.
+    return reopened and await page.locator(f'{YT_DIALOG} [role="progressbar"]').evaluate_all("es => es.every(e => [null, '100'].includes(e.getAttribute('aria-valuenow')))")
 
 
 async def publish_youtube(page, tx):
@@ -843,14 +894,22 @@ async def publish_youtube(page, tx):
     if options.get('create_missing_playlists'):
         from .youtube_studio import ensure_playlists
         tx.save(created_playlists=await ensure_playlists(page, tx.identity, options['playlist_titles']))
-    await page.goto(f'https://studio.youtube.com/channel/{tx.identity}/videos/upload?d=ud', wait_until='domcontentloaded', timeout=60000)
-    picker = page.locator('ytcp-uploads-file-picker input[type="file"]')
-    await wait_until(page, picker.count, seconds=60, label='YouTube upload dialog')
-    await choose_file(page, picker.first, tx.media())
+    reopened = tx.resuming and tx.receipt['media_selected'] and await yt_reopen_stopped_upload(page, tx)
+    if not reopened:
+        await page.goto(f'https://studio.youtube.com/channel/{tx.identity}/videos/upload?d=ud', wait_until='domcontentloaded', timeout=60000)
+        picker = page.locator('ytcp-uploads-file-picker input[type="file"]')
+        await wait_until(page, picker.count, seconds=60, label='YouTube upload dialog')
+        await choose_file(page, picker.first, tx.media())
     tx.save(phase='uploading')
     title_box = page.locator(f'{YT_DIALOG} #title-textarea #textbox')
     await wait_until(page, lambda: visible(title_box), seconds=180, label='YouTube details form')
-    video_id = await wait_until(page, lambda: yt_video_id(page), seconds=180, label='YouTube video ID')
+    # Nobody has timed this on a large file, so it gets longer than a small clip needed, and a stop says what the dialog did show.
+    try:
+        video_id = await wait_until(page, lambda: yt_video_id(page), seconds=YT_LINK_SECONDS, label='YouTube video ID')
+    except VpubError as failure:
+        if failure.code != 'processing_timeout':
+            raise
+        raise VpubError(failure.code, f'{failure.message} Last look: {await yt_upload_look(page)}.', failure.hint) from None
     tx.save(phase='editing', draft_id=video_id, draft_url=f'https://studio.youtube.com/video/{video_id}/edit')
     title = await unique_visible(title_box, 'YouTube title')
     await title.fill(options['title'])
@@ -896,7 +955,7 @@ async def publish_youtube(page, tx):
         tx.save(schedule=await yt_schedule(page, when))
     else:
         await yt_radio(page, options['visibility'].upper(), 'visibility_unverified', 'visibility')
-    await wait_until(page, lambda: yt_upload_finished(page), seconds=1500, label='YouTube upload')
+    await wait_until(page, lambda: yt_upload_finished(page, reopened), seconds=YT_UPLOAD_SECONDS, label='YouTube upload')
     tx.save(phase='preview', review_url=page.url)
     if options.get('submission_mode') == 'draft_only':
         return tx.save(state='PREVIEW_READY', note='Uploaded as an unpublished draft in YouTube Studio; nothing was published.')

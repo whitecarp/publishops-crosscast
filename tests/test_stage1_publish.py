@@ -184,6 +184,9 @@ class XFormTests(Form):
 
     def prepare(self):
         super().prepare()
+        held = patch("video_publisher.browser_forms.X_FIRST_CLICK_SECONDS", 0)
+        held.start()
+        self.addCleanup(held.stop)
         self.studio_account = OWNER
         self.composer_outside, self.composer_video, self.extra_video = False, "this-file", ""
         self.form_video = '<video src="https://studio.x.com/this-file.mp4"></video>'
@@ -415,6 +418,7 @@ class InstagramFormTests(Form):
         self.edit_late = False
         self.shared_words = "<p>Your reel has been shared.</p>"
         self.own_caption = None
+        self.caption_head = f'<a href="/{OWNER}/">{OWNER}</a> <time>3d</time>'
         self.comments = ""
 
     async def handle(self, route):
@@ -430,7 +434,8 @@ class InstagramFormTests(Form):
             return await self.json_at(route, {})
         if url.path.rstrip("/") == f"/reel/{REEL}":
             caption = self.posted if self.own_caption is None else self.own_caption
-            return await self.page_at(route, f'<video width="10" height="10"></video><div><div><a href="/{OWNER}/">{OWNER}</a></div><span>{caption}</span></div>{self.comments}')
+            # The row and its order are those of a field read, and the date under everything is how Instagram lays out a post.
+            return await self.page_at(route, f'<video width="10" height="10"></video><a href="/{OWNER}/">{OWNER}</a><div><div>{self.caption_head}</div><span>{caption}</span></div>{self.comments}<div><time>November 2</time></div>')
         grid = f'<a href="/{OWNER}/reel/{REEL}/">{self.plan["options"]["title"]}</a>' if self.posted and not self.never_shows else ""
         await self.page_at(route, f"""{self.check}<main>{grid}</main>{self.composer()}""")
 
@@ -559,16 +564,43 @@ class InstagramFormTests(Form):
     async def test_a_comment_saying_its_words_is_not_its_caption(self):
         """From a review: the words passed from anywhere on the page."""
         self.own_caption = "Something else"
-        self.comments = '<div><div><a href="/someone/">someone</a></div><span>My title Words</span></div>'
+        self.comments = '<div><div><a href="/someone/">someone</a> <time>1d</time></div><span>My title Words</span></div>'
         result = await self.publish()
         self.assertEqual(("SUBMITTED_UNVERIFIED", 1), (result["state"], len(self.final)))
+
+    async def test_the_owners_own_comment_saying_its_words_is_not_its_caption(self):
+        """From a review: the owner's name beside a comment passed for the caption's."""
+        self.own_caption = "Something else"
+        self.comments = f'<div><div><a href="/{OWNER}/">{OWNER}</a> <time>1d</time></div><span>My title Words</span></div>'
+        self.assertEqual("SUBMITTED_UNVERIFIED", (await self.publish())["state"])
+
+    async def test_its_words_inside_a_longer_caption_are_not_its_caption(self):
+        """From a review: a span holding only these words passed, though the caption around it said more."""
+        self.own_caption = "<span>My title Words</span> and more"
+        self.assertEqual("SUBMITTED_UNVERIFIED", (await self.publish())["state"])
+
+    async def test_more_words_loose_beside_the_caption_are_not_its_caption(self):
+        self.own_caption = "My title Words</span> and more<span>"
+        self.assertEqual("SUBMITTED_UNVERIFIED", (await self.publish())["state"])
+
+    async def test_a_hidden_copy_of_its_words_is_not_its_caption(self):
+        self.own_caption = '<span hidden>My title Words</span>'
+        self.assertEqual("SUBMITTED_UNVERIFIED", (await self.publish())["state"])
+
+    async def test_someone_elses_name_in_the_captions_row_stays_unconfirmed(self):
+        self.caption_head = '<a href="/someone/">someone</a> <time>3d</time>'
+        self.assertEqual("SUBMITTED_UNVERIFIED", (await self.publish())["state"])
+
+    async def test_a_page_with_no_time_beside_its_caption_stays_unconfirmed(self):
+        self.caption_head = f'<a href="/{OWNER}/">{OWNER}</a>'
+        self.assertEqual("SUBMITTED_UNVERIFIED", (await self.publish())["state"])
 
     async def test_a_caption_with_more_words_is_not_its_caption(self):
         self.own_caption = "My title Words and more"
         self.assertEqual("SUBMITTED_UNVERIFIED", (await self.publish())["state"])
 
     async def test_a_comment_repeating_the_words_does_not_get_in_the_way(self):
-        self.comments = '<div><div><a href="/someone/">someone</a></div><span>My title Words</span></div>'
+        self.comments = '<div><div><a href="/someone/">someone</a> <time>1d</time></div><span>My title Words</span></div>'
         self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
 
     async def test_a_caption_with_a_tag_and_a_person_in_it_is_still_its_caption(self):

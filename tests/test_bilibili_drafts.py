@@ -191,6 +191,49 @@ class PlanTests(unittest.TestCase):
         self.assertEqual("SKIPPED_EXISTING", result["results"]["bilibili"]["state"])
         self.assertEqual((True, ["bilibili"]), (result["all_drafts_ready"], result["drafts_read_back"]))
 
+    def publish_after(self, state):
+        self.run_plan(state)
+        self.plan()
+        loaded = load_plan(self.path)
+        with patch.object(adapters, "preflight", return_value={"identity": "owner"}), patch.object(adapters, "publish", return_value={"state": "SUBMISSION_VERIFIED"}) as sent:
+            return cli.publish_plan(loaded, loaded["confirmation"]), sent
+
+    def test_publishing_the_same_video_after_its_draft_goes_ahead(self):
+        """From a field run: a dry run otherwise stopped the real post of the same file."""
+        result, sent = self.publish_after("DRAFT_SAVED")
+        self.assertEqual("SUBMISSION_VERIFIED", result["results"]["bilibili"]["state"])
+        sent.assert_called_once()
+
+    def test_publishing_the_same_video_after_its_preview_goes_ahead(self):
+        result, sent = self.publish_after("PREVIEW_READY")
+        self.assertEqual("SUBMISSION_VERIFIED", result["results"]["bilibili"]["state"])
+        sent.assert_called_once()
+
+    def test_a_preview_whose_final_press_was_tried_still_stops_a_publish(self):
+        self.plan(submission_mode="draft_only")
+        loaded = load_plan(self.path)
+        with patch.object(adapters, "preflight", return_value={"identity": "owner"}), patch.object(adapters, "publish", return_value={"state": "PREVIEW_READY", "final_submit_attempted": True}):
+            cli.publish_plan(loaded, loaded["confirmation"])
+        self.plan()
+        loaded = load_plan(self.path)
+        with patch.object(adapters, "preflight", return_value={"identity": "owner"}), patch.object(adapters, "publish", return_value={"state": "SUBMISSION_VERIFIED"}) as sent:
+            result = cli.publish_plan(loaded, loaded["confirmation"])
+        self.assertEqual("SKIPPED_EXISTING", result["results"]["bilibili"]["state"])
+        sent.assert_not_called()
+
+    def test_a_draft_that_did_not_stop_cleanly_still_stops_a_publish(self):
+        result, sent = self.publish_after("SUBMITTED_UNVERIFIED")
+        self.assertEqual("SKIPPED_EXISTING", result["results"]["bilibili"]["state"])
+        sent.assert_not_called()
+
+    def test_a_published_video_is_not_published_again(self):
+        self.plan()
+        loaded = load_plan(self.path)
+        with patch.object(adapters, "preflight", return_value={"identity": "owner"}), patch.object(adapters, "publish", return_value={"state": "SUBMISSION_VERIFIED"}) as sent:
+            cli.publish_plan(loaded, loaded["confirmation"])
+            self.assertEqual("SKIPPED_EXISTING", cli.publish_plan(loaded, loaded["confirmation"])["results"]["bilibili"]["state"])
+        sent.assert_called_once()
+
     def test_a_plan_with_a_draft_and_a_publication_answers_for_each(self):
         result = self.run_plan("DRAFT_SAVED", {"douyin": {"account": "default", "method": "browser", "visibility": "public", "ai_generated": True, "title": "标题"}})
         self.assertEqual((True, True), (result["all_drafts_ready"], result["all_submissions_verified"]))

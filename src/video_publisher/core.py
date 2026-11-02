@@ -475,6 +475,11 @@ class Ledger:
                         (state, json.dumps(data, ensure_ascii=False), now(), key))
         self.db.commit()
 
+    def forget_preview(self, key):
+        """Release a record that only reached a draft or preview."""
+        self.db.execute("DELETE FROM publications WHERE key=? AND state IN ('DRAFT_SAVED','PREVIEW_READY')", (key,))
+        self.db.commit()
+
     def forget(self, key):
         """Release a claim only when nothing can have reached the platform."""
         self.db.execute("DELETE FROM publications WHERE key=? AND state='IN_PROGRESS'", (key,))
