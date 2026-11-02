@@ -1,0 +1,1033 @@
+"""Free YouTube playlists, saves and comment actions, driven in a real browser against a small copy of YouTube's pages.
+
+The copy follows what Studio and the watch page did on a real channel, including how Studio delays a change while it runs
+its own checks. Nothing here contacts YouTube.
+"""
+import asyncio
+import json
+import os
+from pathlib import Path
+import tempfile
+from types import SimpleNamespace
+import unittest
+from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
+
+from video_publisher import adapters, browser_forms, cli, collections as c, comment_actions, engagement, safety, youtube_playlists as free, youtube_studio as yt
+from video_publisher.core import VpubError, atomic_json, digest, home, read_json
+from shared_chrome import ChromeCase, async_playwright
+
+CHANNEL = "UC" + "a" * 22
+VIDEO = "dQw4w9WgXcQ"
+OTHER = "aBcDeFgHiJk"
+FIRST = "PLaaaaaaaaaaaaaaaaaaaa"
+SECOND = "PLbbbbbbbbbbbbbbbbbbbb"
+WORDS = {"public": "公开", "private": "私享", "unlisted": "不公开列出"}
+STYLE = "<style>ytcp-playlist-row,ytcp-video-row,ytcp-comment,ytcp-comment-thread,ytcp-icon-button,tp-yt-paper-item,ytcp-menu-service-item-renderer,ytcp-dialog{display:block;min-height:10px;min-width:10px}ytcp-button{display:inline-block}</style>"
+
+
+def menu_script():
+    return """
+window.pending = 0;
+function later(run, delay) { window.pending += 1; setTimeout(() => { try { run(); } finally { window.pending -= 1; } }, delay); }
+for (const box of document.querySelectorAll('[data-opens]')) box.onclick = () => { const menu = document.getElementById(box.dataset.opens); menu.hidden = !menu.hidden; };
+"""
+
+
+class FakeYouTube:
+    def __init__(self):
+        self.playlists = {FIRST: {"title": "Recipes", "description": "", "visibility": "public", "videos": [VIDEO]},
+                          SECOND: {"title": "Music", "description": "", "visibility": "private", "videos": []}}
+        self.saved = {FIRST: {VIDEO}, SECOND: set()}
+        self.watch_later = set()
+        self.liked = False
+        self.comments = [{"id": "c1", "text": "Nice", "own": False, "liked": False}, {"id": "c2", "text": "Mine", "own": True, "liked": False}]
+        self.writes = []
+        self.confirm = True
+        self.keep = True
+        self.dialog_title = None
+        self.other_box = True  # Studio's general comment box, which a real channel's page always shows outside every comment.
+        self.box_place = "comment"  # Where a reply or edit box opens: comment, thread, sibling, page or nowhere. Studio opens it in the comment.
+        self.box_delay = 0
+        self.boxes = 1
+        self.box_button = True
+        self.open_box = False
+        self.keep_row = False  # Whether a deleted comment stays on the open page.
+        # From a field check: pinning opens Studio's confirmation, whose own element holds a real button.
+        self.watch_comments = True
+        self.watch_threads = None
+        self.pin_ready_after = 0
+        self.pin_sent_after = 0
+        self.says_empty = True
+        self.lists = {}
+
+    async def html(self, route, body):
+        await route.fulfill(status=200, content_type="text/html; charset=utf-8", body="<!doctype html><title>t</title>" + STYLE + "<body>" + body)
+
+    async def handle(self, route):
+        url = urlsplit(route.request.url)
+        path = url.path
+        if route.request.method == "POST":
+            write = parse_qs(url.query).get("write")
+            if write:
+                return await self.write(route, write[0].split("/"), json.loads(route.request.post_data or "{}"))
+            return await route.fulfill(status=200, content_type="application/json", body="{}")
+        if url.hostname == "www.youtube.com" and path == "/watch":
+            return await self.html(route, self.watch_page())
+        if url.hostname != "studio.youtube.com":
+            return await route.abort()
+        if path.startswith("/channel/") and "/videos/" in path:
+            return await self.html(route, self.lists.get(path.rsplit("/", 1)[1], ""))
+        if path.endswith("/content/playlists"):
+            return await self.html(route, self.list_page())
+        if path.endswith("/videos") and path.startswith("/playlist/"):
+            return await self.html(route, self.videos_page(path.split("/")[2]))
+        if path.endswith("/edit") and path.startswith("/playlist/"):
+            return await self.html(route, self.edit_page(path.split("/")[2]))
+        if path.endswith("/comments"):
+            return await self.html(route, self.comments_page())
+        await self.html(route, "<p>Studio</p>")
+
+    async def write(self, route, parts, data):
+        kind = parts[0]
+        self.writes.append((kind, *parts[1:], *data.values()))
+        if kind == "save":
+            (self.saved[parts[1]].discard if parts[2] == VIDEO and parts[2] in self.saved[parts[1]] else self.saved[parts[1]].add)(parts[2])
+        elif kind == "like":
+            self.liked = not self.liked
+        elif kind == "create":
+            self.playlists["PLnewnewnewnewnewnewnew"] = {"title": data["title"], "description": data.get("description", ""), "visibility": data["visibility"], "videos": []}
+            self.saved["PLnewnewnewnewnewnewnew"] = set()
+        elif kind == "update" and self.keep:
+            self.playlists[parts[1]].update(data)
+        elif kind == "delete":
+            del self.playlists[parts[1]]
+        elif kind == "comment-like":
+            next(row for row in self.comments if row["id"] == parts[1])["liked"] ^= True
+        elif kind == "comment-edit":
+            next(row for row in self.comments if row["id"] == parts[1])["text"] = data["text"]
+        elif kind == "comment-reply":
+            self.comments.append({"id": "r1", "text": data["text"], "own": True, "liked": False})
+        elif kind in {"comment-delete", "comment-remove"}:
+            self.comments = [row for row in self.comments if row["id"] != parts[1]]
+        elif kind == "comment-pin":
+            next(row for row in self.comments if row["id"] == parts[1])["pinned"] = True
+        elif kind == "comment-unpin":
+            next(row for row in self.comments if row["id"] == parts[1])["pinned"] = False
+        await route.fulfill(status=200, content_type="application/json", body=json.dumps({"actionResults": [{"status": "STATUS_SUCCEEDED"}]}) if kind.startswith("comment-") else "{}")
+
+    def list_page(self):
+        rows = "".join(f"""<ytcp-playlist-row><a id="playlist-title-link" href="/playlist/{key}/edit">{row['title']}</a><span class="visibility-label"> {WORDS[row['visibility']]}</span>
+            <span class="videos-count-cell">{len(row['videos'])}</span><span class="last-time-updated-cell">2026</span>
+            <ytcp-icon-button id="overflow-menu-button" data-opens="menu-{key}"></ytcp-icon-button>
+            <div id="menu-{key}" hidden><tp-yt-paper-item test-id="EDIT_ON_YOUTUBE">Edit</tp-yt-paper-item><tp-yt-paper-item test-id="DELETE_FOREVER" onclick="{self.delete_call(key)}">Delete</tp-yt-paper-item></div></ytcp-playlist-row>""" for key, row in self.playlists.items())
+        # The window's outer element has no height on the real page, and a delete is answered once before it is sent for real.
+        return f"""{rows}<ytcp-icon-button id="navigate-after" aria-disabled="true"></ytcp-icon-button>
+            <ytcp-confirmation-dialog id="playlist-delete-dialog" style="display:flex;height:0"><div id="ask" hidden><p id="ask-text"></p><ytcp-button id="cancel-button"><button>Cancel</button></ytcp-button><ytcp-button id="confirm-button"><button onclick="sure()">Delete</button></ytcp-button></div></ytcp-confirmation-dialog>
+            <button aria-label="Create" data-opens="create-menu">Create</button>
+            <div id="create-menu" hidden><tp-yt-paper-item test-id="upload">Upload</tp-yt-paper-item><tp-yt-paper-item test-id="new-playlist" onclick="document.getElementById('make').hidden = false">New</tp-yt-paper-item></div>
+            <ytcp-playlist-creation-dialog id="make" hidden><div id="textbox" contenteditable="true" class="title"></div><div id="textbox" contenteditable="true" class="notes"></div>
+              <ytcp-dropdown-trigger data-opens="make-menu"><span id="shown">{WORDS['public']}</span></ytcp-dropdown-trigger>
+              <div id="make-menu" hidden>{"".join(f'<tp-yt-paper-item test-id="{code}" onclick="choose(this, {chr(39)}{name}{chr(39)})">{WORDS[name]}</tp-yt-paper-item>' for name, code in yt.PRIVACY.items())}</div>
+              <ytcp-button id="create-button"><button onclick="make()">Create</button></ytcp-button></ytcp-playlist-creation-dialog>
+            <script>{menu_script()}
+            let chosen = 'public';
+            function choose(item, name) {{ chosen = name; document.getElementById('shown').textContent = item.textContent; item.parentElement.hidden = true; }}
+            function make() {{ fetch('/youtubei/v1/playlist/create?write=create', {{method: 'POST', body: JSON.stringify({{title: document.querySelector('.title').innerText, description: document.querySelector('.notes').innerText, visibility: chosen}})}}).then(() => {{ document.getElementById('make').hidden = true; document.getElementById('make').style.display = 'none'; }}); }}
+            let target = '';
+            function ask(key, title) {{ target = key; document.getElementById('ask-text').textContent = 'Delete ' + title + '?'; document.getElementById('ask').hidden = false; }}
+            function sure() {{ fetch('/youtubei/v1/playlist/delete', {{method: 'POST', body: '{{}}'}}).then(() => later(() => fetch('/youtubei/v1/playlist/delete?write=delete/' + target, {{method: 'POST', body: '{{}}'}}).then(() => {{ document.getElementById('ask').hidden = true; }}), 1500)); }}
+            </script>"""
+
+    def delete_call(self, key):
+        if not self.confirm:
+            return ""
+        title = repr(self.dialog_title) if self.dialog_title else "this.closest('ytcp-playlist-row').querySelector('#playlist-title-link').textContent"
+        return f"ask('{key}', {title})"
+
+    def videos_page(self, key):
+        rows = "".join(f'<ytcp-video-row><a id="video-title" href="/video/{video}/edit">Title {video}</a></ytcp-video-row>' for video in self.playlists[key]["videos"])
+        if not rows:
+            # As Studio shows an empty playlist: no rows, no paging, and its own words saying so.
+            return '<div class="no-content style-scope ytcp-playlist-video-section-content" style="min-height:10px">Add videos</div>' if self.says_empty else "<p>Studio</p>"
+        return f'{rows}<ytcp-icon-button id="navigate-after" aria-disabled="true"></ytcp-icon-button>'
+
+    def edit_page(self, key):
+        row = self.playlists[key]
+        items = "".join(f'<tp-yt-paper-item test-id="{code}" onclick="choose(this, {chr(39)}{name}{chr(39)})">{WORDS[name]}</tp-yt-paper-item>' for name, code in yt.PRIVACY.items())
+        return f"""<div id="title-textarea"><div id="textbox" contenteditable="true" oninput="ready()">{row['title']}</div></div>
+            <div id="description-textarea"><div id="textbox" contenteditable="true" oninput="ready()">{row['description']}</div></div>
+            <div><ytcp-text-dropdown-trigger id="menu-button" data-opens="visibility-menu"><span id="shown">{WORDS[row['visibility']]}</span></ytcp-text-dropdown-trigger><ytcp-text-menu id="visibility-menu" hidden>{items}</ytcp-text-menu></div>
+            <ytcp-button id="save" aria-disabled="true"><button onclick="save()">Save</button></ytcp-button>
+            <script>{menu_script()}
+            let chosen = '{row['visibility']}';
+            function ready() {{ document.getElementById('save').removeAttribute('aria-disabled'); }}
+            // The menu leaves its place beside the button once it has been used, as it does in Studio.
+            function choose(item, name) {{ chosen = name; document.getElementById('shown').textContent = item.textContent; item.parentElement.hidden = true; document.body.append(item.parentElement); ready(); }}
+            // Save greys out at once and the change goes out later, as it does in Studio.
+            function save() {{ const body = JSON.stringify({{title: document.querySelector('#title-textarea #textbox').innerText, description: document.querySelector('#description-textarea #textbox').innerText, visibility: chosen}});
+              document.getElementById('save').setAttribute('aria-disabled', 'true'); later(() => fetch('/youtubei/v1/browse/edit_playlist?write=update/{key}', {{method: 'POST', body}}), 1500); }}
+            </script>"""
+
+    def watch_page(self):
+        rows = '<toggleable-list-item-view-model><button aria-pressed="false">Watch later<br>Private</button></toggleable-list-item-view-model>' + "".join(
+            f"""<toggleable-list-item-view-model><button aria-pressed="{'true' if VIDEO in self.saved[key] else 'false'}" onclick="flip(this, '{key}')">{row['title']}<br>{WORDS[row['visibility']]}</button></toggleable-list-item-view-model>""" for key, row in self.playlists.items())
+        # From a field check: a pinned comment comes first with its badge, and only this page shows it.
+        threads = "".join(f"""<ytd-comment-thread-renderer>{'<div id="pinned-comment-badge">Pinned</div>' if row.get('pinned') else ''}<a href="/watch?v={VIDEO}&lc={row['id']}">now</a>{row['text']}
+              <ytd-menu-renderer><button id="button" data-opens="watch-menu-{row['id']}">...</button></ytd-menu-renderer>
+              <div id="watch-menu-{row['id']}" hidden><ytd-menu-service-item-renderer onclick="fetch('/youtubei/v1/comment/perform_comment_action?write=comment-unpin/{row['id']}', {{method: 'POST', body: '{{}}'}}); this.parentElement.hidden = true">{'取消置顶' if row.get('pinned') else '置顶'}</ytd-menu-service-item-renderer></div></ytd-comment-thread-renderer>"""
+                          for row in sorted(self.comments, key=lambda row: not row.get("pinned")))
+        threads = self.watch_threads or threads
+        return f"""<yt-player-quick-action-buttons><like-button-view-model style="display:block;width:0;height:0;overflow:hidden"><button aria-pressed="false" style="width:0;height:0;padding:0;border:0"></button></like-button-view-model></yt-player-quick-action-buttons>
+            {threads if self.watch_comments else ''}
+            <ytd-watch-metadata><ytd-menu-renderer>
+              <button aria-pressed="{'true' if self.liked else 'false'}" aria-label="like this video" onclick="fetch('/youtubei/v1/like/like?write=like', {{method: 'POST', body: '{{}}'}}); this.setAttribute('aria-pressed', this.getAttribute('aria-pressed') === 'true' ? 'false' : 'true')">Like</button>
+              <button aria-label="Share">Share</button>
+              <button aria-label="Save to playlist" onclick="document.getElementById('sheet').hidden = false">Save</button>
+            </ytd-menu-renderer></ytd-watch-metadata>
+            <yt-sheet-view-model id="sheet" hidden>{rows}</yt-sheet-view-model>
+            <script>{menu_script()}
+            function flip(button, key) {{ fetch('/youtubei/v1/browse/edit_playlist?write=save/' + key + '/{VIDEO}', {{method: 'POST', body: '{{}}'}}).then(() => button.setAttribute('aria-pressed', button.getAttribute('aria-pressed') === 'true' ? 'false' : 'true')); }}</script>"""
+
+    def comments_page(self):
+        rows = ""
+        for row in self.comments:
+            handle = "mychannel" if row["own"] else "viewer"
+            # From a field check: Studio's menu keeps offering to pin, even a comment that is pinned.
+            pin = f"""<ytcp-menu-service-item-renderer onclick="pinning('{row['id']}')">置顶</ytcp-menu-service-item-renderer>"""
+            items = (pin + f"""<ytcp-menu-service-item-renderer onclick="editing('{row['id']}')">修改</ytcp-menu-service-item-renderer>
+                        <ytcp-menu-service-item-renderer onclick="removing('{row['id']}')">删除</ytcp-menu-service-item-renderer>""" if row["own"]
+                     else pin + f"""<ytcp-menu-service-item-renderer onclick="act('comment-remove/{row['id']}')">移除</ytcp-menu-service-item-renderer><ytcp-menu-service-item-renderer>举报</ytcp-menu-service-item-renderer>""")
+            pinned_label = '<span class="pinned">置顶者：mychannel</span>' if row.get("pinned") else ""
+            sibling = f'<ytcp-comment class="sibling" comment-id="{row["id"]}-reply"><div id="content-text">A reply</div></ytcp-comment>' if self.box_place == "sibling" else ""
+            already = '<ytcp-commentbox><textarea id="textarea"></textarea></ytcp-commentbox>' if self.open_box else ""
+            rows += f"""<ytcp-comment-thread><ytcp-comment comment-id="{row['id']}">{already}{pinned_label}<a id="name" href="http://www.youtube.com/@{handle}"><span class="author-text">{handle}</span></a><span class="published-time-text">now</span>
+              <div id="content-text">{row['text']}</div>
+              <ytcp-comment-toggle-button id="like-button"><ytcp-icon-button aria-label="赞" onclick="fetch('/youtubei/v1/comment/perform_comment_action?write=comment-like/{row['id']}', {{method: 'POST', body: '{{}}'}}); this.parentElement.isToggled = !this.parentElement.isToggled"></ytcp-icon-button></ytcp-comment-toggle-button>
+              <div id="reply-button"><button onclick="replying(this.closest('ytcp-comment'))">回复</button></div>
+              <ytcp-icon-button id="action-menu-button" data-opens="menu-{row['id']}"></ytcp-icon-button><div id="menu-{row['id']}" hidden>{items}</div></ytcp-comment>{sibling}</ytcp-comment-thread>"""
+        if self.other_box:
+            rows += '<ytcp-commentbox><textarea id="textarea"></textarea><div id="submit-button"><button onclick="fetch(\'/youtubei/v1/comment/create_comment_reply?write=comment-reply/other\', {method: \'POST\', body: \'{\\"text\\": \\"wrong box\\"}\'})">Send</button></div></ytcp-commentbox>'
+        states = json.dumps({row["id"]: row["liked"] for row in self.comments})
+        confirm = "document.getElementById('sure').hidden = false; document.getElementById('sure').dataset.comment = id" if self.confirm else "fetch('/youtubei/v1/comment/perform_comment_action?write=comment-delete/' + id, {method: 'POST', body: '{}'})"
+        return f"""{rows}<div id="box"></div>
+            <ytcp-confirmation-dialog id="sure" hidden><button id="confirm-button" onclick="fetch('/youtubei/v1/comment/perform_comment_action?write=comment-delete/' + document.getElementById('sure').dataset.comment, {{method: 'POST', body: '{{}}'}}); document.getElementById('sure').hidden = true; leave(document.getElementById('sure').dataset.comment)">Delete</button></ytcp-confirmation-dialog>
+            <ytcp-confirmation-dialog id="pin-sure" hidden><tp-yt-paper-dialog id="dialog" role="dialog"><ytcp-button id="cancel-button"><button>取消</button></ytcp-button><ytcp-button id="confirm-button"><button id="pin-go">置顶</button></ytcp-button></tp-yt-paper-dialog></ytcp-confirmation-dialog>
+            <script>{menu_script()}
+            function pinning(id) {{
+              const dialog = document.getElementById('pin-sure'), go = document.getElementById('pin-go');
+              dialog.hidden = false;
+              go.disabled = {json.dumps(self.pin_ready_after > 0)};
+              later(() => {{ go.disabled = false; }}, {self.pin_ready_after});
+              go.onclick = () => {{ dialog.hidden = true; later(() => act('comment-pin/' + id), {self.pin_sent_after}); }};
+            }}
+            const states = {states};
+            for (const button of document.querySelectorAll('#like-button')) button.isToggled = states[button.closest('ytcp-comment').getAttribute('comment-id')];
+            function removing(id) {{ {confirm} }}
+            function leave(id) {{ if ({json.dumps(not self.keep_row)}) document.querySelector('ytcp-comment[comment-id="' + id + '"]')?.closest('ytcp-comment-thread').remove(); }}
+            function act(write) {{ fetch('/youtubei/v1/comment/perform_comment_action?write=' + write, {{method: 'POST', body: '{{}}'}}); if (write.startsWith('comment-remove/')) leave(write.split('/')[1]); }}
+            function openBox(row, word, send) {{
+              const homes = {{comment: row, thread: row.closest('ytcp-comment-thread'), sibling: row.closest('ytcp-comment-thread').querySelector('.sibling'), page: document.getElementById('box')}};
+              later(() => {{
+                if (!homes[{json.dumps(self.box_place)}]) return;
+                for (let i = 0; i < {self.boxes}; i++) {{
+                  const box = document.createElement('ytcp-commentbox'); box.innerHTML = '<textarea id="textarea"></textarea>' + ({json.dumps(self.box_button)} ? '<div id="submit-button"><button>' + word + '</button></div>' : '');
+                  homes[{json.dumps(self.box_place)}].append(box);
+                  if ({json.dumps(self.box_button)}) box.querySelector('button').onclick = () => {{ send(box.querySelector('textarea').value); box.remove(); }};
+                }}
+              }}, {self.box_delay});
+            }}
+            function replying(row) {{ openBox(row, 'Send', text => fetch('/youtubei/v1/comment/create_comment_reply?write=comment-reply/' + row.getAttribute('comment-id'), {{method: 'POST', body: JSON.stringify({{text}})}})); }}
+            document.addEventListener('keydown', event => {{ if (event.key === 'Escape') for (const menu of document.querySelectorAll('[id^="menu-"]')) menu.hidden = true; }});
+            function editing(id) {{ openBox(document.querySelector('ytcp-comment[comment-id="' + id + '"]'), 'Save', text => fetch('/youtubei/v1/comment/update_comment?write=comment-edit/' + id, {{method: 'POST', body: JSON.stringify({{text}})}})); }}
+            </script>"""
+
+
+class Browser(ChromeCase):
+    quick_pauses = True  # This copy's timers count themselves in window.pending (see later() in its page), so a pause waits for them.
+    async def asyncSetUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        env = patch.dict(os.environ, {"VPUB_HOME": str(Path(temp.name) / "runtime")})
+        env.start()
+        self.addCleanup(env.stop)
+        atomic_json(home() / "accounts/default/youtube-handle.json", {"identity": CHANNEL, "handle": "mychannel"})
+        self.pw = await async_playwright().start()
+        self.browser = await self.pw.chromium.launch(channel="chrome", headless=True)
+        self.page = await self.browser.new_page()
+        self.page.set_default_timeout(8000)
+        self.site = FakeYouTube()
+        await self.page.route("**/*", self.site.handle)
+        for target in (patch.object(yt, "appears", side_effect=self.fast_appears), patch.object(yt, "QUIET_TICKS", 6), patch.object(yt, "PIN_TICKS", 6), patch.object(yt, "BOX_TICKS", 10), patch.object(yt, "DELETE_RESULTS", frozenset({"actionResults.status"}))):
+            target.start()
+            self.addCleanup(target.stop)
+
+    async def no_wait(self, ms):
+        return None
+
+    async def fast_appears(self, page, target, seconds):
+        for _ in range(30):
+            if await target.count():
+                return True
+            await page.wait_for_timeout(100)
+        return False
+
+    async def asyncTearDown(self):
+        await self.browser.close()
+        await self.pw.stop()
+
+    def receipt(self, action, collection=None, title=None, **extra):
+        key = digest([action, collection, title, str(extra)])
+        atomic_json(c.receipt_path(key), {"key": key, "platform": "youtube", "identity": CHANNEL, "action": action, "collection_id": collection, "title": title, "state": "READY", "intent": {}, **extra})
+        return key
+
+    async def run_op(self, operation, **payload):
+        return await yt.playlists(self.page, CHANNEL, {"platform": "youtube", "operation": operation, **payload})
+
+
+def content_row(video, title):
+    return f"""<ytcp-video-row><a id="video-title" href="/video/{video}/edit">{title}</a></ytcp-video-row>"""
+
+
+DRAFT = """<ytcp-video-row><a id="video-title">crosscast e1bc62c1f38c4234</a><span>草稿</span><ytcp-button><button onclick="window.opened = this.closest('ytcp-video-row').querySelector('a').innerText"><div>编辑草稿</div></button></ytcp-button></ytcp-video-row>"""
+
+
+class ContentListTests(Browser):
+    async def asyncSetUp(self):
+        self.answers = []
+        await super().asyncSetUp()
+
+    async def fast_appears(self, page, target, seconds):
+        self.answers.append(await super().fast_appears(page, target, seconds))
+        return self.answers[-1]
+
+    async def test_a_vertical_video_is_found_under_shorts(self):
+        """From a field run: a vertical video isn't on the list of Videos, which was all this read."""
+        self.site.lists = {"upload": content_row(VIDEO, "Wide"), "short": content_row(OTHER, "Tall")}
+        found = await yt.works(self.page, CHANNEL)
+        self.assertEqual({VIDEO: "Wide", OTHER: "Tall"}, {key: item["title"] for key, item in found.items()})
+
+    async def test_a_stopped_uploads_draft_is_opened_from_the_list_it_is_on(self):
+        """From a field read: under Shorts, with no link to an edit page, and the file's hyphen written as a space."""
+        other = DRAFT.replace("e1bc62c1f38c4234", "aaaaaaaaaaaaaaaa")
+        self.site.lists = {"upload": content_row(VIDEO, "crosscast e1bc62c1f38c4234"), "short": other + DRAFT}
+        tx = SimpleNamespace(identity=CHANNEL, receipt={"upload_filename": "crosscast-e1bc62c1f38c4234.mp4"})
+        self.assertTrue(await browser_forms.yt_reopen_stopped_upload(self.page, tx))
+        self.assertEqual("crosscast e1bc62c1f38c4234", await self.page.evaluate("window.opened", isolated_context=False))
+        self.assertEqual({VIDEO}, set(await yt.works(self.page, CHANNEL)))
+
+    async def test_a_reopened_draft_is_finished_only_if_no_bar_says_otherwise(self):
+        bars = '<ytcp-uploads-dialog><div role="progressbar" aria-valuemax="100"></div><div role="progressbar" aria-valuenow="%s" aria-valuemax="100"></div></ytcp-uploads-dialog>'
+        for value, reopened, finished in (("100", True, True), ("40", True, False), ("100", False, False)):
+            with self.subTest(value=value, reopened=reopened):
+                await self.page.set_content(bars % value)
+                self.assertIs(finished, await browser_forms.yt_upload_finished(self.page, reopened))
+
+    async def test_a_list_that_never_answered_is_not_taken_to_have_no_draft(self):
+        """It would otherwise go on to upload the file a second time."""
+        self.site.lists = {"upload": content_row(VIDEO, "Wide"), "short": ""}
+        tx = SimpleNamespace(identity=CHANNEL, receipt={"upload_filename": "crosscast-e1bc62c1f38c4234.mp4"})
+        with self.assertRaises(VpubError) as caught:
+            await browser_forms.yt_reopen_stopped_upload(self.page, tx)
+        self.assertEqual("inspect_existing_draft", caught.exception.code)
+
+    async def test_no_draft_of_this_file_means_nothing_is_pressed(self):
+        self.site.lists = {"upload": content_row(VIDEO, "Wide"), "short": DRAFT.replace("e1bc62c1f38c4234", "aaaaaaaaaaaaaaaa")}
+        tx = SimpleNamespace(identity=CHANNEL, receipt={"upload_filename": "crosscast-e1bc62c1f38c4234.mp4"})
+        self.assertFalse(await browser_forms.yt_reopen_stopped_upload(self.page, tx))
+        self.assertIsNone(await self.page.evaluate("window.opened || null", isolated_context=False))
+
+    async def test_two_drafts_of_one_file_are_not_chosen_between(self):
+        self.site.lists = {"upload": "<p>No content available</p>", "short": DRAFT + DRAFT}
+        tx = SimpleNamespace(identity=CHANNEL, receipt={"upload_filename": "crosscast-e1bc62c1f38c4234.mp4"})
+        with self.assertRaises(VpubError) as caught:
+            await browser_forms.yt_reopen_stopped_upload(self.page, tx)
+        self.assertEqual("inspect_existing_draft", caught.exception.code)
+        self.assertIsNone(await self.page.evaluate("window.opened || null", isolated_context=False))
+
+    async def test_a_list_that_says_it_has_nothing_is_not_waited_on(self):
+        self.site.lists = {"upload": "<p>没有可显示的内容</p>", "short": content_row(OTHER, "Tall")}
+        self.assertEqual([OTHER], list(await yt.works(self.page, CHANNEL)))
+        self.assertEqual([True, True], self.answers)
+
+    async def test_that_message_kept_hidden_does_not_end_the_wait(self):
+        row = content_row(VIDEO, "Late")
+        self.site.lists = {"upload": f"""<p hidden>No content available</p><script>{menu_script()} later(() => document.body.insertAdjacentHTML('beforeend', '{row}'), 300);</script>""", "short": ""}
+        self.assertEqual([VIDEO], list(await yt.works(self.page, CHANNEL)))
+        self.assertEqual([True, False], self.answers)
+
+
+class PlaylistTests(Browser):
+    async def test_the_list_shows_each_playlist_with_its_id_and_visibility(self):
+        result = await self.run_op("list")
+        self.assertTrue(result["complete"])
+        self.assertEqual([(FIRST, "Recipes", "public", 1), (SECOND, "Music", "private", 0)], [(r["id"], r["title"], r["visibility"], r["videos"]) for r in result["items"]])
+        self.assertEqual([], self.site.writes)
+
+    async def test_a_list_with_more_pages_is_not_complete_when_the_read_stops(self):
+        with patch.object(yt, "TABLE_PAGES", 1), patch.object(FakeYouTube, "list_page", lambda s: '<ytcp-playlist-row><a id="playlist-title-link" href="/playlist/PLccccccccccccc/edit">A</a></ytcp-playlist-row><ytcp-icon-button id="navigate-after" aria-disabled="false"></ytcp-icon-button>'):
+            self.assertFalse((await self.run_op("list"))["complete"])
+
+    async def test_a_playlists_videos_come_from_studio(self):
+        result = await self.run_op("items", collection_id=FIRST)
+        self.assertEqual(([VIDEO], True), ([r["id"] for r in result["items"]], result["complete"]))
+
+    async def test_the_save_window_says_whether_one_video_is_in_a_playlist(self):
+        inside = await self.run_op("items", collection_id=FIRST, work_id=VIDEO)
+        outside = await self.run_op("items", collection_id=SECOND, work_id=VIDEO)
+        self.assertEqual(([{"id": VIDEO}], True), (inside["items"], inside["complete"]))
+        self.assertEqual(([], True), (outside["items"], outside["complete"]))
+        self.assertEqual([], self.site.writes)
+
+    async def test_adding_clicks_only_that_playlist_and_marks_the_receipt_first(self):
+        key = self.receipt("add", SECOND, work_id=VIDEO, before_members=[])
+        await self.run_op("add", collection_id=SECOND, work_id=VIDEO, before_members=[], receipt_key=key)
+        self.assertEqual([("save", SECOND, VIDEO)], self.site.writes)
+        self.assertEqual({VIDEO}, self.site.saved[SECOND])
+        self.assertEqual({VIDEO}, self.site.saved[FIRST])
+        self.assertEqual("SUBMITTING", read_json(c.receipt_path(key))["state"])
+
+    async def test_removing_takes_it_out_of_that_playlist_only(self):
+        key = self.receipt("remove", FIRST, work_id=VIDEO, before_members=[VIDEO])
+        await self.run_op("remove", collection_id=FIRST, work_id=VIDEO, before_members=[VIDEO], receipt_key=key)
+        self.assertEqual(set(), self.site.saved[FIRST])
+
+    async def test_a_video_that_moved_since_the_check_is_not_touched(self):
+        key = self.receipt("remove", SECOND, work_id=VIDEO, before_members=[VIDEO])
+        with self.assertRaises(VpubError) as caught:
+            await self.run_op("remove", collection_id=SECOND, work_id=VIDEO, before_members=[VIDEO], receipt_key=key)
+        self.assertEqual("collection_changed", caught.exception.code)
+        self.assertEqual([], self.site.writes)
+
+    async def test_a_playlist_id_that_is_not_this_channels_is_never_tried(self):
+        with self.assertRaises(VpubError) as caught:
+            await self.run_op("items", collection_id="PLzzzzzzzzzzzzzzzzzz", work_id=VIDEO)
+        self.assertEqual("collection_not_visible", caught.exception.code)
+
+    async def test_two_playlists_with_one_title_stop_it(self):
+        self.site.playlists[SECOND]["title"] = "Recipes"
+        with self.assertRaises(VpubError) as caught:
+            await self.run_op("items", collection_id=FIRST, work_id=VIDEO)
+        self.assertEqual("playlist_ambiguous", caught.exception.code)
+
+    async def test_a_title_is_matched_whole_and_watch_later_is_ignored(self):
+        self.site.playlists[SECOND]["title"] = "Recipes old"
+        self.assertEqual([{"id": VIDEO}], (await self.run_op("items", collection_id=FIRST, work_id=VIDEO))["items"])
+        self.site.playlists[SECOND]["title"] = "Watch"
+        self.assertEqual([], (await self.run_op("items", collection_id=SECOND, work_id=VIDEO))["items"])
+
+    async def test_creating_sets_private_and_finds_the_new_id(self):
+        key = self.receipt("create", None, "Cooking", before_ids=[FIRST, SECOND])
+        result = await self.run_op("create", collection_id=None, title="Cooking", description="About food", privacy="private", receipt_key=key)
+        self.assertEqual("PLnewnewnewnewnewnewnew", result["collection_id"])
+        self.assertEqual(("private", "About food"), (self.site.playlists[result["collection_id"]]["visibility"], self.site.playlists[result["collection_id"]]["description"]))
+
+    async def test_a_playlists_own_page_says_what_the_list_does_not_and_saves_nothing(self):
+        self.site.playlists[FIRST]["description"] = "Some notes"
+        result = await self.run_op("details", collection_id=FIRST)
+        row = result["items"][0]
+        self.assertEqual((FIRST, "Recipes", "Some notes", "public"), (row["id"], row["title"], row["description"], row["visibility"]))
+        self.assertEqual([], self.site.writes)
+
+    async def test_an_empty_playlist_is_complete_only_when_the_page_says_it_is_empty(self):
+        self.assertEqual(([], True), (lambda r: (r["items"], r["complete"]))(await self.run_op("items", collection_id=SECOND)))
+        self.site.says_empty = False
+        self.assertEqual(([], False), (lambda r: (r["items"], r["complete"]))(await self.run_op("items", collection_id=SECOND)))
+
+    async def test_changing_visibility_saves_even_though_the_menu_moves_away(self):
+        key = self.receipt("rename", FIRST, "Recipes", before_ids=[FIRST, SECOND])
+        await self.run_op("rename", collection_id=FIRST, title="Recipes", description="New notes", privacy="unlisted", receipt_key=key)
+        self.assertEqual(("unlisted", "New notes"), (self.site.playlists[FIRST]["visibility"], self.site.playlists[FIRST]["description"]))
+
+    async def test_before_an_upload_only_a_missing_playlist_is_made_and_private(self):
+        made = await yt.ensure_playlists(self.page, CHANNEL, ["Recipes", "Cooking"])
+        self.assertEqual([{"id": "PLnewnewnewnewnewnewnew", "title": "Cooking"}], made)
+        self.assertEqual("private", self.site.playlists["PLnewnewnewnewnewnewnew"]["visibility"])
+        self.assertEqual(1, len([write for write in self.site.writes if write[0] == "create"]))
+
+    async def test_every_playlist_already_there_makes_nothing(self):
+        self.assertEqual([], await yt.ensure_playlists(self.page, CHANNEL, ["Recipes", "Music"]))
+        self.assertEqual([], self.site.writes)
+
+    async def test_a_list_read_only_part_way_does_not_prove_a_playlist_is_missing(self):
+        with patch.object(yt, "read_playlists", return_value=([{"id": FIRST, "title": "Recipes"}], False)), self.assertRaises(VpubError) as caught:
+            await yt.ensure_playlists(self.page, CHANNEL, ["Cooking"])
+        self.assertEqual("read_incomplete", caught.exception.code)
+        self.assertEqual([], self.site.writes)
+
+    async def test_renaming_waits_for_the_change_studio_sends_later(self):
+        key = self.receipt("rename", FIRST, "Later")
+        await self.run_op("rename", collection_id=FIRST, title="Later", receipt_key=key)
+        self.assertEqual("Later", self.site.playlists[FIRST]["title"])
+
+    async def test_the_wait_ends_at_its_limit_on_a_page_that_never_goes_quiet(self):
+        await self.page.goto("https://studio.youtube.com/channel/x")
+        await self.page.evaluate("setInterval(() => fetch('/youtubei/v1/log_event', {method: 'POST', body: '{}'}), 200)")
+        clicks = []
+
+        async def act():
+            clicks.append(1)
+
+        with patch.object(yt, "MOST_TICKS", 6):
+            await yt.act_and_settle(self.page, act)
+        self.assertEqual([1], clicks)
+
+    async def test_the_wait_ends_soon_on_a_quiet_page(self):
+        await self.page.goto("https://studio.youtube.com/channel/x")
+        started = asyncio.get_running_loop().time()
+
+        async def act():
+            return None
+
+        await yt.act_and_settle(self.page, act)
+        self.assertLess(asyncio.get_running_loop().time() - started, 12)
+
+    async def test_renaming_saves_once_and_reads_it_back(self):
+        key = self.receipt("rename", FIRST, "Cooking")
+        result = await self.run_op("rename", collection_id=FIRST, title="Cooking", description="New words", privacy="unlisted", receipt_key=key)
+        self.assertTrue(result["submitted"])
+        self.assertEqual(1, len(self.site.writes))
+        self.assertEqual(("Cooking", "New words", "unlisted"), tuple(self.site.playlists[FIRST][name] for name in ("title", "description", "visibility")))
+
+    async def test_a_rename_that_did_not_keep_is_not_called_done(self):
+        self.site.keep = False
+        key = self.receipt("rename", FIRST, "Cooking")
+        with self.assertRaises(VpubError) as caught:
+            await self.run_op("rename", collection_id=FIRST, title="Cooking", receipt_key=key)
+        self.assertEqual("playlist_unverified", caught.exception.code)
+        self.assertEqual("SUBMITTING", read_json(c.receipt_path(key))["state"])
+
+    async def test_nothing_to_save_stops_before_any_write(self):
+        key = self.receipt("rename", FIRST, "Recipes")
+        with self.assertRaises(VpubError) as caught, patch.object(yt, "wait_ready", return_value=False):
+            await self.run_op("rename", collection_id=FIRST, title="Recipes", receipt_key=key)
+        self.assertEqual("edit_not_ready", caught.exception.code)
+        self.assertEqual([], self.site.writes)
+        self.assertEqual("READY", read_json(c.receipt_path(key))["state"])
+
+    async def test_deleting_stays_until_studio_has_really_sent_it(self):
+        key = self.receipt("delete", FIRST)
+        await self.run_op("delete", collection_id=FIRST, receipt_key=key)
+        self.assertEqual([("delete", FIRST)], self.site.writes)
+        self.assertEqual("SUBMITTING", read_json(c.receipt_path(key))["state"])
+        self.assertEqual({SECOND}, set(self.site.playlists))
+
+    async def test_no_confirmation_window_means_nothing_is_deleted_or_marked(self):
+        self.site.confirm = False
+        key = self.receipt("delete", FIRST)
+        with self.assertRaises(VpubError) as caught, patch.object(self.page, "wait_for_timeout", side_effect=self.no_wait):
+            await self.run_op("delete", collection_id=FIRST, receipt_key=key)
+        self.assertEqual("layout_changed", caught.exception.code)
+        self.assertEqual([], self.site.writes)
+        self.assertEqual("READY", read_json(c.receipt_path(key))["state"])
+
+    async def test_a_confirmation_naming_another_playlist_stops_the_delete(self):
+        self.site.dialog_title = "Music"
+        key = self.receipt("delete", FIRST)
+        with self.assertRaises(VpubError) as caught:
+            await self.run_op("delete", collection_id=FIRST, receipt_key=key)
+        self.assertEqual("wrong_collection", caught.exception.code)
+        self.assertEqual([], self.site.writes)
+        self.assertEqual("READY", read_json(c.receipt_path(key))["state"])
+
+    async def test_a_playlist_not_in_the_list_is_not_deleted(self):
+        key = self.receipt("delete", "PLzzzzzzzzzzzzzzzzzz")
+        with self.assertRaises(VpubError) as caught:
+            await self.run_op("delete", collection_id="PLzzzzzzzzzzzzzzzzzz", receipt_key=key)
+        self.assertEqual("collection_not_visible", caught.exception.code)
+        self.assertEqual([], self.site.writes)
+
+
+class WatchPageTests(Browser):
+    async def test_the_visible_like_button_is_read_not_the_players_hidden_copy(self):
+        self.site.liked = True
+        result = await yt.engagement(self.page, CHANNEL, {"operation": "status", "work_id": VIDEO})
+        self.assertIs(True, result["liked"])
+
+    async def test_a_like_clicks_the_visible_button_once(self):
+        path = home() / "receipt.json"
+        atomic_json(path, {"state": "ACTION_READY"})
+        result = await yt.engagement(self.page, CHANNEL, {"operation": "set", "work_id": VIDEO, "kind": "like", "desired": True, "receipt_path": str(path)})
+        self.assertEqual(1, result["platform_writes"])
+        self.assertEqual([("like",)], self.site.writes)
+        self.assertEqual("ACTION_SUBMITTING", read_json(path)["state"])
+
+    async def test_a_save_reads_and_changes_one_playlist(self):
+        status = await yt.engagement(self.page, CHANNEL, {"operation": "status", "work_id": VIDEO, "collection": SECOND})
+        self.assertEqual((False, SECOND), (status["saved"], status["collection"]))
+        path = home() / "receipt.json"
+        atomic_json(path, {"state": "ACTION_READY"})
+        await yt.engagement(self.page, CHANNEL, {"operation": "set", "work_id": VIDEO, "kind": "save", "desired": True, "collection": SECOND, "receipt_path": str(path)})
+        self.assertEqual([("save", SECOND, VIDEO)], self.site.writes)
+
+    async def test_a_save_already_there_sends_nothing(self):
+        result = await yt.engagement(self.page, CHANNEL, {"operation": "set", "work_id": VIDEO, "kind": "save", "desired": True, "collection": FIRST, "receipt_path": "unused"})
+        self.assertEqual(("NO_CHANGE", 0), (result["state"], result["platform_writes"]))
+        self.assertEqual([], self.site.writes)
+
+
+class CommentTests(Browser):
+    def payload(self, kind, comment="c1", desired=True, operation="set", text="Nice", receipt=None):
+        return {"operation": operation, "receipt_path": receipt, "request": {"identity": CHANNEL, "work_id": VIDEO, "kind": kind, "desired": desired, "comment": {"id": comment, "text": text}}}
+
+    def receipt_file(self):
+        path = home() / "comment.json"
+        atomic_json(path, {"state": "COMMENT_READY"})
+        return str(path)
+
+    async def test_status_reads_the_like_and_text(self):
+        self.site.comments[0]["liked"] = True
+        result = await yt.comment_action(self.page, CHANNEL, self.payload("like", operation="status"))
+        self.assertEqual((True, "Nice", False), (result["liked"], result["text"], result["deleted"]))
+
+    async def test_a_like_marks_the_receipt_then_clicks_once(self):
+        path = self.receipt_file()
+        result = await yt.comment_action(self.page, CHANNEL, self.payload("like", receipt=path))
+        self.assertEqual(("COMMENT_UNVERIFIED", 1), (result["state"], result["platform_writes"]))
+        self.assertEqual([("comment-like", "c1")], self.site.writes)
+
+    async def test_a_comment_already_liked_sends_nothing(self):
+        self.site.comments[0]["liked"] = True
+        result = await yt.comment_action(self.page, CHANNEL, self.payload("like", receipt=self.receipt_file()))
+        self.assertEqual("NO_CHANGE", result["state"])
+        self.assertEqual([], self.site.writes)
+
+    async def test_unliking_works_the_same_way(self):
+        self.site.comments[0]["liked"] = True
+        await yt.comment_action(self.page, CHANNEL, self.payload("like", desired=False, receipt=self.receipt_file()))
+        self.assertEqual([("comment-like", "c1")], self.site.writes)
+
+    async def test_editing_the_channels_own_comment_types_and_saves_once(self):
+        await yt.comment_action(self.page, CHANNEL, self.payload("edit", "c2", "New words", text="Mine", receipt=self.receipt_file()))
+        self.assertEqual([("comment-edit", "c2", "New words")], self.site.writes)
+
+    async def test_deleting_goes_through_studios_confirmation(self):
+        await yt.comment_action(self.page, CHANNEL, self.payload("delete", "c2", text="Mine", receipt=self.receipt_file()))
+        self.assertEqual([("comment-delete", "c2")], self.site.writes)
+
+    async def test_a_delete_with_no_confirmation_was_already_marked_as_submitting(self):
+        self.site.confirm = False
+        path = self.receipt_file()
+        with patch.object(yt, "CONFIRM_BUTTON", "#never"):
+            result = await yt.comment_action(self.page, CHANNEL, self.payload("delete", "c2", text="Mine", receipt=path))
+        self.assertEqual([("comment-delete", "c2")], self.site.writes)
+        self.assertEqual("COMMENT_UNVERIFIED", result["state"])
+
+    async def test_a_viewers_comment_has_no_edit_or_delete_to_click(self):
+        path = self.receipt_file()
+        with self.assertRaises(VpubError):
+            await yt.comment_action(self.page, CHANNEL, self.payload("edit", "c1", "New", receipt=path))
+        self.assertEqual([], self.site.writes)
+
+    async def test_a_comment_not_on_the_loaded_page_proves_nothing(self):
+        result = await yt.comment_action(self.page, CHANNEL, self.payload("delete", "gone", operation="status"))
+        self.assertIsNone(result["deleted"])
+        self.assertIs(True, result["absent_from_loaded_list"])
+
+    async def test_deleting_says_whether_the_comment_left_the_page(self):
+        result = await yt.comment_action(self.page, CHANNEL, self.payload("delete", "c2", text="Mine", receipt=self.receipt_file()))
+        self.assertEqual((True, True), (result["gone_from_page"], result["acknowledged"]))
+        self.assertEqual(("/youtubei/v1/comment/perform_comment_action", True, 200), tuple(result["write_answers"][0][key] for key in ("path", "names_target", "http")))
+
+    async def answered(self, status, body):
+        original = self.site.write
+
+        async def refuse(route, parts, data):
+            self.site.writes.append((parts[0], parts[1]))
+            await route.fulfill(status=status, content_type="application/json", body=body)
+        self.site.write = refuse
+        self.addCleanup(setattr, self.site, "write", original)
+        return await yt.comment_action(self.page, CHANNEL, self.payload("delete", "c2", text="Mine", receipt=self.receipt_file()))
+
+    async def test_a_row_that_vanishes_while_the_platform_refuses_is_not_acknowledged(self):
+        result = await self.answered(200, '{"error": {"code": 409}}')
+        self.assertEqual((True, False), (result["gone_from_page"], result["acknowledged"]))
+
+    async def test_a_failed_request_is_not_acknowledged(self):
+        self.assertIs(False, (await self.answered(500, "{}"))["acknowledged"])
+
+    async def test_an_answer_that_can_not_be_read_or_says_nothing_is_not_acknowledged(self):
+        for body in ("<html>Sorry</html>", "{}", '{"actionResults": [{"status": "STATUS_PENDING"}]}', '{"actions": [{"pinCommentAction": {"actionResult": {"status": "STATUS_SUCCEEDED"}}}]}'):
+            with self.subTest(body=body):
+                self.site.comments = [{"id": "c1", "text": "Nice", "own": False, "liked": False}, {"id": "c2", "text": "Mine", "own": True, "liked": False}]
+                self.assertIs(False, (await self.answered(200, body))["acknowledged"])
+
+    async def test_a_comment_still_on_the_page_after_the_press_is_not_called_gone(self):
+        self.site.keep_row = True
+        result = await yt.comment_action(self.page, CHANNEL, self.payload("delete", "c2", text="Mine", receipt=self.receipt_file()))
+        self.assertIs(False, result["gone_from_page"])
+
+    async def test_another_account_stops_before_anything(self):
+        with self.assertRaises(VpubError) as caught:
+            await yt.comment_action(self.page, "UC" + "b" * 22, self.payload("like", receipt=self.receipt_file()))
+        self.assertEqual("wrong_account", caught.exception.code)
+
+    async def reply_to_first(self):
+        path = home() / "reply.json"
+        atomic_json(path, {"state": "REPLY_READY", "request": {"attempt": "this-attempt"}})
+        return await yt.operations(self.page, CHANNEL, {"operation": "reply", "work_id": VIDEO, "reply_receipt_path": str(path),
+                                                        "reply_request": {"expected_identity": CHANNEL, "text": "Thanks", "comment": {"id": "c1", "text": "Nice"}, "attempt": "this-attempt"}})
+
+    async def test_a_reply_uses_the_box_under_its_comment(self):
+        await self.reply_to_first()
+        self.assertEqual([("comment-reply", "c1", "Thanks")], self.site.writes)
+
+    async def test_another_box_elsewhere_on_the_page_is_left_alone(self):
+        self.site.other_box = True
+        await self.reply_to_first()
+        self.assertEqual([("comment-reply", "c1", "Thanks")], self.site.writes)
+
+    async def test_a_box_that_is_slow_to_open_is_waited_for_and_another_box_is_not_taken_meanwhile(self):
+        self.site.other_box, self.site.box_delay = True, 1500
+        await self.reply_to_first()
+        self.assertEqual([("comment-reply", "c1", "Thanks")], self.site.writes)
+
+    async def assert_no_reply(self):
+        with self.assertRaises(VpubError) as caught:
+            await self.reply_to_first()
+        self.assertEqual("layout_changed", caught.exception.code)
+        self.assertEqual([], self.site.writes)
+        return caught.exception
+
+    async def test_a_box_that_never_opens_stops_even_with_one_elsewhere_on_the_page(self):
+        self.site.other_box, self.site.box_place = True, "nowhere"
+        error = await self.assert_no_reply()
+        self.assertIn("found 0, with 1 on the page", error.message)
+
+    async def test_a_box_elsewhere_on_the_page_is_never_taken_for_this_comments(self):
+        self.site.box_place = "page"
+        await self.assert_no_reply()
+
+    async def test_a_box_that_opens_under_another_comment_in_the_thread_is_never_used(self):
+        self.site.box_place = "sibling"
+        await self.assert_no_reply()
+
+    async def test_a_box_in_the_thread_but_outside_this_comment_is_never_used(self):
+        self.site.box_place = "thread"
+        await self.assert_no_reply()
+
+    async def test_two_boxes_for_this_comment_stop_it(self):
+        self.site.boxes = 2
+        error = await self.assert_no_reply()
+        self.assertIn("found 2", error.message)
+
+    async def test_a_box_with_no_send_button_of_its_own_never_borrows_another(self):
+        self.site.other_box, self.site.box_button = True, False
+        await self.assert_no_reply()
+
+    async def test_a_box_already_open_in_this_comment_stops_before_anything_is_pressed(self):
+        self.site.open_box = True
+        with self.assertRaises(VpubError) as caught:
+            await self.reply_to_first()
+        self.assertEqual("layout_changed", caught.exception.code)
+        self.assertIn("already open", caught.exception.message)
+        self.assertEqual([], self.site.writes)
+
+    async def test_an_edit_box_elsewhere_on_the_page_is_never_used(self):
+        self.site.box_place = "page"
+        with self.assertRaises(VpubError) as caught:
+            await yt.comment_action(self.page, CHANNEL, self.payload("edit", "c2", "New", text="Mine", receipt=self.receipt_file()))
+        self.assertEqual("layout_changed", caught.exception.code)
+        self.assertEqual([], self.site.writes)
+
+    async def test_the_pin_state_is_read_from_the_videos_own_page(self):
+        self.assertIs(False, (await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
+        self.site.comments[0]["pinned"] = True
+        self.assertIs(True, (await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
+        self.assertEqual([], self.site.writes)
+
+    def pinned_thread(self, root, replies=()):
+        links = "".join(f'<a href="/watch?v={VIDEO}&lc={reply}">reply</a>' for reply in replies)
+        return f"""<ytd-comment-thread-renderer><div id="pinned-comment-badge">Pinned</div><a href="/watch?v={VIDEO}&lc={root}">now</a>
+            <ytd-menu-renderer><button id="button" data-opens="watch-menu-root">...</button></ytd-menu-renderer>
+            <div id="watch-menu-root" hidden><ytd-menu-service-item-renderer onclick="fetch('/youtubei/v1/comment/perform_comment_action?write=comment-unpin/{root}', {{method: 'POST', body: '{{}}'}})">取消置顶</ytd-menu-service-item-renderer></div>
+            <div id="replies">{links}<ytd-menu-renderer><button id="button">...</button></ytd-menu-renderer></div></ytd-comment-thread-renderer>"""
+
+    async def test_a_longer_id_on_the_pinned_comment_is_another_comment(self):
+        self.site.watch_threads = self.pinned_thread("c1.longer")
+        self.assertIs(False, (await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
+        with self.assertRaises(VpubError) as caught:
+            await yt.comment_action(self.page, CHANNEL, self.payload("pin", receipt=self.receipt_file()))
+        self.assertEqual("another_comment_pinned", caught.exception.code)
+        self.assertEqual([], self.site.writes)
+
+    async def test_a_reply_under_another_pinned_comment_is_not_the_pinned_one(self):
+        self.site.watch_threads = self.pinned_thread("c9", replies=("c1",))
+        self.assertIs(False, (await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
+
+    async def test_the_pinned_comment_is_itself_even_with_replies_under_it(self):
+        self.site.watch_threads = self.pinned_thread("c1", replies=("c1.reply", "c9"))
+        self.assertIs(True, (await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
+
+    async def test_a_pinned_comment_whose_id_cannot_be_read_says_nothing(self):
+        self.site.watch_threads = '<ytd-comment-thread-renderer><div id="pinned-comment-badge">Pinned</div></ytd-comment-thread-renderer>'
+        self.assertIsNone((await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
+
+    async def test_unpinning_refuses_before_any_menu_or_mark_unless_this_is_the_pinned_comment(self):
+        for threads in (self.pinned_thread("c1.longer"), self.pinned_thread("c9", replies=("c1",)), "<ytd-comment-thread-renderer></ytd-comment-thread-renderer>"):
+            with self.subTest(threads=threads[:60]):
+                self.site.watch_threads = threads
+                path = self.receipt_file()
+                with self.assertRaises(VpubError) as caught:
+                    await yt.watch_unpin(self.page, VIDEO, "c1", path)
+                self.assertEqual("comment_changed", caught.exception.code)
+                self.assertEqual("COMMENT_READY", read_json(path)["state"])
+                self.assertEqual(0, await self.page.locator("ytd-menu-service-item-renderer:visible").count())
+                self.assertEqual([], self.site.writes)
+
+    async def test_unpinning_uses_the_top_level_comments_own_menu(self):
+        self.site.watch_threads = self.pinned_thread("c1", replies=("c9",))
+        await yt.watch_unpin(self.page, VIDEO, "c1", self.receipt_file())
+        self.assertEqual([("comment-unpin", "c1")], self.site.writes)
+
+    async def test_another_comments_pin_does_not_read_as_this_ones(self):
+        self.site.comments[1]["pinned"] = True
+        self.assertIs(False, (await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
+
+    async def test_a_slow_page_gets_its_comments_in_view_once_they_are_ready(self):
+        """Comments load once their section is in view. A field check's read could not see them after scrolling on every second, and could after bringing the section into view."""
+        self.site.watch_threads = """<div style="height:1500px"></div><ytd-comments id="comments-holder"></ytd-comments><div style="height:30000px"></div>
+            <script>window.pending = (window.pending || 0) + 1;
+            setTimeout(() => {
+              const section = document.getElementById('comments-holder');
+              section.id = 'comments';
+              section.style.display = 'block';
+              section.style.height = '50px';
+              new IntersectionObserver((seen, watcher) => {
+                if (!seen.some(entry => entry.isIntersecting)) return;
+                watcher.disconnect();
+                section.innerHTML = '<ytd-comment-thread-renderer><div id="pinned-comment-badge">Pinned</div><a href="/watch?v=%s&lc=c1">now</a></ytd-comment-thread-renderer>';
+              }).observe(section);
+              window.pending -= 1;
+            }, 2500);</script>""" % VIDEO
+        self.assertIs(True, (await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
+
+    async def test_a_page_showing_no_comments_says_nothing_about_a_pin(self):
+        self.site.watch_comments = False
+        with patch.object(yt, "WATCH_TICKS", 2):
+            observed = await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status"))
+            self.assertIsNone(observed["pinned"])
+            self.assertEqual("the video's page showed no comments in time", observed["pin_unread"])
+            with self.assertRaises(VpubError) as caught:
+                await yt.comment_action(self.page, CHANNEL, self.payload("pin", receipt=self.receipt_file()))
+        self.assertEqual("state_unavailable", caught.exception.code)
+        self.assertEqual([], self.site.writes)
+
+    async def test_pinning_marks_the_receipt_then_chooses_it_once(self):
+        path = self.receipt_file()
+        result = await yt.comment_action(self.page, CHANNEL, self.payload("pin", receipt=path))
+        self.assertEqual(("COMMENT_UNVERIFIED", 1), (result["state"], result["platform_writes"]))
+        self.assertEqual([("comment-pin", "c1")], self.site.writes)
+        self.assertEqual(["/youtubei/v1/comment/perform_comment_action"], result["page_requests"])
+
+    async def test_a_confirmation_that_is_not_ready_yet_is_waited_for(self):
+        self.site.pin_ready_after = 800
+        await yt.comment_action(self.page, CHANNEL, self.payload("pin", receipt=self.receipt_file()))
+        self.assertEqual([("comment-pin", "c1")], self.site.writes)
+
+    async def test_it_stays_long_enough_for_a_pin_that_goes_out_late(self):
+        self.site.pin_sent_after = 1500
+        with patch.object(yt, "QUIET_TICKS", 2):
+            await yt.comment_action(self.page, CHANNEL, self.payload("pin", receipt=self.receipt_file()))
+        self.assertEqual([("comment-pin", "c1")], self.site.writes)
+
+    async def test_a_pin_with_no_confirmation_is_not_called_sent(self):
+        with patch.object(yt, "CONFIRM_BUTTON", "#never"), self.assertRaises(VpubError) as caught:
+            await yt.comment_action(self.page, CHANNEL, self.payload("pin", receipt=self.receipt_file()))
+        self.assertEqual("layout_changed", caught.exception.code)
+        self.assertEqual([], self.site.writes)
+
+    async def test_unpinning_goes_through_the_videos_own_page_once(self):
+        self.site.comments[0]["pinned"] = True
+        path = self.receipt_file()
+        result = await yt.comment_action(self.page, CHANNEL, self.payload("pin", desired=False, receipt=path))
+        self.assertEqual(("COMMENT_UNVERIFIED", 1), (result["state"], result["platform_writes"]))
+        self.assertEqual([("comment-unpin", "c1")], self.site.writes)
+        self.assertEqual(["/youtubei/v1/comment/perform_comment_action"], result["page_requests"])
+        self.assertIs(False, (await yt.comment_action(self.page, CHANNEL, self.payload("pin", operation="status")))["pinned"])
+
+    async def test_it_never_unpins_another_comment(self):
+        self.site.comments[1]["pinned"] = True
+        result = await yt.comment_action(self.page, CHANNEL, self.payload("pin", desired=False, receipt=self.receipt_file()))
+        self.assertEqual("NO_CHANGE", result["state"])
+        self.assertEqual([], self.site.writes)
+
+    async def test_a_comment_already_pinned_sends_nothing(self):
+        self.site.comments[0]["pinned"] = True
+        result = await yt.comment_action(self.page, CHANNEL, self.payload("pin", receipt=self.receipt_file()))
+        self.assertEqual("NO_CHANGE", result["state"])
+        self.assertEqual([], self.site.writes)
+
+    async def test_pinning_never_replaces_another_pinned_comment(self):
+        self.site.comments[1]["pinned"] = True
+        with self.assertRaises(VpubError) as caught:
+            await yt.comment_action(self.page, CHANNEL, self.payload("pin", receipt=self.receipt_file()))
+        self.assertEqual("another_comment_pinned", caught.exception.code)
+        self.assertEqual([], self.site.writes)
+
+    async def test_removing_a_viewers_comment_chooses_remove_once(self):
+        path = self.receipt_file()
+        result = await yt.comment_action(self.page, CHANNEL, self.payload("remove", receipt=path))
+        self.assertEqual(("COMMENT_UNVERIFIED", 1), (result["state"], result["platform_writes"]))
+        self.assertEqual([("comment-remove", "c1")], self.site.writes)
+        self.assertIs(True, result["gone_from_page"])
+        self.assertIs(True, (await yt.comment_action(self.page, CHANNEL, self.payload("remove", operation="status")))["absent_from_loaded_list"])
+
+    async def test_the_channels_own_comment_has_no_remove_to_choose(self):
+        with self.assertRaises(VpubError):
+            await yt.comment_action(self.page, CHANNEL, self.payload("remove", "c2", text="Mine", receipt=self.receipt_file()))
+        self.assertEqual([], self.site.writes)
+
+    async def test_moderation_says_it_needs_the_add_on(self):
+        with self.assertRaises(VpubError) as caught:
+            await yt.comment_action(self.page, CHANNEL, self.payload("moderate", desired="published", receipt=self.receipt_file()))
+        self.assertEqual("paid_feature_required", caught.exception.code)
+
+
+class CommandTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        env = patch.dict(os.environ, {"VPUB_HOME": str(Path(temp.name) / "runtime")})
+        env.start()
+        self.addCleanup(env.stop)
+        atomic_json(home() / "accounts/default/youtube-identity.json", {"identity": CHANNEL})
+        self.rows = [{"id": FIRST, "title": "Recipes"}]
+        self.members = []
+        self.calls = []
+        self.kept = {}
+        for target in (patch.object(c, "call", side_effect=self.fake), patch.object(adapters, "addon_installed", return_value=False)):
+            target.start()
+            self.addCleanup(target.stop)
+
+    def fake(self, platform, operation, owner, **options):
+        self.calls.append((operation, options))
+        if operation == "list":
+            return {"identity": owner, "items": [dict(row) for row in self.rows], "complete": True}
+        if operation == "items":
+            return {"identity": owner, "collection_id": options["collection_id"], "items": [{"id": video} for video in self.members], "complete": True}
+        if operation == "details":
+            return {"identity": owner, "items": [{**row, "description": self.kept.get("description"), "visibility": self.kept.get("privacy")} for row in self.rows if row["id"] == options["collection_id"]], "complete": False}
+        c.before_submit(dict(platform=platform, operation=operation, **options), owner)
+        self.kept = options
+        if operation == "create":
+            self.rows.append({"id": SECOND, "title": options["title"]})
+            return {"collection_id": SECOND}
+        if operation == "rename":
+            self.rows[0]["title"] = options["title"]
+        if operation == "delete":
+            self.rows.clear()
+        if operation in {"add", "remove"}:
+            self.members = [options["work_id"]] if operation == "add" else []
+        return {}
+
+    def run_cli(self, *argv):
+        return cli.run_command(cli.parser().parse_args(["playlist", *argv]))
+
+    def test_list_and_items_need_no_add_on(self):
+        self.assertEqual(FIRST, self.run_cli("list")["items"][0]["id"])
+        self.assertEqual([], self.run_cli("items", FIRST)["items"])
+
+    def test_create_is_private_unless_asked(self):
+        result = self.run_cli("create", "--title", "Cooking", "--request-id", "c1")
+        self.assertEqual(("CONFIRMED", SECOND), (result["state"], result["collection_id"]))
+        self.assertEqual("private", next(options for operation, options in self.calls if operation == "create")["privacy"])
+
+    def test_update_with_only_new_words_keeps_the_title(self):
+        result = self.run_cli("update", FIRST, "--description", "New words", "--request-id", "u1")
+        self.assertEqual("CONFIRMED", result["state"])
+        options = next(options for operation, options in self.calls if operation == "rename")
+        self.assertEqual(("Recipes", "New words"), (options["title"], options["description"]))
+
+    def test_update_with_the_same_title_and_nothing_else_writes_nothing(self):
+        result = self.run_cli("update", FIRST, "--title", "Recipes", "--request-id", "u1")
+        self.assertEqual(0, result["platform_writes"])
+        self.assertNotIn("rename", [operation for operation, _ in self.calls])
+
+    def test_update_with_nothing_asked_is_refused(self):
+        with self.assertRaises(VpubError) as caught:
+            self.run_cli("update", FIRST, "--request-id", "u1")
+        self.assertEqual("invalid_options", caught.exception.code)
+
+    def test_add_and_remove_are_exact_and_read_back(self):
+        added = self.run_cli("add", FIRST, VIDEO, "--request-id", "a1")
+        self.assertEqual("CONFIRMED", added["state"])
+        self.assertEqual({"collection_id": FIRST, "work_id": VIDEO}, self.calls[0][1])
+        removed = self.run_cli("remove", FIRST, VIDEO, "--request-id", "r1")
+        self.assertEqual("CONFIRMED", removed["state"])
+
+    def test_the_same_request_never_runs_twice(self):
+        self.run_cli("add", FIRST, VIDEO, "--request-id", "a1")
+        self.assertTrue(self.run_cli("add", FIRST, VIDEO, "--request-id", "a1")["reused"])
+        self.assertEqual(1, sum(operation == "add" for operation, _ in self.calls))
+
+    def test_reordering_stays_paid(self):
+        with self.assertRaises(VpubError) as caught:
+            self.run_cli("move", FIRST, "item", "--position", "1", "--request-id", "m1")
+        self.assertEqual("paid_feature_required", caught.exception.code)
+
+    def test_a_short_special_list_is_refused(self):
+        for bad in ("WL", "LL", "../x", "PL space here"):
+            with self.subTest(bad=bad), self.assertRaises(VpubError):
+                self.run_cli("items", bad)
+
+    def test_a_page_cursor_is_refused_rather_than_ignored(self):
+        with self.assertRaises(VpubError) as caught:
+            self.run_cli("list", "--cursor", "abc")
+        self.assertEqual("cursor_unsupported", caught.exception.code)
+
+    def test_the_add_on_keeps_its_api_playlists(self):
+        with patch.object(adapters, "addon_installed", return_value=True), patch.object(adapters, "youtube_api") as api:
+            self.assertIs(api.return_value.playlists, adapters.youtube_playlists())
+        self.assertIs(free, adapters.youtube_playlists())
+
+
+class RouteTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        env = patch.dict(os.environ, {"VPUB_HOME": str(Path(temp.name) / "runtime")})
+        env.start()
+        self.addCleanup(env.stop)
+        addon = patch.object(adapters, "addon_installed", return_value=False)
+        addon.start()
+        self.addCleanup(addon.stop)
+
+    def test_saves_and_their_playlists_use_youtubes_own_pages(self):
+        with patch.object(free, "listing", return_value={"items": []}) as listing:
+            engagement.collections("youtube")
+        listing.assert_called_once()
+        with patch.object(adapters, "browser_call", return_value={"identity": CHANNEL, "saved": False, "liked": False, "collection": FIRST}) as call:
+            engagement.status("youtube", VIDEO, FIRST)
+        self.assertEqual(("youtube", "engagement", "default"), call.call_args.args)
+        self.assertEqual(FIRST, call.call_args.kwargs["collection"])
+
+    def test_a_save_still_needs_a_chosen_playlist_and_counts_towards_the_cap(self):
+        with self.assertRaises(VpubError) as caught:
+            engagement.set_action("youtube", VIDEO, "save")
+        self.assertEqual("collection_required", caught.exception.code)
+        safety.set_limits(likes_per_day=0)
+        with patch.object(engagement, "status", return_value={"identity": CHANNEL, "liked": False, "saved": False, "collection": FIRST}), patch.object(engagement, "dispatch") as send:
+            with self.assertRaises(VpubError) as caught:
+                engagement.set_action("youtube", VIDEO, "save", collection=FIRST)
+        self.assertEqual("daily_limit_reached", caught.exception.code)
+        send.assert_not_called()
+
+    def test_comment_actions_use_the_browser_without_the_add_on(self):
+        atomic_json(home() / "operations/comments" / (digest(["youtube", VIDEO]) + ".json"), {"identity": CHANNEL, "items": [{"id": "c1", "text": "Nice", "is_owner": False}]})
+        with patch.object(adapters, "browser_call", return_value={"identity": CHANNEL, "liked": False, "text": "Nice", "deleted": False}) as call:
+            comment_actions.status("youtube", VIDEO, "c1")
+        self.assertEqual(("youtube", "comment_management", "default"), call.call_args.args)
+
+    def test_comment_likes_use_the_browser_even_with_the_add_on(self):
+        request = {"platform": "youtube", "work_id": VIDEO, "identity": CHANNEL, "comment": {"id": "c1"}, "kind": "like"}
+        with patch.object(adapters, "addon_installed", return_value=True), patch.object(adapters, "browser_call", return_value={}) as call:
+            comment_actions.dispatch(request)
+        call.assert_called_once()
+        with patch.object(adapters, "addon_installed", return_value=True), patch.object(adapters, "youtube_api") as api:
+            comment_actions.dispatch({**request, "kind": "moderate"})
+        api.return_value.comment_action.assert_called_once()
+
+
+if __name__ == "__main__":
+    unittest.main()

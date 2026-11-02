@@ -56,8 +56,13 @@ if (-not (Test-Path -LiteralPath $venvPython)) {
 # The distribution was renamed, but the venv and user-data directory stay in place.
 & $venvPython -m pip uninstall -y whitecarp-video-publisher
 if ($LASTEXITCODE -ne 0) { throw 'Legacy package upgrade failed; runtime data was retained.' }
+# bili-cli now ships inside this package; an older separate install would own the same files.
+& $venvPython -m pip uninstall -y bili-agent
+if ($LASTEXITCODE -ne 0) { throw 'Removing the older bili-agent failed; runtime data was retained.' }
 & $venvPython -m pip install --upgrade $PSScriptRoot
 if ($LASTEXITCODE -ne 0) { throw 'Package installation failed. No login or publication was attempted.' }
 & $venvPython -m video_publisher doctor
-if ($LASTEXITCODE -ne 0) { throw 'Local dependency check failed.' }
+$checked = $LASTEXITCODE
 Write-Output ('Command: ' + (Join-Path $venvPath 'Scripts/vpub.exe'))
+if ($checked -eq 4) { throw 'CrossCast is installed, but the check above found something to fix. Each item under issues says how.' }
+if ($checked -ne 0) { throw 'Local dependency check failed.' }

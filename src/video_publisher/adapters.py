@@ -1,89 +1,184 @@
 """Real platform adapters; no platform write occurs during plan/doctor."""
 from __future__ import annotations
 
-import contextlib
+from datetime import datetime, timezone
+import importlib
+import importlib.util
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 
-from .core import VpubError, atomic_json, config, home, read_json, stop_check, platform_check
+from . import progress, safety
+from .core import HELD_BACK, NOT_ON_SALE, VpubError, stop_check, platform_check, real_window
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
-          "https://www.googleapis.com/auth/youtube.readonly"]
-PLAYLIST_SCOPE = "https://www.googleapis.com/auth/youtube.force-ssl"
+ROUTES = {"bilibili": {"cli"}, "douyin": {"browser"}, "youtube": {"browser", "api"}, "x": {"browser", "api"}, "instagram": {"browser", "api"}}
+BILI_MAIN = "from bili_cli.main import main; main()"
 
 
-def bili(args, timeout=180):
-    stop_check("bilibili")
+def bili(args, timeout=210, program=BILI_MAIN, signing_in=False):
+    # bili-cli stops a stuck command after 180 s and says why, so give it time to report that.
+    stop_check("bilibili", signing_in=signing_in)
     env = dict(os.environ, PYTHONIOENCODING="utf-8")
     # The existing local wrapper applies this HTTPX compatibility fix too.
     for key in ("NO_PROXY", "no_proxy"):
         if key in env:
             env[key] = ",".join(x for x in env[key].split(",") if ":" not in x)
-    cp = subprocess.run([sys.executable, "-c", "from bili_cli.main import main; main()", *args],
-                        capture_output=True, text=True, encoding="utf-8", env=env, timeout=timeout)
+    try:
+        # bili-cli's own spacing then sleeps through gaps of up to a minute, so a batch just works. A longer one still comes back as write_spacing.
+        cp = subprocess.run([sys.executable, "-c", program, *(["--wait"] if program == BILI_MAIN else []), *args],
+                            capture_output=True, text=True, encoding="utf-8", env=env, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise VpubError("backend_timeout", "bili-cli did not finish in time.", "Inspect the original work before any retry; do not repeat a submission.") from None
     try:
         result = json.loads(cp.stdout)
     except ValueError:
         raise VpubError("backend_error", "bili-cli did not return valid JSON.", "Run bili schema to diagnose; do not repeat a submission.")
     if not result.get("ok"):
         e = result.get("error", {})
+        # bili-cli's own spacing between writes says when to try again. Bilibili never saw the request, so it has not objected.
+        if e.get("code") == "rate_limited" and (e.get("detail") or {}).get("limit"):
+            raise VpubError(HELD_BACK, e.get("message", "bili-cli held this write back."), e.get("hint", ""))
+        safety.pushed_back("bilibili", e.get("code"))
         raise VpubError(e.get("code", "backend_error"), e.get("message", "bili-cli failed"), e.get("hint", ""))
     return result.get("data", {})
 
 
-def yt_credentials(account):
-    from google.oauth2.credentials import Credentials
-    from google.auth.transport.requests import Request
-    path = home() / "accounts" / account / "youtube-token.json"
-    if not path.exists():
-        raise VpubError("not_logged_in", "YouTube authorization is missing.", "vpub auth login youtube --client-json PATH")
-    creds = Credentials.from_authorized_user_file(str(path))
-    if not creds.valid:
-        if not creds.refresh_token:
-            raise VpubError("auth_expired", "YouTube needs browser authorization again.")
-        try:
-            creds.refresh(Request())
-        except Exception:
-            raise VpubError("auth_expired", "YouTube token refresh failed.", "Run auth login again; Testing-mode tokens may expire after 7 days.")
-        atomic_json(path, json.loads(creds.to_json()))
-    return creds
+def paid_api():
+    """Official API routes for X, Instagram and YouTube need the separate paid package."""
+    try:
+        import crosscast_api
+    except ImportError:
+        raise VpubError("paid_route_required", "Official API routes for X, Instagram and YouTube need the paid CrossCast API add-on.",
+                        f"Use the free default route. {NOT_ON_SALE}") from None
+    return crosscast_api
+
+
+def paid_feature(module, label):
+    """A feature outside the free core, loaded from the paid add-on."""
+    try:
+        return importlib.import_module("crosscast_api." + module)
+    except ModuleNotFoundError as error:
+        if not (error.name or "").startswith("crosscast_api"):
+            raise
+    raise VpubError("paid_feature_required", f"{label} is part of the paid CrossCast add-on.", f"{NOT_ON_SALE} Everything else keeps working without it.")
+
+
+def email_reminder(key, platform, episode):
+    """Queue a reminder when the add-on is installed. Without it the person sees the notice inline."""
+    if not addon_installed():
+        return {"state": "NOT_INSTALLED", "email_sent": False, "inline_notice_required": True}
+    return paid_feature("notifications", "Email reminders").enqueue(key, platform, episode)
+
+
+def email_status():
+    if not addon_installed():
+        return {"enabled": False, "available": False, "note": f"Email reminders are part of the paid CrossCast add-on. {NOT_ON_SALE}"}
+    return paid_feature("notifications", "Email reminders").onboarding()
+
+
+def youtube_api():
+    paid_api()
+    from crosscast_api import youtube
+    return youtube
+
+
+def youtube_playlists():
+    """Playlist commands: the official API with the add-on, otherwise YouTube's own pages."""
+    if addon_installed():
+        return youtube_api().playlists
+    from . import youtube_playlists as free
+    return free
 
 
 def yt_service(account):
-    from googleapiclient.discovery import build
-    return build("youtube", "v3", credentials=yt_credentials(account), cache_discovery=False)
+    return youtube_api().client(account)
 
 
-def youtube_login(account, client_json, manage_playlists=False):
-    if not client_json:
-        raise VpubError("oauth_setup_required", "YouTube requires a Desktop OAuth client JSON on first setup.",
-                        "Enable YouTube Data API v3 in Google Cloud; create a Desktop OAuth client. Then run vpub auth login youtube --client-json PATH.")
-    from google_auth_oauthlib.flow import InstalledAppFlow
-    scopes = [*SCOPES, PLAYLIST_SCOPE] if manage_playlists else SCOPES
-    flow = InstalledAppFlow.from_client_secrets_file(str(Path(client_json).resolve()), scopes,
-                                                    autogenerate_code_verifier=True)
-    # OAuth URLs and progress belong on stderr, never mixed with the JSON result.
-    with contextlib.redirect_stdout(sys.stderr):
-        creds = flow.run_local_server(host="127.0.0.1", port=0, timeout_seconds=300, open_browser=False,
-                                      authorization_prompt_message="Open this Google authorization URL: {url}",
-                                      success_message="Authorization received. You can close this tab.",
-                                      access_type="offline", prompt="consent")
-    atomic_json(home() / "accounts" / account / "youtube-token.json", json.loads(creds.to_json()))
-    return auth_status("youtube", account, "api")
+def yt_credentials(account):
+    return youtube_api().credentials(account)
 
 
-def dy_worker(action, account, plan=None, timeout=180):
-    payload = {"action": action, "account": account, "plan": plan}
-    cp = subprocess.run([sys.executable, "-m", "video_publisher.douyin_worker"],
-                        input=json.dumps(payload), capture_output=True, encoding="utf-8", timeout=timeout,
-                        env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+def publish_youtube(*args, **kwargs):
+    return youtube_api().publish(*args, **kwargs)
+
+
+def finish_youtube(*args, **kwargs):
+    return youtube_api().finish(*args, **kwargs)
+
+
+def addon_installed():
+    return importlib.util.find_spec("crosscast_api") is not None
+
+
+def default_method(platform):
+    if platform == "youtube" and addon_installed():
+        return "api"
+    return {"bilibili": "cli"}.get(platform, "browser")
+
+
+def browser_timeout(action):
+    from .browser_broker import SIGN_IN_SECONDS
+    from .browser_worker import action_timeout
+    # Leaves room for the sign-in check and saving the session, so a slow page is not reported as an interrupted command.
+    return action_timeout(action) + SIGN_IN_SECONDS + 30
+
+
+def hidden_desktop_call(payload, timeout):
+    """A real Chrome window on Windows. YouTube's steps of one command share one Chrome on the hidden desktop, which closes itself soon after the last of them. Douyin's commands that need one have a Chrome each."""
+    from . import browser_broker
+    from .hidden_desktop import call_worker
+    if browser_broker.enabled():
+        if payload["action"] in browser_broker.REUSABLE:
+            result = browser_broker.call(payload, timeout)
+            if result is not None:
+                return {"ok": True, "data": result}
+        else:
+            progress.stage("waiting for the browser", payload.get("stages_path"))
+            browser_broker.release(payload["platform"], payload["account"])
+    return call_worker(payload, timeout)
+
+
+def worker_call(payload, timeout):
+    progress.stage("starting the browser", payload.get("stages_path"))
     try:
-        result = json.loads(cp.stdout)
+        cp = subprocess.run([sys.executable, "-m", "video_publisher.browser_worker"],
+                            input=json.dumps(payload), capture_output=True, encoding="utf-8",
+                            timeout=timeout,
+                            env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+    except subprocess.TimeoutExpired:
+        raise VpubError("browser_timeout", "Browser command timed out; existing receipts are retained.", "Read the attempt's receipt, and look on the platform before running it again. Whether it kept a draft isn't known. Do not repeat an upload or final submit.")
+    try:
+        return json.loads(cp.stdout)
     except ValueError:
-        raise VpubError("backend_error", "Douyin adapter did not return a receipt.", "Inspect creator center before any retry.")
+        raise VpubError("browser_error", "Browser command returned no valid JSON receipt.")
+
+
+def browser_call(platform, action, account, **kwargs):
+    """Every browser route ends here, so a platform's warning always stops what follows, whichever route brought it."""
+    stop_check(platform)
+    payload = {"platform": platform, "action": action, "account": account, **kwargs}
+    try:
+        with progress.relay(platform, payload):
+            return browser_answer(platform, action, account, payload)
+    except VpubError as exc:
+        safety.pushed_back(platform, exc.code)
+        raise
+
+
+def browser_answer(platform, action, account, payload):
+    from . import browser_broker
+    # A real Chrome window never lingers where a window could show: see hidden_desktop_call for Windows.
+    windowed = real_window(platform, action)
+    if not windowed and browser_broker.enabled():
+        if action in browser_broker.REUSABLE:
+            result = browser_broker.call(payload, browser_timeout(action))
+            if result is not None:
+                return result
+        else:
+            progress.stage("waiting for the browser", payload.get("stages_path"))
+            browser_broker.release(platform, account)
+    result = hidden_desktop_call(payload, browser_timeout(action)) if windowed and os.name == "nt" else worker_call(payload, browser_timeout(action))
     if not result.get("ok"):
         e = result["error"]
         raise VpubError(e["code"], e["message"], e.get("hint", ""))
@@ -93,62 +188,77 @@ def dy_worker(action, account, plan=None, timeout=180):
 def auth_status(platform, account, method=None):
     platform_check(platform)
     stop_check(platform)
-    method = method or {"bilibili": "cli", "douyin": "browser"}.get(platform, "native")
+    method = method or default_method(platform)
     if method == "native":
         from .native_browser import login
         return login(platform)
-    supported = {"bilibili": {"cli"}, "douyin": {"browser"}, "youtube": {"api"}, "x": set(), "instagram": set()}
-    if method not in supported[platform]:
+    if method not in ROUTES[platform]:
         raise VpubError("invalid_method", "This backend is unavailable on the selected platform.")
     if platform == "bilibili":
         v = bili(["auth", "status"])
         if not v.get("logged_in"):
             raise VpubError("not_logged_in", "Bilibili is not logged in.", "vpub auth login bilibili")
         return {"logged_in": True, "account": account, "identity": str(v["user"]["mid"]), "name": v["user"].get("name")}
-    if platform == "youtube":
-        response = yt_service(account).channels().list(part="id,snippet", mine=True).execute()
-        items = response.get("items", [])
-        if len(items) != 1:
-            raise VpubError("channel_required", "Expected exactly one authorized YouTube channel.", "Create/select the intended YouTube channel and authorize again.")
-        return {"logged_in": True, "account": account, "identity": items[0]["id"], "name": items[0]["snippet"]["title"]}
-    return dy_worker("status", account)
+    if platform == "youtube" and method == "api":
+        return youtube_api().status(account)
+    if method == "api":
+        return paid_api().status(platform, account)
+    from .browser_runtime import identity_path, profile_dir, remember_identity
+    if identity_path(platform, account).exists():
+        return browser_call(platform, "status", account)
+    # A sign-in can finish after its window stopped being watched, leaving a working profile with no record. The site decides.
+    profile = profile_dir(platform, account)
+    if profile.is_dir() and any(profile.iterdir()):
+        try:
+            found = browser_call(platform, "status", account)
+        except VpubError as exc:
+            if exc.code != "auth_expired":
+                raise
+        else:
+            remember_identity(platform, account, found["identity"])
+            return found
+    raise VpubError("not_logged_in", "No verified independent browser login.", f"Run vpub auth login {platform} --method browser.")
 
 
-def auth_login(platform, account, client_json=None, method=None, manage_playlists=False):
+def auth_login(platform, account, client_json=None, method=None):
     platform_check(platform)
-    stop_check(platform)
-    method = method or ("api" if client_json else "native")
+    stop_check(platform, signing_in=True)
+    method = method or default_method(platform)
     if method == "native":
         from .native_browser import login
         return login(platform)
-    supported = {"bilibili": {"cli"}, "douyin": {"browser"}, "youtube": {"api"}, "x": set(), "instagram": set()}
-    if method not in supported[platform]:
+    if method not in ROUTES[platform]:
         raise VpubError("invalid_method", "This login method is unavailable on the selected platform.")
     if platform == "bilibili":
-        return bili(["auth", "login"])
-    if platform == "youtube":
-        return youtube_login(account, client_json, manage_playlists)
+        return bili(["auth", "login"], signing_in=True)
+    if platform == "youtube" and method == "api":
+        return youtube_api().login(account, client_json)
+    if method == "api":
+        return paid_api().login(platform, account, client_json)
     from .auth_jobs import start
-    return start("douyin", account)
+    return start(platform, account)
 
 
 def preflight(platform, options):
     if options.get("method") == "native":
         return {"logged_in": None, "method": "native", "note": "Account must be checked in the built-in browser before browser begin."}
-    if platform == "youtube" and options.get("playlist_ids"):
-        creds = yt_credentials(options["account"])
-        if not any(creds.has_scopes([s]) for s in (PLAYLIST_SCOPE, "https://www.googleapis.com/auth/youtube", "https://www.googleapis.com/auth/youtubepartner")):
-            raise VpubError("playlist_scope_required", "Playlist writes require an additional optional OAuth scope, before uploading.", "Use native mode or explicitly reauthorize with --manage-playlists; existing permissions are not expanded automatically.")
+    if platform == "youtube" and options.get("method") == "api" and options.get("playlist_ids"):
+        youtube_api().check_playlist_scope(options)
     identity = auth_status(platform, options["account"], options.get("method"))
-    expected = options.get("expected_uid") if platform == "bilibili" else options.get("expected_channel_id")
-    if expected and str(expected) != identity.get("identity"):
+    expected = options.get("expected_uid") if platform == "bilibili" else options.get("expected_channel_id") if platform == "youtube" else options.get("expected_identity")
+    if expected and str(expected).casefold() != str(identity.get("identity")).casefold():
         raise VpubError("wrong_account", "The authorized account differs from the manifest.")
     return identity
 
 
 def publish_bilibili(plan, options, checkpoint):
+    if options.get("submission_mode") == "draft_only":
+        from .drafts_bilibili import save
+        return save(plan, options, checkpoint)
+    # bili-cli ticks "含AI生成内容" by default, so ordinary videos must opt out explicitly.
     args = ["upload", "video", plan["video"], "--title", options["title"],
-            "--desc", options["description"], "--ai-declare"]
+            "--desc", options["description"],
+            "--ai-declare" if options["ai_generated"] else "--no-ai-declare"]
     for tag in options["tags"]:
         args += ["--tag", tag]
     if plan.get("cover"):
@@ -159,86 +269,42 @@ def publish_bilibili(plan, options, checkpoint):
         args += ["--private"]
     if options.get("schedule"):
         args += ["--schedule", options["schedule"]]
+    if options.get("season_id"):
+        args += ["--season", str(options["season_id"])]
     v = bili(args, timeout=3600)
     bvid = v.get("bvid")
     if not bvid:
         return {"state": "SUBMITTED_UNVERIFIED", "reason": "Backend returned no BV identifier."}
-    receipt = {"state": "SUBMITTED", "id": bvid, "url": f"https://www.bilibili.com/video/{bvid}"}
-    checkpoint(receipt)
-    return verify("bilibili", options["account"], receipt)
-
-
-def publish_youtube(plan, options, checkpoint):
-    from .categories import validate_youtube
-    category_id = validate_youtube(options.get("category_id"))
-    from googleapiclient.http import MediaFileUpload
-    service = yt_service(options["account"])
-    categories = service.videoCategories().list(part="snippet", id=category_id).execute().get("items", [])
-    if not any(c.get("id") == category_id and c.get("snippet", {}).get("assignable") is True for c in categories):
-        raise VpubError("invalid_category", "YouTube does not currently allow the selected category; no video was uploaded.")
-    status = {"privacyStatus": options["visibility"],
-              "selfDeclaredMadeForKids": options["made_for_kids"],
-              "containsSyntheticMedia": options["ai_generated"]}
+    receipt = {"state": "SUBMITTED", "id": bvid, "url": f"https://www.bilibili.com/video/{bvid}",
+               "expected_ai_declare": options["ai_generated"], "expected_private": options["visibility"] == "private"}
     if options.get("schedule"):
-        status["publishAt"] = options["schedule"]
-    body = {"snippet": {"title": options["title"], "description": options["description"],
-                        "tags": options["tags"], "categoryId": category_id}, "status": status}
-    req = service.videos().insert(part="snippet,status", body=body,
-                                 media_body=MediaFileUpload(plan["video"], chunksize=8 * 1024 * 1024, resumable=True))
-    result = None
-    while result is None:
-        progress, result = req.next_chunk(num_retries=3)
-        if progress:
-            print(f"YouTube upload: {int(progress.progress() * 100)}%", file=sys.stderr, flush=True)
-    video_id = result.get("id")
-    if not video_id:
-        return {"state": "SUBMITTED_UNVERIFIED", "reason": "Upload completed without a video ID."}
-    receipt = {"state": "SUBMITTED", "method": "api", "id": video_id, "url": f"https://www.youtube.com/watch?v={video_id}", "expected_category_id": category_id}
-    checkpoint(receipt)  # persist the video ID before optional cover/verification calls
-    if plan.get("cover"):
-        try:
-            service.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(plan["cover"])).execute()
-        except Exception:
-            receipt["warning"] = "Video exists; thumbnail upload failed. Do not upload the video again."
-            checkpoint(receipt)
-    if options.get("playlist_ids"):
-        ensure_youtube_playlists(service, video_id, options["playlist_ids"], receipt, checkpoint)
-    verified = verify("youtube", options["account"], receipt)
-    actual = verified.get("visibility")
-    if actual and actual != options["visibility"]:
-        verified["state"] = "VISIBILITY_MISMATCH"
-        verified["expected_visibility"] = options["visibility"]
-    return verified
+        receipt["expected_schedule"] = options["schedule"]
+    if options.get("season_id"):
+        # The upload stands even if adding it to the collection failed; the receipt says so.
+        receipt["season"] = {"id": options["season_id"], "added": v.get("season_added") is True, "error": v.get("season_error")}
+    if options.get("chapters"):
+        receipt.update(pending_chapters=options["chapters"], chapters_state="PENDING")
+    if options.get("widgets"):
+        receipt.update(pending_widgets=options["widgets"], widgets_state="PENDING")
+    checkpoint(receipt)
+    return verify("bilibili", options["account"], receipt, checkpoint)
 
 
-def ensure_youtube_playlists(service, video_id, playlist_ids, receipt, checkpoint):
-    """Add only missing memberships. Persist before each write; never retry it."""
-    results = receipt.setdefault("playlists", {})
-    for playlist_id in playlist_ids:
-        try:
-            items = service.playlistItems().list(part="id", playlistId=playlist_id, videoId=video_id, maxResults=1).execute().get("items", [])
-            if items:
-                results[playlist_id] = {"state": "VERIFIED", "item_id": items[0]["id"]}
-                checkpoint(receipt)
-                continue
-            if playlist_id in results:
-                # An earlier timeout or interrupted insert might still settle.
-                results[playlist_id]["state"] = "UNKNOWN"
-                checkpoint(receipt)
-                continue
-            results[playlist_id] = {"state": "ADDING"}
-            checkpoint(receipt)
-            item = service.playlistItems().insert(part="snippet", body={"snippet": {
-                "playlistId": playlist_id, "resourceId": {"kind": "youtube#video", "videoId": video_id}}}).execute()
-            results[playlist_id] = {"state": "ADDED_UNVERIFIED", "item_id": item.get("id")}
-            checkpoint(receipt)
-            actual = service.playlistItems().list(part="id", playlistId=playlist_id, videoId=video_id, maxResults=1).execute().get("items", [])
-            if actual:
-                results[playlist_id] = {"state": "VERIFIED", "item_id": actual[0]["id"]}
-        except Exception:
-            results[playlist_id] = {**results.get(playlist_id, {}), "state": "UNKNOWN"}
-        checkpoint(receipt)
-    return results
+def moment(text):
+    return datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+
+
+def bilibili_differences(receipt, info):
+    """What Bilibili's own record says against what this upload asked for. Only something it reports can differ, so an older receipt says nothing."""
+    differs = []
+    for name, expected, actual in (("ai_declaration", receipt.get("expected_ai_declare"), info.get("ai_declare")), ("visibility", receipt.get("expected_private"), info.get("private"))):
+        if isinstance(expected, bool) and isinstance(actual, bool) and actual != expected:
+            differs.append(name)
+    # Before its time, only the time on record proves it was scheduled rather than gone out already.
+    when = receipt.get("expected_schedule")
+    if when and datetime.now(timezone.utc) < moment(when) and not (info.get("scheduled_time") and abs((moment(info["scheduled_time"]) - moment(when)).total_seconds()) < 60):
+        differs.append("schedule")
+    return differs
 
 
 def publish(platform, plan, options, checkpoint):
@@ -250,42 +316,43 @@ def publish(platform, plan, options, checkpoint):
         plan = {**plan, "cover": landscape["path"], "cover_sha256": landscape["sha256"]}
     if platform == "bilibili":
         return publish_bilibili(plan, options, checkpoint)
-    if platform == "youtube":
-        return publish_youtube(plan, options, checkpoint)
-    return dy_worker("publish", options["account"], {**plan, "options": options}, timeout=1800)
+    if platform == "youtube" and options.get("method") == "api":
+        return youtube_api().publish(plan, options, checkpoint)
+    if options.get("method") == "api":
+        return paid_api().publish(platform, plan, options, checkpoint)
+    result = browser_call(platform, "publish", options["account"],
+                          expected_identity=options.get("expected_identity"), plan={**plan, "options": options})
+    return result
 
 
-def verify(platform, account, receipt):
+def verify(platform, account, receipt, checkpoint=None):
     if receipt.get("method") == "native":
         return {**receipt, "state": "BROWSER_VERIFICATION_REQUIRED", "note": "Re-open the original work in the same built-in browser and record actual UI evidence. No CLI platform check was performed."}
+    if receipt.get("draft_title"):
+        from .drafts_bilibili import verify as verify_draft
+        return verify_draft(receipt)
     video_id = receipt.get("id")
-    if platform == "douyin":
-        return dy_worker("verify", account, receipt)
+    if receipt.get("method") == "browser" and platform in {"douyin", "instagram", "x", "youtube"}:
+        return browser_call(platform, "verify", account, expected_identity=receipt.get("identity"), receipt=receipt)
     if not video_id:
         raise VpubError("receipt_missing", "No platform video ID; inspect the original submission before retrying.")
+    if platform in {"x", "instagram"}:
+        return paid_api().verify(platform, account, receipt)
     if platform == "bilibili":
         info = bili(["upload", "status", video_id])
-        return {**receipt, "state": "SUBMISSION_VERIFIED", "platform_status": info,
-                "note": "Creator record read back; review/public visibility may still be pending."}
-    items = yt_service(account).videos().list(part="status,snippet,processingDetails", id=video_id).execute().get("items", [])
-    if not items:
-        raise VpubError("not_found", "Uploaded video is not yet visible to the authorized account.")
-    item = items[0]
-    status = item.get("status", {})
-    failed = status.get("uploadStatus") in {"failed", "rejected", "deleted"}
-    playlist_results = receipt.get("playlists", {})
-    for playlist_id in playlist_results:
-        try:
-            members = yt_service(account).playlistItems().list(part="id", playlistId=playlist_id, videoId=video_id, maxResults=1).execute().get("items", [])
-            playlist_results[playlist_id] = {"state": "VERIFIED", "item_id": members[0]["id"]} if members else {"state": "UNVERIFIED"}
-        except Exception:
-            playlist_results[playlist_id] = {"state": "UNKNOWN"}
-    category_id = item.get("snippet", {}).get("categoryId")
-    category_mismatch = bool(receipt.get("expected_category_id") and category_id != receipt["expected_category_id"])
-    incomplete = any(x["state"] != "VERIFIED" for x in playlist_results.values()) or bool(receipt.get("warning")) or category_mismatch
-    return {**receipt, "state": "PLATFORM_REJECTED" if failed else "SUBMITTED_UNVERIFIED" if incomplete else "SUBMISSION_VERIFIED",
-            "visibility": status.get("privacyStatus"), "upload_status": status.get("uploadStatus"),
-            "processing_status": item.get("processingDetails", {}).get("processingStatus"),
-            "publish_at": status.get("publishAt"), "channel_id": item.get("snippet", {}).get("channelId"),
-            "category_id": category_id, "category_mismatch": category_mismatch,
-            "note": "Video ID read back; public playback depends on privacy, processing and platform review."}
+        result = {**receipt, "state": "SUBMISSION_VERIFIED", "platform_status": info,
+                  "note": "Creator record read back; review/public visibility may still be pending."}
+        differs = bilibili_differences(receipt, info if isinstance(info, dict) else {})
+        if differs:
+            result.update(state="SUBMITTED_UNVERIFIED", readback_differs=differs,
+                          note="Bilibili recorded something other than the plan asked for (see readback_differs). Correct it on this existing work "
+                               "(bili upload edit); do not upload again.")
+        if "ai_declaration" in differs:
+            result.update(declaration_mismatch=True,
+                          note="Bilibili recorded a different AI-content declaration. Correct it on this existing work "
+                               "(bili upload edit with --ai-declare or --no-ai-declare); do not upload again.")
+        from .edits_bilibili import finish_chapters
+        from .widgets_bilibili import finish as finish_widgets, seen as widgets_seen
+        result = finish_widgets(finish_chapters(result, checkpoint), checkpoint)
+        return {**result, "widgets_seen": widgets_seen(video_id, result.get("widgets"))}
+    return youtube_api().verify_video(account, receipt, video_id)

@@ -1,0 +1,367 @@
+# Validation status
+
+[繁體中文](VALIDATION.md) · **English**
+
+Date: **2026-11-02**, PublishOps CrossCast **0.16.0 alpha**.
+
+## 0.16.0: paid API split, included bili-cli, status and cleanup
+
+**Real-account checks for this version covered reads and a bounded set of changes on test targets, run with the owner's go-ahead and undone or removed afterwards.** The live results further down belong to the versions they are listed under. On 2026-11-02 public works went out through this version's browser routes, with the owner's go-ahead for each: see the first row. Publishing has not been tried through bili-cli 1.2.1.
+
+| Live check | Result |
+|---|---|
+| Real public posts, 2026-11-02 | With the owner's go-ahead for each, on commits up to `d28cd22`. **Posted and read back:** a vertical video on YouTube, Douyin and X, and a 2:56 film on YouTube and X. The film also went up on Douyin with its cover: the owner saw it on their profile, and CrossCast's read-back lost its browser after the one press. The vertical video also went to Instagram, where an independent read accepted the post and CrossCast's own record stayed `SUBMITTED_UNVERIFIED`. **What these runs found.** YouTube: the film's first Publish left a draft, with the form still open after the wait. Public uploaders show Studio asking "still checking your content" at that point, which wasn't captured here. Reopening that draft after its checks had finished and pressing Publish once put it up with no second upload. CrossCast now handles both, and that code hasn't run on a real channel. A vertical video's first try had stopped at its `/shorts/` link and left a draft, finished the same way. Douyin: one run's first page stayed empty with nothing sent, which now gets one more load. X: a first click right after a large upload opened the file's details with no form, and a new page with one click reached it. A 1920×1080 film's preview played at 480×270, so its stored resolution wasn't verified. A vertical video's 3:4 cover was stored at 900×1200, but the public post shows it in the 9:16 frame, clipping both edges. Instagram: `/reel/<id>/` goes on to a viewer with no caption, and `/p/<id>/` shows the standard post. The website can't change a cover after posting, and the phone can. **Douyin's cover window:** after 完成 it stayed busy on most real tries, so the vertical video went out with no cover and the owner set one on the phone, which took seconds. In two stops in a row the only failed requests went to `mcs.snssdk.com` and `tos-lf-x.snssdk.com`, which that computer's command line couldn't reach. The next try, in a real Chrome window, went through at once, and a check minutes later still couldn't reach them. So those sites don't explain it alone. The owner thinks it was the network, and one try can't tell a network change from the real window. On Windows, Douyin's uploads and edits now use a real Chrome window on the hidden desktop, which hasn't been tried there yet. **Wrong reads:** on that computer the unchanged film file read wrong twice in about 31 reads by one process. The captured read had 10 single wrong bytes, all at the same position in a 16-byte pattern. About 2,600 GiB of checks afterwards found none, so the cause is open, and a memory or processor fault fits. Such a read now stops with `read_unstable`. Nothing can check what a browser reads for its upload. |
+| Bilibili widgets | By hand, not through `vpub`: on 2026-11-02 four writes 35 seconds apart on two public videos returned ok and read back, a rating and a follow button on each. `interact list` failed twice with no reason given, and answered 62003 on three approved videos waiting for release, which is why `vpub widgets` waits for a read to answer. `vpub widgets` itself has only run against a stand-in. |
+| Bilibili sign-in | QR sign-in through the included bili-cli 1.2.1 worked. |
+| Bilibili message sources | `vpub messages sync --platforms bilibili --sources mentions,dm_preview` read 20 @ mentions and 20 conversation previews with no platform writes. A second full read found nothing new or changed. The report contained no message text. |
+| Blank rows | The first run left 4 mentions and 1 conversation without text: a mention in a post (动态) has no text of its own, and Bilibili returned no name for 5 of the 20 conversations, one of which also had no message text. Rows now say who wrote and where, and a rerun filled all 40. |
+| Unread badges | Unread counts were 0 before and after, so this check cannot show whether reading clears a badge. |
+| YouTube sign-in | Google accepted sign-in in the dedicated Chrome, and the channel was read from Studio's own address. |
+| YouTube background browser | Studio does not run under a headless browser, so it runs as a normal Chrome window on a hidden Windows desktop. Measured from the normal desktop: Chrome running, no window showing, nothing left after it closed. |
+| YouTube's 20-second session | In a trial on a real channel, on an earlier commit: eight reads of the works list, in two sets of four. The first read of each set took about 10 seconds and the others 3 to 4, against 12 when Chrome closed after each read. Chrome was gone about 20 seconds after the last read of each set, and the owner saw no new window or taskbar icon throughout. On the code that went in, works, stats, comments, playlists and a Like state read through one Chrome at 5 to 10 seconds each, and it closed 19 to 21 seconds after the last. A video like and its undo then ran through it, and a draft upload straight after a read closed it first. One cold read of a Like state stopped with `wrong_work`, cause unknown, and four repeats and a separate check passed. Nobody watched the taskbar during these later runs. |
+| YouTube free-route reads | `vpub works`, `vpub stats` and `vpub comments list` ran on a real channel in the background, in Studio's Chinese interface. They read 4 videos, lifetime figures, and all 3 comments on a video including a nested reply, and recognised the channel's own comments. Studio hides answered threads by default, so that filter is removed before reading. |
+| YouTube free-route playlists and saves | In the background, on the same channel, with nothing changed: `vpub playlist list` read 2 playlists to the end of Studio's list, `vpub playlist items` read a playlist's video, the watch page's Save window showed that video was in it, and `vpub engage status` and `vpub comments status` read the Like states. This check found that the Like button CrossCast read was a hidden copy in the player; it now reads the visible one. |
+| YouTube free-route playlist changes | With the owner's go-ahead, on a temporary private playlist and the private test video, nothing else: `vpub playlist create`, `update` (rename), `add`, `remove` and `delete` each read back as confirmed on one full pass with the final code. Afterwards the channel's other playlists and the test video matched how they started. The playlist stayed private throughout. A later run changed a description and visibility too. |
+| What that test found | The first pass found two faults a fake page had hidden, and both stopped safely. Studio greys Save out at once and sends the change about 6 seconds later, after its own checks, and it answers a delete once and then sends it again; leaving at either point cancelled the change. CrossCast now stays until the page's own requests stop, for every Studio and watch-page change, including replies, likes, saves and video edits, which were not part of this test. The delete window's outer element also never counts as visible, so its button is used instead, and the name in the window must match the playlist. |
+| YouTube free-route upload | `vpub publish` uploaded a 5-second private test clip in about 34 seconds, in Studio's Chinese interface, with nothing on screen. Studio then showed the planned title, multi-line description, tags, category, audience, altered-content answer, private visibility and custom thumbnail. A fresh `vpub verify` agreed, and a signed-out visit got YouTube's private-video refusal. Public and unlisted uploads, long videos, and Chrome being interrupted mid-upload have not been tried. The playlists and scheduling added afterwards are under the later field runs. |
+| X's two websites | X serves two versions of its site. Read signed out, x.com's public page code shows a rebuilt site without most of the page labels the earlier route looks for. A read-only check of a signed-in account on 2026-10-31 found it still gets the earlier site: its post, mention and profile labels are all there, `/i/chat` asks for the chat PIN, and `/i/bookmarks/add/<post>` is page-not-found. The X route now handles both, and the same tests of posts, replies, likes, saves, hiding replies, mentions, chat, adopting posts and post edits run against small copies of each. Nothing on the rebuilt site has been tried while signed in. What ran on the earlier site is under the field runs. |
+
+**The offline suite has 2,066 tests, and CI runs it on Windows with Python 3.10, 3.11 and 3.12.** The paid add-on's own 210 tests pass against this core.
+
+| Offline check | Result |
+|---|---|
+| Restarts, overlaps and crashes | Each run is its own process against a fake platform that records everything that would have gone out. Caps and repeat checks hold after a restart. Five overlapping runs answer one comment once, and six cannot pass a cap of two together. A process killed right after sending never sends again, for replies, messages, likes and comment likes; one killed before sending gets its count back. A damaged count file stops sending instead of resetting. Every platform warning stops the next run until it is cleared. |
+| X bookmark folders | Tried in a real browser against small copies of both sites. Rebuilt site, built from its public page code: the list, add, remove, rename, delete, create, a folder name shared by two folders, a post that moved since the check, a refusal from X, and an account without Premium. Earlier site, from what a signed-in account showed: the list, create, rename, delete, add, remove and one-post checks. What ran on X itself is under the field runs. |
+| First field run on real accounts | With the owner's go-ahead, on commit 7f747c3. Read back as expected: X works, stats, replies, like and save state and a reply dry run; Bilibili collection list, items, create, rename and delete; YouTube works, stats, comments, playlist create and delete, and a video like and save with their undo. It found faults, since fixed: a session that hung while closing and blocked X for over an hour, X's nested reply window, failures reported as success, a sign-in lost with its tab, YouTube's reply box and playlist picker at upload, and removing a save reporting an error first. Later runs retried the YouTube fixes. Douyin reads timed out at first, and passed once a session stuck from the older commit was ended. Instagram asked for account recovery when the account changed devices; once the owner had recovered it, its reads, a saved collection's create, rename, add, remove and delete, a save with its undo, and a caption edit restored exactly all passed. |
+| Bilibili edits, chapters, collections at upload and comment deletes | Ran against a recording stand-in for bili-cli: each sends once and reads back, a refusal can be tried again, and an unclear ending blocks a repeat. Not tried on a real account, apart from checking an adopted work's existing text, which changes nothing. |
+| Second field run | With the owner's go-ahead, on commit 117524b. X passed `vpub collection list` (its own Chrome got the earlier site), `vpub ops adopt`, mentions and message previews once the stuck session was ended. Bilibili's collection create, rename and delete passed again. Chrome's window count stayed the same during X and YouTube reads, but a taskbar icon could not be observed, so invisibility is not fully accepted. Changing a YouTube playlist's visibility failed before saving, which was fixed and passed in a later run. Douyin stayed blocked by a session stuck from the older commit. |
+| Later field runs | With the owner's go-ahead, up to commit 2d54c8f, with Douyin's private schedule on 8cd35c9 and its first private publish on eaab0d2, on test targets, undone or removed afterwards. Read back as expected: a YouTube reply, an edit of the channel's own comment and putting it back, a comment pin and taking it off, a private playlist's changes, the playlist picker in a draft upload, including a playlist it created, a schedule's date and time in draft uploads, on and off the quarter hour, and a private video's title and description changed and put back; on X's earlier site, bookmark folder create, rename and delete, adding and removing a post, likes and saves with their undo, and a reply, confirmed by a follow-up check, and deleting it, and a draft upload reaching X's composer with the right file's details filled in, removed unposted; Bilibili adopting a work, checking its existing text with links, and a draft matched on its video number; Douyin adopting a work, checking its existing text, a draft kept with 暂存离开, a collection created and deleted, and a private schedule read back from its card, with no stray marks in its words; Instagram reads, with the account now read from its settings page. Failed or not confirmed, and nothing sent twice: X uploads through Media Studio stopped three times before posting, because the uploaded file's page did not open, and a fourth time when X asked for a verification before anything was chosen. After that a draft got through, as above, and then an upload meant for scheduling waited ten minutes for that same page and stopped, with nothing scheduled. The cause isn't confirmed. The file is now picked by what shows, and the wait's error says what it saw and that `vpub resume` looks again on a fresh page without uploading again. With that, a scheduling test reached X's calendar and pressed its Save, which only confirms the date, so nothing was scheduled, and a later look showed the real final button reads Done. CrossCast now presses Done, only once it reads Done and the date, time and words read back, and only inside this file's own form, around this file's video. A draft on a fresh upload showed that form and its composer holding the same video, and was removed unposted. Then a scheduling test pressed Done once, and Studio's schedule page showed one row with its exact words, date and time and a video, with no ID or link. It was cancelled there before its time, by hovering over the row, pressing its Delete and then a red Delete in a confirmation with no dialog role, and its clip was deleted. The check that now reads that row was written from this run and hasn't itself run on a real account: the next upload meant to prove it waited ten minutes for the file's form and stopped, with nothing scheduled. The file's details had opened in place with no form, and a fresh page then opened the form with one click, so the clip was deleted. The next upload stalled the same way, still on the Library's address. `vpub resume` on the same receipt then reached the composer in 48 seconds with no second upload, and stopped before Done, with a 532-character caption and one button greyed out, for a reason not yet known. That clip was deleted too. CrossCast now clicks the file's tile again when its details open with no form, which hasn't run on a real account, and that stop now says which check failed. No scheduled post has reached its time. Two earlier private Douyin schedules made the right card and ended unconfirmed, first because of a wait for a page that card doesn't open and then because the card's words had stray stars, and each was removed by hand before its time. A private Douyin video was published with the right words on its card and its edit page and no stars on its page as its owner sees it, and ended unconfirmed, because a private work's title opens nothing, so its ID was not found. Going through the card's edit menu instead, the next private test was confirmed and adopted. A caption edit on it, and one on a later private test, was pressed once and did not save, and each test was then removed. On the later one Douyin's edit page said 作品修改审核中，暂不支持修改 above a save button that was grey only through its style, so it could be clicked and did nothing. CrossCast now reads it and stops before typing or pressing (`edit_held_by_review`). On a third private video the message was there on the first read, before anything was typed or pressed, and still there about 49 minutes later, when the owner chose to stop waiting and the video was deleted unedited. No caption edit has saved on a real Douyin work yet. Douyin's edit page also says a work can be changed at most 5 times. Changing a real video's cover at the owner's request first stopped in `vpub edit`, with nothing changed, because its title box shows empty for a moment. That is fixed and has not been re-run there. A script taking the same steps in the same background browser then found Douyin's cover window, given the new image, still working, greyed out, 30 seconds after 完成 on one try and three minutes after it on the next, with nothing saved, which now stops with `cover_not_ready`. The owner suspected the network and asked for another try. With nothing changed on this side, one 完成 and one 提交修改 went back to the works list, and a fresh look showed the new cover, with the title, caption and visibility unchanged and no review message. The cause of the earlier stops isn't known. This is the first save seen to work on a real Douyin work's edit page. Deleting a comment on YouTube and Instagram removed it but stays `COMMENT_UNVERIFIED`, because the platform's success answer is not recognised yet. |
+| Stray stars on Douyin | A caption set in one go came out with a `*` at each new paragraph on a test card, and one real video shows 6 of them on its card, its edit page and its public page. A second real video has none. Captions are now typed a line at a time. The next test card had none, and neither did two private test videos' cards, edit pages or pages as their owner sees them. Changing an existing caption has not worked yet, as above, and the real video has not been changed. A new video's public page has not been checked. |
+| Safety testing | Every free feature on all five platforms was tested against fakes and small page copies, including hostile messages and odd shapes from a page. That found 20 faults, all fixed with their own tests. Codex's independent reviews found more, fixed with tests, and the newest fixes are waiting for its re-check. The security review and final review are not finished. There is no separate trial on dedicated test accounts, so the real-account evidence is what these field runs list. |
+| Douyin text edits, YouTube pins, removals and chapters, a missing playlist at upload, X reply deletes | Driven in a real browser against small copies of the pages. Of these, a YouTube pin, a missing playlist at upload and an X reply delete have since been tried on a real account, under the later field runs. The rest have not. |
+| Bilibili collections | The rename and member-list requests ran in a separate process with bili-cli's request maker replaced by a recorder, so the exact request was checked and nothing reached Bilibili. The rename address and fields come from a community client, not from Bilibili's documentation. Rename has passed on a real account, in the first field run above. CrossCast's own process still never loads the GPL library. |
+| Portrait covers | `vpub covers portrait` output was measured: every part stays inside the safe area, the edges have no empty bars, a single wide band is refused, and the result works as the shared portrait. Whether a given layout looks good still needs a person's eye. |
+| Included bili-cli | All 47 files match the 1.2.1 release. Its own suite passes on the included copy (172 passed, 3 skipped). Every `bili` command CrossCast builds is parsed against the real command tree. |
+| Clean install | A built wheel installs into an empty environment. `vpub doctor` reports ready and `bili --version` reports 1.2.1. Upgrading over a separate bili-agent 0.7.0 works after following `vpub doctor`. |
+| Background browser | Real Chrome on a blank page, with sign-in and commands stubbed. It started in 1.6 s and a reused session answered in 0.2 s. A busy command waited its turn, a lost startup race kept the winner, and no Chrome was left running after idle exit. |
+| Malformed input | Wrong values in the JSON files assistants write now return a clear error. An audit that found 32 crash paths now finds none. |
+| Docs and site | Every documented command parses and every link resolves. The site was checked in three languages at desktop and phone widths, with no overflow, console errors or broken images. |
+
+## 0.15.1: existing-work closeout
+
+Date: 2026-10-30.
+
+**417 offline tests pass, including 15 new tests.** Added coverage includes cross-process exclusion, hard-exit recovery, active/damaged legacy markers, preserved receipts, partial replay retention, pending thumbnail/playlist steps, uncertain thumbnail outcomes without resending and a delayed Instagram edit menu.
+
+| Live check | Result |
+|---|---|
+| YouTube hard interruption | A private excerpt called `os._exit(75)` after 8,388,608 acknowledged bytes. A second process continued that session and called `os._exit(76)` after saving its video ID. A third completed its thumbnail. The same ID was retained; private visibility and successful processing were read back. |
+| Cleanup | Only this private test clip was deleted, with fresh absence confirmation. Original videos, captions, covers and schedules were unchanged. |
+| Captions and chapters | Episode-two YouTube/Instagram captions matched the saved Chinese-plus-English copy. All six custom Douyin chapters were freshly read back. No writes. |
+| Instagram editor | The first check reached the menu before Edit loaded. After a bounded wait was added, a fresh process verified the actual work editor's bilingual caption without saving it again. |
+| Complete reads | Empty Douyin/Instagram/X collection lists had official end markers. A one-page YouTube budget paused and resumed to the end. Large nonempty browser lists remain untested. |
+| Other existing actions | Publishing, comments/replies, likes/saves, moderation/hiding and collection rename/member changes retain the historical live evidence below. This round did not rerun every mutation or add Bilibili tests. |
+
+**Scope is frozen for this closeout.** Multi-account operation and deep historical analytics are not added. Retained limits: no Douyin/Instagram website byte recovery; other browser work/comment/DM histories remain bounded; nonempty Instagram mentions, large lists and sustained unattended operation lack acceptance evidence. The user-accepted mobile cover is retained; the original X episode-two post stays unchanged; Gmail remains optional and off by default. Older pending notes below are historical, not new commitments.
+
+## 0.15.0: session reuse, resumable upload and full-page reads
+
+**402 offline tests pass, including 25 new tests.** Coverage adds lost chunk/final responses, expired sessions without a second upload, changed account/media/metadata, URL validation, durable page cursors, repeated cursors, overlapping rows, missing replies, server end markers and unrelated GraphQL responses.
+
+| Live check | Observed result |
+|---|---|
+| Browser latency | Three fresh Instagram collection reads: 37.312 s with three contexts, 17.297 s with one. Identical results; no platform writes. One machine/account sample only. |
+| Process interruption | An EP02 excerpt uploaded privately to YouTube. The test process exited after 8,388,608 bytes were acknowledged. A separate `vpub resume` process completed the same upload and read back its ID and private state. The temporary video was deleted and a later fresh read confirmed absence; originals stayed unchanged. |
+| YouTube pages | Page size 1 read two existing videos in two pages. EP02 comments/replies required three pages and returned three unique comment records. Page budgets paused and resumed from committed cursors. |
+| YouTube playlists | Two unique playlists across four size-1 pages (including overlapping results); one playlist had one member, the other five members across five pages. Reads only; no playlist changes. |
+| Browser end markers | Douyin, Instagram and X empty collection lists returned explicit server end markers. A temporary Instagram collection's items returned a confirmed complete empty list. Large/nonempty multi-page browser lists are not live-accepted. |
+| Reused-session writes | Temporary Instagram create/rename/delete persisted. The first delete readback was uncertain; a later read-only verify confirmed deletion without a second delete. All temporary collections were removed. |
+
+The first YouTube initiation exposed the current `youtube.googleapis.com` upload host, in addition to the documented `www.googleapis.com` host. The allowlist was corrected before successful testing; that initial attempt sent no video bytes and its uncertain receipt is retained. Session URLs are private. Browser parsing was also corrected to ignore unrelated null GraphQL results; malformed relevant pages still fail.
+
+No new Bilibili live test, public repost, interaction message or existing cover/metadata change was made. Full browser work/comment/DM history, browser byte recovery, forced-kill lock recovery and sustained unattended/large-account validation remain open. Earlier version sections below are historical.
+
+## 0.14.0: collection membership, rename and named skill
+
+**377 offline tests pass, including 16 new tests.** New checks cover complete member baselines, preservation of other members, no-op/repeated requests, receipt tampering, account and collection binding, pagination, default Saved exclusion and schema failures.
+
+| Live check | Result |
+|---|---|
+| Instagram rename | The website modal stalled without saving. The official page's own collection client successfully renamed the temporary collection; a fresh browser read confirmed the new name. |
+| Instagram membership | Removed an existing saved work, independently confirmed an empty collection, added that same work through the CLI and read back the exact shortcode and numeric media ID. |
+| Douyin collections | CLI create, repeated-create deduplication, rename, add/remove an existing work and delete were independently read back. A prior add completed despite a response timeout; `verify` confirmed it without another add. |
+| Cleanup | Temporary collections removed; the two deliberately saved test posts restored to their original unsaved state. Original videos, comments, captions, covers and schedules were not deleted or edited. Bilibili was not tested. |
+| Agent skill | Bundled `SKILL.md` and `agents/openai.yaml` validated and installed locally as PublishOps CrossCast. Exact Codex progress wording remains client-controlled. |
+
+These tests used small collections on the operator's accounts. They do not establish large-list pagination, all account variants, or sustained unattended operation. X named-folder membership remains unverified and disabled; its normal bookmark control does not establish folder membership. Instagram adds require an already-saved work visible in the loaded picker. Incomplete lists block membership writes. Browser startup and independent readback still take time; no new speed benchmark is claimed.
+
+Earlier sections below describe historical versions; their unsupported statements do not override the current scope.
+
+## 0.13.0: private collections and bookmark folders
+
+**361 offline tests pass, including 30 new tests.** Coverage includes account/exact-ID binding, request deduplication, lost creations not adopted by title, partial lists not proving deletion, pre-submit receipts, response-schema changes and retrying only read-only navigation while X's menu initializes.
+
+| Live check | Result |
+|---|---|
+| X private folders | Temporary-folder create, rename and delete independently read back; cleanup restored the empty list. |
+| Instagram private collections | Temporary create/delete and empty-collection item reads tested. Rename did not persist, so this operation is disabled. |
+| Douyin work collections | Explicit empty collection list read; creation requires a cover and works. No public test collection was submitted. Nonempty lists and writes remain pending. |
+| X item reads | The platform displayed an error; the CLI returned `read_failed` instead of treating the accompanying empty-state text as success. Nonempty items remain unverified. |
+| Uncertain submissions and network loss | Submitted requests without an exact returned ID remain unverified, without title-based success claims or automatic resubmission. Test folders were cleaned up using exact IDs from listing. |
+
+No videos, comments or DMs were sent, no default saved items changed, and Bilibili was not tested. Private accounts, collection names/IDs and diagnostics remain local. Create/rename/delete still launch several independent browser contexts for readback; they are not instant direct-API operations, and this release makes no new speedup claim. Pending: named membership changes, collection pagination, Instagram rename, full Douyin work collections and clean-machine/long-running acceptance.
+
+## 0.12.0: speed, unified message resumption and YouTube playlists
+
+**331 offline tests pass, including 25 new tests.** Coverage includes overlapping reads, platform isolation, child-journal recovery, message caches/private reports, YouTube connection/ownership reuse, playlist ownership, field preservation, ordering, request deduplication and uncertain writes.
+
+| Live check | Result |
+|---|---|
+| 10 live reads across four platforms | Same watchlist and page budgets: 55.446 seconds on 0.11 versus 27.398 seconds with three platform workers on 0.12; first saved result at about 3 seconds. Both completed 10 reads using 3 browser contexts. One comparison, not a sustained latency guarantee. |
+| YouTube playlists | Created a private test list, renamed it, added two existing videos, moved the second item to position 0, removed one item and deleted the test list. All 7 changes were independently read back. Existing public playlists and videos were not deleted or changed. |
+| Post-write visibility | An immediate read missed the newly created list. Its returned ID was saved and a later verify confirmed it. Bounded readback retries were added; creation was not repeated. |
+| Unified message sources | Read watched comments on four platforms plus mentions and conversation previews on Douyin/Instagram/X. Instagram mentions remained explicitly empty; a nonempty fixture is still pending. X returned 1 visible mention this round. YouTube mentions/DMs remain UNSUPPORTED. |
+| Windows checkpoint concurrency | Found a file-sharing race between status reads and atomic replacement; added a process-local read/write lock. Resumption completed the remaining 3 jobs after 8 had finished, without repeating completed work. |
+| Actual forced interruption | The Douyin worker had saved both source results; the parent was forcibly exited after merging the first mention source. A new process recovered the second source, preserving the first observation time, with 0 new browsers and 0 platform writes. This validates source-level recovery, not a persistent browser scroll cursor. |
+| Immediate repeat | All 11 successful reads reused caches: 0 new queries and 0 browser contexts. Cached observations are not live reads. |
+
+No comments, DMs, likes or videos were sent this round; covers, captions, schedules and Gmail settings were unchanged. Bilibili was not live-tested. Accounts, message bodies, receipts and diagnostic details remain local.
+
+Pending: live long-history/large-comment acceptance, nonempty Instagram mentions, clean-machine and sustained unattended acceptance. See [usage](OPERATIONS_EN.md#youtube-playlist-management) for playlist authorization, special-list and manual-ordering limits. Douyin work collections, named Instagram collections and X bookmark folders are not integrated.
+
+Historical validation follows; earlier unsupported statements do not override this release.
+
+## 0.11.0: existing-work adoption, incremental collection and resumption
+
+**306 offline tests pass.** The 23 new tests cover freshness caches, scope/account isolation, text changes, API/reply continuations, cursor loops, recovery of completed browser reads, platform failure isolation, process locks and ownership conflicts during adoption.
+
+| Live check | Result |
+|---|---|
+| Work discovery | Instagram returned 6 works; Douyin returned 2; X returned 3 IDs across 3 bounded rounds. All retain an incomplete-history flag. |
+| Existing-work adoption | An old manual Instagram post without a CrossCast upload receipt was verified through its owner Edit control, tracked and successfully read for comments/metrics. Douyin/X episode two also passed fresh adoption checks. |
+| Actual process interruption | The process exited with code 91 after saving the first real YouTube read. A new process resumed and completed 10 reads across four platforms; the first step retained its observation time and was not repeated. |
+| Immediate repeat | All 10 reads reused freshness caches: 0 new platform reads, 0 browser starts and 0 changes. This is a development check on these accounts, not a general speed guarantee. |
+
+Fixed a false missing-Edit result while Instagram's management menu was still loading. No comments, DMs, likes or videos were sent; captions, covers, visibility and schedules were unchanged. Bilibili was not live-tested this round. Raw catalogues, comments, accounts and receipts remain local.
+
+**Limits:** these accounts have short work lists; long-history browsing has not passed live acceptance. API second-page/reply interruption recovery was verified with offline fault injection; the live process interruption occurred after a completed read. Unfinished browser works restart from their page, and `--full` remains bounded. Mention/DM-preview sources do not use this process-resumption system. More devices, accounts, long lists and clean-machine acceptance remain pending.
+
+## 0.10.0: mentions, viewer moderation and hide/unhide
+
+**283 offline tests pass.** New coverage includes notification/feed isolation, relative-time deduplication, CAPTCHA iframe detection, review-queue reads when held comments disappear, unknown/conflicting states, explicit receipt recovery and X first-use confirmation/hidden-reply navigation.
+
+| Item | Observed result |
+|---|---|
+| Douyin @ mentions | The CLI read one real test mention from the user's second account. A fresh repeated read retained the same entry with zero new observations. Returning to Creator Center for DM previews also passed. |
+| Instagram tags/mentions | Two CLI runs opened Tags & mentions and read an explicit empty state. No second account was available; nonempty parsing has offline tests only, not full live acceptance. |
+| YouTube viewer moderation | One top-level test comment completed published → held → published; owner-review and public-state reads confirmed both transitions. Restored. |
+| X hide/unhide | One other-author test reply completed visible → hidden → restored. First-use confirmation, the owned post's hidden-replies entry and exact menu-state reads passed. |
+
+Notification previews lack event IDs and identical content may coalesce; bounded visible coverage is not full history. These checks cover specific accounts/pages/fixtures. No new DMs, Bilibili tests, video/cover/schedule edits or Gmail changes occurred. Diagnostic pages, comment bodies and test-account data remain local. Earlier-version records follow.
+
+## 0.9.0: unified messages, bounded collection and experimental moderation
+
+**263 offline tests pass.** Added coverage includes per-source baselines/deduplication, relative-time changes, account isolation, handling marks, private bodies excluded from reports, partial-page absence preserving history, bounded cross-page unions, root/child moderation ambiguity, unknown states and own-reply safeguards.
+
+| Live check this round | Result |
+|---|---|
+| Douyin/Instagram/X comment collection | Each existing work returned two test comments/replies; IDs were retained across bounded rounds. No full-history claim. Large-list coverage still lacks a live fixture. |
+| Unified message collection | Watched comments read successfully on four platforms, with conversation previews on Douyin/Instagram/X. Repeated previews produced no new or changed entries. Unsupported YouTube DMs correctly made the combined result PARTIAL. |
+| X mentions | Explicit empty Mentions state matched on two reads; no nonempty mention fixture yet. |
+| Douyin inbox loading | Replaced the early shell check with a wait for actual rows or an explicit empty state. |
+| YouTube review queue | Published queue read successfully. A separate own childless test comment received an accepted hold request, but fresh state remained published: not a verified transition. The temporary comment was deleted and absence confirmed; the original test thread remains. Viewer-comment transitions await validation. |
+| X hiding | Own-reply dry-run stopped without mutation. No eligible viewer-reply fixture, so live hide/unhide is not accepted. |
+
+No new DMs, Bilibili live tests, video/cover/schedule edits or email-setting changes occurred in this round. Raw messages, pages and test-account data remain local. New moderation/hiding routes are experimental; offline tests and accepted requests do not establish live platform state.
+
+Historical validation scopes follow; current behavior is defined above and in the README.
+
+## 0.8.0: comment management and direct-message live checks
+
+**240 offline tests pass.** New coverage includes pending-message resend suppression, wrong-account/recipient rejection, outgoing-bubble sender and sent-state checks, truncated results not reducing prior identical-message counts, explicit language, test-traffic exclusion, partial-page absence not proving Douyin deletion, and Bilibili pins never replacing another pinned comment.
+
+| Live check this round | Result |
+|---|---|
+| Douyin comment like/unlike | An existing test comment changed from unliked to liked and was restored; fresh sessions confirmed both states. |
+| Douyin comment deletion | Created one separate, own test comment without replies, deleted it and confirmed absence on the complete comment page. The original hello thread remains. |
+| Douyin text message | One Chinese test message to one public account; a fresh session confirmed the exact recipient and outgoing bubble. |
+| Instagram text message | One English test message to one public account; a fresh session confirmed sender, text and recipient. |
+| X text message | The user completed the official PIN step; a new CLI session reused it. No message went to a closed inbox. One English message went to another public account, followed by fresh You-label and sent-state read-back. |
+| Inbox summaries | All three browser platforms returned visible summaries through the CLI; this is not complete history, total unread count or a private API. |
+
+Exactly one message was sent per platform, with no bulk sending or recipient delivery/read claim. Initially uncertain messages stayed pending; parser repairs used read-only verification without resending. The Douyin delete-dialog button repair also retried only before final confirmation. Messages, raw pages and recipient data remain local and are not published to GitHub.
+
+**No Bilibili live tests this round.** Messaging and comment pins delegate to upstream and were checked offline only. The observed Douyin/Instagram web layouts expose no verified comment pin/hide entry. X hide-reply is not integrated; profile pinning is not comment pinning. Existing YouTube comments remain; no DM or moderation API was added. Videos, covers, captions, schedules, email and other operations agents are outside this change.
+
+The following sections preserve historical validation scopes. Earlier unsupported-feature statements do not override the 0.8.0 results above.
+
+## 0.7.0: batched reads, persistent inbox and comment management
+
+CLI reads succeeded for comments and metrics on the five existing episode-two works. The run took about **76 seconds**, with **3 browser sessions** across the three browser backends and no platform writes. Reads share a context per platform/account; Instagram/X reuse the same work page. This is one development run, not a cross-machine speed guarantee or a controlled before/after timing comparison.
+
+| Live check | Result |
+|---|---|
+| Bilibili, Instagram and X comment likes | Changed state, repeated the command without writing, then restored the original state; independent read-back confirmed each |
+| YouTube own comments | Edited an existing test reply and restored its text; created a separate disposable test comment, deleted it and verified absence by exact ID |
+| Local inbox | A handled mark survived resync, then was restored; the repeated YouTube read found zero new audience comments |
+
+**9 comment-management writes** were verified, plus one disposable test-comment creation. Three repeated like commands returned `NO_CHANGE`. Existing hello threads remain and audience comments were not changed. Instagram initially stopped before writing because text and heart controls are sibling containers; the corrected exact-comment scope passed live testing and cannot climb into the post toolbar. One local lock conflict stopped before submission; testing resumed only after the earlier operation finished.
+
+**218 offline tests pass.** Coverage includes rejecting writes in read batches, stopping on failure while retaining prior results, account isolation, history retention and reopened text, bounded reply expansion and continuations, exact work/author checks, no resend after uncertainty, isolated comment controls and excluding test traffic from reports. Reply-preview expansion was regression-tested; the live sample had no incomplete previews, so large-thread live coverage is not claimed.
+
+Douyin comment management, pinning/hiding, private messages and a complete account inbox remain unimplemented. Browser collection covers visible comments only. This round did not change videos, covers, captions, visibility or schedules. Language rules and Gmail-off defaults remain. Private receipts and page diagnostics are not published.
+
+Official references: [YouTube comment editing](https://developers.google.com/youtube/v3/docs/comments/update), [deletion](https://developers.google.com/youtube/v3/docs/comments/delete), [reading](https://developers.google.com/youtube/v3/docs/comments/list).
+
+## 0.6.0: likes, saves, reversals and deduplication
+
+The user authorized bounded live CLI tests on the existing episode-two work on each platform. Each action records its original state, changes it once and verifies independently; repeating the same command must return `NO_CHANGE`, then the original state is restored and queried again. Private receipts retain the test marker and are excluded from ordinary operations reports. Test traffic is not organic engagement or growth.
+
+| Platform | Like and reverse | Save and remove | Evidence |
+|---|---|---|---|
+| Bilibili | Passed, restored | Selected favorite folder passed, restored | Upstream CLI relation plus video-specific folder membership |
+| YouTube | Passed, restored | Selected owned playlist passed, restored | `getRating` and exact video/playlist item IDs |
+| Instagram | Passed, restored | Default Saved passed, restored | Post toolbar read after closing and restarting the CLI browser |
+| X | Passed, restored | Private bookmarks passed, restored | Exact post controls in an independent CLI browser |
+| Douyin | Passed, restored | Default saved items passed, restored | `aweme_detail.user_digged` / `collect_stat` loaded by the normal work page, matched to the exact video ID |
+
+Across five platforms, **20 writes including restorations were independently verified and 10 repeated commands returned `NO_CHANGE`**. All like/save states were restored to their recorded baselines. Failed reads and repairs remain recorded; no repeated clicks were used to manufacture success. Existing playlist items and membership in other favorite folders were preserved.
+
+Instagram live testing exposed nested sections matching the same toolbar. Selection now uses the innermost post toolbar, excluding comment likes. One X read stopped when the post appeared before its toolbar. After adding a bounded wait, bookmark creation, duplicate-command checking and removal completed. YouTube removes the exact playlist item; Bilibili removal targets only one folder.
+
+Douyin retained its Like tooltip after a successful like, causing the original check to mark the action unverified. The fix observes account state in the normal page's own loaded detail response and independently verifies the existing receipt without liking again. Tooltips locate controls only; neither heart color nor aggregate like count determines account state. This observes official-page responses, not an independent official API. Missing fields, wrong video IDs and states other than 0/1 stop execution.
+
+**193 offline tests pass.** Added state deduplication, durable submission, no resend or opposite toggle after timeout, account/collection checks, duplicate membership refusal, test-traffic report isolation and seven network-free DOM tests. This round did not reupload videos or change copy, covers, visibility or schedules. Existing language rules and Gmail-off defaults remain. Live development checks cover these accounts and layouts, not all accounts, layouts or clean-machine unattended operation.
+
+Official references: [YouTube rating](https://developers.google.com/youtube/v3/docs/videos/rate), [rating reads](https://developers.google.com/youtube/v3/docs/videos/getRating), [playlist membership](https://developers.google.com/youtube/v3/docs/playlistItems/insert), [X bookmarks](https://help.x.com/en/using-x/bookmarks). YouTube API rating success is distinct from official like counts; this test verifies account ratings. Raw pages, private receipts and login data are not published.
+
+## 0.5.0: Read-only multi-platform collection
+
+Live checks used the current signed-in accounts and existing episode-two works through the CLI, without the host's in-app browser. All five `works` calls returned works. New YouTube/Bilibili work pagination and `comments replies` read back the existing hello comment and reply. No test comments were resent and no video, copy, cover, visibility or Bilibili schedule was changed.
+
+After adding the five works to the local watchlist, `ops sync` completed all comment reads and statistics queries. Bilibili, YouTube, Douyin and X returned available metrics; Instagram's current work surface returned none, retained null values and reported the limitation. Own comments were excluded from audience interactions. Browser comments remain limited to visible entries and Bilibili thread lists retain reply previews; this collection is not a complete historical inbox.
+
+YouTube and Bilibili work lists were followed to the next page. A second API collection reported zero newly observed comments on both platforms. X can display a zero comment count while loading conversation entries, so all three browser adapters now retain `complete: false`.
+
+**164 offline tests pass.** New cases cover page budgets and cursor loops, deduplication, account-change stops, partial failures, source/unit/rounded-value incompatibility, percentage-point deltas, watchlists and read-only dispatch. Live acceptance covers these accounts, works and layouts, not every account or clean-machine unattended operation. Watch duration, full Insights, private messages and automatic likes remain unintegrated; Gmail stays off by default.
+
+API references: [YouTube upload-list pagination](https://developers.google.com/youtube/v3/docs/playlistItems/list), [comment-reply pagination](https://developers.google.com/youtube/v3/docs/comments/list).
+
+## 0.4.1: Douyin reply and read-back repair
+
+The user confirmed on the phone that only the original comment existed. Public-work submission requests produced no readable reply. Replies now use the selected comment's Creator Center composer, scoped separately from the top-level comment box. After fresh Creator Center data showed zero replies, a recorded repair test ran without creating another top-level seed.
+
+**The reply succeeded and was read back by an independent CLI session.** A fresh comment ID, author, exact “你好” text and nested parent all matched; data loaded by the official page independently corroborated the parent. Earlier failed attempts remain recorded. Video, caption, cover, visibility and schedules were unchanged. HTTP 200 or a successful click alone is not success evidence.
+
+The repair also handles missing absolute timestamps, extracts nested comment parents, and distinguishes platform rejection, uncertain submission and verified visibility. An ambiguous mapping between a comment ID and a visible Creator Center row stops before sending. Only top-level targets are supported. No automatic resend mechanism was added; this was a controlled repair supported by the user's report and fresh creator data.
+
+**147 tests pass.** New regressions cover work/parent/author/text matching, empty acknowledgements and rejections, retained repair history, nested DOM and missing timestamps. All five live hello tests now have read-back replies. These development tests do not establish full unattended acceptance for every account, layout or clean installation.
+
+## 0.4.0: comments, replies and operations reports
+
+The user explicitly authorized one “你好” comment and one “你好” reply on the existing episode-two works. Video, cover, caption, visibility and Bilibili schedules were unchanged. Test comments are retained, not automatically deleted.
+
+| Platform | Live result and evidence boundary |
+|---|---|
+| Bilibili | Upstream CLI posted the test comment/reply; author, exact text, parent and reply IDs read back. The existing audience comment had already received an owner reply and was left alone. |
+| YouTube | Official Data API posted and verified the comment/reply. A live bug was fixed: Comment resources may omit videoId, so CommentThread now establishes work membership; matching the channel alone is insufficient. |
+| Instagram | The CLI session clicked Reply on the selected comment; a fresh comment ID, author and “@author 你好” text were read back. Relative-time changes and delayed Post-button appearance were fixed. No official API parent relationship was verified. |
+| X | The CLI session posted and read back fresh IDs, author and exact text. Delayed nested dialogs and Draft.js CJK input were fixed; the original video post was preserved. No official API parent relationship was verified. |
+| Douyin | The seed comment was read back on the public work page while Creator Center temporarily omitted it. The submitted reply is still REPLY_UNVERIFIED, was not resent, and was subsequently repaired as recorded in 0.4.1 above. |
+
+One work per platform was queried: Bilibili creator data, YouTube basic statistics, Douyin creator metrics, X post counters and Instagram visible fields. Missing Instagram values stay null; full Insights is not integrated. YouTube completion/watch duration still needs separate Analytics support. X post views are not video plays. Debug visits and test comments can affect raw counters; these are not organic growth or efficiency evidence.
+
+Chinese and English paragraph reports were generated from deduplicated execution receipts. Own comments and self-test replies do not count as audience interactions; uncertain sends are not completed replies. Reply language follows the commenter, while report language follows the user separately.
+
+**140 offline tests pass.** Coverage includes pagination, ownership, single-language routing, direct send, duplicate suppression, parent verification, missing metrics/units, test isolation, reports and two Chrome DOM tests that never visit platforms. Live development tests required repairs and are not a clean-machine unattended acceptance run. Douyin reply visibility remains open. The asynchronous-send wait fix has not had an additional live write test.
+
+Official references: [YouTube reply insertion](https://developers.google.com/youtube/data/reference/rest/v3/comments/insert), [thread pagination](https://developers.google.com/youtube/data/reference/rest/v3/commentThreads/list), [video statistics](https://developers.google.com/youtube/data/reference/rest/v3/videos). Raw pages, audience data, sign-in information and private receipts stay local and are not published.
+
+
+## 0.3.3: persisted Instagram caption checks and cover acceptance
+
+- **Observed problem:** The user reported English-only copy on episode two. Reopening the original work’s editor confirmed it. Earlier success records did not establish current platform state; the cause of this discrepancy is unconfirmed.
+- **Correction:** The CLI-owned session restored original Chinese plus English on the [same Reel](https://www.instagram.com/reel/DfExzPeiC_i/), totaling 1,771 characters. The saved editor was reopened, followed by an independent read after closing and restarting the CLI browser; the full text matched exactly. No reupload, deletion, cover or visibility action occurred.
+- **Code fix:** An old `EDIT_VERIFIED` no longer short-circuits a current platform check. Instagram compares full original text in the requested work’s editor instead of searching the whole page and rejects wrong-work redirects. Verify-only returns `EDIT_MISMATCH` without saving; a mismatching read after a save remains unverified.
+- **Cover:** The user applied the shared episode-two v3 artwork on Douyin and Instagram, supplied two phone profile-grid screenshots and confirmed acceptance, including visible footer text. This covers only those views; phone screenshots and private data remain unpublished.
+
+**113 offline tests pass.** Six added regressions cover old success receipts, misleading body text, matching-text no-op, ineffective saves, reopened read-back and wrong-work redirects. Gmail alerts remain explicit opt-in and off by default.
+
+## 0.3.2: Gmail-only notifications and cover candidate
+
+- **Gmail:** A real plugin sent one clearly labelled TEST message from the connected account to itself. Matching From/To and SENT/INBOX were read back; the user confirmed receipt. Ongoing alerts remained off.
+- **Final scope:** Gmail only, off by default, enabled only on an explicit user request. Ordinary setup does not prompt for email. Plugin discovery, installation/connection assistance and exact-account checks precede sending. Outlook, QQ, NetEase and SMTP are excluded; unsupported legacy preferences cannot dispatch.
+- **Outlook test history:** A test went to a QQ address returned by the connected profile. It appeared in Sent Items, but the user reported no receipt in QQ or Outlook. This was not delivery success. No retry occurred; Outlook adaptation was removed at the user's request.
+- **Cover:** Episode-two v3 shared portrait was delivered for user replacement, with the footer moved upward. Text remains complete in local 3:4/4:5 center-crop previews. This is not phone-platform acceptance; no online cover was changed.
+
+**107 offline tests pass.** Added explicit opt-in, Gmail address/account checks, missing/disconnected plugins, unsupported-provider rejection, one-off test deduplication and uncertain-send suppression. Email addresses, private responses and authorization data are not published.
+
+## 0.3.1: episode-two corrections and acceptance limits
+
+- **YouTube:** The CLI official API updated the same work to original Chinese plus English. Full title/description were read back; category, tags and public visibility were retained. Management authorization completed; first connection now requests the tool's required scopes together.
+- **Instagram historical correction:** The earlier record reported successful Chinese-plus-English editing. On 2026-10-30, the editor still contained English only, so that record cannot establish current state. See 0.3.3 for the correction and new independent read-back.
+- **X:** The original post no longer exposed Edit. The operator chose to retain its English copy and use the new policy on the next post; no deletion, repost or reply occurred. A successful available-Edit save remains untested.
+- **Douyin:** [Episode two](https://www.douyin.com/video/7702037050320506122) is listed as published. The CLI saved the shared dedicated portrait, visible in the management page and the user's phone screenshot. Six custom chapters at 00:00 / 00:14 / 00:36 / 00:49 / 01:00 / 01:09 were saved and reopened, replacing the default chapter list. No video was reuploaded.
+- **Cover limitation:** Both phone grids still crop the footer line. Cover application is confirmed; visual adaptation and aesthetics are not accepted. Next video prioritizes common safe areas, UI overlays, thumbnail text size, contrast and composition; retain the current art this round. Local SHA-256 does not establish equality with platform image pixels.
+
+**98 offline tests pass.** Added language matrix, bilingual-section, shared-portrait, existing-work edit and uncertain-save safeguards. YouTube edit tests cover account ownership and retention of category, tags, audio language and visibility. Chapter tests cover time/title pairing and pending-step recovery. These tests are not fully unattended or phone-layout acceptance.
+
+Corrections used the official API or CLI-owned sessions; the user's phone cover selection is a separate manual step. Raw pages, private profiles, sign-in data and phone screenshots are excluded from the public repository.
+
+
+## 0.3.0 history: episode 02 independent backends
+
+The operator authorized this exact test asset: **GPT Duty Log 02 | Asked for a Song, I Asked a Question First**. Source: 84.4 seconds, 1920×1080, SHA-256 `decb95dbb5ebaac47aa41a9d578c55e17e027d565b2610652ca435277dd70991`. All uploads used the same original bytes. Bilibili was not reuploaded and existing schedules were retained.
+
+| Platform | Observed result |
+|---|---|
+| YouTube | [API-uploaded episode](https://www.youtube.com/watch?v=zuLz9rEBcj0). Exact English title, public visibility, category 1 (Film & Animation) and processing `succeeded` read back. Production-thumbnail API write succeeded. |
+| X | [Studio post](https://x.com/White_Carp2000/status/2115749753178992679). Dedicated session, one media upload, saved production thumbnail and exact English post text read back. Resumed the same Studio asset after selector fixes; no duplicate post. Text AI disclosure is present; native AI badge was not observed. |
+| Instagram | [Reel](https://www.instagram.com/reel/DfExzPeiC_i/). Original crop and unchanged video, separate production cover, full English caption and native AI Content label read back. Grid/mobile cropping is not guaranteed. |
+| Douyin | One episode-two work submitted with the exact Simplified Chinese title/caption, native AI declaration, public setting and both cover variants. Creator Center displayed the matching 1:24 work under platform review. This is submission evidence, not anonymous playback acceptance. |
+
+X and Instagram passed a fresh CLI read-back after closing their test browsers. Douyin initially reused the dedicated session, but the post-upload restart returned to the official login page; stable session reuse remains an open acceptance item. Its submitted work was retained, and no duplicate was uploaded. YouTube used the public CLI API route. Browser backend development runs included selector repairs while preserving the existing upload; Instagram and Douyin were exercised through a persistent local development harness. These are real publications, but **not a clean-machine, uninterrupted end-to-end acceptance run**. No full continuous playback or cross-OS installation acceptance was performed.
+
+The production cover is the correct episode-two artwork. Douyin accepted the paired contain-and-pad images, but flagged the portrait's large border area as a quality issue. Dedicated portrait composition is preferable; automatic fitting does not guarantee a good thumbnail. Source hashes and UI acceptance do not prove pixel-identical remote assets.
+
+**86 offline tests pass.** New coverage includes single-submit persistence on timeout, profile locks, wrong-account rejection, changed assets, recovery without reupload, Instagram's account-prefixed work links, portrait-only artwork handling and verified-receipt persistence. Tests do not post to platforms or send email.
+
+Unfinished scope: direct X/Instagram official APIs, unified analytics/comments/inbox, YouTube cards/clickable end screens, live API playlist writes and fully unattended multi-platform acceptance. Advanced chapters and edits remain explicit native handoffs. TikTok stays suspended. Private profiles, tokens, raw page captures and receipts are excluded from GitHub.
+
+## 0.2.5 — Historical status
+
+**2026-10-29 live YouTube API connection:** Desktop OAuth completed and `vpub auth status youtube --method api` returned the intended channel. An API read confirmed the existing test video's public visibility and processed upload status. Missing PySocks caused `httplib2` to ignore the configured proxy and time out; installing `PySocks==1.7.1` restored connectivity. It is now an installation dependency and a `doctor` check. This session made read-only calls, with no new upload or platform edit. Live API upload, thumbnail writes and playlist writes remain unverified.
+
+The operator supplied two phone recordings and reported that the one-second lead did not solve the need, while camera-roll portrait covers worked. Sampled frames show cover editing and return to the work; this is not agent-operated phone control or full-playback acceptance. Lead-in functionality is removed. Original-video/shared-artwork handoff is implemented; this rule update did not republish the test work.
+
+72 tests pass. Four current Instagram tests check unchanged video SHA-256, exact Douyin portrait reuse, scoped/idempotent manifests, overwrite guards and truthful missing-artwork state. The 0.2.4 FFmpeg test is historical, not an active publishing feature.
+
+## Earlier live-test records
+
+- **72 offline tests passed:** source/plan integrity, media snapshots, duplicate suppression, durable IDs, native-account checks, language routing, immutable privacy, optional email with single claim and uncertain-send suppression, cover fitting with no cropping, per-platform cover evidence, and playlist membership/deduplication. Added draft receipts, no-publication guards, explicit same-draft authorization, scoped CLI initialization and rejection-only recovery with fresh absence evidence. Tests use synthetic media and mocked services, including original-video/shared-cover handoff tests; they do not create live posts or mail.
+- **YouTube:** One original native private upload was verified. The latest Simplified Chinese/English description without external links was saved and read back. The dedicated cover and private GPT Duty Log playlist were saved and read back in Studio. Category changed from People & Blogs to Film & Animation; the saved selection and disabled Save button were observed.
+- **Category fix:** Explicit plans, host selection, in-place revision and receipt matching are offline-tested; API assignability and mismatch handling use mocks.
+- **Douyin:** The same work stays private. Management now shows the revised Simplified Chinese caption without URLs and the dedicated portrait cover. Landscape cover was not freshly rechecked in this round. Four chapters were submitted. Initial read-back reported review; the user subsequently confirmed mobile chapter visibility.
+- **Bilibili:** Existing upstream CLI/work retained; no reupload or operations takeover. Historical stop-file state is not presented as current.
+- **Instagram initial publication (historical):** Original-ratio video, production cover, English caption and AI label were published and read back. Initial Share failed; after user reauthentication and a fresh same-account absence check, one retry succeeded, retaining failure/recovery history. The AI Content badge, exact caption and video scene were visible. The selected landscape cover is present, but profile-grid cropping cuts some text; grid fitting remains unresolved.
+- **X:** Real upload reached Ready and survived draft save/reopen. After explicit authorization it was submitted once; the original status showed the matching author, exact English text, Made with AI and a 1:19 embedded video. Full playback and anonymous access were not tested. No deletion; custom thumbnails remain unimplemented. [Procedure](DRAFT_TESTING_EN.md).
+- **Email:** Handoff, deduplication and result classification have offline tests; no test email was sent and delivery is unverified. A send tool must actually be available at execution.
+- **API playlists:** Scope checks, list-before-insert and uncertain-write suppression have mock tests, not live API acceptance.
+- **Chapters:** The hover menu entry was exercised. Four starts were checked before submission; the user confirmed mobile visibility; full post-review list inspection by the agent remains pending. [Procedure](CATEGORIES_AND_CHAPTERS_EN.md).
+- **Not completed:** YouTube cards/clickable end screens; X/Instagram APIs; unified analytics/comments; clean-machine/cross-OS installation acceptance. TikTok remains suspended.
+
+Private receipts, sign-in data, raw pages and test-account details stay local and are excluded from this code update.
+
+## 0.2.3 — Historical status
+
+- **Instagram deletion:** The operator explicitly authorized deletion of that test work. Confirmation returned to the profile; refresh showed 4 rather than 5 posts and no original work link. Both receipts are retained. Recovery and permanent purge were not tested.
+- **Instagram replacement:** The original video was uploaded to an unpublished preview. A dedicated Douyin portrait cover was still cropped in the landscape preview. The operator is inspecting Instagram; replacement publication is incomplete.
+- **X Media Studio:** After subscription Studio opened, but its library reported a setup failure after onboarding dismissal and reload. No custom thumbnail was saved; the existing X post was neither deleted nor reposted.
+- **Added tests:** Tests reject wrong identities/IDs, missing deletion or absence evidence, premature/duplicate reposts and changed video/settings; the allowed path retains history and cover snapshots.
+
+## 0.2.4 — Historical experiment
+
+- **Instagram original-ratio replacement:** The original-ratio replacement was shared, then deleted by the operator; a refreshed profile confirmed absence. The new 1920×1080 cover-lead version is about 79.5 seconds; sampled frames show cover at 0.5 s and original footage at 1.2 s. Original crop, English caption and AI disclosure were selected before sharing; success and a new work link were observed. The exact 1327-character caption, native AI badge and cover thumbnail were read back; the profile grid still crops the landscape artwork. Mobile cover selection remains operator acceptance.
+- **X Studio:** Direct library upload and persistent original 16:9 thumbnail succeeded. Newly authorized publication was read back with matching author, text, 1:19 video and cover; the earlier post remains. Text disclosure is present but the native AI badge was not observed. Full playback remains unverified.
+- **New tests:** Tests cover portrait/square passthrough, Instagram-only output, missing artwork, overwrite/duration guards, changed covers, duplicate lead prevention, and real FFmpeg duration/audio/frame-colour/reuse checks.
+

@@ -1,0 +1,235 @@
+"""Explicit comment management with exact targets and durable no-resend receipts."""
+import re
+import uuid
+from . import adapters, operations as ops, safety
+from .core import VpubError, atomic_json, digest, error_fields, home, language_tag, never_sent, now, publication_lock, read_json, receipt_turn, stop_check
+from .progress import stage
+
+SUPPORTED = {'bilibili': {'like', 'pin', 'delete', 'remove'}, 'instagram': {'like', 'delete'}, 'x': {'like', 'hide', 'delete'}, 'youtube': {'like', 'pin', 'edit', 'delete', 'remove', 'moderate'}, 'douyin': {'like', 'delete'}}
+PENDING = {'COMMENT_SUBMITTING', 'COMMENT_UNVERIFIED'}
+STATE_FIELD = {'like': 'liked', 'pin': 'pinned', 'hide': 'hidden', 'moderate': 'moderation_status', 'edit': 'text', 'delete': 'deleted', 'remove': 'deleted'}
+# State setters that can be undone. A person can have one of these pressed again; deleting and editing are looked at on the site itself.
+RESUMABLE = {'like', 'pin', 'hide', 'moderate'}
+# YouTube's API cannot do these, so they use Studio's own page on every route.
+STUDIO_ONLY = {'like', 'pin', 'remove'}
+
+
+def target(platform, work, comment_id):
+    ops.work_id(platform, work)
+    if not re.fullmatch(r'[A-Za-z0-9_.:-]{1,200}', comment_id):
+        raise VpubError('invalid_comment_id', 'Use an exact observed comment ID.')
+    path = home() / 'operations/comments' / (digest([platform, work]) + '.json')
+    if not path.exists(): raise VpubError('comment_snapshot_required', 'Read this work’s comments first.')
+    snapshot = read_json(path)
+    rows = [c for c in snapshot['items'] if c['id'] == comment_id]
+    if not rows:
+        from .operations_inbox import find
+        old = find(platform, snapshot['identity'], work, comment_id)
+        if old: rows = [old]
+    if len(rows) != 1: raise VpubError('comment_not_observed', 'The exact comment was not observed.', 'Run vpub comments list for this work again.')
+    return {'platform': platform, 'work_id': work, 'identity': snapshot['identity'], 'comment': rows[0]}
+
+
+def gone_for_certain(saved, after):
+    """A list that loads in part proves little by leaving a comment out, and a page can drop a row before the platform has agreed.
+    Together they settle it: a fresh read leaves it out, it vanished right after this one press, and the platform answered that press about this comment without objecting."""
+    if after.get('absent_from_loaded_list') and saved.get('gone_from_page') and saved.get('acknowledged'):
+        return {**after, 'deleted': True, 'source': 'answered_and_vanished_after_this_press'}
+    return after
+
+
+def refresh_snapshot(request):
+    """The next command can then name this comment without listing them all again. It still checks the live page before changing anything."""
+    path = home() / 'operations/comments' / (digest([request['platform'], request['work_id']]) + '.json')
+    if not path.exists() or request['kind'] not in {'edit', 'delete', 'remove'}: return
+    saved = read_json(path); comment = request['comment']['id']
+    if request['kind'] == 'edit':
+        for row in saved.get('items', []):
+            if row['id'] == comment: row['text'] = request['desired']
+    else:
+        saved['items'] = [row for row in saved.get('items', []) if row['id'] != comment]
+    atomic_json(path, saved)
+
+
+def dispatch(request, operation='status', receipt_path=None):
+    p = request['platform']; stop_check(p)
+    if p == 'bilibili' or (p == 'youtube' and adapters.addon_installed() and request.get('kind') not in STUDIO_ONLY):
+        from .comment_actions_api import execute
+        return execute(request, operation, receipt_path)
+    return adapters.browser_call(p, 'comment_management', 'default', expected_identity=request['identity'],
+        request=request, operation=operation, receipt_path=str(receipt_path) if receipt_path else None)
+
+
+def status(platform, work, comment_id):
+    if not SUPPORTED.get(platform): raise VpubError('unsupported_operation', 'Comment management has no verified adapter on this platform.')
+    request = target(platform, work, comment_id)
+    return {**dispatch(request), 'platform': platform, 'work_id': work, 'comment_id': comment_id, 'platform_writes': 0}
+
+
+def submitting(path):
+    """A press's last step. Only an attempt still waiting gets past here: one that a newer attempt closed, or whose command has given up and given its count back, presses nothing."""
+    with receipt_turn(path):
+        saved = read_json(path)
+        if saved.get('state') != 'COMMENT_READY': raise VpubError('attempt_replaced', 'A newer attempt took this over, or this one had already ended, so this one pressed nothing.')
+        saved.update(state='COMMENT_SUBMITTING', submitted_at=now())
+        atomic_json(path, saved)
+    stage('pressing')
+
+
+def matches(request, observed):
+    if observed.get('identity') != request['identity']: return False
+    key = STATE_FIELD[request['kind']]
+    return observed.get(key) == request['desired'] and (key in {'text','moderation_status'} or type(observed.get(key)) is bool)
+
+
+def edited_words(text, old, language, written_by):
+    """An edit says who wrote it, as a reply does. The label goes in the language of the one the new words already carry, then the one asked for, then their script, then the label on the old words."""
+    hint = ops.language_hint(text)
+    chosen = (safety.label_language(text) or (language_tag(language).lower().split('-')[0] if language != 'auto' else None)
+              or (hint if hint != 'und' else None) or safety.label_language(old))
+    words = safety.labelled(text, chosen, written_by)
+    if len(words) > 2000:
+        raise VpubError('invalid_text', 'Supply nonempty comment text of at most 2000 characters, including the AI label.')
+    return words
+
+
+def mutate(platform, work, comment_id, kind, desired=True, dry_run=False, test_id=None, written_by='ai', language='auto'):
+    if kind not in SUPPORTED.get(platform, set()):
+        raise VpubError('unsupported_operation', 'This comment action is not supported on this platform.')
+    if kind=='moderate':
+        if desired not in {'published','heldForReview'}:raise VpubError('invalid_action','Choose published or heldForReview. Rejection/author bans are not implicit actions.')
+    elif kind == 'edit':
+        if not isinstance(desired, str) or not desired.strip() or len(desired) > 2000 or '\x00' in desired:
+            raise VpubError('invalid_text', 'Supply nonempty comment text of at most 2000 characters.')
+        safety.check_text(desired, False, 'An edit has no way round this. Write it without them, or reply with --allow-link if a person chose to share them.')
+    elif type(desired) is not bool or (kind in {'delete', 'remove'} and not desired):
+        raise VpubError('invalid_action', 'Invalid target state.')
+    if test_id and not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', test_id): raise VpubError('invalid_test_id', 'Use a short test label.')
+    found = target(platform, work, comment_id)
+    if kind == 'edit':
+        desired = edited_words(desired, found['comment'].get('text'), language, written_by)
+    request = {**found, 'kind': kind, 'desired': desired}
+    if kind=='moderate' and request['comment'].get('is_owner'):
+        raise VpubError('other_author_required','Use a viewer comment for moderation. The live self-comment probe did not change state.')
+    if kind in {'edit', 'delete'} and not request['comment'].get('is_owner'):
+        raise VpubError('own_comment_required', 'Editing/deleting is restricted to your own comments on your own work.')
+    if kind == 'remove' and request['comment'].get('is_owner'):
+        raise VpubError('other_author_required', 'Remove is for a viewer\'s comment; use delete for your own.')
+    with publication_lock():
+        index = home() / 'operations/comment-targets' / (digest([platform, request['identity'], work, comment_id]) + '.json')
+        if index.exists():
+            prior_path = home() / 'operations/comment-actions' / (read_json(index)['key'] + '.json')
+            with receipt_turn(prior_path):
+                prior = read_json(prior_path)
+                if prior['state'] in PENDING:
+                    again = ' If it is unchanged, comments resume-action KEY tries once more.' if prior['request']['kind'] in RESUMABLE else ' If it is unchanged, look at it on the site.'
+                    return {**prior, 'platform_writes': 0, 'reused': True, 'hint': 'Use comments verify-action KEY; no automatic resend or reversal.' + again}
+                if prior['state'] == 'COMMENT_READY':
+                    # A command killed part way can still be running in the shared background browser, so this attempt closes as its count goes back.
+                    prior['state'] = 'COMMENT_REPLACED'; atomic_json(prior_path, prior)
+                    safety.reclaim(prior_path, prior)
+        before = dispatch(request)
+        if matches(request, before): return {'state': 'NO_CHANGE', 'platform_writes': 0, 'observed': before}
+        if before.get('deleted'): raise VpubError('comment_missing', 'The comment is no longer present.')
+        if before.get('absent_from_loaded_list'):
+            raise VpubError('comment_not_visible', 'This comment is not on the page that loaded, so nothing changed.', 'Run vpub comments list for this work again.')
+        if kind in {'like','pin','hide'} and type(before.get({'like':'liked','pin':'pinned','hide':'hidden'}[kind])) is not bool:
+            raise VpubError('state_unavailable', 'Exact comment action state is unavailable.')
+        if kind=='moderate' and before.get('moderation_status') not in {'published','heldForReview'}:
+            raise VpubError('state_unavailable','Exact moderation status is unavailable; no write attempted.')
+        if before.get('text') != request['comment']['text']:
+            raise VpubError('comment_changed', 'The comment text changed; read it again before changing it.')
+        counted = kind == 'like' and desired is True
+        if dry_run:
+            if counted: safety.admit('like', platform, request['identity'], reserve=False)
+            return {'state': 'DRY_RUN', 'request': request, 'observed': before, 'platform_writes': 0}
+        ticket = safety.admit('like', platform, request['identity']) if counted else None
+        key = uuid.uuid4().hex; path = home() / 'operations/comment-actions' / (key + '.json')
+        saved = {'key': key, 'state': 'COMMENT_READY', 'request': request, 'before': before, 'at': now(),
+                 'test': bool(test_id), 'test_id': test_id, 'platform_writes': 0, 'safety_ticket': ticket}
+        atomic_json(path, saved); atomic_json(index, {'key': key})
+        try:
+            result = dispatch(request, 'set', path)
+            saved = {**read_json(path), **result}
+            atomic_json(path, saved)
+            after = gone_for_certain(saved, dispatch({**request, 'verification': True}))
+            state = 'COMMENT_VERIFIED' if matches(request, after) else 'COMMENT_UNVERIFIED'
+            if result.get('state') == 'NO_CHANGE' and state == 'COMMENT_VERIFIED': state = 'NO_CHANGE'
+            saved.update(after=after, state=state)
+            if state == 'COMMENT_VERIFIED': refresh_snapshot(request)
+        except Exception as exc:
+            with receipt_turn(path):
+                saved = read_json(path)
+                saved.update(state='COMMENT_UNVERIFIED' if saved['state'] in PENDING and not never_sent(exc) else 'COMMENT_FAILED', **error_fields(exc, 'error_code'))
+                saved['platform_writes'] = None if saved['state'] == 'COMMENT_UNVERIFIED' else 0
+                atomic_json(path, saved)
+            if saved['state'] == 'COMMENT_FAILED': safety.release(ticket)
+        atomic_json(path, saved)
+        return ops.record('comment_management', platform, work, saved)
+
+
+def verify(key):
+    if not re.fullmatch(r'[a-f0-9]{32}', key): raise VpubError('invalid_receipt', 'Use a comment action key.')
+    path = home() / 'operations/comment-actions' / (key + '.json')
+    if not path.exists(): raise VpubError('receipt_required', 'Comment action receipt not found.')
+    with publication_lock():
+        r = read_json(path)['request']
+        observed = dispatch({**r, 'verification': True})
+        # That read can queue behind a killed command's press, so what it finds goes onto the receipt as it stands now.
+        with receipt_turn(path):
+            saved = read_json(path)
+            after = gone_for_certain(saved, observed)
+            if saved['state'] in PENDING | {'COMMENT_VERIFIED'}:
+                saved['state'] = 'COMMENT_VERIFIED' if matches(r, after) else 'COMMENT_UNVERIFIED'
+                if saved['state'] == 'COMMENT_VERIFIED': refresh_snapshot(r)
+            if saved['state']=='COMMENT_VERIFIED' and saved.get('error_code'):
+                saved.setdefault('resolved_errors',[]).append({'code':saved.pop('error_code'),'resolved_at':now()});saved.pop('error_message',None)
+            saved.update(after=after, verified_at=now()); atomic_json(path, saved)
+        ops.record('comment_management', r['platform'], r['work_id'], saved)
+        return {**saved, 'platform_writes': 0}
+
+
+def resume(key):
+    """Explicit recovery only for reversible state setters, never an automatic retry."""
+    if not re.fullmatch(r'[a-f0-9]{32}',key):raise VpubError('invalid_receipt','Use a comment action key.')
+    path=home()/'operations/comment-actions'/(key+'.json')
+    if not path.exists():raise VpubError('receipt_required','Comment action receipt not found.')
+    with publication_lock():
+        saved=read_json(path);r=saved['request']
+        if r['kind'] not in RESUMABLE or saved['state'] not in PENDING:
+            raise VpubError('resume_unavailable','Only a pending like, pin, hide or moderation change can be explicitly resumed.')
+        index=home()/'operations/comment-targets'/(digest([r['platform'],r['identity'],r['work_id'],r['comment']['id']])+'.json')
+        if not index.exists() or read_json(index)['key']!=key:
+            raise VpubError('stale_receipt','This is no longer the current action for the comment.')
+        current=dispatch({**r,'verification':True})
+        # That read can queue behind a killed command's press, so what it finds goes onto the receipt as it stands now.
+        with receipt_turn(path):
+            saved=read_json(path)
+            if saved['state'] not in PENDING:
+                raise VpubError('resume_unavailable','Only a pending like, pin, hide or moderation change can be explicitly resumed.')
+            if matches(r,current):
+                saved.update(state='COMMENT_VERIFIED',after=current,verified_at=now());atomic_json(path,saved)
+                return {**saved,'platform_writes':0}
+            field=STATE_FIELD[r['kind']]
+            # Which check it was, and never the words or IDs it compared.
+            stopped=[reason for reason,failed in (('the account differs',current.get('identity')!=r['identity']),('the comment text differs',current.get('text')!=r['comment']['text']),
+                                                  ('its state could not be read',current.get(field) is None),
+                                                  ('its state differs from before',current.get(field) is not None and current.get(field)!=saved['before'].get(field))) if failed]
+            if stopped:
+                raise VpubError('state_unavailable','Cannot establish the exact original state; no retry was made.','Stopped because '+', and '.join(stopped)+'.')
+            saved.setdefault('recovery_attempts',[]).append({'at':now(),'before':current,'previous_error':saved.get('error_code'),
+                                                             'previous_platform_writes':saved.get('platform_writes')})
+            saved.update(state='COMMENT_READY',platform_writes=0);saved.pop('error_code',None);atomic_json(path,saved)
+        try:
+            result=dispatch(r,'set',path)
+            saved={**read_json(path),**result}
+            after=dispatch({**r,'verification':True})
+            saved.update(after=after,state='COMMENT_VERIFIED' if matches(r,after) else 'COMMENT_UNVERIFIED')
+        except Exception as exc:
+            with receipt_turn(path):
+                saved=read_json(path)
+                saved.update(state='COMMENT_UNVERIFIED' if saved['state'] in PENDING else 'COMMENT_FAILED',**error_fields(exc,'error_code'))
+                saved['platform_writes']=None if saved['state']=='COMMENT_UNVERIFIED' else 0
+                atomic_json(path,saved)
+        atomic_json(path,saved)
+        return ops.record('comment_management',r['platform'],r['work_id'],saved)

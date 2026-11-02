@@ -1,0 +1,6 @@
+interface:
+  display_name: "PublishOps CrossCast"
+  short_description: "Publish and manage videos across supported platforms"
+  default_prompt: "Use $publishops-crosscast to manage my videos through the vpub CLI."
+policy:
+  allow_implicit_invocation: true

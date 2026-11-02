@@ -1,11 +1,10 @@
-from copy import deepcopy
 import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-from video_publisher import adapters, cli, metadata, native_browser
+from video_publisher import cli, metadata, native_browser
 from video_publisher.core import atomic_json, load_plan, read_json, VpubError
 
 
@@ -24,6 +23,8 @@ class MetadataTests(unittest.TestCase):
         self.value['platforms']['youtube']['category_id']='1'  # Synthetic fixture only.
         self.value['platforms']['instagram'] = {'method':'native','visibility':'account','ai_generated':True}
         self.value['platforms']['x'] = {'method':'native','visibility':'account','ai_generated':True}
+        for platform in self.value['platforms'].values():
+            platform['metadata_mode']='bilingual'  # Japanese content requires source plus every selected platform's target.
         atomic_json(self.path, self.value)
 
     def tearDown(self):
@@ -31,13 +32,17 @@ class MetadataTests(unittest.TestCase):
         self.temp.cleanup()
 
     def prepared_response(self):
-        job = metadata.request(self.path, bilingual=['youtube'])
+        job = metadata.request(self.path)
         response = {'request_id':job['request_id'],'platforms':{p: {
             'title':'测试' if p in ('bilibili','douyin') else 'Test',
             'description':'内容' if p in ('bilibili','douyin') else 'Video description',
             'tags':['AI'],'metadata_language':t['language'],'metadata_mode':t['mode']}
             for p,t in job['targets'].items()}}
         response['platforms']['youtube']['category_id']='1'
+        for p, text in response['platforms'].items():
+            if job['targets'][p]['mode']=='bilingual':
+                text['description_parts']=['原文の説明', text['description']]
+                text['description']='\n\n'.join(text['description_parts'])
         req, out = self.root/'request.json', self.root/'response.json'
         atomic_json(req,job)
         atomic_json(out,response)
@@ -51,7 +56,7 @@ class MetadataTests(unittest.TestCase):
         self.assertEqual('zh-Hans',value['platforms']['douyin']['metadata_language'])
         self.assertEqual('en',value['platforms']['x']['metadata_language'])
         self.assertEqual('bilingual',value['platforms']['youtube']['metadata_mode'])
-        self.assertEqual('target_only',value['platforms']['bilibili']['metadata_mode'])
+        self.assertEqual('bilingual',value['platforms']['bilibili']['metadata_mode'])
         self.assertEqual(self.value, read_json(self.path))
         self.assertEqual(0,result['platform_writes'])
 
@@ -110,15 +115,14 @@ class MetadataTests(unittest.TestCase):
         with self.assertRaises(VpubError):
             native_browser.begin(key,identity)
 
-    def test_douyin_private_cover_native_only(self):
+    def test_douyin_private_cover_browser_and_native(self):
         self.value['cover']=str(self.cover)
         self.value['platforms']['douyin']['visibility']='private'
         atomic_json(self.path,self.value)
         self.assertEqual('private',load_plan(self.path,['douyin'])['platforms']['douyin']['visibility'])
         self.value['platforms']['douyin']['method']='browser'
         atomic_json(self.path,self.value)
-        with self.assertRaises(VpubError):
-            load_plan(self.path,['douyin'])
+        self.assertEqual('browser', load_plan(self.path,['douyin'])['platforms']['douyin']['method'])
 
     def test_chapter_translation_preserves_timing(self):
         self.value['platforms']['youtube']['chapters']=[{'start_seconds':0,'title':'開始'}]
@@ -134,29 +138,4 @@ class MetadataTests(unittest.TestCase):
         result=metadata.apply(self.path,req,path,self.root/'output.json')
         self.assertEqual('Start',read_json(result['manifest'])['platforms']['youtube']['chapters'][0]['title'])
 
-    def test_playlist_insert_dedup_and_uncertain_retry_suppressed(self):
-        service=MagicMock()
-        api=service.playlistItems.return_value
-        api.list.return_value.execute.return_value={'items':[{'id':'existing'}]}
-        receipt={'id':'abcdefghijk'}
-        adapters.ensure_youtube_playlists(service,receipt['id'],['PL12345678'],receipt,lambda r:None)
-        api.insert.assert_not_called()
-        self.assertEqual('VERIFIED',receipt['playlists']['PL12345678']['state'])
-        api.list.return_value.execute.return_value={'items':[]}
-        api.insert.return_value.execute.side_effect=TimeoutError
-        receipt={'id':'abcdefghijk'}
-        checkpoints=[]
-        for _ in range(2):
-            adapters.ensure_youtube_playlists(service,receipt['id'],['PL12345678'],receipt,lambda r:checkpoints.append(deepcopy(r)))
-        self.assertEqual(1,api.insert.call_count)
-        self.assertEqual('ADDING',checkpoints[0]['playlists']['PL12345678']['state'])
-        self.assertEqual('UNKNOWN',receipt['playlists']['PL12345678']['state'])
-        self.assertEqual('abcdefghijk',receipt['id'])
 
-    def test_playlist_scope_missing_blocks_before_upload(self):
-        creds=MagicMock()
-        creds.has_scopes.return_value=False
-        with patch.object(adapters,'yt_credentials',return_value=creds), patch.object(adapters,'auth_status') as status:
-            with self.assertRaises(VpubError):
-                adapters.preflight('youtube',{'method':'api','account':'default','playlist_ids':['PL12345678']})
-            status.assert_not_called()

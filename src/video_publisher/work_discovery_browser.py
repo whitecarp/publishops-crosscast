@@ -1,0 +1,113 @@
+"""Bounded official-page discovery and fresh per-work management proof."""
+import re
+from urllib.parse import urlsplit
+from . import x_pages
+from .core import VpubError, stop_check
+from .browser_runtime import risk_check, unique_visible
+from .browser_backends import MANAGE, douyin_card_id, douyin_card_is_waiting, douyin_card_status, douyin_editor_address, links, work_url
+from .browser_edits import douyin_fields
+
+EMPTY_LIST = re.compile(r'暂无作品|暂无内容|No posts yet|hasn.t posted', re.I)
+
+
+async def scan(page, platform, identity, limit, pages):
+    if type(limit) is not int or not 1 <= limit <= 200 or type(pages) is not int or not 1 <= pages <= 10:
+        raise VpubError('invalid_limit','Use limit 1–200 and pages 1–10.')
+    url = MANAGE if platform=='douyin' else f'https://www.instagram.com/{identity}/' if platform=='instagram' else f'https://x.com/{identity}'
+    await page.goto(url,wait_until='domcontentloaded',timeout=60000)
+    rows={}; reason='page_budget'; stalled=0; omitted=0
+    for index in range(pages):
+        stop_check(platform); await risk_check(page)
+        await page.wait_for_timeout(2000 if index else 4000)
+        if platform=='douyin' and not index:
+            # The creator list fills in some time after the page shows.
+            for _ in range(20):
+                if await page.locator('[class^="info-title-text-"]').count() or EMPTY_LIST.search(await page.locator('body').inner_text()): break
+                await page.wait_for_timeout(1000)
+        before=len(rows)
+        # Scope link extraction to the authenticated account profile, not recommendation rails.
+        found=await links(page,platform,identity)
+        if platform=='instagram':
+            hrefs=await page.locator('main a[href]').evaluate_all('es=>es.map(e=>e.href)')
+            ids={m[1] for href in hrefs if (m:=re.search(r'/(?:p|reel)/([\w-]+)/?',urlsplit(href).path))}
+            found={k:v for k,v in found.items() if k in ids}
+        rows.update(found)
+        if platform=='douyin':
+            titles=page.locator('[class^="info-title-text-"]')
+            for title in (await titles.all())[:max(0,limit-len(rows))]:
+                text=await title.inner_text()
+                card=title.locator('xpath=ancestor::div[starts-with(@class,"video-card-content-")]')
+                if douyin_card_is_waiting(await douyin_card_status(card)): omitted+=1; continue
+                k=await douyin_card_id(page,title,card)
+                if not k: omitted+=1; continue
+                rows[k]={'id':k,'text':text,'url':work_url(platform,identity,k)}
+        if len(rows)>=limit: reason='item_budget'; break
+        if index+1>=pages: break
+        stalled=stalled+1 if len(rows)==before else 0
+        if stalled>=2: reason='no_new_rows'; break
+        if platform=='douyin':
+            next_button=page.locator('li.ant-pagination-next:not(.ant-pagination-disabled), button[aria-label="下一页"]:not([disabled])')
+            if await next_button.count()==1 and await next_button.is_visible():
+                await next_button.click(); continue
+        moved=await page.evaluate('''() => {
+          const nodes=[document.scrollingElement,...document.querySelectorAll('main,main div')];
+          const e=nodes.filter(e=>e && e.clientHeight>200 && e.scrollHeight>e.clientHeight+4)
+            .filter(e=>e===document.scrollingElement || /auto|scroll/.test(getComputedStyle(e).overflowY))
+            .sort((a,b)=>b.clientHeight-a.clientHeight)[0];
+          if(!e)return false;const before=e.scrollTop;e.scrollTop+=Math.max(300,e.clientHeight*.85);return e.scrollTop!==before;
+        }''')
+        if not moved: reason='no_visible_continuation'; break
+    if not rows:
+        body=await page.locator('body').inner_text()
+        if not EMPTY_LIST.search(body):
+            raise VpubError('works_layout_unverified','No verified works or explicit empty state; discovery is incomplete.')
+    return {'identity':identity,'items':list(rows.values())[:limit],'pages_read':index+1,
+            'complete':False,'next_cursor':None,'stop_reason':reason,'omitted_cards':omitted,
+            'source':'official_profile_or_creator_list','platform_writes':0}
+
+
+async def douyin_title(page,work):
+    """A card's title node goes on to hold the caption, so a work's title alone comes from its edit page. Covers and chapters compare it, and refuse a work with none on record."""
+    from patchright.async_api import Error as BrowserError
+    try:
+        box,_=await douyin_fields(page,douyin_editor_address(work),work)
+        return await box.input_value() or None
+    except BrowserError: return None
+    except VpubError as failure:
+        if failure.code not in {'layout_changed','wrong_work'}: raise
+        return None
+
+
+async def execute(page,platform,identity,payload):
+    from .operations import work_id
+    if payload['action']=='discover_works':
+        return await scan(page,platform,identity,payload['limit'],payload['pages'])
+    work=work_id(platform,payload['work_id'])
+    title=None
+    if platform=='douyin':
+        result=await scan(page,platform,identity,200,payload['pages'])
+        matches=[v for v in result['items'] if v['id']==work]
+        if len(matches)!=1: raise VpubError('owner_unverified','Work not found in this account’s bounded creator list; increase --pages if needed.')
+        title=await douyin_title(page,work); evidence='authenticated_creator_card_and_exact_work_id'
+    else:
+        from .operations_browser import open_work, x_root
+        await open_work(page,platform,identity,work)
+        if platform=='x':
+            post=await x_pages.post_fields(await x_root(page,identity,work))
+            if not post or post['id']!=work or post['author'].casefold()!=identity.casefold():
+                raise VpubError('owner_unverified','Exact post author was not verified.')
+            evidence='exact_post_permalink_and_author'
+        else:
+            more=await unique_visible(page.locator('svg[aria-label="More options"]'),'post menu')
+            await more.click()
+            edit=page.get_by_role('button',name='Edit',exact=True)
+            try: await edit.wait_for(state='visible',timeout=8000)
+            except Exception: pass
+            if await edit.count()!=1 or not await edit.is_visible():
+                await page.keyboard.press('Escape')
+                raise VpubError('owner_unverified','The work does not expose an owner Edit control.')
+            # Inspecting the menu is read-only; do not enter edit or save.
+            await page.keyboard.press('Escape'); evidence='exact_work_and_owner_edit_control'
+    await risk_check(page)
+    return {'identity':identity,'work_id':work,'title':title,'url':work_url(platform,identity,work),
+            'owner_verified':True,'ownership_evidence':evidence,'platform_writes':0}

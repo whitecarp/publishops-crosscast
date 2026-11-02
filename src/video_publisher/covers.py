@@ -1,18 +1,106 @@
 """Fit existing artwork without cropping. Presets are working canvas sizes,
 not universal platform limits. Baked-in text is not translated by this module.
+Only a portrait cover built from chosen parts crops, and only to the parts it was given.
 """
 from copy import deepcopy
+import os
 from pathlib import Path
+import re
 import tempfile
-from PIL import Image, ImageOps, UnidentifiedImageError
-from .core import VpubError, atomic_json, digest, file_sha, load_plan, read_json
+import shutil
+from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
+from .core import VpubError, atomic_json, digest, file_sha, load_plan, read_json, shared_portrait
 
 PRESETS = {
     "bilibili": {"landscape": (1600, 1000)},
     "youtube": {"landscape": (1920, 1080)},
     "douyin": {"landscape": (1200, 900), "portrait": (1080, 1440)},
-    "instagram": {"portrait": (1080, 1920)},
+    "instagram": {"landscape": (1920, 1080), "portrait": (1080, 1920)},
+    "x": {"landscape": (1920, 1080)},
 }
+BACKGROUND = "#151923"
+# A 9:16 cover whose central 3:4 area holds everything that matters, so Instagram's full frame and Douyin's crop both keep it.
+CANVAS = (1080, 1920)
+SAFE = (0, 240, 1080, 1440)
+MARGIN = 60
+GAP = 24
+MOST_PARTS = 3
+SMALLEST_SIDE = 100
+# Below this the parts would float in a band of background, which is a letterboxed landscape in all but name.
+LEAST_FILL = 0.6
+SOFT_ABOVE = 2.5
+
+
+def parse_box(value, width, height):
+    found = re.fullmatch(r"(\d+),(\d+),(\d+),(\d+)", value or "")
+    if not found:
+        raise VpubError("invalid_box", "Write each part as x,y,width,height in the source image's pixels.")
+    left, top, wide, tall = map(int, found.groups())
+    if wide < SMALLEST_SIDE or tall < SMALLEST_SIDE or left + wide > width or top + tall > height:
+        raise VpubError("invalid_box", f"Each part must be at least {SMALLEST_SIDE} pixels on both sides and inside the {width}x{height} source.")
+    return left, top, wide, tall
+
+
+def layout(boxes):
+    """Where each part lands: as wide as the safe area allows, stacked and centred. The stack must fill that area."""
+    room_wide, room_tall = SAFE[2] - 2 * MARGIN, SAFE[3] - 2 * MARGIN
+    gaps = GAP * (len(boxes) - 1)
+    natural = sum(tall * room_wide / wide for _, _, wide, tall in boxes)
+    shrink = min(1, (room_tall - gaps) / natural)
+    stack = natural * shrink + gaps
+    if stack < LEAST_FILL * room_tall:
+        raise VpubError("would_letterbox", "These parts would sit in a band across the cover, which reads as a letterboxed landscape.",
+                        "Give a taller part, or separate parts for the subject and the title so they stack.")
+    placed, top = [], SAFE[1] + (SAFE[3] - stack) / 2
+    for box in boxes:
+        scale = shrink * room_wide / box[2]
+        wide, tall = round(box[2] * scale), round(box[3] * scale)
+        placed.append({"box": list(box), "placed": [(CANVAS[0] - wide) // 2, round(top), wide, tall], "scale": round(scale, 3)})
+        top += tall + GAP
+    return placed
+
+
+def portrait(source, boxes, output):
+    """Lay chosen parts of an image into a portrait cover, with no AI. The agent looks at the image and picks the parts."""
+    source, output = Path(source).resolve(), Path(output).resolve()
+    if not source.is_file() or source.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
+        raise VpubError("invalid_cover", "Choose a complete production JPG/PNG.")
+    if output.suffix.lower() not in {".jpg", ".jpeg"}:
+        raise VpubError("invalid_output", "The portrait cover is saved as a .jpg file.")
+    if output.exists():
+        raise VpubError("already_exists", "Choose a new output path; existing artwork will not be overwritten.")
+    if not boxes or len(boxes) > MOST_PARTS:
+        raise VpubError("invalid_box", f"Give from 1 to {MOST_PARTS} parts with --box.")
+    before = file_sha(source)
+    try:
+        with Image.open(source) as opened:
+            if opened.width * opened.height > 40000000:
+                raise VpubError("invalid_cover", "Cover exceeds the 40-megapixel processing limit.")
+            image = ImageOps.exif_transpose(opened).convert("RGB")
+    except (OSError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
+        raise VpubError("invalid_cover", "Cannot decode the production image.") from exc
+    parts = layout([parse_box(value, image.width, image.height) for value in boxes])
+    blurred = ImageOps.fit(image, CANVAS, Image.Resampling.LANCZOS).filter(ImageFilter.GaussianBlur(60))
+    canvas = Image.blend(blurred, Image.new("RGB", CANVAS, BACKGROUND), 0.45)
+    for part in parts:
+        left, top, wide, tall = part["box"]
+        canvas.paste(image.crop((left, top, left + wide, top + tall)).resize(tuple(part["placed"][2:]), Image.Resampling.LANCZOS), tuple(part["placed"][:2]))
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".crosscast-portrait-", dir=output.parent) as tmp:
+        target = Path(tmp) / output.name
+        for quality in (92, 85, 75, 60):
+            canvas.save(target, "JPEG", quality=quality, optimize=True)
+            if target.stat().st_size <= 1900000:
+                break
+        else:
+            raise VpubError("cover_too_large", "Output exceeds the conservative local file-size budget.")
+        if file_sha(source) != before:
+            raise VpubError("source_changed", "Artwork changed during preparation; retry after it finishes.")
+        os.replace(target, output)
+    return {"state": "PREPARED", "mode": "layout_without_ai", "path": str(output), "sha256": file_sha(output), "bytes": output.stat().st_size,
+            "size": list(CANVAS), "safe_area": {"left": SAFE[0], "top": SAFE[1], "width": SAFE[2], "height": SAFE[3]}, "parts": parts,
+            "soft_parts": [number for number, part in enumerate(parts, 1) if part["scale"] > SOFT_ABOVE], "source_sha256": before, "platform_writes": 0,
+            "next": "Look at the result before using it: text must read clearly and nothing important may be cut. Then pass it to covers prepare with --portrait."}
 
 
 def prepare(manifest, source, out_dir, output, portrait=None):
@@ -21,22 +109,28 @@ def prepare(manifest, source, out_dir, output, portrait=None):
     original = read_json(path)
     load_plan(path)
     portrait = Path(portrait).resolve() if portrait else None
+    variants = original.get('covers', {})
+    shared = shared_portrait(variants)
+    shared = portrait or ((path.parent / shared).resolve() if shared else None)
     jobs, skipped = [], {}
     for platform, opts in original["platforms"].items():
-        if platform == "x":
+        if platform == "x" and opts.get('method', 'browser') == 'native':
             skipped[platform] = "Custom thumbnails are not implemented; video thumbnail remains unchanged."
             continue
-        if platform == "douyin" and opts.get("method", "browser") != "native":
-            raise VpubError("unsupported_cover", "Douyin covers require method=native for subsequent application.")
         for role, size in PRESETS[platform].items():
             override = original.get("covers", {}).get(platform, {}).get(role)
-            asset = (path.parent / override).resolve() if override else portrait if role == "portrait" and portrait else source
+            if role == 'portrait' and platform in {'douyin','instagram'}:
+                if shared is None:
+                    raise VpubError('portrait_required', 'Supply a dedicated shared Douyin/Instagram portrait; a letterboxed landscape thumbnail is not a portrait composition.', 'The host should prepare one portrait with text/face inside the common grid safe area, then pass --portrait PATH.')
+                asset = shared
+            else:
+                asset = (path.parent / override).resolve() if override else source
             if not asset.is_file() or asset.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
                 raise VpubError("invalid_cover", "Choose a complete production JPG/PNG or dedicated variant.")
             jobs.append({"platform": platform, "role": role, "size": list(size),
                          "source": str(asset), "source_sha256": file_sha(asset)})
-    recipe = {"version": 1, "manifest_sha256": digest(original), "jobs": jobs,
-              "mode": "contain", "background": "#151923", "skipped": skipped}
+    recipe = {"version": 2, "manifest_sha256": digest(original), "jobs": jobs,
+              "mode": "contain", "background": BACKGROUND, "skipped": skipped}
     recipe_hash = digest(recipe)
     receipt_path = directory / "cover-receipt.json"
     if directory.exists() or output.exists():
@@ -56,6 +150,21 @@ def prepare(manifest, source, out_dir, output, portrait=None):
     with tempfile.TemporaryDirectory(prefix=".crosscast-covers-", dir=directory.parent) as tmp:
         staging = Path(tmp)
         for job in jobs:
+            if job['role']=='portrait':
+                src=Path(job['source'])
+                with Image.open(src) as opened:
+                    if opened.height <= opened.width:
+                        raise VpubError('portrait_required', 'The shared portrait must have a portrait aspect ratio.')
+                    actual_size=[opened.width,opened.height]
+                filename='shared-douyin-instagram-portrait'+src.suffix.lower()
+                target=staging/filename
+                shutil.copyfile(src,target)
+                if file_sha(target)!=job['source_sha256']:
+                    raise VpubError('source_changed','Shared portrait changed during preparation.')
+                final=directory/filename
+                value['covers'].setdefault(job['platform'],{})[job['role']]=str(final)
+                assets.append({**job,'size':actual_size,'path':str(final),'sha256':file_sha(target),'bytes':target.stat().st_size,'mode':'shared_original'})
+                continue
             filename = job["platform"] + "-" + job["role"] + ".jpg"
             target = staging / filename
             try:
@@ -81,7 +190,8 @@ def prepare(manifest, source, out_dir, output, portrait=None):
             assets.append({**job, "path": str(final), "sha256": file_sha(target), "bytes": target.stat().st_size})
         receipt = {"recipe_sha256": recipe_hash, "manifest_sha256": digest(value), "assets": assets,
                    "skipped": skipped, "state": "PREPARED", "platform_writes": 0,
-                   "mode": "contain", "text_translated": False,
+                   "mode": "landscape_contain_shared_portrait", "text_translated": False,
+                   "portrait_policy": "Douyin and Instagram receive the identical portrait file/hash. Keep titles and faces within the central crop-safe area; mobile grid adjustment remains separately verified.",
                    "next": "Apply supported covers to the existing work and inspect each saved variant; preparation is not upload verification."}
         atomic_json(staging / "cover-receipt.json", receipt)
         staging.rename(directory)
