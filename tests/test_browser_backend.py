@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from video_publisher import adapters, cli
 from video_publisher.browser_backends import Transaction, execute, work_url, links
 from video_publisher.browser_runtime import profile_lock
-from video_publisher.core import VpubError, file_sha, read_json
+from video_publisher.core import Ledger, VpubError, file_sha, read_json
 
 
 class BrowserSafetyTests(unittest.TestCase):
@@ -75,6 +75,35 @@ class BrowserSafetyTests(unittest.TestCase):
         with patch('video_publisher.browser_forms.publish_douyin',new=AsyncMock(return_value={'state':'SUBMITTED_UNVERIFIED'})) as publish:
             asyncio.run(execute(AsyncMock(),'douyin','tester',{'action':'resume','plan':self.plan}))
         publish.assert_awaited_once()
+
+    def resume_record(self, *flags, method='browser'):
+        cover={'path':str(Path(self.tmp.name)/'cover.jpg'),'sha256':'b'*64}
+        plan={**self.plan,'cover':cover['path'],'covers':{'douyin':{'portrait':cover},'x':{'landscape':cover}}}
+        ledger=Ledger()
+        key=ledger.claim('douyin','default','c'*64,{'options':{'method':method},'upload_plan':plan,'approved_plan':plan,'identity':{'identity':'tester'},'receipt':{'state':'PREPARATION_INCOMPLETE'}})
+        ledger.close()
+        with patch.object(adapters,'browser_call',return_value={'state':'SUBMITTED_UNVERIFIED'}) as call:
+            return cli.execute(cli.parser().parse_args(['resume',key,*flags])),call
+
+    def test_a_resume_keeps_its_cover_unless_told_otherwise(self):
+        result,call=self.resume_record()
+        self.assertEqual(self.resume_cover_paths(call),(True,True))
+        self.assertNotIn('cover_left_out',result)
+
+    def test_a_resume_can_leave_out_a_cover_on_this_platform_only(self):
+        result,call=self.resume_record('--no-cover')
+        self.assertEqual(self.resume_cover_paths(call),(False,False))
+        self.assertEqual(['x'],list(call.call_args.kwargs['plan']['covers']))
+        self.assertIs(True,result['cover_left_out'])
+
+    def resume_cover_paths(self,call):
+        plan=call.call_args.kwargs['plan']
+        return bool(plan.get('cover')),'douyin' in plan['covers']
+
+    def test_leaving_out_a_cover_is_only_for_a_browser_attempt(self):
+        with self.assertRaises(VpubError) as caught:
+            self.resume_record('--no-cover',method='cli')
+        self.assertEqual('invalid_resume',caught.exception.code)
 
     def test_selected_instagram_media_cannot_be_uploaded_again_by_resume(self):
         tx=Transaction('instagram','tester',self.plan);tx.save(media_selected=True)

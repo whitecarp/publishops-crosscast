@@ -33,6 +33,11 @@ def only_a_preview(old, opts):
             and not (old["data"].get("receipt") or {}).get("final_submit_attempted"))
 
 
+def without_cover(plan, platform):
+    """This plan with nothing to choose as a cover on this platform, for one run. A field run's cover window kept a real post from going out, and its plan said no cover was better than no post."""
+    return {**plan, 'cover': None, 'covers': {name: value for name, value in (plan.get('covers') or {}).items() if name != platform}}
+
+
 def check_upload_copy(plan):
     """The private copy an attempt uploads. Cleanup only removes copies of finished publications."""
     if not Path(plan['video']).is_file():
@@ -498,6 +503,7 @@ def parser():
     q.add_argument("--out")
     q = sub.add_parser("resume", help="Resume a saved YouTube upload session or inspect an existing browser attempt; never blindly resubmit.")
     q.add_argument("key")
+    q.add_argument("--no-cover", action="store_true", help="Finish a browser attempt without its planned cover, when the cover is what keeps stopping it.")
     q = sub.add_parser("verify", help="Verify an existing work and complete its pending Douyin chapter step; never upload.")
     q.add_argument("key")
     q = sub.add_parser('edit', help='Correct an existing recorded work by ID; never upload/delete a video.')
@@ -654,6 +660,8 @@ def run_command(args):
                 if not row:
                     raise VpubError('invalid_resume', 'Use an existing upload receipt key.')
                 record = row['data']
+                if args.no_cover and record.get('options', {}).get('method') != 'browser':
+                    raise VpubError('invalid_resume', '--no-cover is only for an attempt on a browser route.')
                 if row['platform'] == 'youtube' and record.get('options', {}).get('method') == 'api':
                     receipt = record.get('receipt', {})
                     options = {**record['options'], 'expected_channel_id': record['identity']['identity']}
@@ -690,8 +698,12 @@ def run_command(args):
                     raise VpubError('invalid_resume', 'This backend has no automatic resumable session.')
                 plan, opts = record.get('upload_plan', record['approved_plan']), record['options']
                 check_upload_copy(plan)
+                if args.no_cover:
+                    plan = without_cover(plan, row['platform'])
                 result = adapters.browser_call(row['platform'], 'resume', row['account'],
                     expected_identity=record['identity']['identity'], plan={**plan, 'options':opts}, prior_receipt=record.get('receipt'))
+                if args.no_cover:
+                    result = {**result, 'cover_left_out': True}
                 record['receipt'] = result
                 ledger.save(args.key, result['state'], record)
                 return {'key':args.key, **result}
