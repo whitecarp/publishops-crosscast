@@ -20,6 +20,7 @@ MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", 
 WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 X_CHOSEN_TIME = re.compile(r'([A-Z][a-z]{2}) (\d{1,2})(?:, (\d{4}))?, (1[0-2]|[1-9]):([0-5]\d) ([AP]M)')
 X_SCHEDULE_DAY = re.compile(r'([A-Z][a-z]{2} \d{1,2}) ([A-Z][a-z]{2})')
+X_SCHEDULE_CLOCK = re.compile(r'(1[0-2]|[1-9]):[0-5]\d [AP]M')
 X_SCHEDULE_PAGE = "https://studio.x.com/schedule"
 X_SCHEDULE_HEADINGS = ["Date", "Time", "Post", "Media"]
 X_SCHEDULE_EMPTY = "Schedule posts from your Library or Producer to see them here"
@@ -562,24 +563,39 @@ def x_schedule_moment(when):
 
 
 def x_row_has_words(cells, words):
-    return normalize(cells[2]) == words
+    return len(cells) >= len(X_SCHEDULE_HEADINGS) and normalize(cells[2]) == words
+
+
+def x_row_is_a_post(cells):
+    """A field read found the empty page keeps its message in a row of its own, in a single cell. A row with a post's cells or its day is a post's, however far it has got."""
+    return len(cells) >= len(X_SCHEDULE_HEADINGS) or bool(X_SCHEDULE_DAY.fullmatch(normalize(cells[0])))
+
+
+def x_row_is_finished(cells):
+    """A row showing everything a field read's did: Nov 8 Sun, 9:11 PM, the words and the media."""
+    return (len(cells) >= len(X_SCHEDULE_HEADINGS) and bool(X_SCHEDULE_DAY.fullmatch(normalize(cells[0]))) and bool(X_SCHEDULE_CLOCK.fullmatch(normalize(cells[1])))
+            and bool(normalize(cells[2])) and bool(normalize(cells[3])))
 
 
 def x_row_has_schedule(cells, schedule):
     return x_row_says_schedule(cells[0], cells[1], schedule) and normalize(cells[3]) == "Video"
 
 
+async def x_schedule_rows(page):
+    """The cells of each row showing in the one table with these headings on Studio's schedule page, read together so that nothing is combined across a redraw. A review found rows in hidden or other tables could count."""
+    return await page.evaluate(X_SCHEDULE_TABLE, X_SCHEDULE_HEADINGS)
+
+
 async def x_schedule_read(page):
-    """What Studio's schedule page shows now: the cells of each row showing in the one table with these headings, read together so that nothing is combined across a redraw.
-    A review found rows in hidden or other tables could count. A field read found the empty page keeps its message in a row of its own, so only a row that starts with a day is one.
-    No rows is only an answer once the page says so in its own words, since a table can show its headings, or something in place of its rows, before its rows."""
-    rows = await page.evaluate(X_SCHEDULE_TABLE, X_SCHEDULE_HEADINGS)
+    """All the posts Studio's schedule page holds, once it can be taken at its word. Reviews found a table can show its headings, something in place of its rows, or rows still filling in, and any of those would say nothing like this post is there.
+    So every post's row has to be finished, and no rows is only an answer once the page says so in its own words."""
+    rows = await x_schedule_rows(page)
     if rows is None:
         return None
-    rows = [cells for cells in rows if len(cells) >= len(X_SCHEDULE_HEADINGS) and X_SCHEDULE_DAY.fullmatch(normalize(cells[0]))]
-    if rows or await visible(page.get_by_text(X_SCHEDULE_EMPTY, exact=True)):
-        return {"rows": rows}
-    return None
+    posts = [cells for cells in rows if x_row_is_a_post(cells)]
+    if posts:
+        return {"rows": posts} if all(x_row_is_finished(cells) for cells in posts) else None
+    return {"rows": []} if await visible(page.get_by_text(X_SCHEDULE_EMPTY, exact=True)) else None
 
 
 async def x_schedule_baseline(page, post_text, schedule):
@@ -613,9 +629,9 @@ async def verify_scheduled_x(page, identity, receipt):
     await page.goto(X_SCHEDULE_PAGE, wait_until="domcontentloaded", timeout=60000)
     words = normalize(receipt.get("expected_text") or receipt["title"])
 
+    # Another post's unfinished row doesn't stop this one being read: only the read before the upload needs them all.
     async def rows_with_its_words():
-        read = await x_schedule_read(page)
-        return [cells for cells in read["rows"] if x_row_has_words(cells, words)] if read else []
+        return [cells for cells in await x_schedule_rows(page) or [] if x_row_has_words(cells, words)]
     rows = await look_until(page, rows_with_its_words, X_SCHEDULE_SECONDS * 1000)
     await risk_check(page)
     matching = [cells for cells in rows if x_row_has_schedule(cells, receipt["schedule"])]

@@ -701,6 +701,9 @@ class ScheduleRowTests(ChromeCase):
         blank = "<tr>" + "<td>&nbsp;</td>" * 7 + "</tr>"
         for name, html in (("headings and no rows yet", self.table()), ("an empty page", ""), ("its empty message hidden", self.table(after=f'<p style="display: none">{empty}</p>')),
                            ("something in place of its rows", self.table('<tr><td colspan="6">Loading</td></tr>')), ("blank rows", self.table(blank, blank)),
+                           ("a row with only its day so far", self.table(self.row(clock="", words="", media=""))), ("a row with no time yet", self.table(self.row(clock="Loading..."))),
+                           ("a row with no words yet", self.table(self.row(words=""))), ("a row with no media yet", self.table(self.row(media=""))), ("only a day in its one cell", self.table("<tr><td>Nov 8 Sun</td></tr>")),
+                           ("a finished row beside an unfinished one", self.table(self.row(words="Other words"), self.row(clock=""))), ("an unfinished row and its empty message", self.table(self.row(clock=""), after=f"<p>{empty}</p>")),
                            ("two tables", self.table(self.row(), after=self.table(after=f"<p>{empty}</p>")))):
             with self.subTest(name):
                 self.assertIsNone(await self.baseline(html))
@@ -708,6 +711,11 @@ class ScheduleRowTests(ChromeCase):
     async def test_the_read_before_the_upload_waits_for_rows_to_come(self):
         late = """<script>window.pending = 1; setTimeout(() => { document.getElementById('rows').insertAdjacentHTML('beforeend', %s); window.pending = 0; }, 300);</script>""" % json.dumps(self.row())
         self.assertEqual(1, await self.baseline(self.table(after=late)))
+
+    async def test_another_posts_unfinished_row_does_not_hide_this_posts_row(self):
+        result = await self.read(self.row(words="", media=""), self.row())
+        self.assertEqual("SUBMISSION_VERIFIED", result["state"])
+        self.assertEqual((1, 1), (result["schedule_rows_with_its_words"], result["schedule_rows_matching"]))
 
     async def test_a_row_that_does_not_match_settles_nothing(self):
         for name, row in (("another time", self.row(clock="9:12 PM")), ("the morning", self.row(clock="9:11 AM")), ("another day", self.row(day="Nov 9", weekday="Mon")), ("another month", self.row(day="Dec 8", weekday="Tue")),

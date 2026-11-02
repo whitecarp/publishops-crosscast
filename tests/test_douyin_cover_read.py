@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from patchright.async_api import Error as BrowserError, TimeoutError as BrowserTimeout
+
 from video_publisher import browser_backends, browser_edits
 from video_publisher.core import VpubError, file_sha, read_json
 
@@ -146,6 +148,28 @@ class DouyinCoverReadTests(unittest.IsolatedAsyncioTestCase):
         self.choose.assert_awaited_once()
         # Only open the picker and finish the local choice; never press Save.
         self.assertEqual(2, self.control.click.await_count)
+        self.capture.assert_not_awaited()
+        self.assertFalse(self.output.exists())
+
+    def window_stops_with(self, problem):
+        async def wait_for(state=None, **kwargs):
+            if state == "hidden":
+                raise problem
+        self.control.wait_for = AsyncMock(side_effect=wait_for)
+
+    async def test_a_cover_window_that_runs_out_of_time_says_so_and_saves_nothing(self):
+        self.window_stops_with(BrowserTimeout("Timeout exceeded"))
+        with self.assertRaises(VpubError) as caught:
+            await self.edit()
+        self.assertEqual("cover_not_ready", caught.exception.code)
+        self.capture.assert_not_awaited()
+        self.assertFalse(self.output.exists())
+
+    async def test_a_browser_that_closes_at_the_cover_window_is_not_called_slow(self):
+        """From a review: any browser failure there was reported as three minutes of processing."""
+        self.window_stops_with(BrowserError("Target page, context or browser has been closed"))
+        with self.assertRaises(BrowserError):
+            await self.edit()
         self.capture.assert_not_awaited()
         self.assertFalse(self.output.exists())
 

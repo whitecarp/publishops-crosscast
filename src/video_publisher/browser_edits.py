@@ -129,10 +129,10 @@ async def execute(page, platform, identity, payload):
             await choose_file(page,area.locator('input.semi-upload-hidden-input'),patch['portrait'])
             await page.wait_for_timeout(1500)
             await dialog.get_by_role('button',name='完成',exact=True).click()
-            from patchright.async_api import Error as BrowserError
+            from patchright.async_api import TimeoutError as BrowserTimeout
             try:
                 await dialog.wait_for(state='hidden',timeout=DOUYIN_COVER_SECONDS*1000)
-            except BrowserError:
+            except BrowserTimeout:
                 # A field run saw the window greyed out and working for over three minutes after 完成. Why isn't known, and nothing has been saved at this point.
                 raise VpubError('cover_not_ready',f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so the work was not saved.",'Nothing changed. Try again later, or change the cover on Douyin\'s own page.') from None
             save_button=await visible(page.get_by_role('button',name=re.compile(r'^(保存|保存修改|提交修改|发布)$')))
