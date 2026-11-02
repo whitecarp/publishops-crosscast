@@ -36,6 +36,14 @@ def part_left_undone(receipt):
     return receipt.get("chapters_state") not in {None, "VERIFIED"} or receipt.get("widgets_state") not in {None, "VERIFIED"} or (isinstance(season, dict) and season.get("added") is False)
 
 
+def presses_on_record(saved, other):
+    """What one copy of a browser receipt says about a press that the other doesn't. A killed command's worker finishes by itself, so either copy can be the newer, and a review found resume could press again after an older one was saved over a newer."""
+    kept = {name: True for name in ("final_submit_attempted", "media_selected") if saved.get(name) and not other.get(name)}
+    if (saved.get("final_presses") or 0) > (other.get("final_presses") or 0):
+        kept["final_presses"] = saved["final_presses"]
+    return kept
+
+
 def reply_pressing(path, request, **details):
     """A reply's last step before its click. A command killed part way can still be running in the shared background browser, with a second attempt behind it,
     and each attempt writes over the same receipt. So only the attempt the receipt holds now gets past here, and only while it is still waiting."""

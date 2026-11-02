@@ -9,7 +9,7 @@ from pathlib import Path
 import unicodedata
 from urllib.parse import parse_qs, urlsplit
 
-from .core import VpubError, atomic_json, file_sha, home, now, read_json, snapshot_file, stop_check, wrong_file
+from .core import VpubError, atomic_json, file_sha, home, now, presses_on_record, read_json, receipt_turn, snapshot_file, stop_check, wrong_file
 from .browser_runtime import failure_message, failure_record, look_until, plain_address, platform_at, risk_check, unique_visible, visible
 from .progress import stage
 from .x_pages import own_posts, post_fields, post_row, post_time
@@ -157,7 +157,7 @@ class Transaction:
             saved = read_json(self.path)
             if saved.get('video_sha256') != plan['video_sha256'] or saved.get('identity') != identity:
                 raise VpubError('receipt_conflict', 'Resume must use the same account and media.')
-            self.receipt = saved
+            self.receipt = {**saved, **presses_on_record(prior_receipt or {}, saved)}
         elif resume and prior_receipt and (prior_receipt.get('media_selected') or prior_receipt.get('final_submit_attempted')):
             raise VpubError('receipt_missing', "This attempt's browser receipt is gone, and its record says a file was already chosen, so nothing was uploaded again.", 'Inspect the platform, and use vpub verify to read the work back. Never upload it again.')
         elif platform=='douyin' and self.options.get('chapters'):
@@ -170,7 +170,8 @@ class Transaction:
             if changes.get(key):
                 changes[key] = plain_address(changes[key])
         self.receipt.update(changes, updated_at=now())
-        atomic_json(self.path, self.receipt)
+        with receipt_turn(self.path):
+            atomic_json(self.path, self.receipt)
         return dict(self.receipt)
 
     def media_name(self):

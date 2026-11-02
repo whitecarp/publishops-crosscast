@@ -2,7 +2,7 @@
 from copy import deepcopy
 from pathlib import Path
 import re
-from .core import Ledger, VpubError, atomic_json, digest, douyin_caption, file_sha, home, now, publication_lock, read_json, stop_check, title_limit
+from .core import Ledger, VpubError, atomic_json, digest, douyin_caption, file_sha, home, now, publication_lock, read_json, receipt_turn, stop_check, title_limit
 from .language_policy import route
 from .safety import check_public_text, public_text_flags
 
@@ -142,9 +142,10 @@ def keep_resume_in_step(record, platform, work, owner, changes):
     plan_hash=record.get('plan_hash') or record.get('approved_plan',{}).get('confirmation')
     durable=home()/'browser-receipts'/f'{plan_hash}-{platform}.json'
     if plan_hash and record['receipt'].get('method')=='browser' and durable.exists():
-        saved=read_json(durable)
-        if saved.get('id')==work and saved.get('identity')==owner:
-            atomic_json(durable,{**saved,**changes})
+        with receipt_turn(durable):
+            saved=read_json(durable)
+            if saved.get('id')==work and saved.get('identity')==owner:
+                atomic_json(durable,{**saved,**changes})
 
 
 def run(key, patch_path, dry_run=False, verify_only=False, person_approved=False):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 from copy import deepcopy
 import importlib.util
 import json
@@ -10,7 +11,7 @@ import subprocess
 import sys
 
 from . import __version__, adapters
-from .core import Ledger, NOT_ON_SALE, PLATFORMS, VpubError, atomic_json, config, file_sha, home, how_to_clear_a_stop, load_plan, never_sent, now, part_left_undone, publication_lock, read_json, snapshot_file, stop_check, platform_check, wrong_file
+from .core import Ledger, NOT_ON_SALE, PLATFORMS, VpubError, atomic_json, config, file_sha, home, how_to_clear_a_stop, load_plan, never_sent, now, part_left_undone, presses_on_record, publication_lock, read_json, receipt_turn, snapshot_file, stop_check, platform_check, wrong_file
 from .overview import DRAFTS
 from .safety import pushed_back
 
@@ -898,14 +899,16 @@ def run_command(args):
         # A review found two at once could put back each other's older state, after which a third sent again what had ended unclear.
         if part_left_undone(first["data"].get("receipt") or {}):
             with publication_lock():
-                return verify_attempt(ledger, args.key, True)
-        return verify_attempt(ledger, args.key, False)
+                return verify_attempt(ledger, ledger.get(args.key), True)
+        return verify_attempt(ledger, first, False)
     finally:
         ledger.close()
 
 
-def verify_attempt(ledger, key, holds_the_lock):
-    old = ledger.get(key)
+def verify_attempt(ledger, old, holds_the_lock):
+    """Without the lock it goes by what was read when that was decided, and it gets nowhere to record an attempt, so it can only read. A review found a second read here could pick up a receipt
+    the publisher had just saved, and send chapters the publisher then sent too."""
+    key = old["key"]
     receipt = old["data"].get("receipt", {"title": old["data"].get("title")})
     seen = old["updated_at"]
 
@@ -913,19 +916,38 @@ def verify_attempt(ledger, key, holds_the_lock):
         old["data"]["receipt"] = value
         ledger.save(key, value["state"], old["data"])
 
-    result = adapters.verify(old["platform"], old["account"], receipt, checkpoint)
+    result = adapters.verify(old["platform"], old["account"], receipt, checkpoint if holds_the_lock else None)
     if result["state"] == "BROWSER_VERIFICATION_REQUIRED":
         return {"key": key, **result}
-    old["data"]["receipt"] = result
     if holds_the_lock:
-        ledger.save(key, result["state"], old["data"])
-    elif not ledger.save_unless_changed(key, result["state"], old["data"], seen):
-        # With no lock another command may have moved this record on while this one read, and what it read isn't worth what saving would lose.
-        return {"key": key, **result, "not_saved": "Another command changed this record during this check, so this answer was not saved. Run vpub verify again."}
+        return {"key": key, **keep_verified(ledger, old, result)}
+    # It takes the lock now only to save, so no writer is part way through the two places this goes, and it saves only if nothing moved on while it read. What it read isn't worth what saving would lose.
+    try:
+        with publication_lock():
+            kept = keep_verified(ledger, old, result, seen)
+    except VpubError as exc:
+        if exc.code not in {"busy", "attempt_busy"}:
+            raise
+        kept = None
+    return {"key": key, **kept} if kept else {"key": key, **result, "not_saved": "Another command was running or changed this record during this check, so this answer was not saved. Run vpub verify again."}
+
+
+def keep_verified(ledger, old, result, seen=None):
+    """A verify's answer, in the ledger and for a browser attempt in the receipt resume reads. Returns what was saved, or None if the record has moved on since `seen`."""
+    key = old["key"]
     plan_hash = old['data'].get('plan_hash') or old['data'].get('approved_plan', {}).get('confirmation')
-    if result.get('method') == 'browser' and plan_hash:
-        atomic_json(home() / 'browser-receipts' / (plan_hash+'-'+old['platform']+'.json'), result)
-    return {"key": key, **result}
+    durable = home() / 'browser-receipts' / (plan_hash+'-'+old['platform']+'.json') if result.get('method') == 'browser' and plan_hash else None
+    with receipt_turn(durable) if durable else contextlib.nullcontext():
+        if durable and durable.exists():
+            result = {**result, **presses_on_record(read_json(durable), result)}
+        old["data"]["receipt"] = result
+        if seen is None:
+            ledger.save(key, result["state"], old["data"])
+        elif not ledger.save_unless_changed(key, result["state"], old["data"], seen):
+            return None
+        if durable:
+            atomic_json(durable, result)
+    return result
 
 
 def login_answer(job):

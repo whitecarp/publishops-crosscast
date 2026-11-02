@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 from urllib.parse import urlsplit
 
-from video_publisher import adapters, browser_edits, chapters, cli, comment_actions, comment_actions_api as api, edits, edits_bilibili
+from video_publisher import adapters, browser_backends, browser_edits, chapters, cli, comment_actions, comment_actions_api as api, edits, edits_bilibili
 from video_publisher.core import Ledger, VpubError, atomic_json, digest, home, load_plan, publication_lock, read_json
 from shared_chrome import ChromeCase, async_playwright
 
@@ -492,6 +492,37 @@ class TwoVerifiesTests(Temporary):
         self.assertEqual([], self.bili.writes())
         self.assertEqual("SAVE_UNVERIFIED", self.stored(key)["data"]["receipt"]["chapters_state"])
 
+    def test_one_that_read_before_the_upload_was_saved_sends_nothing(self):
+        """From a review: its first read found no receipt, the publisher then saved one with chapters to send, and a second read here sent them, and the publisher sent them too."""
+        ledger = Ledger()
+        key = ledger.claim("bilibili", "default", "a" * 64, {})
+        ledger.close()
+        real, reads = Ledger.get, []
+
+        def publisher_saves_just_after(ledger, wanted):
+            row = real(ledger, wanted)
+            if not reads:
+                reads.append(True)
+                ledger.save(key, "SUBMITTED", {"receipt": {"id": WORK, "state": "SUBMITTED", "pending_chapters": LONG, "chapters_state": "PENDING"}})
+            return row
+        with patch.object(Ledger, "get", publisher_saves_just_after), self.assertRaises(VpubError) as caught:
+            self.verify_command(key)
+        self.assertEqual("receipt_missing", caught.exception.code)
+        self.assertEqual([], self.bili.writes())
+        self.assertEqual("PENDING", self.stored(key)["data"]["receipt"]["chapters_state"])
+
+    def test_without_the_lock_it_has_nowhere_to_record_a_write(self):
+        key = self.recorded()
+        with patch.object(adapters, "verify", return_value={"id": WORK, "state": "SUBMISSION_VERIFIED"}) as verify:
+            self.verify_command(key)
+        self.assertIsNone(verify.call_args.args[3])
+
+    def test_with_the_lock_it_has(self):
+        key = self.recorded(pending_chapters=LONG, chapters_state="PENDING")
+        with patch.object(adapters, "verify", return_value={"id": WORK, "state": "SUBMISSION_VERIFIED"}) as verify:
+            self.verify_command(key)
+        self.assertTrue(callable(verify.call_args.args[3]))
+
     def test_one_that_only_reads_never_writes_over_a_newer_record(self):
         key = self.recorded()
 
@@ -515,10 +546,71 @@ class TwoVerifiesTests(Temporary):
         self.assertNotIn("not_saved", result)
         self.assertEqual("SUBMISSION_VERIFIED", self.stored(key)["state"])
 
-    def test_one_that_only_reads_needs_no_turn(self):
+    def test_one_that_only_reads_can_run_during_another_command_and_saves_nothing_then(self):
         key = self.recorded()
         with publication_lock(), patch.object(adapters, "verify", return_value={"id": WORK, "state": "SUBMISSION_VERIFIED"}):
-            self.assertEqual("SUBMISSION_VERIFIED", self.verify_command(key)["state"])
+            result = self.verify_command(key)
+        self.assertEqual("SUBMISSION_VERIFIED", result["state"])
+        self.assertIn("not saved", result["not_saved"])
+        self.assertEqual("SUBMITTED", self.stored(key)["state"])
+
+    def browser_attempt(self, ledger_says, file_says):
+        ledger = Ledger()
+        key = ledger.claim("x", "default", "b" * 64, {})
+        ledger.save(key, "SUBMITTED_UNVERIFIED", {"plan_hash": "plan", "receipt": {"method": "browser", "state": "SUBMITTED_UNVERIFIED", "identity": "me", **ledger_says}})
+        ledger.close()
+        path = home() / "browser-receipts" / "plan-x.json"
+        atomic_json(path, {"method": "browser", "state": "SUBMITTED_UNVERIFIED", "identity": "me", **file_says})
+        return key, path
+
+    def test_what_a_workers_own_copy_says_about_a_press_stays_said(self):
+        """A killed command's worker finishes by itself, so its copy can be newer than the ledger's, and a verify then read the older one and saved it over the newer."""
+        key, path = self.browser_attempt({"final_submit_attempted": False}, {"final_submit_attempted": True, "final_presses": 1, "media_selected": True})
+        with patch.object(adapters, "verify", side_effect=lambda platform, account, receipt, checkpoint=None: {**receipt, "state": "SUBMITTED_UNVERIFIED"}):
+            result = self.verify_command(key)
+        for receipt in (result, read_json(path), self.stored(key)["data"]["receipt"]):
+            self.assertEqual((True, 1, True), (receipt["final_submit_attempted"], receipt["final_presses"], receipt["media_selected"]))
+
+    def test_a_second_press_on_record_is_not_taken_back_by_an_older_count(self):
+        key, path = self.browser_attempt({"final_submit_attempted": True, "final_presses": 2}, {"final_submit_attempted": True, "final_presses": 1})
+        with patch.object(adapters, "verify", side_effect=lambda platform, account, receipt, checkpoint=None: {**receipt, "state": "SUBMITTED_UNVERIFIED"}):
+            self.verify_command(key)
+        self.assertEqual(2, read_json(path)["final_presses"])
+
+    def test_a_writer_that_gets_in_between_is_not_overwritten_in_either_place(self):
+        key, path = self.browser_attempt({"final_submit_attempted": False}, {"final_submit_attempted": False})
+
+        def read_while_a_resume_presses(platform, account, receipt, checkpoint=None):
+            row = self.stored(key)
+            newer = {**row["data"]["receipt"], "final_submit_attempted": True}
+            atomic_json(path, newer)
+            ledger = Ledger()
+            ledger.save(key, "SUBMITTED_UNVERIFIED", {**row["data"], "receipt": newer})
+            ledger.close()
+            return {**receipt, "state": "SUBMITTED_UNVERIFIED"}
+        with patch.object(adapters, "verify", read_while_a_resume_presses):
+            result = self.verify_command(key)
+        self.assertIn("not_saved", result)
+        self.assertTrue(read_json(path)["final_submit_attempted"])
+        self.assertTrue(self.stored(key)["data"]["receipt"]["final_submit_attempted"])
+
+    def test_with_the_receipts_own_turn_taken_it_saves_nothing_and_says_so(self):
+        key, path = self.browser_attempt({}, {})
+        with patch.object(adapters, "verify", return_value={"method": "browser", "state": "SUBMISSION_VERIFIED"}), \
+                patch.object(cli, "receipt_turn", side_effect=VpubError("attempt_busy", "Another step is moving this attempt on, so nothing was sent.")):
+            result = self.verify_command(key)
+        self.assertIn("not_saved", result)
+        self.assertEqual("SUBMITTED_UNVERIFIED", self.stored(key)["state"])
+
+    def test_resume_trusts_whichever_copy_says_the_press_happened(self):
+        plan = {"confirmation": "plan", "video_sha256": "s", "options": {"title": "T"}}
+        path = home() / "browser-receipts" / "plan-x.json"
+        atomic_json(path, {"video_sha256": "s", "identity": "me", "final_submit_attempted": False})
+        kept = browser_backends.Transaction("x", "me", plan, resume=True, prior_receipt={"final_submit_attempted": True, "final_presses": 1})
+        self.assertEqual((True, 1), (kept.receipt["final_submit_attempted"], kept.receipt["final_presses"]))
+        atomic_json(path, {"video_sha256": "s", "identity": "me", "final_submit_attempted": True, "final_presses": 1})
+        kept = browser_backends.Transaction("x", "me", plan, resume=True, prior_receipt={"final_submit_attempted": False})
+        self.assertEqual((True, 1), (kept.receipt["final_submit_attempted"], kept.receipt["final_presses"]))
 
 
 class PlanTests(unittest.TestCase):
