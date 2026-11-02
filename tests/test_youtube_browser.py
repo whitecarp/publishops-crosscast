@@ -884,6 +884,35 @@ class HiddenDesktopTests(Temporary):
         hidden.assert_not_called()
         plain.assert_called_once()
 
+    def test_douyins_uploads_and_edits_get_the_hidden_desktop_on_windows_only(self):
+        """Its cover window went through at once in a real window, after hanging on most tries in a headless one."""
+        answer = {"ok": True, "data": {}}
+        for action in ("publish", "resume", "edit"):
+            with self.subTest(action=action), patch.object(adapters.os, "name", "nt"), patch.object(adapters, "hidden_desktop_call", return_value=answer) as hidden, \
+                    patch.object(adapters, "worker_call") as plain, patch("video_publisher.browser_broker.call") as broker:
+                adapters.browser_call("douyin", action, "default")
+                hidden.assert_called_once()
+                plain.assert_not_called()
+                broker.assert_not_called()
+        with patch.object(adapters.os, "name", "nt"), patch.object(adapters, "hidden_desktop_call") as hidden, \
+                patch.object(adapters, "worker_call", return_value=answer), patch("video_publisher.browser_broker.enabled", return_value=False):
+            adapters.browser_call("douyin", "status", "default")
+        hidden.assert_not_called()
+        with patch.object(adapters, "stop_check"), patch.object(adapters.os, "name", "posix"), patch.object(adapters, "hidden_desktop_call") as hidden, \
+                patch.object(adapters, "worker_call", return_value=answer) as plain, patch("video_publisher.browser_broker.enabled", return_value=False):
+            adapters.browser_call("douyin", "publish", "default")
+        hidden.assert_not_called()
+        plain.assert_called_once()
+
+    def test_a_command_that_asks_for_a_window_gets_one_off_screen(self):
+        launch = AsyncMock(return_value=MagicMock(add_cookies=AsyncMock()))
+        pw = MagicMock()
+        pw.chromium.launch_persistent_context = launch
+        asyncio.run(browser_runtime.open_context(pw, "douyin", "default", window=True))
+        self.assertEqual((False, ["--window-position=-32000,-32000"]), (launch.call_args.kwargs["headless"], launch.call_args.kwargs["args"]))
+        asyncio.run(browser_runtime.open_context(pw, "douyin", "default"))
+        self.assertEqual((True, []), (launch.call_args.kwargs["headless"], launch.call_args.kwargs["args"]))
+
     def test_other_platforms_keep_their_own_route(self):
         with patch.object(adapters.os, "name", "nt"), patch.object(adapters, "hidden_desktop_call") as hidden, \
                 patch.object(adapters, "worker_call", return_value={"ok": True, "data": {}}), patch("video_publisher.browser_broker.enabled", return_value=False):

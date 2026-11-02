@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import sys
 
-from .core import VpubError, atomic_json, home, now, read_json, stop_check
+from .core import VpubError, atomic_json, home, now, read_json, stop_check, real_window
 from . import browser_runtime as runtime, progress
 
 
@@ -72,7 +72,7 @@ async def run(payload):
                 return await runtime.login(pw, payload)
             if payload['action']=='chat_unlock' and platform!='x':
                 raise VpubError('unsupported_operation','Chat unlock currently supports X only.')
-            context = await runtime.open_context(pw, platform, account, interactive=payload['action']=='chat_unlock')
+            context = await runtime.open_context(pw, platform, account, interactive=payload['action']=='chat_unlock', window=real_window(platform, payload['action']))
             try:
                 page, actual = await runtime.signed_in_page(context, platform, payload.get("expected_identity"))
                 if payload["action"] == "status":

@@ -14,7 +14,7 @@
 
 讓同一支原創影片擁有各平台適用的文案、封面與發布回執。選擇 Bilibili、抖音、YouTube、Instagram、X 的任意組合，首次登入後，CLI 復用本機專用會話完成後續上傳。
 
-預設路徑：B站沿用 bili-cli，YouTube／抖音／Instagram／X 由 CLI 在背景控制專用 Chrome（安裝付費附加元件後，YouTube 改用官方 API）。首次登入與官方驗證需要使用者協助；明確設定 `method: native` 仍可使用宿主瀏覽器交接。這是 alpha 版本，開發期實測與無人值守驗收分開記錄。已新增評論、作品數據及匯報命令；各站實測範圍見下方。TikTok、YouTube 卡片／可點擊片尾尚未實作。
+預設路徑：B站沿用 bili-cli，YouTube／抖音／Instagram／X 由 CLI 在背景控制專用 Chrome（安裝付費附加元件後，YouTube 改用官方 API）。YouTube，以及 Windows 上抖音的上傳與修改，是在隱藏桌面上以真實 Chrome 視窗執行，不是無頭模式。首次登入與官方驗證需要使用者協助；明確設定 `method: native` 仍可使用宿主瀏覽器交接。這是 alpha 版本，開發期實測與無人值守驗收分開記錄。已新增評論、作品數據及匯報命令；各站實測範圍見下方。TikTok、YouTube 卡片／可點擊片尾尚未實作。
 
 [功能範圍](FEATURES.md) · [驗證記錄](VALIDATION.md) · [草稿測試](DRAFT_TESTING.md)
 

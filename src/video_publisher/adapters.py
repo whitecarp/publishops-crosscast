@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 from . import progress, safety
-from .core import HELD_BACK, NOT_ON_SALE, VpubError, stop_check, platform_check
+from .core import HELD_BACK, NOT_ON_SALE, VpubError, stop_check, platform_check, real_window
 
 ROUTES = {"bilibili": {"cli"}, "douyin": {"browser"}, "youtube": {"browser", "api"}, "x": {"browser", "api"}, "instagram": {"browser", "api"}}
 BILI_MAIN = "from bili_cli.main import main; main()"
@@ -124,7 +124,7 @@ def browser_timeout(action):
 
 
 def hidden_desktop_call(payload, timeout):
-    """YouTube on Windows. The steps of one command share one Chrome on the hidden desktop, which closes itself soon after the last of them."""
+    """A real Chrome window on Windows. YouTube's steps of one command share one Chrome on the hidden desktop, which closes itself soon after the last of them. Douyin's commands that need one have a Chrome each."""
     from . import browser_broker
     from .hidden_desktop import call_worker
     if browser_broker.enabled():
@@ -167,8 +167,9 @@ def browser_call(platform, action, account, **kwargs):
 
 def browser_answer(platform, action, account, payload):
     from . import browser_broker
-    # YouTube's background browser is a real Chrome window, so it never lingers where a window could show: see hidden_desktop_call for Windows.
-    if platform != "youtube" and browser_broker.enabled():
+    # A real Chrome window never lingers where a window could show: see hidden_desktop_call for Windows.
+    windowed = real_window(platform, action)
+    if not windowed and browser_broker.enabled():
         if action in browser_broker.REUSABLE:
             result = browser_broker.call(payload, browser_timeout(action))
             if result is not None:
@@ -176,7 +177,7 @@ def browser_answer(platform, action, account, payload):
         else:
             progress.stage("waiting for the browser", payload.get("stages_path"))
             browser_broker.release(platform, account)
-    result = hidden_desktop_call(payload, browser_timeout(action)) if platform == "youtube" and os.name == "nt" else worker_call(payload, browser_timeout(action))
+    result = hidden_desktop_call(payload, browser_timeout(action)) if windowed and os.name == "nt" else worker_call(payload, browser_timeout(action))
     if not result.get("ok"):
         e = result["error"]
         raise VpubError(e["code"], e["message"], e.get("hint", ""))

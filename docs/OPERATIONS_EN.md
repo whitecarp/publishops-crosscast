@@ -14,7 +14,7 @@ This requirement exists because non-subscribers are limited to **140-second, 512
 
 Prepare platform-specific metadata, covers and publication receipts for one original video. Choose any subset of Bilibili, Douyin, YouTube, Instagram and X. Sign in once; the CLI reuses its own local sessions for later uploads.
 
-Default routes: Bilibili uses bili-cli, and YouTube/Douyin/Instagram/X use a dedicated persistent Chrome profile controlled by the CLI in the background (YouTube uses its official API instead with the paid add-on). First login and official verification require the user. Explicit `method: native` retains host-browser handoff. This remains alpha; live development tests are documented separately from unattended acceptance. Comments, work metrics and reports now share CLI commands, with platform-specific validation below. TikTok is suspended; YouTube cards/clickable end screens remain unimplemented.
+Default routes: Bilibili uses bili-cli, and YouTube/Douyin/Instagram/X use a dedicated persistent Chrome profile controlled by the CLI in the background (YouTube uses its official API instead with the paid add-on). YouTube, and on Windows Douyin's uploads and edits, run as a real Chrome window on a hidden desktop rather than headless. First login and official verification require the user. Explicit `method: native` retains host-browser handoff. This remains alpha; live development tests are documented separately from unattended acceptance. Comments, work metrics and reports now share CLI commands, with platform-specific validation below. TikTok is suspended; YouTube cards/clickable end screens remain unimplemented.
 
 [Features](FEATURES_EN.md) · [Validation](VALIDATION_EN.md) · [Draft testing](DRAFT_TESTING_EN.md)
 

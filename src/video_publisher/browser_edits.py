@@ -217,18 +217,10 @@ def douyin_cover_traffic(page):
     return look
 
 
-def douyin_cover_requests(seen):
-    """What a stop says about the page's requests. In a field run's hang the only failed requests went to two sites this computer's network refused, while the phone app set a cover in a second. That wasn't proven to be the cause, so it says what to check, not what's wrong."""
-    words = f"Requests since the press: {seen}."
-    if seen['failed_hosts']:
-        words += " Requests to the failed_hosts sites didn't get through, so a proxy or filter on this computer is worth checking before another try."
-    return words
-
-
 async def douyin_cover_stuck(page,fonts,seen):
     """What a stop can say about the page, with no words from it."""
     windows=page.locator('[role=dialog]')
-    return f"Its fonts were {fonts} at the press and are {await douyin_fonts(page)} now. {await windows.locator('visible=true').count()} of {await windows.count()} windows on the page are showing. {douyin_cover_requests(seen)}"
+    return f"Its fonts were {fonts} at the press and are {await douyin_fonts(page)} now. {await windows.locator('visible=true').count()} of {await windows.count()} windows on the page are showing. Requests since the press: {seen}."
 
 
 async def douyin_cover_settles(page):

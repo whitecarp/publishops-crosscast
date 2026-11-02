@@ -208,12 +208,12 @@ def check_identity(actual, expected):
     return actual
 
 
-async def open_context(pw, platform, account, interactive=False):
+async def open_context(pw, platform, account, interactive=False, window=False):
     path = profile_dir(platform, account)
     path.mkdir(parents=True, exist_ok=True)
     # Studio does not run under a headless browser, so YouTube's background browser is a real Chrome window:
-    # off-screen, and on Windows also on its own hidden desktop (see hidden_desktop.py), so there is no taskbar icon either.
-    off_screen = platform == "youtube" and not interactive
+    # off-screen, and on Windows also on its own hidden desktop (see hidden_desktop.py), so there is no taskbar icon either. A command that asks for a window gets the same.
+    off_screen = (platform == "youtube" or window) and not interactive
     try:
         context = await pw.chromium.launch_persistent_context(
             str(path), channel="chrome", headless=not interactive and not off_screen,

@@ -114,6 +114,15 @@ def file_sha(path):
     return h.hexdigest()
 
 
+# Douyin's cover window stayed busy for minutes on most tries in a headless Chrome, and went through at once on the one try in a real window. That isn't proof, since the network may have changed as well, but a real window out of sight costs little.
+DOUYIN_WINDOW_ACTIONS = {"publish", "resume", "edit"}
+
+
+def real_window(platform, action):
+    """Whether this command needs a real Chrome window rather than a headless one. Only Windows has a hidden desktop to keep one out of sight, so elsewhere Douyin stays headless."""
+    return platform == "youtube" or (platform == "douyin" and action in DOUYIN_WINDOW_ACTIONS and os.name == "nt")
+
+
 def wrong_file(path, sha, message):
     """The error for a file that just read back with the wrong hash. A field run's film once read wrong by 10 bytes with the file unchanged, and "changed" sent everyone looking at the wrong thing. A second read tells them apart. It never lets anything through."""
     if file_sha(path) == sha:
