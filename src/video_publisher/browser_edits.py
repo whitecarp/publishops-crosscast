@@ -114,9 +114,8 @@ async def execute(page, platform, identity, payload):
         if not str(work_id).isdigit(): raise VpubError('invalid_id','Invalid Douyin ID.')
         if 'portrait' in patch:
             url=douyin_editor_address(work_id)
-            await page.goto(url,wait_until='domcontentloaded',timeout=60000)
-            title=page.locator('input[placeholder*="填写作品标题"]')
-            await title.wait_for(timeout=45000)
+            # A field run found the title box showing empty for a moment, so this waits for its title as the text route does.
+            title,_=await douyin_fields(page,url,work_id)
             if receipt.get('title') and await title.input_value()!=receipt['title']: raise VpubError('wrong_work','Existing title differs from the receipt; inspect before applying a cover.')
             control=page.locator('[class^="coverControl-"]').filter(has=page.get_by_text('竖封面3:4',exact=True))
             if payload.get('verify_only'):
@@ -130,7 +129,12 @@ async def execute(page, platform, identity, payload):
             await choose_file(page,area.locator('input.semi-upload-hidden-input'),patch['portrait'])
             await page.wait_for_timeout(1500)
             await dialog.get_by_role('button',name='完成',exact=True).click()
-            await dialog.wait_for(state='hidden',timeout=30000)
+            from patchright.async_api import Error as BrowserError
+            try:
+                await dialog.wait_for(state='hidden',timeout=DOUYIN_COVER_SECONDS*1000)
+            except BrowserError:
+                # A field run saw the window greyed out and working for over three minutes after 完成. Why isn't known, and nothing has been saved at this point.
+                raise VpubError('cover_not_ready',f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so the work was not saved.",'Nothing changed. Try again later, or change the cover on Douyin\'s own page.') from None
             save_button=await visible(page.get_by_role('button',name=re.compile(r'^(保存|保存修改|提交修改|发布)$')))
             if save_button is None: raise VpubError('layout_changed','Existing-work save button is unavailable; no video was uploaded.')
             await douyin_can_press(page,save_button)
@@ -138,8 +142,7 @@ async def execute(page, platform, identity, payload):
             await submit(save_button,still_holds=lambda: douyin_can_press(page,save_button))
             stayed=await douyin_moved_on(page,pressed,output)
             if stayed: return save(state='EDIT_SUBMITTED_UNVERIFIED',platform_writes=1,url=url,after_press=stayed,note='Pressed once, and the page did not go back to the works list. See after_press; do not press again.')
-            await page.goto(url,wait_until='domcontentloaded')
-            await title.wait_for(timeout=30000)
+            await douyin_fields(page,url,work_id)
             return await capture_cover(page,control,output,patch,save,url)
         if 'chapters' in patch:
             return await douyin_chapters(page,receipt,patch,save,submit,verify_only=payload.get('verify_only',False))
@@ -153,6 +156,7 @@ async def execute(page, platform, identity, payload):
 
 
 DOUYIN_SAVE_SECONDS=60
+DOUYIN_COVER_SECONDS=180
 
 
 async def douyin_says_held(page):

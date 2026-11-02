@@ -153,6 +153,8 @@ class DouyinPageTests(SharedBrowser):
     def prepare(self):
         self.saves = []
         self.title = "Old title"
+        self.title_shows = True
+        self.cover_window_closes = True
         self.saved_chapters = []
         self.keeps_chapter_titles = True
         self.portrait = self.root / "portrait.jpg"
@@ -174,9 +176,9 @@ class DouyinPageTests(SharedBrowser):
         await self.page_at(route, "elsewhere")
 
     async def cover_page(self, route):
-        await self.page_at(route, f"""<input placeholder="填写作品标题，为作品获得更多流量" value="{self.title}">
+        await self.page_at(route, f"""<input placeholder="填写作品标题，为作品获得更多流量" value="{self.title if self.title_shows else ''}"><div contenteditable="true">Words</div>
           <div class="coverControl-a"><span>竖封面3:4</span><div class="cover-a" onclick="document.getElementById('picker').hidden = false">cover</div></div>
-          <div role="dialog" id="picker" hidden><div class="semi-upload">点击上传文件或拖拽文件到这里<input class="semi-upload-hidden-input" type="file"></div><button onclick="document.getElementById('picker').hidden = true">完成</button></div>
+          <div role="dialog" id="picker" hidden><div class="semi-upload">点击上传文件或拖拽文件到这里<input class="semi-upload-hidden-input" type="file"></div><button onclick="document.getElementById('picker').hidden = {'true' if self.cover_window_closes else 'false'}">完成</button></div>
           <button onclick="fetch('/cover', {{method: 'POST', body: '{{}}'}}).then(() => location.href = '/creator-micro/content/manage')">保存</button>""")
 
     async def manage_page(self, route):
@@ -211,6 +213,34 @@ class DouyinPageTests(SharedBrowser):
             await self.cover()
         self.assertEqual("wrong_work", caught.exception.code)
         self.assertEqual([], self.saves)
+
+    async def test_a_title_that_comes_a_moment_after_its_box_does_not_stop_a_cover(self):
+        """From a field run: the box showed empty at first, which read as another work's title."""
+        self.title_shows = False
+
+        async def title_comes(ms):
+            await self.page.evaluate("const box = document.querySelector('input'); if (box) box.value = 'Old title';")
+        self.page.wait_for_timeout.side_effect = title_comes
+        result = await self.cover()
+        self.assertEqual("EDIT_SUBMITTED_UNVERIFIED", result["state"])
+        self.assertEqual([("/cover", "EDIT_SUBMITTING")], self.saves)
+
+    async def test_a_title_that_never_comes_is_not_taken_for_this_works(self):
+        self.title_shows = False
+        with self.assertRaises(VpubError) as caught:
+            await self.cover()
+        self.assertEqual("wrong_work", caught.exception.code)
+        self.assertEqual([], self.saves)
+
+    async def test_a_cover_window_that_keeps_working_stops_with_nothing_saved(self):
+        """From a field run: after 完成 the window stayed, greyed out, for over three minutes."""
+        self.cover_window_closes = False
+        with patch.object(browser_edits, "DOUYIN_COVER_SECONDS", 1), self.assertRaises(VpubError) as caught:
+            await self.cover()
+        self.assertEqual("cover_not_ready", caught.exception.code)
+        self.assertIn("not saved", caught.exception.message)
+        self.assertEqual([], self.saves)
+        self.assertFalse(self.path.exists())
 
     async def test_a_cover_file_that_changed_since_the_check_is_not_sent(self):
         checked = edits.validate_patch("douyin", {"expected_identity": OWNER, "portrait": str(self.portrait)})

@@ -691,14 +691,16 @@ class ScheduleRowTests(ChromeCase):
 
     async def test_the_read_before_the_upload_counts_rows_like_this_post(self):
         empty = f"<p>{browser_backends.X_SCHEDULE_EMPTY}</p>"
-        for name, html, wanted in (("says it is empty, with its headings", self.table(after=empty), 0), ("says it is empty, with no table", empty, 0), ("other posts only", self.table(self.row(words="Other words"), self.row(clock="10:00 PM")), 0),
+        for name, html, wanted in (("says it is empty, with its headings", self.table(after=empty), 0), ("says it is empty, with no table", empty, 0), ("says it is empty in a row of its own", self.table(f'<tr><td colspan="6">{empty}</td></tr>'), 0), ("other posts only", self.table(self.row(words="Other words"), self.row(clock="10:00 PM")), 0),
                                    ("one like it", self.table(self.row(), self.row(words="Other words")), 1), ("two like it", self.table(self.row(), self.row()), 2)):
             with self.subTest(name):
                 self.assertEqual(wanted, await self.baseline(html))
 
     async def test_the_read_before_the_upload_does_not_guess(self):
         empty = browser_backends.X_SCHEDULE_EMPTY
+        blank = "<tr>" + "<td>&nbsp;</td>" * 7 + "</tr>"
         for name, html in (("headings and no rows yet", self.table()), ("an empty page", ""), ("its empty message hidden", self.table(after=f'<p style="display: none">{empty}</p>')),
+                           ("something in place of its rows", self.table('<tr><td colspan="6">Loading</td></tr>')), ("blank rows", self.table(blank, blank)),
                            ("two tables", self.table(self.row(), after=self.table(after=f"<p>{empty}</p>")))):
             with self.subTest(name):
                 self.assertIsNone(await self.baseline(html))

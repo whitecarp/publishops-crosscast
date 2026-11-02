@@ -562,7 +562,7 @@ def x_schedule_moment(when):
 
 
 def x_row_has_words(cells, words):
-    return len(cells) > 3 and normalize(cells[2]) == words
+    return normalize(cells[2]) == words
 
 
 def x_row_has_schedule(cells, schedule):
@@ -571,9 +571,13 @@ def x_row_has_schedule(cells, schedule):
 
 async def x_schedule_read(page):
     """What Studio's schedule page shows now: the cells of each row showing in the one table with these headings, read together so that nothing is combined across a redraw.
-    A review found rows in hidden or other tables could count. No rows is only an answer once the page says so in its own words, since a table can show its headings before its rows."""
+    A review found rows in hidden or other tables could count. A field read found the empty page keeps its message in a row of its own, so only a row that starts with a day is one.
+    No rows is only an answer once the page says so in its own words, since a table can show its headings, or something in place of its rows, before its rows."""
     rows = await page.evaluate(X_SCHEDULE_TABLE, X_SCHEDULE_HEADINGS)
-    if rows or (rows == [] and await visible(page.get_by_text(X_SCHEDULE_EMPTY, exact=True))):
+    if rows is None:
+        return None
+    rows = [cells for cells in rows if len(cells) >= len(X_SCHEDULE_HEADINGS) and X_SCHEDULE_DAY.fullmatch(normalize(cells[0]))]
+    if rows or await visible(page.get_by_text(X_SCHEDULE_EMPTY, exact=True)):
         return {"rows": rows}
     return None
 
