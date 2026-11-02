@@ -12,7 +12,6 @@ import sys
 
 from . import __version__, adapters
 from .core import Ledger, NOT_ON_SALE, PLATFORMS, VpubError, atomic_json, config, file_sha, home, how_to_clear_a_stop, load_plan, never_sent, now, part_left_undone, publication_lock, read_json, receipt_turn, verified_over, snapshot_file, stop_check, platform_check, wrong_file
-from .overview import DRAFTS
 from .safety import pushed_back
 
 # The command finished, but the work it was asked to do did not.
@@ -73,6 +72,8 @@ def snapshot_plan(plan, platform):
 
 
 def publish_plan(plan, confirm):
+    from .overview import DRAFTS
+
     if confirm != plan["confirmation"]:
         raise VpubError("confirmation_required", "The confirmation hash must match the current plan.", "Run vpub plan MANIFEST and review the exact platforms, accounts and visibility.")
     for platform in plan["platforms"]:
