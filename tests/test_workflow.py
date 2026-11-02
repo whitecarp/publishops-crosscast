@@ -572,6 +572,41 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual("SUBMISSION_VERIFIED", second["state"])
         upload.assert_called_once()
 
+    def test_a_first_page_that_never_loaded_releases_the_claim_and_says_nothing_went_up(self):
+        """From a field run: Douyin's first page came back empty before any work on it, and the record then said not to submit again."""
+        self.value["platforms"]["douyin"]["method"] = "browser"
+        self.save()
+        plan = self.plan(["douyin"])
+        hint = "Check network/site availability; no upload or edit was attempted."
+        with patch.object(adapters, "preflight", return_value={"identity": "owner"}), \
+                patch.object(adapters, "publish", side_effect=VpubError("page_not_ready", "Empty page.", hint)):
+            first = cli.publish_plan(plan, plan["confirmation"])["results"]["douyin"]
+        self.assertEqual(("NOT_STARTED", "page_not_ready", hint), (first["state"], first["code"], first["hint"]))
+        ledger = Ledger()
+        self.assertEqual([], ledger.rows())
+        ledger.close()
+        with patch.object(adapters, "preflight", return_value={"identity": "owner"}), \
+                patch.object(adapters, "publish", return_value={"state": "SUBMISSION_VERIFIED", "id": "123456789"}) as upload:
+            second = cli.publish_plan(plan, plan["confirmation"])["results"]["douyin"]
+        self.assertEqual("SUBMISSION_VERIFIED", second["state"])
+        upload.assert_called_once()
+
+    def test_an_empty_page_after_a_receipt_exists_stays_on_record(self):
+        self.value["platforms"]["douyin"]["method"] = "browser"
+        self.save()
+        plan = self.plan(["douyin"])
+
+        def part_way(platform, safe_plan, opts, checkpoint):
+            checkpoint({"state": "SUBMITTED", "id": "1234567890"})
+            raise VpubError("page_not_ready", "Empty page.", "Check.")
+        with patch.object(adapters, "preflight", return_value={"identity": "owner"}), patch.object(adapters, "publish", side_effect=part_way):
+            first = cli.publish_plan(plan, plan["confirmation"])["results"]["douyin"]
+        self.assertEqual(("SUBMITTED_UNVERIFIED", "1234567890"), (first["state"], first["id"]))
+        with patch.object(adapters, "preflight", return_value={"identity": "owner"}), patch.object(adapters, "publish") as upload:
+            again = cli.publish_plan(plan, plan["confirmation"])["results"]["douyin"]
+        self.assertEqual("SKIPPED_EXISTING", again["state"])
+        upload.assert_not_called()
+
     def run_cli(self, *arguments):
         output = io.StringIO()
         with patch.object(sys, "argv", ["vpub", *arguments]), patch.object(sys, "stdout", output), self.assertRaises(SystemExit) as stopped:
