@@ -1,4 +1,5 @@
 """Bilibili edits, chapters and collections at upload, deleting comments, and Douyin text edits. Stand-ins only; nothing is contacted."""
+import contextlib
 import os
 from pathlib import Path
 import tempfile
@@ -7,7 +8,7 @@ from unittest.mock import MagicMock, patch
 from urllib.parse import urlsplit
 
 from video_publisher import adapters, browser_edits, chapters, cli, comment_actions, comment_actions_api as api, edits, edits_bilibili
-from video_publisher.core import Ledger, VpubError, atomic_json, digest, home, load_plan, read_json
+from video_publisher.core import Ledger, VpubError, atomic_json, digest, home, load_plan, publication_lock, read_json
 from shared_chrome import ChromeCase, async_playwright
 
 WORK = "BV1xx411c7mD"
@@ -445,6 +446,79 @@ class BilibiliUploadTests(Temporary):
             result = cli.run_command(cli.parser().parse_args(["verify", key]))
         self.assertEqual(["SUBMITTING"], seen)
         self.assertEqual("VERIFIED", result["chapters_state"])
+
+
+class TwoVerifiesTests(Temporary):
+    """From a review: two at once could put back each other's older state, after which a third sent again what had ended unclear."""
+
+    def recorded(self, **receipt):
+        ledger = Ledger()
+        key = ledger.claim("bilibili", "default", "a" * 64, {})
+        ledger.save(key, "SUBMITTED", {"receipt": {"id": WORK, "state": "SUBMITTED", **receipt}})
+        ledger.close()
+        return key
+
+    @staticmethod
+    def stored(key):
+        ledger = Ledger()
+        row = ledger.get(key)
+        ledger.close()
+        return row
+
+    def verify_command(self, key):
+        return cli.run_command(cli.parser().parse_args(["verify", key]))
+
+    def test_one_that_can_still_send_waits_its_turn_and_sends_nothing_meanwhile(self):
+        key = self.recorded(pending_chapters=LONG, chapters_state="PENDING")
+        with publication_lock(), self.assertRaises(VpubError) as caught:
+            self.verify_command(key)
+        self.assertEqual("busy", caught.exception.code)
+        self.assertEqual([], self.bili.writes())
+        self.assertEqual("PENDING", self.stored(key)["data"]["receipt"]["chapters_state"])
+
+    def test_once_it_has_its_turn_it_goes_by_the_record_as_it_is_then(self):
+        key = self.recorded(pending_chapters=LONG, chapters_state="PENDING")
+
+        @contextlib.contextmanager
+        def another_got_there_first():
+            row = self.stored(key)
+            ledger = Ledger()
+            ledger.save(key, "SUBMITTED", {**row["data"], "receipt": {**row["data"]["receipt"], "chapters_state": "SAVE_UNVERIFIED"}})
+            ledger.close()
+            yield
+        with patch.object(cli, "publication_lock", another_got_there_first):
+            result = self.verify_command(key)
+        self.assertEqual("SAVE_UNVERIFIED", result["chapters_state"])
+        self.assertEqual([], self.bili.writes())
+        self.assertEqual("SAVE_UNVERIFIED", self.stored(key)["data"]["receipt"]["chapters_state"])
+
+    def test_one_that_only_reads_never_writes_over_a_newer_record(self):
+        key = self.recorded()
+
+        def read_while_another_saves(platform, account, receipt, checkpoint=None):
+            row = self.stored(key)
+            ledger = Ledger()
+            ledger.save(key, "SUBMITTED", {**row["data"], "edits": ["kept"]})
+            ledger.close()
+            return {**receipt, "state": "SUBMISSION_VERIFIED", "older": True}
+        with patch.object(adapters, "verify", read_while_another_saves):
+            result = self.verify_command(key)
+        self.assertIn("Another command", result["not_saved"])
+        row = self.stored(key)
+        self.assertEqual(("SUBMITTED", ["kept"]), (row["state"], row["data"]["edits"]))
+        self.assertNotIn("older", row["data"]["receipt"])
+
+    def test_with_nothing_else_going_on_one_that_only_reads_is_saved(self):
+        key = self.recorded()
+        with patch.object(adapters, "verify", return_value={"id": WORK, "state": "SUBMISSION_VERIFIED"}):
+            result = self.verify_command(key)
+        self.assertNotIn("not_saved", result)
+        self.assertEqual("SUBMISSION_VERIFIED", self.stored(key)["state"])
+
+    def test_one_that_only_reads_needs_no_turn(self):
+        key = self.recorded()
+        with publication_lock(), patch.object(adapters, "verify", return_value={"id": WORK, "state": "SUBMISSION_VERIFIED"}):
+            self.assertEqual("SUBMISSION_VERIFIED", self.verify_command(key)["state"])
 
 
 class PlanTests(unittest.TestCase):

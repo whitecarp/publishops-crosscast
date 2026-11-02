@@ -641,6 +641,7 @@ An error code alone never shows that nothing was written: a command with several
 |---|---|---|
 | `write_spacing` | bili-cli held this write back to keep its own spacing, so nothing reached Bilibili. It waits through gaps of up to a minute by itself, so this means a longer one | Try again after its hint |
 | `unsafe_text` | A title, description, tag or other public text looks like it holds a password, a key or sign-in data, so nothing went out | Rewrite it without them |
+| `not_saved` in a `vpub verify` answer | Another command changed this record during the check, so what the check read wasn't saved | Run `vpub verify` again |
 | `attempt_exists` | This attempt at a reply has ended, or another got there first, so nothing more was sent | `comments verify-reply`; never send again |
 | `attempt_replaced` | A newer attempt took this message, like or comment action over, or this one had already ended, so it pressed nothing | Read the newest attempt's receipt |
 | `attempt_busy` | Another step was moving this attempt on at that moment, and nothing was sent | Try again shortly |

@@ -20,6 +20,7 @@ X_RANGE, Y_RANGE = (118, 549), (82, 293)
 FIELDS = {"link": {"target", "text"}, "follow": {"style", "x", "y", "duration"},
           "vote": {"question", "options", "allow_custom", "custom_label"}, "rating": {"title", "skin"}}
 BV = re.compile(r"BV[0-9A-Za-z]{10}")
+NOT_SENT = {"PENDING", "NOT_APPLIED"}  # The only states a row is sent from without being asked.
 # Nothing more goes after one of these, and the rest wait for a later run.
 STOPS_THE_REST = {"rate_limited", "risk_control", "captcha_required", "not_logged_in", "auth_expired", "write_spacing", "stopped"}
 
@@ -161,7 +162,7 @@ def send(work, rows, save, again=False, sent_count=None):
     except VpubError as exc:
         return rows, {"state": "WAITING_FOR_PUBLIC", "error": exc.code, "reason": exc.message,
                       "next": "Bilibili didn't list this video's widgets, so nothing was sent. It does this before a video is public, and a read can also just fail. Run this again once the video is public."}
-    resend = {"PENDING", "NOT_APPLIED"} | ({"UNVERIFIED", "REFUSED", "CONFLICT", "SUBMITTING", "MISSING"} if again else set())
+    resend = NOT_SENT | ({"UNVERIFIED", "REFUSED", "CONFLICT", "SUBMITTING", "MISSING"} if again else set())
     went = False
     for row in rows:
         widget, items = row["widget"], listed[row["widget"]["page"]]
@@ -234,7 +235,7 @@ def finish(receipt, checkpoint=None):
     loaded = receipt.get("widgets") or new_rows(wanted)
     path = record_path(work)
     path.parent.mkdir(parents=True, exist_ok=True)
-    # vpub verify holds no other lock, and two of them at once could both load these as not yet sent. A review found that a list still empty after the first one's unclear ending let the second send again,
+    # A receipt loaded before this turn can be out of date. A review found that with a list still empty after one attempt's unclear ending, a second one that had loaded the receipt earlier sent again,
     # because a list that shows nothing doesn't undo an attempt. So the record, written before each send, is what decides once this one's turn comes.
     try:
         with receipt_turn(path):
@@ -288,11 +289,16 @@ def record_of(work):
 
 
 def latest(work, loaded):
-    """These rows as the record has them, since another command may have moved them on after they were loaded, and any others it holds. Returns the record too."""
+    """These rows as the record has them, since another command may have moved them on after they were loaded, and any others it holds. Returns the record too.
+    Where only one side says a send may have happened, that side stands. A review found a record from an earlier version still saying PENDING beside a receipt saying UNVERIFIED, and the widget went again."""
     record = record_of(work)
     known = {digest(row["widget"]): row for row in record["rows"]}
     asked = {digest(row["widget"]) for row in loaded}
-    return record, [known.get(digest(row["widget"]), row) for row in loaded], [row for key, row in known.items() if key not in asked]
+
+    def stands(row):
+        on_record = known.get(digest(row["widget"]))
+        return row if on_record is None or (on_record["state"] in NOT_SENT and row["state"] not in NOT_SENT) else on_record
+    return record, [stands(row) for row in loaded], [row for key, row in known.items() if key not in asked]
 
 
 def listing(work, page=1):

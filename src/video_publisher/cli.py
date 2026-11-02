@@ -521,7 +521,8 @@ def parser():
     covering = q.add_mutually_exclusive_group()
     covering.add_argument("--no-cover", action="store_true", help="Finish a browser attempt without its planned cover, when the cover is what keeps stopping it.")
     covering.add_argument("--cover", help="Finish a browser attempt with this JPG or PNG as its cover, when its plan had none and it hasn't been pressed yet.")
-    q = sub.add_parser("verify", help="Verify an existing work and finish any chapters or Bilibili widgets its plan still needs; never upload.")
+    words = "Verify an existing work and finish any chapters or Bilibili widgets its plan still needs; never upload."
+    q = sub.add_parser("verify", help=words, description=words)
     q.add_argument("key")
     q = sub.add_parser('edit', help='Correct an existing recorded work by ID; never upload/delete a video.')
     q.add_argument('key')
@@ -890,26 +891,41 @@ def run_command(args):
                       "association": "Operator-supplied mapping; remote video bytes were not compared."}
             ledger.save(key, "EXISTING_VERIFIED", record)
             return {"key": key, **record}
-        old = ledger.get(args.key)
-        if not old:
+        first = ledger.get(args.key)
+        if not first:
             raise VpubError("not_found", "Receipt key not found.")
-        receipt = old["data"].get("receipt", {"title": old["data"].get("title")})
-
-        def checkpoint(value):
-            old["data"]["receipt"] = value
-            ledger.save(args.key, value["state"], old["data"])
-
-        result = adapters.verify(old["platform"], old["account"], receipt, checkpoint)
-        if result["state"] == "BROWSER_VERIFICATION_REQUIRED":
-            return {"key": args.key, **result}
-        old["data"]["receipt"] = result
-        ledger.save(args.key, result["state"], old["data"])
-        plan_hash = old['data'].get('plan_hash') or old['data'].get('approved_plan', {}).get('confirmation')
-        if result.get('method') == 'browser' and plan_hash:
-            atomic_json(home() / 'browser-receipts' / (plan_hash+'-'+old['platform']+'.json'), result)
-        return {"key": args.key, **result}
+        # One that can still finish chapters or widgets is a write like any other, so it takes its turn and reads the record again once it has it.
+        # A review found two at once could put back each other's older state, after which a third sent again what had ended unclear.
+        if part_left_undone(first["data"].get("receipt") or {}):
+            with publication_lock():
+                return verify_attempt(ledger, args.key, True)
+        return verify_attempt(ledger, args.key, False)
     finally:
         ledger.close()
+
+
+def verify_attempt(ledger, key, holds_the_lock):
+    old = ledger.get(key)
+    receipt = old["data"].get("receipt", {"title": old["data"].get("title")})
+    seen = old["updated_at"]
+
+    def checkpoint(value):
+        old["data"]["receipt"] = value
+        ledger.save(key, value["state"], old["data"])
+
+    result = adapters.verify(old["platform"], old["account"], receipt, checkpoint)
+    if result["state"] == "BROWSER_VERIFICATION_REQUIRED":
+        return {"key": key, **result}
+    old["data"]["receipt"] = result
+    if holds_the_lock:
+        ledger.save(key, result["state"], old["data"])
+    elif not ledger.save_unless_changed(key, result["state"], old["data"], seen):
+        # With no lock another command may have moved this record on while this one read, and what it read isn't worth what saving would lose.
+        return {"key": key, **result, "not_saved": "Another command changed this record during this check, so this answer was not saved. Run vpub verify again."}
+    plan_hash = old['data'].get('plan_hash') or old['data'].get('approved_plan', {}).get('confirmation')
+    if result.get('method') == 'browser' and plan_hash:
+        atomic_json(home() / 'browser-receipts' / (plan_hash+'-'+old['platform']+'.json'), result)
+    return {"key": key, **result}
 
 
 def login_answer(job):

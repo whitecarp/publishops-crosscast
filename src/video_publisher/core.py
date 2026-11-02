@@ -502,6 +502,13 @@ class Ledger:
                         (state, json.dumps(data, ensure_ascii=False), now(), key))
         self.db.commit()
 
+    def save_unless_changed(self, key, state, data, seen):
+        """Saves only if the record is still as it was when read, and says whether it did."""
+        saved = self.db.execute("UPDATE publications SET state=?,data=?,updated_at=? WHERE key=? AND updated_at=?",
+                                (state, json.dumps(data, ensure_ascii=False), now(), key, seen))
+        self.db.commit()
+        return saved.rowcount == 1
+
     def forget_preview(self, key):
         """Release a record that only reached a draft or preview."""
         self.db.execute("DELETE FROM publications WHERE key=? AND state IN ('DRAFT_SAVED','PREVIEW_READY')", (key,))

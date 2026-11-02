@@ -245,6 +245,25 @@ class FinishTests(Base):
         self.assertEqual(1, len(self.bili.sent))
         self.assertEqual(("UNVERIFIED", "PARTIAL"), (second["widgets"][0]["state"], second["widgets_state"]))
 
+    def test_an_older_record_never_undoes_a_receipts_unclear_attempt(self):
+        """From a review: an earlier version's vpub widgets add left PENDING after a failed read, and a plan's send then ended unclear with only its receipt saying so."""
+        widget = widgets.validate([RATING])[0]
+        atomic_json(widgets.record_path(WORK), {"work": WORK, "rows": [{"widget": widget, "state": "PENDING"}]})
+        self.bili.loses_writes = True
+        receipt = {**self.receipt(RATING), "widgets": [{"widget": widget, "state": "UNVERIFIED"}], "widgets_state": "PARTIAL"}
+        result = widgets.finish(receipt, self.checkpoint)
+        self.assertEqual([], self.bili.sent)
+        self.assertEqual("UNVERIFIED", result["widgets"][0]["state"])
+        self.assertEqual("UNVERIFIED", widgets.record_of(WORK)["rows"][0]["state"])
+
+    def test_which_side_stands_for_a_row(self):
+        widget = widgets.validate([RATING])[0]
+        for on_record, loaded, expected in (("PENDING", "UNVERIFIED", "UNVERIFIED"), ("PENDING", "SUBMITTING", "SUBMITTING"), ("NOT_APPLIED", "VERIFIED", "VERIFIED"), ("PENDING", "NOT_APPLIED", "PENDING"),
+                                            ("UNVERIFIED", "PENDING", "UNVERIFIED"), ("VERIFIED", "UNVERIFIED", "VERIFIED"), ("REFUSED", "PENDING", "REFUSED")):
+            with self.subTest(on_record=on_record, loaded=loaded):
+                atomic_json(widgets.record_path(WORK), {"work": WORK, "rows": [{"widget": widget, "state": on_record}]})
+                self.assertEqual(expected, widgets.latest(WORK, [{"widget": widget, "state": loaded}])[1][0]["state"])
+
     def test_one_that_finds_another_mid_send_reports_how_the_record_stands(self):
         loaded = self.receipt(RATING)
         atomic_json(widgets.record_path(WORK), {"work": WORK, "rows": [{"widget": widgets.validate([RATING])[0], "state": "SUBMITTING"}]})
