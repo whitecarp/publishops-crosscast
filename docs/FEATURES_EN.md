@@ -2,9 +2,9 @@
 
 [繁體中文](FEATURES.md) · **English**
 
-**X publishing supports subscribed users whose accounts can actually access Media Studio.**
+**The free X browser publishing route requires a subscription and actual Media Studio access.** The official API route belongs to the separate paid add-on, which is not on sale yet; this does not establish support for free or Basic accounts.
 
-This requirement exists because non-subscribers are limited to **140-second, 512 MB** video uploads and cannot use the Media Studio media-management and custom-thumbnail workflow on which this tool depends. CrossCast uploads videos and sets production thumbnails through Media Studio, so its X backend currently supports subscription accounts with that access. Login or payment alone does not establish access; the CLI checks the library entry and managed account before selecting media. [Official upload limits](https://help.x.com/en/using-x/x-videos) · [Media Studio access](https://help.x.com/en/using-x/media-studio).
+This requirement exists because non-subscribers are limited to **140-second, 512 MB** video uploads and cannot use the Media Studio media-management and custom-thumbnail workflow on which the free browser route depends. CrossCast's free X browser backend uploads videos and sets production thumbnails through Media Studio, so that route supports subscription accounts with that access. Login or payment alone does not establish access; the CLI checks the library entry and managed account before selecting media. [Official upload limits](https://help.x.com/en/using-x/x-videos) · [Media Studio access](https://help.x.com/en/using-x/media-studio).
 
 **0.16.0 alpha.** New manifests use CLI execution after first login; `method: native` is an explicit host-browser fallback. Bilibili uses the copy of [bili-cli](https://github.com/kukemc/bili-cli) included in this package, which also gives you the `bili` command.
 

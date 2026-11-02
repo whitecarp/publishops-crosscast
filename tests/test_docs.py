@@ -109,6 +109,18 @@ class DocsTests(unittest.TestCase):
                 problems.append(target)
         self.assertEqual([], problems)
 
+    def test_every_word_on_the_site_is_in_every_language(self):
+        page = (ROOT / "docs/index.html").read_text(encoding="utf-8")
+        script = (ROOT / "docs/site.js").read_text(encoding="utf-8")
+        used = set(re.findall(r'data-i18n(?:-html|-aria)?="([^"]+)"', page))
+        self.assertGreater(len(used), 100)
+        for name, start, end in (("TW", "var TW = {", "var EN = {"), ("EN", "var EN = {", "var DICTS")):
+            with self.subTest(name=name):
+                words = script.split(start, 1)[1].split(end, 1)[0]
+                have = set(re.findall(r'(?m)(?:^\s*|, )([A-Za-z_][A-Za-z0-9_]*): "', words))
+                self.assertEqual(set(), used - have)
+                self.assertEqual(set(), {key for key in have - used if not key.startswith("_")})
+
     def test_the_package_version_is_the_one_the_project_declares(self):
         declared = re.search(r'^version = "([^"]+)"', (ROOT / "pyproject.toml").read_text(encoding="utf-8"), re.M)[1]
         self.assertEqual(declared, __version__)
