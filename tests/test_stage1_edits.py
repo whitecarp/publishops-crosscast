@@ -34,6 +34,7 @@ class LastMomentTests(SharedBrowser):
         self.saves = []
         self.title, self.words = "Old title", "Old words"
         self.stays = None
+        self.tip, self.button_class = "", ""
 
     async def handle(self, route):
         if route.request.method == "POST":
@@ -42,7 +43,7 @@ class LastMomentTests(SharedBrowser):
             return await self.json_at(route, {})
         if urlsplit(route.request.url).path == "/creator-micro/content/post/video":
             return await self.page_at(route, f"""<input placeholder="填写作品标题，为作品获得更多流量" value="{self.title}"><div contenteditable="true" id="c">{self.words}</div>
-              <button id="go">发布</button><script>document.getElementById('go').onclick = async () => {{
+              {self.tip}<button id="go" class="{self.button_class}">发布</button><script>document.getElementById('go').onclick = async () => {{
                 await fetch('/save', {{method: 'POST', body: JSON.stringify({{title: document.querySelector('input').value, words: document.getElementById('c').innerText}})}}); {"document.body.insertAdjacentHTML('beforeend', " + repr(self.stays) + ")" if self.stays else "location.href = '/creator-micro/content/manage'"}; }};</script>""")
         await self.page_at(route, "manage")
 
@@ -50,6 +51,44 @@ class LastMomentTests(SharedBrowser):
         checked = edits.validate_patch("douyin", {**TEXT, "metadata_language": "zh-Hans", "content_language": "zh-Hans"})
         self.path = self.root / "edit.json"
         return await browser_edits.execute(self.page, "douyin", OWNER, {"patch": checked, "receipt": {"id": "123", "title": "Old title"}, "edit_receipt_path": str(self.path)})
+
+    TIP = '<div class="modify-tip-JHqxpV">作品修改审核中，暂不支持修改</div>'
+
+    async def test_a_work_douyin_says_it_cannot_change_yet_is_left_alone(self):
+        """From a field run: this message, above a grey button that reported itself enabled, and a click that did nothing."""
+        self.tip, self.button_class = self.TIP, "button-dhlUZE confirm-btn-o5qYAY disabled-hQcr9C primary-cECiOJ"
+        with self.assertRaises(VpubError) as caught:
+            await self.edit()
+        self.assertEqual("edit_held_by_review", caught.exception.code)
+        self.assertEqual([], self.saves)
+        self.assertEqual("Old words", await self.page.locator("#c").inner_text())
+        self.assertFalse(self.path.exists())
+
+    async def test_the_same_words_in_the_text_do_not_hold_it(self):
+        self.words = "作品修改审核中，暂不支持修改"
+        await self.edit()
+        self.assertEqual(1, len(self.saves))
+
+    async def test_a_button_that_stays_grey_is_not_pressed(self):
+        self.button_class = "button-dhlUZE confirm-btn-o5qYAY disabled-hQcr9C primary-cECiOJ"
+        with self.assertRaises(VpubError) as caught:
+            await self.edit()
+        self.assertEqual("edit_not_ready", caught.exception.code)
+        self.assertEqual([], self.saves)
+        self.assertFalse(self.path.exists())
+
+    async def test_a_button_that_turns_from_grey_once_the_words_are_in_is_pressed(self):
+        self.button_class = "disabled-hQcr9C"
+        self.tip = """<script>addEventListener('input', () => { document.getElementById('go').className = 'primary-cECiOJ'; });</script>"""
+        await self.edit()
+        self.assertEqual(1, len(self.saves))
+
+    async def test_a_press_that_leaves_this_message_says_so(self):
+        self.stays = self.TIP
+        with patch.object(browser_edits, "DOUYIN_SAVE_SECONDS", 1):
+            result = await self.edit()
+        self.assertIs(True, result["after_press"]["says_held"])
+        self.assertEqual(("EDIT_SUBMITTED_UNVERIFIED", 1), (result["state"], len(self.saves)))
 
     STAYS = '<div role="dialog">请先完成封面设置 secret-viewer-words<div contenteditable="true">secret-form-words</div></div>'
 

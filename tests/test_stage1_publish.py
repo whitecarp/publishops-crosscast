@@ -179,6 +179,7 @@ class XFormTests(Form):
     def prepare(self):
         super().prepare()
         self.studio_account = OWNER
+        self.composer_outside, self.composer_video, self.extra_video = False, "this-file", ""
         self.studio_open = True
         self.never_shows = False
 
@@ -205,9 +206,25 @@ class XFormTests(Form):
         if path.endswith("/edit"):
             keep = "" if self.keeps_text else "this.value = '';"
             name = parse_qs(urlsplit(route.request.url).query)["name"][0]
-            return await self.page_at(route, f"""{account}{self.check}<div><a download="{name}" href="#">Download</a><button type="button">Change thumbnail</button><button type="button" id="compose" onclick="this.remove(); document.getElementById('box').hidden = false">Post</button></div>
-              <div id="box" hidden><textarea placeholder="What's happening?" oninput="{keep}"></textarea><button type="button" onclick="fetch('/post', {{method: 'POST', body: JSON.stringify({{text: document.querySelector('textarea').value}})}})">Post</button></div>""")
+            box = f"""<div id="box"><video src="https://studio.x.com/{self.composer_video}.mp4"></video><textarea placeholder="What's happening?" oninput="{keep}"></textarea><button type="button" onclick="fetch('/post', {{method: 'POST', body: JSON.stringify({{text: document.querySelector('textarea').value}})}})">Post</button></div>"""
+            return await self.page_at(route, f"""{account}{self.check}<div><a download="{name}" href="#">Download</a><button type="button">Change thumbnail</button>{self.extra_video}<video src="https://studio.x.com/this-file.mp4"></video><button type="button" id="compose" onclick="const home = {'document.body' if self.composer_outside else 'this.parentElement'}; document.querySelector('video').remove(); this.remove(); home.insertAdjacentHTML('beforeend', document.getElementById('held').innerHTML)">Post</button></div><template id="held">{box}</template>""")
         await self.page_at(route, f"""{account}<button>Upload Media</button><input type="file" accept="video/mp4" onchange="fetch('/upload', {{method: 'POST', body: '{{}}'}}); const row = document.createElement('div'); row.textContent = this.files[0].name; row.onclick = () => location.href = '/library/1_2/edit?name=' + encodeURIComponent(row.textContent); document.body.append(row)">""")
+
+    async def test_a_composer_outside_this_files_form_posts_nothing(self):
+        """From a review, and a field read of where the composer really sits."""
+        self.composer_outside = True
+        await self.refused("layout_changed")
+        self.assertEqual([], self.final)
+
+    async def test_a_form_with_two_videos_posts_nothing(self):
+        self.extra_video = '<video src="https://studio.x.com/another-file.mp4"></video>'
+        await self.refused("layout_changed")
+        self.assertEqual([], self.final)
+
+    async def test_a_composer_showing_another_video_posts_nothing(self):
+        self.composer_video = "another-file"
+        await self.refused("layout_changed")
+        self.assertEqual([], self.final)
 
     async def test_a_studio_that_names_another_account_stops_before_any_upload(self):
         self.studio_account = "someone_else"

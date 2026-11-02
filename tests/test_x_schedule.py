@@ -16,12 +16,14 @@ from shared_chrome import ChromeCase, async_playwright
 OWNER = "owner"
 
 
-def page_html(keep_clock=True, final_after="Done", shows=None, closes=True, done_closes=True, final_elsewhere=False, row_extra=""):
+def page_html(keep_clock=True, final_after="Done", shows=None, closes=True, done_closes=True, final_elsewhere=False, row_extra="", both_elsewhere=False):
     """Follows what a field run saw: the calendar has its own Clear and Save, and only its Save changes the buttons below it, sending nothing."""
     months = "".join(f'<option value="{i}">{name}</option>' for i, name in enumerate("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split()))
     years = "".join(f'<option value="{year}">{year}</option>' for year in range(2026, 2032))
     final_button = '<button type="button" id="final" class="Button Button--primary tweetbtn">Post</button>'
-    return f"""<!doctype html><body><div id="page"><div id="composer"><textarea name="tweetData.text" placeholder="What's happening?">Words</textarea>
+    opener = '<button type="button" id="open" class="Button Button--link">Schedule</button>'
+    row = f'<div class="row">{opener}{row_extra}{final_button}</div>'
+    return f"""<!doctype html><body><div id="page"><div id="composer"><video src="https://studio.x.com/this-file.mp4"></video><textarea name="tweetData.text" placeholder="What's happening?">Words</textarea>
       <div id="panel" hidden>
         <fieldset class="CalendarNavigation-monthFormSelect"><select id="m">{months}</select></fieldset>
         <fieldset class="CalendarNavigation-yearFormSelect"><select id="y">{years}</select></fieldset>
@@ -31,8 +33,9 @@ def page_html(keep_clock=True, final_after="Done", shows=None, closes=True, done
         <button type="button" id="calendar-save" class="Button Button--primary Button--small">Save</button>
       </div>
       <input type="text" name="other" value="not a time">
-      <div class="row"><button type="button" id="open" class="Button Button--link">Schedule</button>{row_extra}{"" if final_elsewhere else final_button}</div></div>
-      {f'<div id="another-composer"><div class="row">{final_button}</div></div>' if final_elsewhere else ""}</div>
+      {"" if both_elsewhere else f'<div class="row">{opener}{row_extra}{"" if final_elsewhere else final_button}</div>'}</div>
+      {f'<div id="another-composer"><video src="https://studio.x.com/another-file.mp4"></video><div class="row">{final_button}</div></div>' if final_elsewhere else ""}
+      {f'<div id="another-composer"><video src="https://studio.x.com/another-file.mp4"></video>{row}</div>' if both_elsewhere else ""}</div>
       <script>
       const m = document.getElementById('m'), y = document.getElementById('y'), days = document.getElementById('days'), final = document.getElementById('final');
       const now = new Date(); m.value = String(now.getMonth()); y.value = String(now.getFullYear());
@@ -309,18 +312,21 @@ class Calendar(ChromeCase):
         await self.open()
         tx = StubTx({"schedule": self.next_month_day().isoformat()})
         with patch.object(browser_forms, "verify_scheduled_x", new=AsyncMock(return_value={"state": "SUBMISSION_VERIFIED"})):
-            result = await browser_forms.x_send_scheduled(self.page, tx)
+            result = await self.send(tx)
         self.assertEqual("SUBMISSION_VERIFIED", result["state"])
         self.assertEqual(["Done"], tx.pressed)
         self.assertEqual(1, len(self.saved))
         self.assertEqual("3:07 PM", self.saved[0]["clock"])
         self.assertTrue(tx.receipt["schedule"]["at"])
 
-    async def refuses(self, html, code="schedule_unverified", **options):
+    async def send(self, tx, form="#page", video="https://studio.x.com/this-file.mp4"):
+        return await browser_forms.x_send_scheduled(self.page, tx, await self.page.locator(form).element_handle(), video)
+
+    async def refuses(self, html, code="schedule_unverified", form="#page", video="https://studio.x.com/this-file.mp4", **options):
         await self.open(html)
         tx = StubTx({"schedule": self.next_month_day().isoformat(), **options})
         with self.assertRaises(VpubError) as caught:
-            await browser_forms.x_send_scheduled(self.page, tx)
+            await self.send(tx, form, video)
         self.assertEqual(code, caught.exception.code)
         self.assertIn("Nothing was posted", caught.exception.message)
         self.assertEqual([], tx.pressed)
@@ -354,7 +360,7 @@ class Calendar(ChromeCase):
         await self.open()
         tx = Changes({"schedule": self.next_month_day().isoformat()})
         with self.assertRaises(VpubError) as caught:
-            await browser_forms.x_send_scheduled(self.page, tx)
+            await self.send(tx)
         self.assertEqual(code, caught.exception.code)
         self.assertEqual(([], []), (tx.pressed, self.saved))
 
@@ -378,12 +384,32 @@ class Calendar(ChromeCase):
                 await button.click(timeout=1000)
         await self.open()
         with self.assertRaises(BrowserError):
-            await browser_forms.x_send_scheduled(self.page, TurnsBack({"schedule": self.next_month_day().isoformat()}))
+            await self.send(TurnsBack({"schedule": self.next_month_day().isoformat()}))
         self.assertEqual([], self.saved)
 
     async def test_a_done_button_in_another_composer_is_not_this_ones(self):
         """From a review: the words and the time from one composer, and the only final button on the page in another."""
         await self.refuses(page_html(final_elsewhere=True))
+
+    async def test_the_time_and_done_together_in_another_composer_are_not_this_ones(self):
+        """From a review: they sat side by side, and only a wider element held them with the words."""
+        await self.refuses(page_html(both_elsewhere=True))
+
+    async def test_a_composer_outside_this_files_form_is_not_its_own(self):
+        await self.refuses(page_html(), form="#panel")
+
+    async def test_a_composer_showing_another_video_is_not_this_files(self):
+        await self.refuses(page_html(), video="https://studio.x.com/another-file.mp4")
+
+    async def test_a_form_that_had_no_video_to_compare_still_needs_its_composer_inside_it(self):
+        await self.open()
+        tx = StubTx({"schedule": self.next_month_day().isoformat()})
+        with patch.object(browser_forms, "verify_scheduled_x", new=AsyncMock(return_value={"state": "SUBMITTED_UNVERIFIED"})):
+            await self.send(tx, video=None)
+        self.assertEqual(["Done"], tx.pressed)
+
+    async def test_with_no_video_to_compare_a_composer_outside_the_form_is_still_refused(self):
+        await self.refuses(page_html(), form="#panel", video=None)
 
     async def test_a_row_with_more_in_it_than_the_time_and_done_is_not_trusted(self):
         await self.refuses(page_html(row_extra='<button type="button">Another action</button>'))
@@ -392,7 +418,7 @@ class Calendar(ChromeCase):
         await self.open(page_html(row_extra='<button type="button" aria-label="Help"><svg width="9" height="9"></svg></button>'))
         tx = StubTx({"schedule": self.next_month_day().isoformat()})
         with patch.object(browser_forms, "verify_scheduled_x", new=AsyncMock(return_value={"state": "SUBMITTED_UNVERIFIED"})):
-            await browser_forms.x_send_scheduled(self.page, tx)
+            await self.send(tx)
         self.assertEqual(["Done"], tx.pressed)
 
     async def test_a_composer_that_stays_open_after_done_is_not_left_behind(self):
@@ -400,7 +426,7 @@ class Calendar(ChromeCase):
         await self.open(page_html(done_closes=False))
         tx = StubTx({"schedule": self.next_month_day().isoformat()})
         with patch.object(browser_forms, "X_DONE_SECONDS", 1), patch.object(browser_forms, "verify_scheduled_x", new=AsyncMock(side_effect=AssertionError("left the page"))):
-            result = await browser_forms.x_send_scheduled(self.page, tx)
+            result = await self.send(tx)
         self.assertEqual(("SUBMITTED_UNVERIFIED", "readback_pending"), (result["state"], result["phase"]))
         self.assertIn("do not post again", result["note"])
         self.assertEqual(["Done"], tx.pressed)
@@ -410,7 +436,7 @@ class Calendar(ChromeCase):
         await self.open()
         tx = StubTx({"schedule": self.next_month_day().isoformat()})
         with patch.object(browser_forms, "verify_scheduled_x", new=AsyncMock(return_value={"state": "SUBMITTED_UNVERIFIED", "schedule_page_mentions": 1})) as read_back:
-            result = await browser_forms.x_send_scheduled(self.page, tx)
+            result = await self.send(tx)
         read_back.assert_awaited_once()
         self.assertEqual(1, result["schedule_page_mentions"])
 
@@ -426,7 +452,7 @@ class Calendar(ChromeCase):
     async def test_a_schedule_that_fails_saves_nothing(self):
         await self.open(page_html(keep_clock=False))
         with self.assertRaises(VpubError):
-            await browser_forms.x_send_scheduled(self.page, StubTx({"schedule": self.next_month_day().isoformat()}))
+            await self.send(StubTx({"schedule": self.next_month_day().isoformat()}))
         self.assertEqual([], self.saved)
 
 

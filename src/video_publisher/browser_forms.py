@@ -107,29 +107,41 @@ def x_chosen_time_says(words, schedule):
     return date == tuple(schedule['date']) and (int(found[4]) % 12 + (12 if found[6] == 'PM' else 0), int(found[5])) == tuple(schedule['time'])
 
 
-def x_smallest_around(page, one, other):
-    """The innermost element holding both, or several if nothing ties them together, which strict matching then refuses."""
-    around = page.locator('div:visible').filter(has=one).filter(has=other)
-    return around.filter(has_not=page.locator('div').filter(has=one).filter(has=other))
+X_FILE_VIDEOS = """form => [...form.querySelectorAll('video')].map(video => video.currentSrc || video.src)"""
+X_COMPOSER_VIDEOS = """(form, nodes) => {
+  if (!form.isConnected || !nodes.every(node => form.contains(node))) return null;
+  let around = nodes[0];
+  while (!around.contains(nodes[1])) around = around.parentElement;
+  return [...around.querySelectorAll('video')].map(video => video.currentSrc || video.src);
+}"""
 
 
-async def x_send_scheduled(page, tx):
+async def x_composer_is_this_files(form, video, caption, final, *others):
+    """A field read found the composer sits inside the file's own form, which stays on the page though its selector stops matching once the composer opens, and that it shows the same video as the form did. So these all have to be inside that form, around that video.
+    Reviews showed being the only one on the page, or sharing some wider element, proves nothing about whose they are."""
+    handles = [await control.element_handle(timeout=5000) for control in (caption, final, *others)]
+    videos = await form.evaluate(X_COMPOSER_VIDEOS, handles)
+    return videos is not None and (videos == [video] if video else len(videos) <= 1)
+
+
+async def x_send_scheduled(page, tx, form, video):
     """The calendar's own Save only closes it, a field run found, and nothing is sent. The composer's final button then reads Done, and the button that opened the calendar shows the date and time.
     Done is the press that schedules, so it alone counts as the final submit, once what it is about to send reads back. If that button still says Post it would post at once, so anything else stops here with nothing posted.
-    A review showed each of these being the only one on the page doesn't make them one composer's, so they are looked for inside the one around the words, and the time and Done have to sit side by side."""
+    They have to be this file's composer's, and the time and Done have to sit side by side."""
     from patchright.async_api import Error as BrowserError
     unconfirmed = 'X Studio did not show this schedule ready to save. Nothing was posted.'
     when = datetime.fromisoformat(tx.options['schedule'].replace('Z', '+00:00'))
     caption = page.get_by_placeholder("What's happening?", exact=True)
     any_final = page.locator('button.tweetbtn:visible')
-    composer = x_smallest_around(page, caption, any_final)
     schedule = await x_schedule(page, when)
     tx.save(schedule=schedule)
-    save = await unique_visible(composer.locator('button[type="button"]').filter(has_text=re.compile(r'^\s*Save\s*$')), 'X calendar Save')
+    save = await unique_visible(page.locator('button[type="button"]').filter(has_text=re.compile(r'^\s*Save\s*$')), 'X calendar Save')
     await wait_until(page, lambda: enabled(save), seconds=30, label='X calendar Save enabled')
+    if not await x_composer_is_this_files(form, video, caption, any_final, save):
+        raise VpubError('schedule_unverified', unconfirmed)
     await save.click(timeout=15000)
     # The press itself asks for the word Done, because a review showed the label could change between looking and pressing.
-    done = composer.locator('button.tweetbtn:visible').filter(has_text=re.compile(r'^\s*Done\s*$'))
+    done = any_final.filter(has_text=re.compile(r'^\s*Done\s*$'))
     chosen = page.locator('button[type="button"]:visible').filter(has_text=X_CHOSEN_TIME)
     row = any_final.locator('xpath=..')  # A field run's read of the page has the time and the final button side by side under one parent.
 
@@ -140,7 +152,8 @@ async def x_send_scheduled(page, tx):
     async def ready_to_send():
         if (not await says_done() or await chosen.count() != 1 or not x_chosen_time_says(await chosen.inner_text(), schedule)
                 or await row.locator('button[type="button"]:visible').filter(has_text=X_CHOSEN_TIME).count() != 1
-                or await row.locator('button:visible').filter(has_text=re.compile(r'\S')).count() != 2 or await composer.get_by_placeholder("What's happening?", exact=True).count() != 1):
+                or await row.locator('button:visible').filter(has_text=re.compile(r'\S')).count() != 2
+                or await page.locator('button.tweetbtn').count() != 1 or await caption.count() != 1 or not await x_composer_is_this_files(form, video, caption, any_final, chosen)):
             raise VpubError('schedule_unverified', unconfirmed)
         if await caption.input_value() != tx.options['post_text']:
             raise VpubError('metadata_mismatch', 'X post text differs from the manifest. Nothing was posted.')
@@ -287,6 +300,11 @@ async def publish_x(page, tx):
     compose_buttons = form.locator('button[type="button"]').filter(has_text=re.compile('^Post$'))
     await wait_until(page, lambda: visible(compose_buttons), seconds=30, label='Studio compose button')
     compose = await unique_visible(compose_buttons, 'Studio compose button')
+    file_form = await form.element_handle(timeout=15000)
+    file_videos = await file_form.evaluate(X_FILE_VIDEOS)
+    if len(file_videos) > 1:
+        raise VpubError('layout_changed', "This file's form shows more than one video, so its composer couldn't be tied to it. Nothing was posted.")
+    file_video = file_videos[0] if file_videos else None
     await compose.click()
     caption = page.get_by_placeholder("What's happening?", exact=True)
     await caption.wait_for(timeout=20000)
@@ -297,10 +315,15 @@ async def publish_x(page, tx):
     if tx.options.get('submission_mode') == 'draft_only':
         return tx.save(state='PREVIEW_READY', note='Media saved in Studio; composer preview is not a confirmed persistent post draft.')
     if tx.options.get('schedule'):
-        return await x_send_scheduled(page, tx)
+        return await x_send_scheduled(page, tx, file_form, file_video)
     post = await unique_visible(page.locator('button[type="button"]').filter(has_text=re.compile('^Post$')), 'final Post')
     await wait_until(page, lambda: enabled(post), seconds=90, label='X final Post enabled')
-    await tx.submit(page, post)
+
+    async def still_this_files():
+        if not await x_composer_is_this_files(file_form, file_video, caption, post):
+            raise VpubError('layout_changed', "X's composer could not be tied to this file's form and video. Nothing was posted.")
+    await still_this_files()
+    await tx.submit(page, post, still_holds=still_this_files)
     return await finish(page, tx, before)
 
 

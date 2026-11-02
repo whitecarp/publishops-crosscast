@@ -4,7 +4,7 @@ import re
 from urllib.parse import urlsplit
 from . import x_pages
 from .core import VpubError, atomic_json, file_sha, now, stop_check
-from .browser_runtime import failure_record, risk_check, unique_visible, visible
+from .browser_runtime import failure_record, look_until, risk_check, unique_visible, visible
 from .browser_backends import choose_file, douyin_card_words, douyin_editor_address, douyin_editor_boxes, douyin_type_caption, normalize, work_url
 from .progress import stage
 
@@ -120,6 +120,7 @@ async def execute(page, platform, identity, payload):
             control=page.locator('[class^="coverControl-"]').filter(has=page.get_by_text('竖封面3:4',exact=True))
             if payload.get('verify_only'):
                 return await capture_cover(page,control,output,patch,save,url)
+            if await douyin_says_held(page): raise douyin_held()
             await control.locator('[class^="cover-"]:not([class^="cover-tip"])').click()
             await page.locator('[role=dialog]').first.wait_for(state='visible',timeout=20000)
             dialog=await unique_visible(page.locator('[role=dialog]'),'cover editor')
@@ -152,6 +153,27 @@ async def execute(page, platform, identity, payload):
 DOUYIN_SAVE_SECONDS=60
 
 
+async def douyin_says_held(page):
+    """Whether a work's edit page says it can't be changed for now. A field run saw 作品修改审核中，暂不支持修改 in its own place above the final button. Only these fixed words count, because a person's text can say anything."""
+    for tip in await page.locator('[class^="modify-tip-"]').all():
+        if await tip.is_visible() and '暂不支持修改' in normalize(await tip.inner_text()):
+            return True
+    return False
+
+
+def douyin_held():
+    return VpubError('edit_held_by_review','Douyin is not allowing changes to this work while a review runs, so nothing was typed or pressed.','Try the same edit again once the review has finished.')
+
+
+async def douyin_greyed(button):
+    """That same run's final button was grey only through a class. It reported itself enabled and could be clicked, and the click did nothing."""
+    return bool(re.search(r'(^|\s)disabled-',await button.get_attribute('class') or ''))
+
+
+async def not_greyed(button):
+    return not await douyin_greyed(button)
+
+
 async def douyin_moved_on(page,pressed,output):
     """None once a press has taken the page back to the works list. Otherwise what can be said about it, because a press is never repeated.
     A field run pressed save and the page stayed, with the old words still saved and nothing to say why, so the usual failure record is kept. A review showed a page's dialogs can quote anyone's words, and that record keeps a page's words only with page_diagnostics on."""
@@ -164,7 +186,7 @@ async def douyin_moved_on(page,pressed,output):
             await failure_record(page,VpubError('edit_stayed','The page did not go back to the works list after the press.'),record,picture=output.with_suffix('.error.png'))
         except Exception:
             pass  # A page that can't be read must not replace what happened.
-        return {'pressed':pressed,'still_on_edit_page':'/content/post/video' in urlsplit(page.url).path,'record':record.name}
+        return {'pressed':pressed,'still_on_edit_page':'/content/post/video' in urlsplit(page.url).path,'says_held':await douyin_says_held(page),'record':record.name}
     return None
 
 
@@ -183,12 +205,17 @@ async def douyin_text(page,work_id,patch,save,submit,output,verify_only=False):
         return save(state='EDIT_VERIFIED',unchanged=True,platform_writes=0,url=url)
     if verify_only:
         return save(state='EDIT_MISMATCH',platform_writes=0,url=url,reason='The saved text differs; no write attempted.')
+    if await douyin_says_held(page): raise douyin_held()
     await title.fill(patch['title'])
     await douyin_type_caption(page,editor,patch['caption'])
     if await current(title,editor)!=wanted:
         raise VpubError('metadata_mismatch','Douyin\'s form did not keep the intended text; nothing was saved.')
     button=await visible(page.get_by_role('button',name=re.compile(r'^(保存|保存修改|提交修改|发布)$')))
     if button is None: raise VpubError('layout_changed','Existing-work save button is unavailable; nothing was saved.')
+    if await douyin_says_held(page): raise douyin_held()
+    # It may turn from grey once the new words have been taken in.
+    if await douyin_greyed(button) and not await look_until(page,lambda: not_greyed(button),5000):
+        raise VpubError('edit_not_ready','Douyin kept its save button grey, so it was not pressed and nothing was saved.')
     pressed=normalize(await button.inner_text())
     await submit(button)
     stayed=await douyin_moved_on(page,pressed,output)
