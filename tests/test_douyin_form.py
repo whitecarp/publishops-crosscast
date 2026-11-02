@@ -505,6 +505,12 @@ class CoverOnANewPostTests(Base):
 
 class ResumeFromKeptDraftTests(Base):
     """A field run's first real post stopped at its cover, with the video uploaded and nothing pressed."""
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        brief = patch.object(browser_forms, "DOUYIN_OFFER_SECONDS", 1)
+        brief.start()
+        self.addCleanup(brief.stop)
+
     OFFER = """<!doctype html><meta charset="utf-8"><body><input type=file><button onclick="location.href='/creator-micro/content/post/video'">继续编辑</button><button>放弃</button>"""
 
     def stopped(self, **receipt):

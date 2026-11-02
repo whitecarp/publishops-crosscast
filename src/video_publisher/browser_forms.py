@@ -508,11 +508,14 @@ async def publish_instagram(page, tx):
     return await finish(page, tx, before)
 
 
+DOUYIN_OFFER_SECONDS = 30
+
+
 async def douyin_reopen_kept_draft(page, tx, caption):
     """Back into this attempt's form, if the upload page offers a kept draft. It's this attempt's if the page offered none before the attempt began, and the form comes back with its exact title. Returns whether it got back in. With nothing on offer the file goes up again, since nothing was ever pressed and there's nothing else to go back to."""
     await page.goto('https://creator.douyin.com/creator-micro/content/upload', wait_until='domcontentloaded', timeout=60000)
     await page.locator('input[type=file]').wait_for(state='attached', timeout=20000)
-    if not await douyin_offers_draft(page, 10):
+    if not await douyin_offers_draft(page, DOUYIN_OFFER_SECONDS):
         return False
     if tx.receipt.get('draft_offered_before') is not False:
         raise VpubError('existing_draft_requires_attention', "Douyin's upload page is offering a kept draft that was there before this attempt, so it wasn't opened.", "Continue or discard that draft on Douyin's upload page yourself, then run this again.")

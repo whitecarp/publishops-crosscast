@@ -185,11 +185,12 @@ async def own_handle(page, identity):
     return handle
 
 
-async def content_rows(page, identity, tab):
+async def content_rows(page, identity, tab, must_answer=False):
     """One of Studio's lists, once it has rows or says it has none."""
     await page.goto(f"{STUDIO}/channel/{identity}/videos/{tab}", wait_until="domcontentloaded", timeout=60000)
     rows = page.locator("ytcp-video-row")
-    await appears(page, rows.or_(page.get_by_text(STUDIO_LIST_EMPTY).locator("visible=true")), 20)
+    if not await appears(page, rows.or_(page.get_by_text(STUDIO_LIST_EMPTY).locator("visible=true")), 20) and must_answer:
+        raise VpubError("inspect_existing_draft", "Studio's list of the channel's videos didn't load, so nothing was opened or uploaded.", "Run vpub resume again, or look for the draft in YouTube Studio.")
     return rows
 
 
@@ -206,7 +207,7 @@ async def drafts_named(page, identity, names):
     """The rows of drafts with one of these names, with the page left on their list. A field read found a stopped upload's draft under Shorts, with no link to an edit page and its file's hyphen written as a space."""
     wanted = {normalize(name).replace("-", " ") for name in names}
     for tab in STUDIO_LISTS:
-        rows = await content_rows(page, identity, tab)
+        rows = await content_rows(page, identity, tab, must_answer=True)
         found = [at for at, row in enumerate(await rows.evaluate_all(WORK_ROWS)) if not row["href"] and normalize(row["title"]).replace("-", " ") in wanted]
         if found:
             return [rows.nth(at) for at in found]

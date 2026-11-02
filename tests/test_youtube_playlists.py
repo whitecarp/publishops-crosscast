@@ -323,6 +323,14 @@ class ContentListTests(Browser):
                 await self.page.set_content(bars % value)
                 self.assertIs(finished, await browser_forms.yt_upload_finished(self.page, reopened))
 
+    async def test_a_list_that_never_answered_is_not_taken_to_have_no_draft(self):
+        """It would otherwise go on to upload the file a second time."""
+        self.site.lists = {"upload": content_row(VIDEO, "Wide"), "short": ""}
+        tx = SimpleNamespace(identity=CHANNEL, receipt={"upload_filename": "crosscast-e1bc62c1f38c4234.mp4"})
+        with self.assertRaises(VpubError) as caught:
+            await browser_forms.yt_reopen_stopped_upload(self.page, tx)
+        self.assertEqual("inspect_existing_draft", caught.exception.code)
+
     async def test_no_draft_of_this_file_means_nothing_is_pressed(self):
         self.site.lists = {"upload": content_row(VIDEO, "Wide"), "short": DRAFT.replace("e1bc62c1f38c4234", "aaaaaaaaaaaaaaaa")}
         tx = SimpleNamespace(identity=CHANNEL, receipt={"upload_filename": "crosscast-e1bc62c1f38c4234.mp4"})
@@ -330,7 +338,7 @@ class ContentListTests(Browser):
         self.assertIsNone(await self.page.evaluate("window.opened || null", isolated_context=False))
 
     async def test_two_drafts_of_one_file_are_not_chosen_between(self):
-        self.site.lists = {"short": DRAFT + DRAFT}
+        self.site.lists = {"upload": "<p>No content available</p>", "short": DRAFT + DRAFT}
         tx = SimpleNamespace(identity=CHANNEL, receipt={"upload_filename": "crosscast-e1bc62c1f38c4234.mp4"})
         with self.assertRaises(VpubError) as caught:
             await browser_forms.yt_reopen_stopped_upload(self.page, tx)
