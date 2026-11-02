@@ -809,6 +809,8 @@ class BilibiliReadBackTests(unittest.TestCase):
             return {"bvid": BVID}
         if args[:2] == ["upload", "status"]:
             return dict(self.status)
+        if args[:3] == ["danmaku", "interact", "list"]:
+            return {"items": []}
         raise AssertionError(args)
 
     def publish(self, **options):

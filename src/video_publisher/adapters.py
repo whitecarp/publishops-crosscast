@@ -283,6 +283,8 @@ def publish_bilibili(plan, options, checkpoint):
         receipt["season"] = {"id": options["season_id"], "added": v.get("season_added") is True, "error": v.get("season_error")}
     if options.get("chapters"):
         receipt.update(pending_chapters=options["chapters"], chapters_state="PENDING")
+    if options.get("widgets"):
+        receipt.update(pending_widgets=options["widgets"], widgets_state="PENDING")
     checkpoint(receipt)
     return verify("bilibili", options["account"], receipt, checkpoint)
 
@@ -350,5 +352,7 @@ def verify(platform, account, receipt, checkpoint=None):
                           note="Bilibili recorded a different AI-content declaration. Correct it on this existing work "
                                "(bili upload edit with --ai-declare or --no-ai-declare); do not upload again.")
         from .edits_bilibili import finish_chapters
-        return finish_chapters(result, checkpoint)
+        from .widgets_bilibili import finish as finish_widgets, seen as widgets_seen
+        result = finish_widgets(finish_chapters(result, checkpoint), checkpoint)
+        return {**result, "widgets_seen": widgets_seen(video_id, result.get("widgets"))}
     return youtube_api().verify_video(account, receipt, video_id)

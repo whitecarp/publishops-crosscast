@@ -84,6 +84,15 @@ def submit(args, checkpoint, work, landed):
 
 
 def run(account, identity, receipt, patch, checkpoint, verify_only):
+    result = change(account, identity, receipt, patch, checkpoint, verify_only)
+    # The owner asked that a video's widgets be looked at after every update, since an edit sends it back for review.
+    if result.get("platform_writes"):
+        from .widgets_bilibili import seen
+        result = {**result, "widgets_seen": seen(receipt["id"], receipt.get("widgets"))}
+    return result
+
+
+def change(account, identity, receipt, patch, checkpoint, verify_only):
     work = receipt["id"]
     signed_in = adapters.auth_status("bilibili", account, "cli")["identity"]
     if str(signed_in) != str(identity):

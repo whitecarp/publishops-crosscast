@@ -15,7 +15,7 @@ from .overview import DRAFTS
 from .safety import pushed_back
 
 # The command finished, but the work it was asked to do did not.
-UNFINISHED_STATES = {"INCOMPLETE", "INTERRUPTED", "UPLOAD_PAUSED", "UPLOAD_INITIATING", "UPLOAD_SESSION_CHECK", "UPLOADING", "UPLOAD_INTERRUPTED", "UPLOAD_EXPIRED", "UPLOAD_UNVERIFIED",
+UNFINISHED_STATES = {"WAITING_FOR_PUBLIC", "REMOVE_UNVERIFIED", "INCOMPLETE", "INTERRUPTED", "UPLOAD_PAUSED", "UPLOAD_INITIATING", "UPLOAD_SESSION_CHECK", "UPLOADING", "UPLOAD_INTERRUPTED", "UPLOAD_EXPIRED", "UPLOAD_UNVERIFIED",
                      "DM_READY", "DM_REPLACED", "DM_SUBMITTING", "DM_UNVERIFIED", "DM_FAILED", "COMMENT_READY", "COMMENT_REPLACED", "COMMENT_SUBMITTING", "COMMENT_UNVERIFIED", "COMMENT_FAILED",
                      "ACTION_READY", "ACTION_REPLACED", "ACTION_SUBMITTING", "ACTION_UNVERIFIED", "ACTION_FAILED", "PARTIAL", "WAITING_FOR_USER", "PREPARATION_INCOMPLETE", "SUBMITTED_UNVERIFIED", "UNKNOWN",
                      "EDIT_SUBMITTING", "EDIT_SUBMITTED_UNVERIFIED", "EDIT_UNAVAILABLE", "REPLY_READY", "REPLY_PENDING", "REPLY_SUBMITTING", "REPLY_UNVERIFIED", "REPLY_REJECTED",
@@ -24,7 +24,7 @@ UNFINISHED_STATES = {"INCOMPLETE", "INTERRUPTED", "UPLOAD_PAUSED", "UPLOAD_INITI
 # Marks JSON leaves as they are that can still end a line, act on a terminal or reorder what a reader sees. A viewer can type any of them.
 UNSAFE_OUTPUT = re.compile("[\x7f-\x9f؜​‎‏ -‮⁠-⁩\ud800-\udfff﻿]")
 # Commands whose --out saves the JSON result. For the others, --out names the file the command produces.
-SAVES_RESULT = {"dm", "read-all", "collection", "playlist", "messages", "engage", "ops", "comments", "stats", "report", "works", "status", "cleanup"}
+SAVES_RESULT = {"dm", "read-all", "collection", "playlist", "messages", "engage", "ops", "comments", "stats", "report", "works", "status", "cleanup", "widgets"}
 
 
 def only_a_preview(old, opts):
@@ -318,6 +318,11 @@ def parser():
     q=cl.add_parser('verify');q.add_argument('key');q.add_argument('--out')
     for action in ('add','remove'):
         q=cl.add_parser(action);q.add_argument('platform',choices=['douyin','instagram','x','bilibili']);q.add_argument('collection');q.add_argument('work');q.add_argument('--request-id',required=True);q.add_argument('--out')
+    wg=sub.add_parser('widgets',help="Bilibili's interactive widgets on your own video: link, follow, vote and rating.").add_subparsers(dest='action',required=True)
+    q=wg.add_parser('list',help="What Bilibili lists on a video.");q.add_argument('work');q.add_argument('--page',type=int,default=1);q.add_argument('--out')
+    q=wg.add_parser('add',help="A file's widgets on a video that's already public. Sends only what isn't there.");q.add_argument('work');q.add_argument('file',help='JSON list of widgets.');q.add_argument('--dry-run',action='store_true');q.add_argument('--again',action='store_true',help="Send again what may have gone, once you've seen it isn't there.");q.add_argument('--out')
+    q=wg.add_parser('verify',help="Only reads, and compares with what was asked for.");q.add_argument('work');q.add_argument('--out')
+    q=wg.add_parser('remove',help="One widget off a video. Never a reserve widget.");q.add_argument('work');q.add_argument('widget');q.add_argument('--page',type=int,default=1);q.add_argument('--dry-run',action='store_true');q.add_argument('--out')
     pl=sub.add_parser('playlist',help="Owned YouTube playlists on YouTube's own pages, or the official API with the add-on.").add_subparsers(dest='action',required=True)
     for action in ('list','items'):
         q=pl.add_parser(action)
@@ -584,6 +589,12 @@ def run_command(args):
         elif args.action in {'add','remove'}:result=collections.membership(args.platform,args.action,args.collection,args.work,args.request_id)
         else:result=collections.change(args.platform,args.action,getattr(args,'collection',None),getattr(args,'title',None),args.request_id,getattr(args,'cover',None),getattr(args,'description',None))
         return result
+    if args.command=='widgets':
+        from . import widgets_bilibili as widgets
+        if args.action=='list':return widgets.listing(args.work,args.page)
+        if args.action=='add':return widgets.add(args.work,args.file,args.dry_run,args.again)
+        if args.action=='verify':return widgets.verify(args.work)
+        return widgets.remove(args.work,args.widget,args.page,args.dry_run)
     if args.command=='playlist':
         playlists = adapters.youtube_playlists()
         if args.action in {'list','items'}:result=playlists.listing(getattr(args,'playlist',None),args.cursor,args.limit)
@@ -972,6 +983,7 @@ def capabilities():
             "instagram_deletion": "Explicit native deletion request, UI result/absence evidence, retained history, and separately authorized same-video cover replacement. No standalone deletion API.",
             "paid_add_on": f"{NOT_ON_SALE} Anything here that needs it is unavailable until it is, so don't offer it as something to buy. Everything else works without it.",
             "email": "Paid add-on. Gmail only, disabled by default. Enable only on explicit request; no ordinary-setup prompt. Host verifies the exact account and live send tool, helps install/connect a missing plugin or leaves email off. Self-send only. Works with any assistant's connected Gmail send tool: claim with its exact name, then call it once with the returned message. No Outlook, QQ, NetEase, SMTP or SMS. A TEST does not enable ongoing alerts.",
+            "bilibili_widgets": "A Bilibili plan's widgets list, or vpub widgets add on a video already up, puts link, follow, vote and rating widgets on your own video through the included bili-cli, 35 seconds apart. Each read first and read back, so one already there isn't sent again, and one that may have gone is only read again. Bilibili doesn't list them before a video is public, so a plan's wait for vpub verify after that. A failed read is an unknown, and nothing is sent after it. vpub verify and a Bilibili edit also report what's on the video as widgets_seen. Reserve widgets are left out, since removing one notifies everyone who booked it. This route hasn't run on a real account.",
             "chapters": "Bilibili's CLI route sets planned chapters right after the upload and Bilibili reviews them; a refusal leaves the upload in place and vpub verify tries again. Verify reads first: an unclear ending is only read again and another person's list is never overwritten. YouTube's browser route adds them to the description as timestamped lines: at least three, each at least 10 seconds. Neither has been tried on a real account. Douyin CLI applies planned chapters after a durable published work ID is available; verify/resume completes a pending chapter step without reupload. Exact timing/title read-back; platform suggestions are not accepted automatically. Native Bilibili/Douyin/YouTube handoffs retained.",
             "youtube_studio_operations": "Without the paid add-on, YouTube works, stats, comments, replies, video and comment likes, comment pins, removing a viewer's comment, saves, playlists, edits (title, description, thumbnail, chapters), and editing or deleting the channel's own comments run on YouTube's own pages in the background browser. Comments are those Studio loaded; reordering a playlist and the held-for-review queue need the add-on. Reads, playlist create, rename, add, remove and delete, a video like and save with their undo, a reply, an edit of the channel's own comment, a private video's title and description changed and put back, and a pin and its removal were checked on a real channel. A pin is read and removed on the video's own page, because Studio's row and menu do not change. A new thumbnail is reported as unconfirmed, because Studio shows nothing to compare it with. A delete of the channel's own reply removed it, but CrossCast can't confirm one until a real delete's answer is known. Other changes have not been tried on one.",
             "existing_work_edits": "vpub edit: YouTube title, description, thumbnail and chapters (Studio in the background browser; title, description and thumbnail also through the official API with the paid add-on), Bilibili title, description, tags, cover and chapters through the included bili-cli (Bilibili reviews each edit again), Douyin title, description, portrait and chapters, Instagram captions, available X Edit action. Bilibili edits and Douyin title and description edits have not been tried on a real account. One field group per request; verify-only never saves. X edit availability is platform-controlled; no automatic repost.",

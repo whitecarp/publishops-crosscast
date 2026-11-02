@@ -109,7 +109,7 @@ def attempt(row, busy):
             "method": (data.get("options") or {}).get("method"), "id": receipt.get("id"), "url": receipt.get("url"),
             "updated_at": row["updated_at"], "next_command": command, "note": note}
     if part_left_undone(receipt):
-        item.update({name: receipt[name] for name in ("chapters_state", "season") if name in receipt})
+        item.update({name: receipt[name] for name in ("chapters_state", "widgets_state", "season") if name in receipt})
     done = progress(row)
     return {**item, "progress": done} if done else item
 

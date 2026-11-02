@@ -111,6 +111,8 @@ Each platform's progress keeps its real name: Queued → Publishing → Submitte
 
 `vpub edit` changes a published work in place: Bilibili titles, descriptions, tags, covers and chapters; YouTube titles, descriptions, thumbnails and chapters; Douyin titles, descriptions, portrait covers and chapters; Instagram captions; and X posts when an Edit option appears. The video and visibility stay the same. For older works CrossCast didn't publish, adopt them with `vpub ops adopt`, then edit them with `vpub edit-work`.
 
+`vpub widgets` puts Bilibili's interactive widgets on your own video: a link to another video, a follow or triple button, a vote and a rating. Choose them in the plan, or add them to a video that's already up. Bilibili doesn't list them before a video is public, so a plan's wait until then, and `vpub verify` sends them. `vpub verify` and a Bilibili edit also report what's on the video. Reserve widgets are left out, since removing one notifies everyone who booked it. This hasn't run on a real account through `vpub` yet.
+
 ### 💬 Comments, likes and messages
 
 Read comments and reply in the commenter's language, like and save works, read and send direct messages on Douyin, Instagram and X, and check @-mentions. You can also pin, hide, delete or remove individual comments where the platform allows it, and manage your collections and playlists (reordering them is part of the paid add-on). Each action covers only the single item you authorized; nothing is sent in bulk. What's available differs by platform; see the [feature scope](docs/FEATURES_EN.md).

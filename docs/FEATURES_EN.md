@@ -23,6 +23,7 @@ This requirement exists because non-subscribers are limited to **140-second, 512
 | Save / remove | Selected favorite folder | Selected ordinary playlist | Default saved items | Private bookmarks | Default Saved |
 | Mentions | bili-cli; `vpub messages sync` | Not integrated | Visible previews | Mentions | Tags/mentions; nonempty fixture pending |
 | Moderation / hiding | Upstream | Viewer hold/approve (paid add-on) | Not integrated | Hide/unhide other-author replies | Not integrated |
+| Interactive widgets | `vpub widgets`: link, follow, vote, rating | Not on this platform | Not on this platform | Not on this platform | Not on this platform |
 
 Every other API entry in the YouTube column also needs the paid add-on; `vpub capabilities` shows what this machine has.
 

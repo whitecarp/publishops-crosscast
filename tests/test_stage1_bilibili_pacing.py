@@ -90,6 +90,8 @@ class Spaced(Temporary):
     def read(self, args):
         if args[:2] == ["video", "info"]:
             return {"owner": {"mid": 42}}
+        if args[:3] == ["danmaku", "interact", "list"]:
+            return {"items": []}
         return None
 
     def written(self, args):

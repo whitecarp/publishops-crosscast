@@ -571,6 +571,35 @@ B站 CLI 路徑與 YouTube 瀏覽器路徑也接受 `chapters` 與 `duration_sec
 
 以上為第一期的歷史範例，當時使用者確認手機可見；目前第二期的六個自訂章節也已由 CLI 保存並完整讀回。章節入口、12 字元限制與審核回執見[操作指南](CATEGORIES_AND_CHAPTERS.md)。在簡介寫時間碼不代表平台章節已生效；入口未開通或仍審核中時保留待辦。
 
+## B站互動組件
+
+```sh
+vpub widgets list BV1xx411c7mD
+vpub widgets add BV1xx411c7mD widgets.json --dry-run
+vpub widgets add BV1xx411c7mD widgets.json
+vpub widgets verify BV1xx411c7mD
+vpub widgets remove BV1xx411c7mD 123456 --dry-run
+```
+
+把 `widgets` 清單寫進 B站方案，或寫在檔案裡，用 `vpub widgets add` 加到已經發布的影片上。每個組件都有 `type`、以秒為單位的 `time`，以及表示分 P 的 `page`（可省略）：
+
+```json
+[{"type": "link", "time": 10, "target": "BV1yy4y1k7yy", "text": "下一集"},
+ {"type": "follow", "time": 20, "style": "both"},
+ {"type": "vote", "time": 30, "question": "選哪個", "options": ["甲", "乙"]},
+ {"type": "rating", "time": 40, "title": "打個分", "skin": "star"}]
+```
+
+B站每部影片只收一個投票，組件至少顯示 5 秒。關注按鈕還可以設定 `x`、`y` 和 `duration`，投票還可以設定 `allow_custom` 和 `custom_label`。
+
+- **時機：** 影片公開之前 B站不會列出組件，所以方案裡的組件會停在 `WAITING_FOR_PUBLIC`，公開之後由 `vpub verify` 送出。讀取失敗代表未知，之後不會送出任何東西。
+- **送出：** 每次都先讀取，只送出還沒有的組件，間隔 35 秒，然後讀回。可能已送出的組件是 `UNVERIFIED`，只會再次讀取。確認它不在之後，用 `vpub widgets add --again` 送出。
+- **拒絕：** B站的 79046（和其他組件時間衝突）會讓該組件變成 `REFUSED`，請換一個時間。36703（送出太快）會停止其餘組件，也會停止 B站上的其他操作，和其他平台反應一樣。
+- **更新之後：** `vpub verify` 和 B站修改會以 `widgets_seen` 回報影片上現有的組件，曾有但不見了的列在 `missing`。
+- **預約組件** 新增和刪除都不包含在內，因為刪除它會通知所有已預約的人。需要時請自己使用 `bili danmaku interact`。
+
+這條路徑還沒有透過 `vpub` 在真實帳號上跑過。同樣的 bili-cli 指令曾在公開影片上手動執行過。
+
 ## 修改已發布作品
 
 ```sh

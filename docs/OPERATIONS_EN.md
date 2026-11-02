@@ -569,6 +569,35 @@ Bilibili's CLI route and YouTube's browser route take `chapters` and `duration_s
 
 These four timestamps are a historical episode-one example with user-confirmed mobile visibility at the time. The six custom episode-two chapters have now also been saved and fully read back through the CLI. See the [guide](CATEGORIES_AND_CHAPTERS_EN.md) for the chapter entry, 12-character title limit and review receipts. Description timestamps do not prove native chapters are active; missing access or review stays pending.
 
+## Bilibili widgets
+
+```sh
+vpub widgets list BV1xx411c7mD
+vpub widgets add BV1xx411c7mD widgets.json --dry-run
+vpub widgets add BV1xx411c7mD widgets.json
+vpub widgets verify BV1xx411c7mD
+vpub widgets remove BV1xx411c7mD 123456 --dry-run
+```
+
+Put a `widgets` list in a Bilibili plan, or in a file for `vpub widgets add` on a video that's already up. Each has a `type`, a `time` in seconds and an optional `page` for the part number:
+
+```json
+[{"type": "link", "time": 10, "target": "BV1yy4y1k7yy", "text": "Next episode"},
+ {"type": "follow", "time": 20, "style": "both"},
+ {"type": "vote", "time": 30, "question": "Which one?", "options": ["A", "B"]},
+ {"type": "rating", "time": 40, "title": "Rate this", "skin": "star"}]
+```
+
+Bilibili takes one vote on a video, and a widget shows for at least 5 seconds. A follow button also takes `x`, `y` and `duration`, and a vote takes `allow_custom` and `custom_label`.
+
+- **When:** Bilibili doesn't list widgets before a video is public, so a plan's stay `WAITING_FOR_PUBLIC` and go out with `vpub verify` after that. A failed read is an unknown, and nothing is sent after it.
+- **Sending:** each run reads first and sends only what isn't there, 35 seconds apart, then reads back. One that may have gone is `UNVERIFIED` and is only read again. `vpub widgets add --again` sends it once you've seen it isn't there.
+- **Refusals:** Bilibili's 79046, a clash with another widget's time, leaves that one `REFUSED`, so give it another time. Its 36703, sending too fast, stops the rest and everything else on Bilibili, as any push-back from it does.
+- **After an update:** `vpub verify` and a Bilibili edit report what's on the video as `widgets_seen`, with any it had and lost under `missing`.
+- **Reserve widgets** are left out, in both directions, since removing one notifies everyone who booked it. Use `bili danmaku interact` yourself for those.
+
+This route hasn't run on a real account through `vpub`. The same bili-cli commands have, by hand, on public videos.
+
 ## Edit an existing publication
 
 ```sh

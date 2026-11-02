@@ -31,9 +31,9 @@ def never_sent(exc):
 
 
 def part_left_undone(receipt):
-    """Chapters or a collection chosen at upload that did not land, on a work that did."""
+    """Chapters, widgets or a collection chosen at upload that did not land, on a work that did."""
     season = receipt.get("season")
-    return receipt.get("chapters_state") not in {None, "VERIFIED"} or (isinstance(season, dict) and season.get("added") is False)
+    return receipt.get("chapters_state") not in {None, "VERIFIED"} or receipt.get("widgets_state") not in {None, "VERIFIED"} or (isinstance(season, dict) and season.get("added") is False)
 
 
 def reply_pressing(path, request, **details):
@@ -285,7 +285,7 @@ def load_plan(path, selected=None):
         if not isinstance(v, dict):
             raise VpubError("invalid_manifest", "Each platform needs an object.")
         permitted = {"account", "title", "description", "tags", "visibility", "ai_generated", "schedule", "content_language", "metadata_language", "metadata_mode", "chapters", "duration_seconds"}
-        permitted |= {"tid", "expected_uid", "method", "season_id", "submission_mode"} if platform == "bilibili" else set()
+        permitted |= {"tid", "expected_uid", "method", "season_id", "submission_mode", "widgets"} if platform == "bilibili" else set()
         permitted |= {"category_id", "made_for_kids", "expected_channel_id", "method", "playlist_ids", "playlist_titles", "create_missing_playlists", "submission_mode"} if platform == "youtube" else set()
         permitted |= {"method", "expected_identity", "submission_mode", "collection_title"} if platform == "douyin" else set()
         permitted |= {"method", "expected_identity", "submission_mode"} if platform in {"x", "instagram"} else set()
@@ -337,8 +337,8 @@ def load_plan(path, selected=None):
         if platform in {"bilibili", "douyin"} and v.get("submission_mode") == "draft_only":
             if v.get("method") == "native":
                 raise VpubError("invalid_submission_mode", f"{platform} draft_only needs CrossCast's own route.")
-            if v.get("schedule") or v.get("chapters") or v.get("season_id") or v.get("collection_title"):
-                raise VpubError("invalid_submission_mode", "A draft keeps the title, description, tags and cover. Choose its schedule, chapters or collection when it is published.")
+            if v.get("schedule") or v.get("chapters") or v.get("season_id") or v.get("collection_title") or v.get("widgets"):
+                raise VpubError("invalid_submission_mode", "A draft keeps the title, description, tags and cover. Choose its schedule, chapters, collection or widgets when it is published.")
         if platform == "douyin" and "collection_title" in v:
             value = v["collection_title"]
             if not isinstance(value, str) or not value.strip() or value != value.strip() or len(value) > 20 or v.get("method", "browser") != "browser":
@@ -423,6 +423,11 @@ def load_plan(path, selected=None):
             # is authoritative. Never silently truncate or assume Premium.
         if platform == "bilibili":
             plans[platform]["method"] = v.get("method", "cli")
+        if "widgets" in v:
+            from .widgets_bilibili import validate as validate_widgets
+            if plans[platform]["method"] != "cli":
+                raise VpubError("invalid_widget", "Widgets go through the CLI route.")
+            plans[platform]["widgets"] = validate_widgets(v["widgets"], v.get("duration_seconds"))
         if "chapters" in v:
             from .chapters import validate, youtube_description
             validate(v["chapters"], platform, plans[platform]["method"], v.get("duration_seconds"))

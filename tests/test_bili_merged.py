@@ -19,6 +19,7 @@ from bili_cli import runtime, skills
 from bili_cli.commands.video import _folders, _own_video
 from bili_cli.main import _hoist_global_flags, app
 import video_publisher
+from video_publisher import widgets_bilibili
 from video_publisher import adapters, cli, direct_messages_bili
 from video_publisher.core import VpubError, atomic_json, read_json
 
@@ -53,6 +54,14 @@ CALLS = [
     ["comment", "like", BV, "1", "--undo"],
     ["comment", "pin", BV, "1"],
     ["comment", "pin", BV, "1", "--undo"],
+    *[widgets_bilibili.command(BV, widget) for widget in (
+        {"type": "link", "time": 10, "page": 1, "target": "BV1yy4y1k7yy", "text": "下一集"},
+        {"type": "follow", "time": 20.5, "page": 2, "style": "triple", "x": 300, "y": 150, "duration": 5},
+        {"type": "vote", "time": 30, "page": 1, "question": "选哪个", "options": ["甲", "乙"], "allow_custom": True, "custom_label": "其他"},
+        {"type": "rating", "time": 40, "page": 1, "title": "打个分", "skin": "star"})],
+    ["danmaku", "interact", "rating", BV, "--title", "打个分", "--skin", "star", "--time", "40", "--page", "1", "--dry-run"],
+    ["danmaku", "interact", "list", BV, "--page", "1"],
+    ["danmaku", "interact", "remove", BV, "123", "--page", "1"],
     ["dm", "list", "--limit", "50"],
     ["feed", "mentions", "--limit", "50"],
     ["dm", "read", "123", "--limit", "20"],
@@ -94,6 +103,13 @@ class IncludedCopyTests(unittest.TestCase):
         for argv in (["dm", "send", "123", "--no-such-flag"], ["no-such-group", "x"], ["upload", "no-such-command"]):
             with self.subTest(argv=argv), self.assertRaises(Exception):
                 parse(argv)
+
+    def test_crosscast_checks_widgets_against_the_limits_bili_cli_has(self):
+        """A plan should fail before anything goes up, and bili-cli's own code can't be imported into CrossCast, so the numbers are copied."""
+        from bili_cli.commands import danmaku
+        self.assertEqual((danmaku.VOTE_QUESTION_MAX, danmaku.VOTE_OPTION_MAX, danmaku.RATING_TITLE_MAX), (widgets_bilibili.QUESTION_MOST, widgets_bilibili.OPTION_MOST, widgets_bilibili.RATING_TITLE_MOST))
+        self.assertEqual((set(danmaku.RATING_SKINS), set(danmaku.FOLLOW_STYLES)), (widgets_bilibili.SKINS, widgets_bilibili.STYLES))
+        self.assertEqual((danmaku.FOLLOW_X_RANGE, danmaku.FOLLOW_Y_RANGE, danmaku.MIN_COMPONENT_MS / 1000), (widgets_bilibili.X_RANGE, widgets_bilibili.Y_RANGE, widgets_bilibili.SHOWS_AT_LEAST))
 
     def test_the_helpers_crosscast_reuses_are_still_there(self):
         self.assertEqual(["video_id"], list(inspect.signature(_own_video).parameters))
