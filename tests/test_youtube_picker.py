@@ -25,10 +25,10 @@ class TickTests(unittest.IsolatedAsyncioTestCase):
         await self.browser.close()
         await self.pw.stop()
 
-    async def tick(self, style):
+    async def tick(self, style, wait=500):
         await self.page.set_content(BOX % style)
         box = self.page.locator('[role="checkbox"]')
-        with patch.object(browser_forms, "YT_TICK_MS", 500):
+        with patch.object(browser_forms, "YT_TICK_MS", wait):
             await browser_forms.yt_tick(self.page, box)
         return await box.get_attribute("aria-checked"), await self.page.evaluate("[window.clicks, window.keys]", isolated_context=False)
 
@@ -40,12 +40,13 @@ class TickTests(unittest.IsolatedAsyncioTestCase):
         box = self.page.locator('[role="checkbox"]')
         with self.assertRaises(Exception):
             await box.click(timeout=300)
-        with patch.object(browser_forms, "YT_TICK_MS", 500):
-            await browser_forms.yt_tick(self.page, box)
+        # With the real wait: half a second ran out here too once the machine was busy.
+        await browser_forms.yt_tick(self.page, box)
         self.assertEqual(("true", 0), (await box.get_attribute("aria-checked"), await self.page.evaluate("window.keys", isolated_context=False)))
 
     async def test_a_box_that_can_be_clicked_gets_one_click_and_no_key(self):
-        self.assertEqual(("true", [1, 0]), await self.tick("width: 20px; height: 20px"))
+        # With the real wait: half a second ran out on a slow test machine after the click had landed, so the key toggled it back.
+        self.assertEqual(("true", [1, 0]), await self.tick("width: 20px; height: 20px", browser_forms.YT_TICK_MS))
 
     async def test_a_box_with_no_size_is_ticked_from_the_keyboard(self):
         self.assertEqual(("true", [0, 1]), await self.tick("width: 0; height: 0; overflow: hidden"))

@@ -674,20 +674,21 @@ async def finish_douyin_form(page, tx, before):
         await wait_until(page, lambda: enabled(done), seconds=90, label='Douyin cover ready')
         await risk_check(page)
         stop_check('douyin')
-        traffic = douyin_cover_traffic(page)
-        await done.click()
-        # First landscape save may offer a portrait upsell. Close it so the
-        # explicit portrait asset below is applied through its own control.
-        await page.wait_for_timeout(700)
-        later = await visible(page.get_by_role('button', name='暂不设置', exact=True))
-        if later:
-            await later.click()
         from patchright.async_api import TimeoutError as BrowserTimeout
+        traffic = douyin_cover_traffic(page)
         try:
-            await dialog.wait_for(state='hidden', timeout=DOUYIN_COVER_SECONDS * 1000)
-        except BrowserTimeout:
-            # A field run's first real post stopped here on a 30-second wait, as the edit route's window had stayed for over three minutes.
-            raise VpubError('cover_not_ready', f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so nothing was published. Its fonts were {fonts} at the press and are {await douyin_fonts(page)} now. Requests since the press: {traffic()}.", 'vpub resume tries again, and vpub resume KEY --no-cover goes without one.') from None
+            await done.click()
+            # First landscape save may offer a portrait upsell. Close it so the
+            # explicit portrait asset below is applied through its own control.
+            await page.wait_for_timeout(700)
+            later = await visible(page.get_by_role('button', name='暂不设置', exact=True))
+            if later:
+                await later.click()
+            try:
+                await dialog.wait_for(state='hidden', timeout=DOUYIN_COVER_SECONDS * 1000)
+            except BrowserTimeout:
+                # A field run's first real post stopped here on a 30-second wait, as the edit route's window had stayed for over three minutes.
+                raise VpubError('cover_not_ready', f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so nothing was published. Its fonts were {fonts} at the press and are {await douyin_fonts(page)} now. Requests since the press: {traffic()}.", 'vpub resume tries again, and vpub resume KEY --no-cover goes without one.') from None
         finally:
             traffic(stop=True)
         saved = await control.locator('img').count() > 0

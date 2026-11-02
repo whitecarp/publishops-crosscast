@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -500,6 +501,44 @@ class CoverOnANewPostTests(Base):
         self.assertEqual({"other.example.org": 1}, seen["failed_hosts"])
         self.assertEqual(1, seen["failed"])
         self.assertNotIn("secret", str(seen))
+
+    async def test_a_request_from_before_the_press_uses_up_no_newer_ones_count(self):
+        """A review caught this: one that ended after the press hid a new one still open, and the totals ran past what had started."""
+        listeners = {}
+        page = SimpleNamespace(on=lambda event, listener: listeners.__setitem__(event, listener), remove_listener=lambda event, listener: listeners.pop(event))
+        older, newer = SimpleNamespace(url="https://cover.example.org/older"), SimpleNamespace(url="https://cover.example.org/newer")
+        traffic = browser_edits.douyin_cover_traffic(page)
+        listeners["request"](newer)
+        listeners["requestfinished"](older)
+        listeners["requestfailed"](older)
+        seen = traffic()
+        self.assertEqual({"cover.example.org": 1}, seen["open"])
+        self.assertEqual((1, 0, 0), (seen["started"], seen["finished"], seen["failed"]))
+        listeners["requestfinished"](newer)
+        seen = traffic(stop=True)
+        self.assertEqual({}, seen["open"])
+        self.assertEqual((1, 1, 0), (seen["started"], seen["finished"], seen["failed"]))
+        self.assertEqual({}, listeners)
+
+    async def test_something_going_wrong_after_the_press_leaves_nothing_listening(self):
+        """A review caught the counter staying on the page when something failed before the wait for the window."""
+        looks, real_count, real_wait = [], browser_edits.douyin_cover_traffic, self.page.wait_for_timeout
+
+        def noted(page):
+            looks.append(real_count(page))
+            return looks[-1]
+
+        async def goes_wrong(ms):
+            if ms == 700:
+                raise RuntimeError("the page went away")
+            await real_wait(ms)
+        with patch.object(browser_edits, "douyin_cover_traffic", noted), patch.object(self.page, "wait_for_timeout", goes_wrong), self.assertRaises(RuntimeError):
+            await self.post()
+        before = looks[0]()["started"]
+        await self.page.route("**/later*", lambda route: route.fulfill(status=200, body="{}"))
+        await self.page.evaluate("fetch('https://cdn.example.org/later').catch(() => {})")
+        await self.page.wait_for_timeout(200)
+        self.assertEqual(before, looks[0]()["started"])
 
     def test_that_window_has_the_edit_routes_three_minutes(self):
         self.assertEqual(180, browser_edits.DOUYIN_COVER_SECONDS)

@@ -133,12 +133,13 @@ async def execute(page, platform, identity, payload):
             stop_check(platform)
             from patchright.async_api import TimeoutError as BrowserTimeout
             traffic=douyin_cover_traffic(page)
-            await dialog.get_by_role('button',name='完成',exact=True).click()
             try:
-                await dialog.wait_for(state='hidden',timeout=DOUYIN_COVER_SECONDS*1000)
-            except BrowserTimeout:
-                # A field run saw the window greyed out and working for over three minutes after 完成. Why isn't known, and nothing has been saved at this point.
-                raise VpubError('cover_not_ready',f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so the work was not saved. Its fonts were {fonts} at the press and are {await douyin_fonts(page)} now. Requests since the press: {traffic()}.",'Nothing changed. Try again later, or change the cover on Douyin\'s own page.') from None
+                await dialog.get_by_role('button',name='完成',exact=True).click()
+                try:
+                    await dialog.wait_for(state='hidden',timeout=DOUYIN_COVER_SECONDS*1000)
+                except BrowserTimeout:
+                    # A field run saw the window greyed out and working for over three minutes after 完成. Why isn't known, and nothing has been saved at this point.
+                    raise VpubError('cover_not_ready',f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so the work was not saved. Its fonts were {fonts} at the press and are {await douyin_fonts(page)} now. Requests since the press: {traffic()}.",'Nothing changed. Try again later, or change the cover on Douyin\'s own page.') from None
             finally:
                 traffic(stop=True)
             save_button=await visible(page.get_by_role('button',name=re.compile(r'^(保存|保存修改|提交修改|发布)$')))
@@ -171,15 +172,20 @@ DOUYIN_COVER_SETTLE_SECONDS=75
 def douyin_cover_traffic(page):
     """Counts what the page asks for from 完成 on, by site, with no addresses. Field runs saw this window hang, with the wait before the press making no clear difference and the one success changing nothing visible, so a stop has to say whether a request is still open, failed or never went."""
     seen={'started':0,'finished':0,'failed':0,'open':{},'failed_hosts':{}}
-    host=lambda request: urlsplit(request.url).hostname or 'other'
+    ours={}
 
     def started(request):
+        name=urlsplit(request.url).hostname or 'other'
+        ours[id(request)]=(request,name)
         seen['started']+=1
-        seen['open'][host(request)]=seen['open'].get(host(request),0)+1
+        seen['open'][name]=seen['open'].get(name,0)+1
 
     def ended(request,failed=False):
-        name=host(request)
-        seen['open'][name]=seen['open'].get(name,1)-1
+        # A request from before the press would otherwise use up a newer one's count, and "nothing open" would be wrong.
+        if id(request) not in ours:
+            return
+        _,name=ours.pop(id(request))
+        seen['open'][name]-=1
         if not seen['open'][name]:
             del seen['open'][name]
         seen['failed' if failed else 'finished']+=1
