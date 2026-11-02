@@ -51,18 +51,32 @@ class LastMomentTests(SharedBrowser):
         self.path = self.root / "edit.json"
         return await browser_edits.execute(self.page, "douyin", OWNER, {"patch": checked, "receipt": {"id": "123", "title": "Old title"}, "edit_receipt_path": str(self.path)})
 
-    async def test_a_save_that_does_not_move_on_says_what_the_page_says_and_is_not_repeated(self):
-        """From a field run: pressed once, the page stayed and the old words stayed, and nothing recorded why."""
-        self.stays = '<div role="dialog">请先完成封面设置</div>'
+    STAYS = '<div role="dialog">请先完成封面设置 secret-viewer-words<div contenteditable="true">secret-form-words</div></div>'
+
+    async def stays_after_the_press(self):
+        self.stays = self.STAYS
         with patch.object(browser_edits, "DOUYIN_SAVE_SECONDS", 1):
             result = await self.edit()
         self.assertEqual(("EDIT_SUBMITTED_UNVERIFIED", 1), (result["state"], result["platform_writes"]))
         self.assertEqual(1, len(self.saves))
-        seen = result["after_press"]
-        self.assertEqual(("发布", True, ["请先完成封面设置"]), (seen["pressed"], seen["still_on_edit_page"], seen["dialogs"]))
-        self.assertIn("发布", seen["buttons"])
-        self.assertNotIn("New text", str(seen))
         self.assertEqual(result["state"], read_json(self.path)["state"])
+        return result, read_json(self.path.with_suffix(".error.json"))
+
+    async def test_a_save_that_does_not_move_on_is_not_repeated_and_keeps_no_page_words_by_default(self):
+        """From a field run: pressed once, the page stayed and the old words stayed, and nothing recorded why. From a review: a dialog can quote anyone's words."""
+        result, record = await self.stays_after_the_press()
+        self.assertEqual(("发布", True), (result["after_press"]["pressed"], result["after_press"]["still_on_edit_page"]))
+        for kept in (result, record):
+            for words in ("请先完成封面设置", "secret-viewer-words", "secret-form-words"):
+                self.assertNotIn(words, str(kept))
+        self.assertNotIn("text", record)
+
+    async def test_with_diagnostics_on_it_keeps_what_the_page_says_and_never_the_form(self):
+        atomic_json(home() / "config.json", {"page_diagnostics": True})
+        result, record = await self.stays_after_the_press()
+        self.assertIn("请先完成封面设置", record["text"])
+        self.assertNotIn("secret-form-words", record["text"])
+        self.assertNotIn("请先完成封面设置", str(result))
 
     async def test_a_stop_that_arrives_during_an_edit_holds_the_save(self):
         self.stop()

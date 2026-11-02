@@ -4,7 +4,7 @@ import re
 from urllib.parse import urlsplit
 from . import x_pages
 from .core import VpubError, atomic_json, file_sha, now, stop_check
-from .browser_runtime import risk_check, unique_visible, visible
+from .browser_runtime import failure_record, risk_check, unique_visible, visible
 from .browser_backends import choose_file, douyin_card_words, douyin_editor_address, douyin_editor_boxes, douyin_type_caption, normalize, work_url
 from .progress import stage
 
@@ -133,7 +133,7 @@ async def execute(page, platform, identity, payload):
             if save_button is None: raise VpubError('layout_changed','Existing-work save button is unavailable; no video was uploaded.')
             pressed=normalize(await save_button.inner_text())
             await submit(save_button)
-            stayed=await douyin_moved_on(page,pressed)
+            stayed=await douyin_moved_on(page,pressed,output)
             if stayed: return save(state='EDIT_SUBMITTED_UNVERIFIED',platform_writes=1,url=url,after_press=stayed,note='Pressed once, and the page did not go back to the works list. See after_press; do not press again.')
             await page.goto(url,wait_until='domcontentloaded')
             await title.wait_for(timeout=30000)
@@ -141,7 +141,7 @@ async def execute(page, platform, identity, payload):
         if 'chapters' in patch:
             return await douyin_chapters(page,receipt,patch,save,submit,verify_only=payload.get('verify_only',False))
         if 'caption' in patch:
-            return await douyin_text(page,work_id,patch,save,submit,payload.get('verify_only',False))
+            return await douyin_text(page,work_id,patch,save,submit,output,payload.get('verify_only',False))
         raise VpubError('unsupported_edit','No supported Douyin correction fields.')
     if platform=='youtube':
         from .youtube_studio import edit
@@ -152,23 +152,19 @@ async def execute(page, platform, identity, payload):
 DOUYIN_SAVE_SECONDS=60
 
 
-async def douyin_after_press(page,pressed):
-    """A field run pressed save on a work's edit page and the page stayed, with the old words still saved and nothing to say why. So this notes what the page itself says then: the button pressed, the buttons there, and its own dialogs and messages. The form's words are left out."""
-    async def shown(selector,limit):
-        words=[normalize(await node.inner_text())[:limit] for node in await page.locator(selector).all() if await node.is_visible()]
-        return [text for text in words if text][:8]
-    return {'pressed':pressed,'still_on_edit_page':'/content/post/video' in urlsplit(page.url).path,'buttons':await shown('button',20),
-            'dialogs':await shown('[role=dialog],[role=alertdialog],.semi-modal-content',200),
-            'messages':await shown('.semi-toast,.semi-notification-notice,[role=alert],[class*="error-"],[class*="-error"]',200)}
-
-
-async def douyin_moved_on(page,pressed):
-    """None once a press has taken the page back to the works list. Otherwise what the page says instead, because a press is never repeated."""
+async def douyin_moved_on(page,pressed,output):
+    """None once a press has taken the page back to the works list. Otherwise what can be said about it, because a press is never repeated.
+    A field run pressed save and the page stayed, with the old words still saved and nothing to say why, so the usual failure record is kept. A review showed a page's dialogs can quote anyone's words, and that record keeps a page's words only with page_diagnostics on."""
     from patchright.async_api import Error as BrowserError
     try:
         await page.wait_for_url(re.compile('/content/manage'),timeout=DOUYIN_SAVE_SECONDS*1000)
     except BrowserError:
-        return await douyin_after_press(page,pressed)
+        record=output.with_suffix('.error.json')
+        try:
+            await failure_record(page,VpubError('edit_stayed','The page did not go back to the works list after the press.'),record,picture=output.with_suffix('.error.png'))
+        except Exception:
+            pass  # A page that can't be read must not replace what happened.
+        return {'pressed':pressed,'still_on_edit_page':'/content/post/video' in urlsplit(page.url).path,'record':record.name}
     return None
 
 
@@ -177,7 +173,7 @@ async def douyin_fields(page,url,work_id):
     return await douyin_editor_boxes(page,work_id)
 
 
-async def douyin_text(page,work_id,patch,save,submit,verify_only=False):
+async def douyin_text(page,work_id,patch,save,submit,output,verify_only=False):
     """Title and description on the work's own edit page, the one its cover uses. Saved once, then read back from a fresh load."""
     url=douyin_editor_address(work_id)
     wanted=normalize(patch['title']),douyin_card_words(patch['caption'])
@@ -195,7 +191,7 @@ async def douyin_text(page,work_id,patch,save,submit,verify_only=False):
     if button is None: raise VpubError('layout_changed','Existing-work save button is unavailable; nothing was saved.')
     pressed=normalize(await button.inner_text())
     await submit(button)
-    stayed=await douyin_moved_on(page,pressed)
+    stayed=await douyin_moved_on(page,pressed,output)
     if stayed: return save(state='EDIT_SUBMITTED_UNVERIFIED',platform_writes=1,url=url,after_press=stayed,note='Pressed once, and the page did not go back to the works list. See after_press; do not press again.')
     title,editor=await douyin_fields(page,url,work_id)
     matched=await current(title,editor)==wanted
