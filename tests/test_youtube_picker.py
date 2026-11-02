@@ -26,7 +26,8 @@ class TickTests(unittest.IsolatedAsyncioTestCase):
         await self.browser.close()
         await self.pw.stop()
 
-    async def tick(self, style, wait=500):
+    # Long enough for a focus to get through on a busy test machine. A box that can't be clicked waits this out.
+    async def tick(self, style, wait=3000):
         await self.page.set_content(BOX % style)
         box = self.page.locator('[role="checkbox"]')
         with patch.object(browser_forms, "YT_TICK_MS", wait):
@@ -55,7 +56,7 @@ class TickTests(unittest.IsolatedAsyncioTestCase):
     async def test_a_box_covered_by_something_else_is_ticked_from_the_keyboard(self):
         await self.page.set_content(BOX % "width: 20px; height: 20px" + '<div style="position: fixed; inset: 0"></div>')
         box = self.page.locator('[role="checkbox"]')
-        with patch.object(browser_forms, "YT_TICK_MS", 500):
+        with patch.object(browser_forms, "YT_TICK_MS", 3000):
             await browser_forms.yt_tick(self.page, box)
         self.assertEqual(("true", [0, 1]), (await box.get_attribute("aria-checked"), await self.page.evaluate("[window.clicks, window.keys]", isolated_context=False)))
 

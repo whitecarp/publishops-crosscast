@@ -513,12 +513,16 @@ async def signed_in_page(context, platform, expected=None):
     stage("checking the account")
     watch(page)
     await page.goto(URLS[platform], wait_until="domcontentloaded", timeout=60000)
-    for _ in range(45):
-        await risk_check(page)
-        actual = await identity(page, platform)
-        if actual:
-            return page, check_identity(actual, expected)
-        await asyncio.sleep(1)
-    if not (await page.locator('body').inner_text()).strip():
-        raise VpubError('page_not_ready', 'The official site returned an empty/loading page; login expiry is not established.', 'Check network/site availability; no upload or edit was attempted.')
-    raise VpubError("auth_expired", "Official page did not confirm a signed-in account.", f"Run vpub auth login {platform} --method browser.")
+    for load_again in (True, False):
+        for _ in range(45):
+            await risk_check(page)
+            actual = await identity(page, platform)
+            if actual:
+                return page, check_identity(actual, expected)
+            await asyncio.sleep(1)
+        if (await page.locator('body').inner_text()).strip():
+            raise VpubError("auth_expired", "Official page did not confirm a signed-in account.", f"Run vpub auth login {platform} --method browser.")
+        if load_again:
+            # A field run's first page stayed empty for 45 seconds, and the next command's loaded. Nothing has been sent yet, so one more load costs only time.
+            await page.reload(wait_until="domcontentloaded", timeout=60000)
+    raise VpubError('page_not_ready', 'The official site returned an empty/loading page; login expiry is not established.', 'Check network/site availability; no upload or edit was attempted.')

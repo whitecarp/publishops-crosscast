@@ -502,6 +502,12 @@ class CoverOnANewPostTests(Base):
         self.assertEqual(1, seen["failed"])
         self.assertNotIn("secret", str(seen))
 
+    def test_a_site_that_failed_is_named_as_worth_checking_and_no_failure_says_nothing_of_it(self):
+        """From a field run's hang: the only failed requests went to two sites this computer's network refused."""
+        counts = {"started": 2, "finished": 1, "failed": 1, "open": {}}
+        self.assertIn("proxy or filter", browser_edits.douyin_cover_requests({**counts, "failed_hosts": {"mcs.example.org": 1}}))
+        self.assertNotIn("proxy", browser_edits.douyin_cover_requests({**counts, "failed_hosts": {}}))
+
     async def test_a_request_from_before_the_press_uses_up_no_newer_ones_count(self):
         """A review caught this: one that ended after the press hid a new one still open, and the totals ran past what had started."""
         listeners = {}

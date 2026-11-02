@@ -9,7 +9,7 @@ from pathlib import Path
 import unicodedata
 from urllib.parse import parse_qs, urlsplit
 
-from .core import VpubError, atomic_json, file_sha, home, now, read_json, snapshot_file, stop_check
+from .core import VpubError, atomic_json, file_sha, home, now, read_json, snapshot_file, stop_check, wrong_file
 from .browser_runtime import failure_message, failure_record, look_until, plain_address, platform_at, risk_check, unique_visible, visible
 from .progress import stage
 from .x_pages import own_posts, post_fields, post_row, post_time
@@ -179,12 +179,12 @@ class Transaction:
 
     def validate_assets(self):
         if file_sha(self.plan["video"]) != self.plan["video_sha256"]:
-            raise VpubError("source_changed", "Snapshot changed before browser upload.")
+            raise wrong_file(self.plan["video"], self.plan["video_sha256"], "Snapshot changed before browser upload.")
         for asset in self.plan.get("covers", {}).get(self.platform, {}).values():
             if file_sha(asset["path"]) != asset["sha256"]:
-                raise VpubError("source_changed", "A cover snapshot changed before upload.")
+                raise wrong_file(asset["path"], asset["sha256"], "A cover snapshot changed before upload.")
         if self.plan.get("cover") and file_sha(self.plan["cover"]) != self.plan["cover_sha256"]:
-            raise VpubError("source_changed", "Cover snapshot changed before upload.")
+            raise wrong_file(self.plan["cover"], self.plan["cover_sha256"], "Cover snapshot changed before upload.")
 
     def cover(self, role="landscape"):
         asset = self.plan.get("covers", {}).get(self.platform, {}).get(role)

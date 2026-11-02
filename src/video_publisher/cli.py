@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 from . import __version__, adapters
-from .core import Ledger, NOT_ON_SALE, PLATFORMS, VpubError, atomic_json, config, file_sha, home, how_to_clear_a_stop, load_plan, never_sent, now, part_left_undone, publication_lock, read_json, snapshot_file, stop_check, platform_check
+from .core import Ledger, NOT_ON_SALE, PLATFORMS, VpubError, atomic_json, config, file_sha, home, how_to_clear_a_stop, load_plan, never_sent, now, part_left_undone, publication_lock, read_json, snapshot_file, stop_check, platform_check, wrong_file
 from .overview import DRAFTS
 from .safety import pushed_back
 
@@ -52,7 +52,7 @@ def check_upload_copy(plan):
         raise VpubError('snapshot_removed', "This attempt's private video copy is gone, so there is nothing to resume.",
                         'Use vpub verify KEY to read the work back. Never upload it again.')
     if file_sha(plan['video']) != plan['video_sha256']:
-        raise VpubError('source_changed', 'Source no longer matches this attempt.')
+        raise wrong_file(plan['video'], plan['video_sha256'], 'Source no longer matches this attempt.')
 
 
 def snapshot_plan(plan, platform):
@@ -950,7 +950,7 @@ def capabilities():
     return {"product": "PublishOps CrossCast", "version": __version__,
             "paid_api_addon": {"installed": adapters.addon_installed(),
                                "covers": "Every official API feature listed below for YouTube, X and Instagram, including resumable uploads in the CLI, reordering playlists and the held-for-review comment queue. Also the operations report (vpub report), complete reads (vpub read-all) and email reminders (vpub notify)."},
-            "youtube_browser_route": "Free: YouTube Studio's own upload form in a background Chrome. Adds the video to playlists named by exact title and can schedule it (in the time zone Studio shows, otherwise this computer's); both are read back before the final Save.",
+            "youtube_browser_route": "Free: YouTube Studio's own upload form in a background Chrome. Adds the video to playlists named by exact title and can schedule it (in the time zone Studio shows, otherwise this computer's); both are read back before the final Save. If Studio warns it is still checking the video after that Save, the form goes back, waits for the checks and saves once more. A read-back showing a draft says still_a_draft, and resume presses Publish on that same draft. Neither path has run on a real channel.",
             "operations":operations_capabilities(),
             "engagement": {"commands":"engage status/collections/like/save/verify; --remove undoes the selected action, --dry-run is optional.",
                 "bilibili":"bili-cli likes and explicit favorite-folder membership; read membership through the pinned upstream helper.",
@@ -985,7 +985,7 @@ def capabilities():
             "draft_only": "Instagram/X: init --draft-only stops CLI before Share/Post. PREVIEW_READY is not a guaranteed persistent draft after closing the browser. YouTube browser route: stops before the final Save and leaves an unpublished draft in Studio. Bilibili: saves through the requests its upload page sends and reads the draft list back; remove one on its 草稿 page. Douyin: presses its 暂存离开 once. Its upload page then offers a draft under 继续编辑. CrossCast only looks and reports draft_offer_seen, which can't prove it is this draft, and a new upload stops with existing_draft_requires_attention while one is on offer, so it can't replace it. On real accounts, a Bilibili draft was saved and read back and a Douyin draft kept. A plan with drafts reports all_drafts_ready and exits 0 once each platform stopped before publishing. drafts_read_back names those read back as this draft, and one not named there may not outlive its browser. all_submissions_verified is null when no platform was meant to publish.",
             "douyin_schedule": "Douyin's browser route takes a future schedule and a collection_title, filled on its own form and read back before 发布. Before its time, only the work showing that time confirms it. A private schedule on a real account was confirmed from its card, and none has reached its time. A caption is typed a line at a time, because setting it in one go left stray stars in a real video's public description.",
             "platforms": {p: platform_routes(p) for p in PLATFORMS},
-            "live_verification_scope": "2026-10-30: source-plus-English YouTube/Instagram corrections and user-accepted v3 shared portrait retained. All five hello reply tests read back; Douyin was repaired through Creator Center and verified with a fresh nested-parent read. Browser evidence differs from API parent-ID verification. Not clean-machine unattended or full-playback acceptance.",
+            "live_verification_scope": "2026-11-02: public posts went out through the browser routes on YouTube, Douyin, X and Instagram; docs/VALIDATION_EN.md lists what stopped them on the way. 2026-10-30: source-plus-English YouTube/Instagram corrections and user-accepted v3 shared portrait retained. All five hello reply tests read back; Douyin was repaired through Creator Center and verified with a fresh nested-parent read. Browser evidence differs from API parent-ID verification. Not clean-machine unattended or full-playback acceptance.",
             "native_execution": "The host agent performs real UI actions. A CLI handoff alone is not an executed action or confirmed login.",
             "bili_cli": f"CrossCast includes bili-cli {included_bili_version()}. Use its bili command directly for search, video, inbox, comment and creator-data work; bili schema lists every command.",
             "works": "Bilibili published-work pages; YouTube Studio's first content page, or upload-playlist pages with the paid add-on; Douyin/Instagram/X visible first page only.",

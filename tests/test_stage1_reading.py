@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -117,6 +117,42 @@ class AccountTests(Pages):
 
     async def test_handles_differing_only_in_case_are_one_account(self):
         self.assertEqual("Owner", rt.check_identity("Owner", "owner"))
+
+
+class FirstPageTests(unittest.IsolatedAsyncioTestCase):
+    """From a field run: Douyin's first page stayed empty for 45 seconds, and the next command's loaded."""
+
+    def load(self, *bodies, accounts=()):
+        page = MagicMock(goto=AsyncMock(), reload=AsyncMock())
+        page.locator.return_value.inner_text = AsyncMock(side_effect=list(bodies))
+        context = MagicMock(pages=[page])
+        self.page = page
+        return context, patch.object(rt, "identity", new=AsyncMock(side_effect=lambda *_: next(accounts, None))), patch.object(rt, "risk_check", new=AsyncMock()), patch.object(rt, "watch"), patch("asyncio.sleep", new=AsyncMock())
+
+    async def signed_in(self, context):
+        return await rt.signed_in_page(context, "douyin", OWNER)
+
+    async def test_an_empty_page_gets_one_more_load_and_can_then_name_the_account(self):
+        context, *patches = self.load("", accounts=iter([None] * 45 + [OWNER]))
+        with patches[0], patches[1], patches[2], patches[3]:
+            _, owner = await self.signed_in(context)
+        self.assertEqual(OWNER, owner)
+        self.page.reload.assert_awaited_once()
+
+    async def test_a_page_empty_both_times_says_nothing_was_attempted(self):
+        context, *patches = self.load("", "", accounts=iter([None] * 90))
+        with patches[0], patches[1], patches[2], patches[3], self.assertRaises(VpubError) as caught:
+            await self.signed_in(context)
+        self.assertEqual("page_not_ready", caught.exception.code)
+        self.assertIn("no upload or edit was attempted", caught.exception.hint)
+        self.page.reload.assert_awaited_once()
+
+    async def test_a_page_with_words_and_no_account_gets_no_second_load(self):
+        context, *patches = self.load("Sign in", accounts=iter([None] * 45))
+        with patches[0], patches[1], patches[2], patches[3], self.assertRaises(VpubError) as caught:
+            await self.signed_in(context)
+        self.assertEqual("auth_expired", caught.exception.code)
+        self.page.reload.assert_not_awaited()
 
 
 class AdoptTests(Pages):

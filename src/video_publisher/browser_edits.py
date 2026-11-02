@@ -139,7 +139,7 @@ async def execute(page, platform, identity, payload):
                     await dialog.wait_for(state='hidden',timeout=DOUYIN_COVER_SECONDS*1000)
                 except BrowserTimeout:
                     # A field run saw the window greyed out and working for over three minutes after 完成. Why isn't known, and nothing has been saved at this point.
-                    raise VpubError('cover_not_ready',f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so the work was not saved. Its fonts were {fonts} at the press and are {await douyin_fonts(page)} now. Requests since the press: {traffic()}.",'Nothing changed. Try again later, or change the cover on Douyin\'s own page.') from None
+                    raise VpubError('cover_not_ready',f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so the work was not saved. Its fonts were {fonts} at the press and are {await douyin_fonts(page)} now. {douyin_cover_requests(traffic())}",'Nothing changed. Try again later, or change the cover on Douyin\'s own page.') from None
             finally:
                 traffic(stop=True)
             save_button=await visible(page.get_by_role('button',name=re.compile(r'^(保存|保存修改|提交修改|发布)$')))
@@ -207,6 +207,14 @@ def douyin_cover_traffic(page):
                 page.remove_listener(event,listener)
         return dict(seen)
     return look
+
+
+def douyin_cover_requests(seen):
+    """What a stop says about the page's requests. In a field run's hang the only failed requests went to two sites this computer's network refused, while the phone app set a cover in a second. That wasn't proven to be the cause, so it says what to check, not what's wrong."""
+    words = f"Requests since the press: {seen}."
+    if seen['failed_hosts']:
+        words += " Requests to the failed_hosts sites didn't get through, so a proxy or filter on this computer is worth checking before another try."
+    return words
 
 
 async def douyin_cover_settles(page):

@@ -114,6 +114,14 @@ def file_sha(path):
     return h.hexdigest()
 
 
+def wrong_file(path, sha, message):
+    """The error for a file that just read back with the wrong hash. A field run's film once read wrong by 10 bytes with the file unchanged, and "changed" sent everyone looking at the wrong thing. A second read tells them apart. It never lets anything through."""
+    if file_sha(path) == sha:
+        return VpubError("read_unstable", "This file read back two different ways with one read after the other, so nothing went ahead. The file itself looks right, which points at this computer's memory or disk.",
+                         "Run the command again. If this keeps happening, test this computer's memory before trusting an upload from it.")
+    return VpubError("source_changed", message)
+
+
 def snapshot_file(source, target, sha, link=False):
     """Give target exactly the approved bytes; a cut-off copy never looks like a changed source.
 
@@ -135,7 +143,7 @@ def snapshot_file(source, target, sha, link=False):
         else:
             shutil.copyfile(source, name)
         if file_sha(name) != sha:
-            raise VpubError("source_changed", "A file differs from the approved plan; create a fresh plan.")
+            raise wrong_file(name, sha, "A file differs from the approved plan; create a fresh plan.")
         os.replace(name, target)
     finally:
         if os.path.exists(name):

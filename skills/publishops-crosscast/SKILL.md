@@ -30,7 +30,7 @@ With the paid add-on, use `resume KEY` for new YouTube API upload sessions; neve
 
 A browser command can take a minute or more. It writes short `browser_progress` JSON lines to stderr as it reaches each stage, at least every 15 seconds, so silence on stdout does not mean it hung; don't stop it and don't start it again. The answer is the one JSON object on stdout, so read the two streams separately.
 
-`resume` may complete never-started YouTube cover/playlist steps for the original video; uncertain writes remain verification-only. Partial browser replays retain prior rows until a complete fresh pass. Kernel locks release on exit, but marker cleanup requires a confirmed dead owner; do not remove active/unknown locks or browser data.
+`resume` may complete never-started YouTube cover/playlist steps for the original video; uncertain writes remain verification-only. A YouTube read-back with `still_a_draft` true means nothing went public, and `resume` presses Publish on that same draft without uploading. `read_unstable` means a file read back two different ways while it looks unchanged: say so plainly, run the command again, and never make a fresh plan from that read. Partial browser replays retain prior rows until a complete fresh pass. Kernel locks release on exit, but marker cleanup requires a confirmed dead owner; do not remove active/unknown locks or browser data.
 
 ## Receipts and verification
 

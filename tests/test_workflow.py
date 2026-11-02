@@ -572,6 +572,23 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual("SUBMISSION_VERIFIED", second["state"])
         upload.assert_called_once()
 
+    def test_a_file_that_reads_wrong_once_is_named_as_that_and_still_stops(self):
+        """A field run's film read wrong by 10 bytes with the file unchanged."""
+        plan = self.plan(["douyin"])
+        real = cli.file_sha
+        reads = iter(["0" * 64])
+        with patch.object(cli, "file_sha", side_effect=lambda path: next(reads, None) or real(path)), self.assertRaises(VpubError) as caught:
+            cli.check_upload_copy(plan)
+        self.assertEqual("read_unstable", caught.exception.code)
+        self.assertIn("memory", caught.exception.hint)
+
+    def test_a_file_that_really_changed_is_still_called_changed(self):
+        plan = self.plan(["douyin"])
+        self.video.write_bytes(b"re-rendered")
+        with self.assertRaises(VpubError) as caught:
+            cli.check_upload_copy(plan)
+        self.assertEqual("source_changed", caught.exception.code)
+
     def test_a_first_page_that_never_loaded_releases_the_claim_and_says_nothing_went_up(self):
         """From a field run: Douyin's first page came back empty before any work on it, and the record then said not to submit again."""
         self.value["platforms"]["douyin"]["method"] = "browser"

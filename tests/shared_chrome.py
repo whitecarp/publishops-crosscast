@@ -15,6 +15,7 @@ import inspect
 import unittest
 
 LONGEST_WAIT = 8000  # Milliseconds.
+LONGEST_LOAD = 20000  # A page load on a busy test machine ran out at 8 seconds with nothing wrong.
 QUIET = 0.1  # Seconds with nothing going on, which end a pause in a class with quick_pauses.
 
 _loop = None
@@ -93,8 +94,9 @@ def shorten_waits():
 
     def shorter(params, timeout_calculator):
         answer = asked(params, timeout_calculator)
-        if answer.get("timeout", 0) > LONGEST_WAIT:
-            answer["timeout"] = LONGEST_WAIT
+        longest = LONGEST_LOAD if "url" in (params or {}) else LONGEST_WAIT
+        if answer.get("timeout", 0) > longest:
+            answer["timeout"] = longest
         return answer
     shorter.shortened = True
     _connection._augment_params = shorter
