@@ -67,14 +67,15 @@ NEVER_SEND = re.compile(
     r"|Authorization:\s*Bearer|Set-Cookie:|(?:\b(?:password|passwd|passcode|pwd)|密码|密碼|口令)\s*(?:[:=]|\bis\b|是|为|為)\s*\S+|\b(?:api[ _-]?key|access[ _-]?key|secret[ _-]?key|token)\s*[:=]\s*\S+"
     r"|" + PRIVATE_PATH, re.I)
 # What a title, description or tag may never say. These are a creator's own work, where a folder, a link or the word "cookie" can be the subject, so only what is a secret on sight is refused.
-SECRET_VALUE = r"(?=[!-~]*\d)[!-~]{8,}"
+# What reads as a value and not as words: in quotes with no spaces, or one piece that holds a digit or is long.
+SECRET_VALUE = r"""(?:["'][^"'\s]{4,}["']|(?=[!-~]*\d)[!-~]{8,}|[A-Za-z0-9._~+/=-]{16,})"""
 NEVER_PUBLISH = re.compile(
     r"(?-i:\bsk-(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{16,}|\bghp_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bAKIA[0-9A-Z]{16}\b|\bAIza[0-9A-Za-z_-]{30,}|\bxox[baprs]-[A-Za-z0-9-]{10,}|\bya29\.[A-Za-z0-9_-]{10,}"
     r"|\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY)"
-    r"|\b(?:SESSDATA|bili_jct|DedeUserID|sessionid|auth_token|access_token|refresh_token|client_secret|api[ _-]?key|access[ _-]?key|secret[ _-]?key)\s*[:=]\s*" + SECRET_VALUE +
-    r"|Authorization:\s*Bearer\s+" + SECRET_VALUE + r"|Set-Cookie:\s*[^=\s]+=\S+"
+    r"""|\b(?:SESSDATA|bili_jct|DedeUserID|sessionid|auth[ _-]?token|access[ _-]?token|refresh[ _-]?token|client[ _-]?secret|api[ _-]?key|access[ _-]?key|secret[ _-]?key)["']?\s*[:=]\s*""" + SECRET_VALUE +
+    r"""|Authorization["']?\s*:\s*["']?Bearer\s+""" + SECRET_VALUE + r"|Set-Cookie:\s*[^=\s]+=\S+"
     # A colon after the word is also how ordinary titles begin, so what follows has to read as one password: a piece holding a digit or a symbol, or a single piece that ends the line.
-    r"|(?:\b(?:password|passwd|passcode)|密码|密碼)\s*[:=]\s*(?:(?=[!-~]*[\d!@#$%^&*_+=-])[!-~]{4,}|[!-~]+[ \t]*$)", re.I | re.M)
+    r"""|(?:\b(?:password|passwd|passcode)|密码|密碼)["']?\s*[:=]\s*(?:["'][^"'\s]+["']|(?=[!-~]*[\d!@#$%^&*_+=-])[!-~]{4,}|[!-~]+[ \t]*$)""", re.I | re.M)
 LOOKS_PRIVATE = re.compile(PRIVATE_PATH, re.I)
 # What viewers read in one platform's plan.
 PLAN_TEXT = ("title", "description", "tags", "chapters", "playlist_titles", "collection_title", "widgets")

@@ -304,8 +304,22 @@ class SignInBudgetTests(unittest.TestCase):
     def test_the_slowest_empty_page_still_gets_its_own_answer(self):
         self.assertEqual(("page_not_ready", 210), self.sign_in(60, None))
 
-    def test_a_new_sessions_own_limits_fit_inside_the_wait_for_it(self):
-        self.assertGreater(broker.START_SECONDS, broker.CHROME_SECONDS + broker.SIGN_IN_SECONDS)
+    def test_a_new_sessions_own_limits_and_its_closing_fit_inside_the_wait_for_it(self):
+        self.assertGreater(broker.START_SECONDS, broker.CHROME_SECONDS + broker.SIGN_IN_SECONDS + broker.CLOSING_SECONDS)
+        self.assertGreaterEqual(broker.CLOSING_SECONDS, rt.EXIT_SECONDS)
+        self.assertGreaterEqual(rt.EXIT_SECONDS, 2 * rt.CLOSE_SECONDS)
+
+    def test_nothing_else_starts_while_the_first_is_still_alive(self):
+        """From a review: past the wait, a one-shot worker started anyway, was refused the profile, and hid what had really happened."""
+        with tempfile.TemporaryDirectory() as home_dir, patch.dict(os.environ, {"VPUB_HOME": home_dir}), patch.object(broker, "start", return_value=MagicMock(poll=MagicMock(return_value=None))), \
+                patch.object(broker, "START_SECONDS", 0.2), self.assertRaises(VpubError) as caught:
+            broker.call({"platform": "x", "account": "default", "action": "operations"}, 5)
+        self.assertEqual("browser_step_timeout", caught.exception.code)
+        self.assertIn("starting Chrome", caught.exception.message)
+
+    def test_a_session_that_ended_with_no_answer_still_falls_back(self):
+        with tempfile.TemporaryDirectory() as home_dir, patch.dict(os.environ, {"VPUB_HOME": home_dir}), patch.object(broker, "start", return_value=MagicMock(poll=MagicMock(return_value=1))):
+            self.assertIsNone(broker.call({"platform": "x", "account": "default", "action": "operations"}, 5))
 
 
 class HangingBrowserTests(unittest.TestCase):

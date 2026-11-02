@@ -95,7 +95,7 @@ async def execute(page, platform, identity, payload):
         wanted=patch['post_text']
         if patch.get('keep_ai_line'):
             fields=await x_pages.post_fields(post.first)
-            if not fields: raise VpubError('state_unavailable',"This post's words could not be read, so nothing was changed.",'Look at the post on X before trying again.')
+            if not fields or not isinstance(fields['text'],str): raise VpubError('state_unavailable',"This post's words could not be read, so nothing was changed.",'Look at the post on X before trying again.')
             wanted=words_to_save(patch,fields['text'])
         if await x_post_says(post,wanted):
             return save(state='EDIT_VERIFIED',unchanged=True,url=url,platform_writes=0)

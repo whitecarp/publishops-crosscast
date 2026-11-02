@@ -41,8 +41,8 @@ CONNECT_SECONDS = 15
 BUSY_SECONDS = 180  # How long a command waits for the one the session is running now.
 CHROME_SECONDS = 140  # Starting Chrome. A browser that takes longer has stopped answering.
 SIGN_IN_SECONDS = 240  # The slowest sign-in check: two page loads of up to a minute, with 45 seconds of looking after each, and room for slow reads. Longer means the same.
-START_SECONDS = CHROME_SECONDS + SIGN_IN_SECONDS + 10  # What a new session's own limits add up to, so its answer always arrives first and nothing else starts while it holds the profile.
 CLOSING_SECONDS = 100  # A session that just ended may still be closing Chrome and holding the profile lock; it ends by itself within this.
+START_SECONDS = CHROME_SECONDS + SIGN_IN_SECONDS + CLOSING_SECONDS + 10  # What a new session's own limits add up to, closing included, because it only gives its answer once it has closed.
 RELEASE_SECONDS = 30
 LAST_COMMAND_SECONDS = 900  # What a command started just before the lifetime limit can still take, including closing.
 
@@ -157,6 +157,9 @@ def call(payload, timeout):
                 return None
             time.sleep(0.2)
             conn = connect(platform, account, BUSY_SECONDS)
+        if conn is None:
+            # It's still alive and holds the profile, so a one-shot worker could only be refused, and that would hide this.
+            raise out_of_time("starting Chrome and checking who is signed in")
     if conn is None:
         return None
     # From here on the command may have reached the platform, so failures never fall back or retry.
@@ -269,13 +272,17 @@ async def serve(listener, handle, platform, *, idle=None, lifetime=MAX_LIFETIME_
             return "idle"
 
 
+def out_of_time(step):
+    """Says which step ran out, because a bare timeout says nothing. Running out proves nothing about the sign-in."""
+    return VpubError("browser_step_timeout", f"The background browser ran out of time while {step}.",
+                     "This computer or the site may be busy; a sign-in has not been shown to have expired. Check any receipt before trying again. Nothing is resent automatically.")
+
+
 async def within(step, work, seconds):
-    """A time limit that says which step ran out, because a bare timeout says nothing. Running out proves nothing about the sign-in."""
     try:
         return await asyncio.wait_for(work, seconds)
     except asyncio.TimeoutError:
-        raise VpubError("browser_step_timeout", f"The background browser ran out of time while {step}.",
-                        "This computer or the site may be busy; a sign-in has not been shown to have expired. Check any receipt before trying again. Nothing is resent automatically.") from None
+        raise out_of_time(step) from None
 
 
 def check_again(payload, age, first):

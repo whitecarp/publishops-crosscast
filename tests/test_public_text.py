@@ -13,8 +13,11 @@ from video_publisher.core import VpubError, atomic_json, load_plan
 SECRETS = ["password: x", "my password: hunter2", "密码：123456", "我的密码：123456，别告诉别人", "password=abc123 then log in", "passcode = 8675309",
            "sk-abcdefgh12345678abcd", "ghp_abcdefghijklmnopqrstuvwxyz", "github_pat_abcdefghijklmnopqrstuvwxyz", "AKIAABCDEFGHIJKLMNOP", "AIzaabcdefghijklmnopqrstuvwxyz123456",
            "xoxb-1234567890-abc", "ya29.abcdefghij12345", "eyJhbGciOiJIUzI1NiIs.eyJzdWIiOiIxMjM0NTY3ODkw", "-----BEGIN RSA PRIVATE KEY-----",
-           "SESSDATA=abc123def456", "bili_jct: 0123456789abcdef", "api_key = abc123def456", "client_secret=abc123def456", "Authorization: Bearer abc123def456", "Set-Cookie: sid=abc"]
-ORDINARY = ["API key: how to get one", "Password: what makes a good one", "Password: 10 tips for stronger logins", "Passwords: 10 tips", "密码：忘记了怎么办", "密码：如何设置 8 位密码",
+           "SESSDATA=abc123def456", "bili_jct: 0123456789abcdef", "api_key = abc123def456", "client_secret=abc123def456", "Authorization: Bearer abc123def456", "Set-Cookie: sid=abc",
+           # From a review: a closing quote hid these, and a bearer value needed a digit.
+           '{"access_token": "madeUpValueOnly"}', '{"refresh_token":"madeUpValueOnly"}', '{"client_secret": "madeUpValueOnly"}', '{"api_key": "madeUpValueOnly"}', '{"password": "x"}',
+           "password='x'", "access token: 'madeUpValueOnly'", "access_token=abcdefghijklmnopqrstuvwxyz", "Authorization: Bearer abcdefghijklmnopqrstuvwxyz", '"Authorization": "Bearer abc123def456"']
+ORDINARY = ["API key: how to get one", "Access token: what it is", "Authorization: Bearer", 'The word "password" explained', "Password: what makes a good one", "Password: 10 tips for stronger logins", "Passwords: 10 tips", "密码：忘记了怎么办", "密码：如何设置 8 位密码",
             "How cookies work", "Set-Cookie explained", "SESSDATA explained", "Authorization: Bearer tokens explained", "Begin with a private key", "SK-II facial treatment essence review",
             "sk-learn-tutorial-for-beginners", "task-management-for-beginners-2026", "Token: ETH", "淘口令：abc123", "提取码: abcd", "pan.baidu.com/s/xx?pwd=1234", "example.ru/login",
             r"C:\Users\me\clip.mp4", "Node.js", "我的原创视频"]
@@ -123,6 +126,11 @@ class EditTests(Workspace):
             with self.subTest(changes=changes), self.assertRaises(VpubError) as caught:
                 edits.validate_patch("bilibili", {**self.TEXT, **changes})
             self.assertEqual("unsafe_text", caught.exception.code)
+
+    def test_a_quoted_secret_in_a_correction_is_refused_too(self):
+        with self.assertRaises(VpubError) as caught:
+            edits.validate_patch("x", {**self.TEXT, "content_language": "en", "metadata_language": "en", "description": '{"access_token": "madeUpValueOnly"}'}, False, None)
+        self.assertEqual("unsafe_text", caught.exception.code)
 
     def test_a_read_back_compares_what_the_work_already_says(self):
         self.assertEqual("password: x", edits.validate_patch("bilibili", {**self.TEXT, "description": "password: x"}, verifying=True)["description"])

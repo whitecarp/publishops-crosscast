@@ -47,12 +47,12 @@ class RunnerTests(unittest.TestCase):
             self.kernel.CloseHandle.assert_any_call(handle)
         self.user.CloseDesktop.assert_called_once_with(105)
 
-    def test_the_worker_joins_the_job_before_its_first_instruction(self):
+    def test_the_worker_joins_the_job_as_it_starts_and_is_never_left_suspended(self):
         hd.run(["worker"], 1)
-        self.launch.assert_called_once_with(["worker"], suspended=True)
+        self.launch.assert_called_once_with(["worker"])
         order = [call[0] for call in self.kernel.method_calls]
-        self.assertLess(order.index("AssignProcessToJobObject"), order.index("ResumeThread"))
-        self.assertLess(order.index("ResumeThread"), order.index("WaitForSingleObject"))
+        self.assertLess(order.index("AssignProcessToJobObject"), order.index("WaitForSingleObject"))
+        self.assertNotIn("ResumeThread", order)
 
     def test_a_job_with_nothing_left_has_nothing_ended(self):
         self.assertIsNone(hd.run(["worker"], 1))
@@ -61,6 +61,18 @@ class RunnerTests(unittest.TestCase):
 
     def test_a_browser_gets_time_to_close_itself(self):
         self.active = [3, 2, 0]
+        hd.run(["worker"], 1)
+        self.assertEqual(0, self.called("TerminateJobObject"))
+        self.assertEqual(3, self.called("QueryInformationJobObject"))
+
+    def test_a_failed_look_does_not_cut_that_time_short(self):
+        """From a review: one failed read of the job counted as time up, so it was ended at once."""
+        looks = iter((0, 0, 1))
+
+        def query(job, kind, info, size, returned):
+            info._obj.ActiveProcesses = 0
+            return next(looks)
+        self.kernel.QueryInformationJobObject.side_effect = query
         hd.run(["worker"], 1)
         self.assertEqual(0, self.called("TerminateJobObject"))
         self.assertEqual(3, self.called("QueryInformationJobObject"))
@@ -123,7 +135,7 @@ class RunnerTests(unittest.TestCase):
             with self.subTest(broken=broken), patch.object(hd.subprocess, "run") as taskkill:
                 self.assertIsNone(hd.run(["worker"], 1))
                 taskkill.assert_not_called()
-                self.assertEqual(1, self.called("ResumeThread"))
+                self.assertEqual(1, self.called("WaitForSingleObject"))
                 self.assertEqual(0, self.called("TerminateJobObject"))
                 self.assertEqual(closes_a_job, (104,) in [call.args for call in self.kernel.CloseHandle.call_args_list])
             self.kernel.CreateJobObjectW.return_value = 104
@@ -136,17 +148,8 @@ class RunnerTests(unittest.TestCase):
         with patch.object(hd.subprocess, "run") as taskkill, self.assertRaises(subprocess.TimeoutExpired):
             hd.run(["worker"], 1)
         self.assertEqual(["taskkill", "/PID", "103", "/T", "/F"], taskkill.call_args.args[0])
+        self.assertEqual(hd.CLEANUP_SECONDS, taskkill.call_args.kwargs["timeout"])
         self.assertEqual(0, self.called("TerminateJobObject"))
-
-    def test_a_worker_that_cannot_resume_is_ended_and_never_waited_for(self):
-        self.kernel.ResumeThread.return_value = hd.RESUME_FAILED
-        self.active = [1]
-        with self.assertRaises(VpubError) as caught:
-            hd.run(["worker"], 1)
-        self.assertEqual("browser_unavailable", caught.exception.code)
-        self.assertEqual(0, self.called("WaitForSingleObject"))
-        self.kernel.TerminateJobObject.assert_called_once_with(104, 1)
-        self.closed(101, 102, 104)
 
     def test_a_job_sets_no_kill_on_close(self):
         hd.run(["worker"], 1)
@@ -181,6 +184,20 @@ class AnswerTests(unittest.TestCase):
         with patch.object(hd, "run", side_effect=worker):
             self.assertEqual(answer, hd.call_worker({"action": "publish"}, 1))
         self.assertEqual([], list((home() / "browser-jobs").iterdir()))
+
+    def test_a_finished_commands_answer_stands_after_a_timeout_too(self):
+        answer = {"ok": True, "data": {"state": "SUBMISSION_VERIFIED"}}
+
+        def worker(argv, timeout):
+            atomic_json(read_json(argv[-1])["result_path"], answer)
+            raise subprocess.TimeoutExpired(argv, timeout)
+        with patch.object(hd, "run", side_effect=worker):
+            self.assertEqual(answer, hd.call_worker({"action": "publish"}, 1))
+
+    def test_a_timeout_with_no_answer_says_so(self):
+        with patch.object(hd, "run", side_effect=subprocess.TimeoutExpired(["worker"], 1)), self.assertRaises(VpubError) as caught:
+            hd.call_worker({"action": "publish"}, 1)
+        self.assertEqual("browser_timeout", caught.exception.code)
 
     def test_with_no_answer_the_error_stands(self):
         with patch.object(hd, "run", side_effect=VpubError("browser_unavailable", "No desktop.")), self.assertRaises(VpubError) as caught:

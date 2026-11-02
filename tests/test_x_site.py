@@ -457,9 +457,10 @@ class ChangeTests(Site):
     async def test_an_adopted_post_it_cant_read_is_left_alone(self):
         adopted = self.edit_payload()
         adopted["patch"]["keep_ai_line"] = True
-        with patch.object(browser_edits.x_pages, "post_fields", new=AsyncMock(return_value=None)), self.assertRaises(VpubError) as caught:
-            await browser_edits.execute(self.page, "x", OWNER, adopted)
-        self.assertEqual("state_unavailable", caught.exception.code)
+        for unread in (None, {"text": None}):
+            with self.subTest(unread=unread), patch.object(browser_edits.x_pages, "post_fields", new=AsyncMock(return_value=unread)), self.assertRaises(VpubError) as caught:
+                await browser_edits.execute(self.page, "x", OWNER, adopted)
+            self.assertEqual("state_unavailable", caught.exception.code)
         self.assertEqual([], self.x.writes)
 
     async def test_checking_an_edit_changes_nothing(self):
