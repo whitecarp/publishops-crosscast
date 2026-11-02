@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from video_publisher import browser_forms
+from video_publisher.core import VpubError
 
 BOX = """<!doctype html><body><div id="box" role="checkbox" tabindex="0" aria-checked="false" style="%s"></div>
 <script>
@@ -57,6 +58,66 @@ class TickTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(browser_forms, "YT_TICK_MS", 500):
             await browser_forms.yt_tick(self.page, box)
         self.assertEqual(("true", [0, 1]), (await box.get_attribute("aria-checked"), await self.page.evaluate("[window.clicks, window.keys]", isolated_context=False)))
+
+
+# Public uploaders' selectors and words for Studio's warning, not a capture from a real channel.
+WARNING = """<!doctype html><body><ytcp-prechecks-warning-dialog><div>We're still checking your content</div>
+    %s<ytcp-button id="primary-action-button"><button aria-label="Publish" onclick="window.pressed.push('main')">Publish</button></ytcp-button></ytcp-prechecks-warning-dialog>
+    <ytcp-uploads-dialog><ytcp-button id="done-button"><button>Publish</button></ytcp-button></ytcp-uploads-dialog><script>window.pressed = [];</script>"""
+GO_BACK = """<ytcp-button id="secondary-action-button"><button aria-label="Go back" onclick="window.pressed.push('back'); document.querySelector('ytcp-prechecks-warning-dialog').remove()">Go back</button></ytcp-button>"""
+
+
+class PublishAnswerTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        from patchright.async_api import async_playwright
+        self.pw = await async_playwright().start()
+        self.browser = await self.pw.chromium.launch(channel="chrome", headless=True)
+        self.page = await self.browser.new_page()
+        self.done = self.page.locator(f"{browser_forms.YT_DIALOG} #done-button")
+
+    async def asyncTearDown(self):
+        await self.browser.close()
+        await self.pw.stop()
+
+    async def pressed(self):
+        return await self.page.evaluate("window.pressed", isolated_context=False)
+
+    async def test_the_warning_is_left_by_its_other_button_and_never_its_main_one(self):
+        await self.page.set_content(WARNING % GO_BACK)
+        self.assertEqual("warned", await browser_forms.yt_press_answer(self.page, self.done))
+        self.assertIn("still checking your content", await browser_forms.yt_back_from_warning(self.page))
+        self.assertEqual(["back"], await self.pressed())
+        self.assertIsNone(await browser_forms.yt_press_answer(self.page, self.done))
+
+    async def test_a_warning_with_no_other_button_is_never_answered_with_its_main_one(self):
+        await self.page.set_content(WARNING % "")
+        with self.assertRaises(VpubError) as caught:
+            await browser_forms.yt_back_from_warning(self.page)
+        self.assertEqual("layout_changed", caught.exception.code)
+        self.assertEqual([], await self.pressed())
+
+    async def test_a_form_that_went_away_counts_as_closed(self):
+        await self.page.set_content("<!doctype html><body><p>Saved</p>")
+        self.assertEqual("closed", await browser_forms.yt_press_answer(self.page, self.done))
+
+    async def test_the_checks_are_finished_only_when_studio_says_so(self):
+        for words, finished in (("检查完毕", True), ("Checks complete. No issues found", True), ("正在检查", False), ("", False)):
+            with self.subTest(words=words):
+                await self.page.set_content(f'<!doctype html><body><ytcp-uploads-dialog><span class="progress-label">{words}</span></ytcp-uploads-dialog>')
+                self.assertEqual(finished, await browser_forms.yt_checks_finished(self.page))
+
+    async def test_what_stayed_open_after_a_press_is_read_with_its_buttons(self):
+        await self.page.set_content('<!doctype html><body><tp-yt-paper-dialog style="display: block; width: 50px; height: 50px">Some words<button aria-label="Close">x</button><button style="display: none">Hidden</button></tp-yt-paper-dialog><tp-yt-paper-dialog style="display: none">Gone</tp-yt-paper-dialog>')
+        self.assertEqual([{"tag": "TP-YT-PAPER-DIALOG", "parent": "BODY", "text": "Some wordsx", "buttons": ["Close"]}], await self.page.evaluate(browser_forms.YT_OPEN_DIALOGS))
+
+    async def test_a_drafts_own_page_offers_its_button_by_those_words(self):
+        """From a field read: ytcp-button#action-1 and the button inside it, labelled 编辑草稿, and no visibility setting."""
+        await self.page.set_content('<!doctype html><body><ytcp-button id="action-1"><button aria-label="编辑草稿" onclick="window.opened = true"><div>编辑草稿</div></button></ytcp-button>')
+        button = await browser_forms.visible(self.page.get_by_text(browser_forms.YT_EDIT_DRAFT))
+        await button.click(timeout=2000)
+        self.assertTrue(await self.page.evaluate("window.opened", isolated_context=False))
+        await self.page.set_content("<!doctype html><body><p>The title is 编辑草稿 today</p>")
+        self.assertIsNone(await browser_forms.visible(self.page.get_by_text(browser_forms.YT_EDIT_DRAFT)))
 
 
 # A field check typed 14:07, and Enter moved it to 15:07 while leaving the box kept it. Nothing here says that is exactly how Studio builds it.

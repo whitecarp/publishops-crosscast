@@ -600,7 +600,7 @@ vpub resume RECEIPT_KEY
 vpub receipts
 ```
 
-新回執保存帳號、完整文案、素材雜湊與最終提交標記。不確定的提交不會自動再按一次；`verify` 可尋找唯一吻合的新作品。`resume` 在提交後驗證原作品，並可完成原方案尚未執行的抖音章節；提交前可接續 X 已存的 Studio 素材。Instagram／抖音中斷上傳需檢查既有草稿。`works` 只讀可見首頁（抖音最多十張卡片），不是完整歷史匯出。進階 native 修改仍用 `browser request/begin/record`。
+新回執保存帳號、完整文案、素材雜湊與最終提交標記。不確定的提交不會自動再按一次；`verify` 可尋找唯一吻合的新作品。`resume` 在提交後驗證原作品，並可完成原方案尚未執行的抖音章節；YouTube 若讀回顯示作品仍是草稿，代表什麼都沒有公開，它會在同一份草稿上按發布；提交前可接續 X 已存的 Studio 素材。Instagram／抖音中斷上傳需檢查既有草稿。`works` 只讀可見首頁（抖音最多十張卡片），不是完整歷史匯出。進階 native 修改仍用 `browser request/begin/record`。
 
 光憑錯誤碼，永遠不能證明什麼都沒寫入：多步驟的指令可能已經送出，之後的讀取或控制項才失敗。在說「沒有任何變更」或重試之前，請先看那次嘗試的回執。指令走到那一步時，它就在指令的結果裡；也可以從 `vpub status`，或對應的核驗指令取得（`vpub verify`、`comments verify-action`、`comments verify-reply`、`engage verify`、`collection verify`、`playlist verify` 或 `dm verify`）。請看它的 `state`、有沒有 `submitted_at`、`platform_writes`，上傳則還要看 `final_submit_attempted`，以及讀回結果。狀態寫著送出中或未確認，就表示可能已經送出：請核驗，絕不要重複執行。
 

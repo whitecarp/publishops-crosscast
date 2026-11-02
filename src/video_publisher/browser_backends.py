@@ -193,16 +193,17 @@ class Transaction:
             asset = self.plan.get('covers', {}).get('instagram', {}).get('portrait')
         return asset["path"] if asset else shared
 
-    async def submit(self, page, button, still_holds=None):
+    async def submit(self, page, button, still_holds=None, again=False):
+        """`again` is only for a press the page has shown did not publish anything."""
         if self.options.get("submission_mode") == "draft_only":
             raise VpubError("draft_only", "Final submission is forbidden in draft-only mode.")
-        if self.receipt["final_submit_attempted"]:
+        if self.receipt["final_submit_attempted"] and not again:
             raise VpubError("already_submitted", "A final submission was already attempted.")
         await risk_check(page)
         stop_check(self.platform)
         if still_holds:
             await still_holds()  # What was read before that wait may not be true after it.
-        self.save(state="UNKNOWN", phase="submitting", final_submit_attempted=True, review_url=page.url)
+        self.save(state="UNKNOWN", phase="submitting", final_submit_attempted=True, final_presses=self.receipt.get("final_presses", 0) + 1, review_url=page.url)
         stage("pressing")
         # Persist BEFORE clicking. A timeout must never cause another click.
         await button.click(timeout=20000)
@@ -229,6 +230,7 @@ async def links(page, platform, identity):
     return result
 
 
+YT_EDIT_DRAFT = re.compile('^(编辑草稿|Edit draft)$', re.I)
 POPUP_MS = 15000
 DOUYIN_CARD_TIME = re.compile(r"(\d{4})年(\d{2})月(\d{2})日 (\d{2}):(\d{2})")
 DOUYIN_CARD = '[class^="video-card-content-"]'
@@ -584,6 +586,8 @@ async def verify_youtube(page, receipt):
     except Exception:
         pass
     await risk_check(page)
+    # A field run's Publish left a draft: its page has a button to edit it, and no visibility setting at all.
+    still_a_draft = not seen.get("visibility") and await visible(page.get_by_text(YT_EDIT_DRAFT)) is not None
     expected = {"title": normalize(receipt["title"]) if receipt.get("title") else None,
                 "description": normalize(receipt["expected_text"]) if "expected_text" in receipt else None,
                 # A scheduled video shows its date and time until then, and afterwards it is public like any other.
@@ -595,10 +599,11 @@ async def verify_youtube(page, receipt):
     present = bool(seen.get("title")) and not differs
     note = ("Current title, description and public visibility read back after the intended schedule; actual publication time and on-time release were not established." if present and passed else
             "Title, description, visibility or schedule, and playlists read back from the channel's own Studio page; cover pixels and playback are separate." if present else
+            "Studio still shows this as a draft, so viewers can't see it. Press Publish on this same draft with vpub resume; do not upload again." if still_a_draft else
             "Expected work/text not yet verified; do not upload again.")
     return {**receipt, "url": url, "state": "SUBMISSION_VERIFIED" if present else "SUBMITTED_UNVERIFIED",
             "phase": "complete" if present else "readback_pending", "error": None if present else receipt.get("error"),
-            "verification_source": "independent_browser_dom", "verified_at": now(), "readback_differs": differs, "note": note,
+            "verification_source": "independent_browser_dom", "verified_at": now(), "readback_differs": differs, "note": note, "still_a_draft": still_a_draft,
             **({"schedule_evidence": {"intended_at": schedule.get("at"), "scheduled_time_elapsed": passed, "on_time_publication_verified": False}} if schedule else {})}
 
 
@@ -803,7 +808,10 @@ async def execute(page, platform, identity, payload):
     tx = Transaction(platform, identity, payload["plan"], resume=action == 'resume', prior_receipt=payload.get('prior_receipt'))
     if tx.receipt['final_submit_attempted']:
         result=await verify(page, platform, identity, tx.receipt)
-        return tx.save(**await complete_pending_chapters(page,platform,identity,result))
+        # The read-back has just shown nothing went public, and the video is already there, so finishing it can't make a second one.
+        if not (action == 'resume' and result.get('still_a_draft')):
+            return tx.save(**await complete_pending_chapters(page,platform,identity,result))
+        tx.save(**result)
     for stale in ('hint', 'blocked_phase'):
         tx.receipt.pop(stale, None)
     tx.save(state='PREPARING', error=None, user_action_required=False)

@@ -12,7 +12,7 @@ from .categories import STUDIO_CATEGORIES
 from .core import VpubError, douyin_caption, stop_check
 from .browser_runtime import look_until, risk_check, unique_visible, visible
 from .progress import stage
-from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, X_CHOSEN_TIME, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style,
+from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, X_CHOSEN_TIME, YT_EDIT_DRAFT, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style,
                                upload_file, wait_until, work_url, works, verify, verify_scheduled_x, x_chosen_time_says, x_new_works, x_schedule_baseline, x_schedule_moment, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
 
 X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
@@ -21,7 +21,14 @@ YT_PLAYLISTS = 'ytcp-playlist-dialog'
 YT_TICK_MS = 5000
 YT_UPLOAD_SECONDS = 1500
 YT_LINK_SECONDS = 600
-YT_EDIT_DRAFT = re.compile('^(编辑草稿|Edit draft)$', re.I)
+YT_CHECKS_WARNING = 'ytcp-prechecks-warning-dialog'
+YT_CHECKS_DONE = re.compile('检查完毕|檢查完畢|Checks complete', re.I)
+YT_CHECKS_SECONDS = 600
+YT_PRESS_ANSWER_SECONDS = 60
+# What's open on the page after Publish, for a press that neither closed the form nor brought the warning.
+YT_OPEN_DIALOGS = """() => [...document.querySelectorAll('tp-yt-paper-dialog, [role="dialog"]')].filter(e => e.getClientRects().length).map(e => ({
+    tag: e.tagName, parent: e.parentElement?.tagName, text: (e.innerText || '').slice(0, 300),
+    buttons: [...e.querySelectorAll('button')].filter(b => b.getClientRects().length).map(b => b.getAttribute('aria-label') || b.innerText).slice(0, 8)}))"""
 # Each playlist row's checkbox, its own lines of text and whether it is ticked.
 YT_PLAYLIST_ROWS = """boxes => boxes.map(box => {
     const row = box.closest('li, label, ytcp-ve') || box.parentElement;
@@ -940,6 +947,79 @@ async def yt_schedule(page, when):
             'time': [local.hour, local.minute], 'timezone_basis': 'studio' if offsets else 'computer', 'time_entry': entered}
 
 
+async def yt_press_answer(page, done):
+    """What Studio did with Publish: 'warned', 'closed', or nothing yet."""
+    if await visible(page.locator(f'{YT_CHECKS_WARNING} button')):
+        return 'warned'
+    return None if await done.is_visible() else 'closed'
+
+
+async def yt_checks_finished(page):
+    words = await page.locator(f'{YT_DIALOG} .progress-label').evaluate_all('es => es.map(e => e.innerText)')
+    return any(YT_CHECKS_DONE.search(word or '') for word in words)
+
+
+async def yt_back_from_warning(page):
+    """Out of Studio's warning without choosing its main button, whose words nobody here has read on a real channel. Public uploaders press Go back there, then wait for the checks and press Publish again."""
+    warning = page.locator(YT_CHECKS_WARNING)
+    words = normalize(await warning.first.inner_text())
+    back = await visible(page.locator(f'{YT_CHECKS_WARNING} button:not(#primary-action-button button):not(#publish-button button)'))
+    if back:
+        await back.click(timeout=15000)
+    else:
+        await page.keyboard.press('Escape')
+
+    async def gone():
+        return not await visible(page.locator(f'{YT_CHECKS_WARNING} button'))
+    if not await look_until(page, gone, 5000):
+        raise VpubError('layout_changed', "Studio's warning about its checks would not close, so nothing more was pressed.", 'Finish this draft in YouTube Studio. Do not upload it again.')
+    return words
+
+
+async def yt_press_publish(page, tx, done):
+    """Publish, and see that Studio took it. A field run's first public upload stayed a draft: Publish went in while Studio's checks ran, the form stayed open, and the read-back left. Public uploaders show Studio asking at that point, so this waits for the checks and presses once more, and leaves the draft for vpub resume if that isn't enough."""
+    from .youtube_studio import PIN_TICKS, act_and_settle
+    again = tx.receipt['final_submit_attempted']
+    for press in range(2):
+        await act_and_settle(page, lambda: tx.submit(page, done, again=again), PIN_TICKS)
+        answer = await look_until(page, lambda: yt_press_answer(page, done), YT_PRESS_ANSWER_SECONDS * 1000)
+        if answer != 'warned':
+            if not answer:
+                tx.save(after_press=await page.evaluate(YT_OPEN_DIALOGS))
+            return
+        tx.save(checks_warning=await yt_back_from_warning(page))
+        if press:
+            return
+        try:
+            await wait_until(page, lambda: yt_checks_finished(page), seconds=YT_CHECKS_SECONDS, label='YouTube checks')
+        except VpubError as failure:
+            if failure.code != 'processing_timeout':
+                raise
+            return
+        stop_check('youtube')
+        await wait_until(page, lambda: yt_button_ready(done), seconds=120, label='YouTube final Save enabled')
+        again = True
+
+
+async def yt_finish_draft(page, tx):
+    """Back into this attempt's own draft and press Publish again, after a read-back showed the last press left a draft. It goes by the video's ID, changes no field, and uploads nothing."""
+    video_id, options = tx.receipt['id'], tx.options
+    await page.goto(f'https://studio.youtube.com/video/{video_id}/edit', wait_until='domcontentloaded', timeout=60000)
+    button = await look_until(page, lambda: visible(page.get_by_text(YT_EDIT_DRAFT)), 30000)
+    if not button:
+        raise VpubError('inspect_existing_draft', "Studio didn't offer to edit this attempt's draft, so nothing was pressed.", 'Look for it in YouTube Studio. Never upload it again.')
+    await button.click(timeout=15000)
+    title_box = page.locator(f'{YT_DIALOG} #title-textarea #textbox')
+    await wait_until(page, lambda: visible(title_box), seconds=60, label='YouTube details form')
+    if await wait_until(page, lambda: yt_video_id(page), seconds=60, label='YouTube video ID') != video_id:
+        raise VpubError('wrong_work', "The draft Studio opened has another video ID from this attempt's, so nothing was changed.")
+    title = await unique_visible(title_box, 'YouTube title')
+    description = await unique_visible(page.locator(f'{YT_DIALOG} #description-textarea #textbox'), 'YouTube description')
+    if normalize(await title.inner_text()) != normalize(options['title']) or normalize(await description.inner_text()) != normalize(options['description']):
+        raise VpubError('metadata_mismatch', "This draft's title or description differs from the plan, so nothing was pressed.", 'Look at it in YouTube Studio. Never upload it again.')
+    return await yt_final_steps(page, tx, video_id, True)
+
+
 async def yt_upload_finished(page, reopened=False):
     # The upload stops when the page closes, so it has to finish before this command can leave.
     progress = page.locator(f'{YT_DIALOG} ytcp-video-upload-progress')
@@ -952,6 +1032,8 @@ async def yt_upload_finished(page, reopened=False):
 async def publish_youtube(page, tx):
     """One upload through Studio's own form. Studio shows the video's ID as soon as the upload starts, so it is saved first."""
     options = tx.options
+    if tx.receipt.get('still_a_draft'):
+        return await yt_finish_draft(page, tx)
     tx.save(expected_text=options['description'], visibility=options['visibility'])
     if options.get('create_missing_playlists'):
         from .youtube_studio import ensure_playlists
@@ -1007,6 +1089,11 @@ async def publish_youtube(page, tx):
         await yt_playlists(page, options['playlist_titles'])
         tx.save(playlists=options['playlist_titles'])
     tx.save(phase='details_ready', metadata_readback=True, ai_disclosure='native_control')
+    return await yt_final_steps(page, tx, video_id, reopened)
+
+
+async def yt_final_steps(page, tx, video_id, reopened):
+    options = tx.options
     # Details, then video elements, then checks, then visibility.
     for _ in range(3):
         following = await unique_visible(page.locator(f'{YT_DIALOG} #next-button'), 'YouTube Next')
@@ -1027,12 +1114,7 @@ async def publish_youtube(page, tx):
     await wait_until(page, lambda: yt_button_ready(done), seconds=120, label='YouTube final Save enabled')
     tx.save(id=video_id, url=work_url('youtube', tx.identity, video_id))
     # On a real channel Studio greyed a Save out at once and sent the change about six seconds later, and leaving before it ended cancelled it. The read-back below leaves this page.
-    from .youtube_studio import PIN_TICKS, act_and_settle
-    await act_and_settle(page, lambda: tx.submit(page, done), PIN_TICKS)
-    try:
-        await done.wait_for(state='hidden', timeout=60000)
-    except Exception:
-        pass
+    await yt_press_publish(page, tx, done)
     result = {}
     for attempt in range(8):
         result = await verify(page, 'youtube', tx.identity, tx.receipt)

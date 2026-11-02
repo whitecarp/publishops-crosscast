@@ -24,7 +24,7 @@ Date: **2026-11-01**, PublishOps CrossCast **0.16.0 alpha**.
 | YouTube free-route upload | `vpub publish` uploaded a 5-second private test clip in about 34 seconds, in Studio's Chinese interface, with nothing on screen. Studio then showed the planned title, multi-line description, tags, category, audience, altered-content answer, private visibility and custom thumbnail. A fresh `vpub verify` agreed, and a signed-out visit got YouTube's private-video refusal. Public and unlisted uploads, long videos, and Chrome being interrupted mid-upload have not been tried. The playlists and scheduling added afterwards are under the later field runs. |
 | X's two websites | X serves two versions of its site. Read signed out, x.com's public page code shows a rebuilt site without most of the page labels the earlier route looks for. A read-only check of a signed-in account on 2026-10-31 found it still gets the earlier site: its post, mention and profile labels are all there, `/i/chat` asks for the chat PIN, and `/i/bookmarks/add/<post>` is page-not-found. The X route now handles both, and the same tests of posts, replies, likes, saves, hiding replies, mentions, chat, adopting posts and post edits run against small copies of each. Nothing on the rebuilt site has been tried while signed in. What ran on the earlier site is under the field runs. |
 
-**The offline suite has 1,837 tests, and CI runs it on Windows with Python 3.10, 3.11 and 3.12.** The paid add-on's own 210 tests pass against this core.
+**The offline suite has 1,853 tests, and CI runs it on Windows with Python 3.10, 3.11 and 3.12.** The paid add-on's own 210 tests pass against this core.
 
 | Offline check | Result |
 |---|---|

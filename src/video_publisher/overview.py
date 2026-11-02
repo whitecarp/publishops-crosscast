@@ -84,6 +84,8 @@ def next_step(row, busy):
         return f"vpub auth login {platform}", f"Complete the official sign-in or verification, then run vpub resume {key}."
     if state in {"IN_PROGRESS", "PREPARATION_INCOMPLETE"} or state.startswith("UPLOAD") or (method == "api" and not receipt.get("id")):
         return f"vpub resume {key}", "The command stopped before finishing. Resume checks the saved state and never submits twice."
+    if receipt.get("still_a_draft"):
+        return f"vpub resume {key}", "Studio shows this as a draft, so viewers can't see it. Resume presses Publish on the same draft and uploads nothing."
     return f"vpub verify {key}", "Read-only check of the original attempt. Never upload it again."
 
 

@@ -104,6 +104,12 @@ class StatusTests(OverviewFixture):
         self.assertEqual("vpub auth login x", item["next_command"])
         self.assertIn("vpub resume " + key, item["note"])
 
+    def test_a_youtube_press_that_left_a_draft_is_sent_to_resume(self):
+        key = self.row("SUBMITTED_UNVERIFIED", method="browser", platform="youtube", receipt={"id": "abc", "still_a_draft": True})
+        item = self.attention()[key]
+        self.assertEqual("vpub resume " + key, item["next_command"])
+        self.assertIn("uploads nothing", item["note"])
+
     def test_bilibili_attempt_without_an_id_is_never_sent_to_resume(self):
         key = self.row("IN_PROGRESS", method="cli", platform="bilibili")
         item = self.attention()[key]

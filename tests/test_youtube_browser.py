@@ -48,6 +48,12 @@ class Element:
     def exists(self):
         if "verifycenter" in self.key or any(part in self.key for part in self.page.missing):
             return False
+        if browser_forms.YT_CHECKS_WARNING in self.key:
+            return self.page.warning_open
+        if "#done-button" in self.key and self.page.published and not self.page.form_stays:
+            return False
+        if self.key == "edit-draft":
+            return self.page.is_draft
         return self.page.picker_open if self.key.startswith(browser_forms.YT_PLAYLISTS) else True
 
     async def all(self):
@@ -71,6 +77,14 @@ class Element:
             self.page.at_final_click = dict(read_json(self.page.receipt_path)) if self.page.receipt_path else {}
             self.page.polls_at_final_click = self.page.polls
             self.page.saved = True
+            if self.page.warnings:
+                self.page.warnings -= 1
+                self.page.warning_open = True
+            elif not self.page.press_does_nothing:
+                self.page.published = True
+                self.page.is_draft = False
+        if browser_forms.YT_CHECKS_WARNING in self.key:
+            self.page.warning_open = False
         if "#next-button" in self.key:
             self.page.steps += 1
         if "tp-yt-paper-item" in self.key:
@@ -93,6 +107,8 @@ class Element:
         return True
 
     async def evaluate_all(self, script):
+        if ".progress-label" in self.key:
+            return [self.page.checks_label]
         if self.key.endswith('[role="checkbox"]'):
             return [{"lines": [title, "Private"], "checked": i in self.page.ticked} for i, title in enumerate(self.page.playlists)]
         return [self.page.link] if self.page.has_link else []
@@ -161,6 +177,9 @@ class FakeStudio:
         self.listeners, self.studio_sends, self.ticks, self.left_at = {}, {}, 0, []
         self.playlists, self.ticked, self.picker_open, self.refuse_tick = [], set(), False, False
         self.date_text, self.time_text, self.scheduler_text, self.refuse_schedule = "2026年10月31日", "18:00", "", False
+        self.warnings, self.warning_open, self.published, self.form_stays = 0, False, False, False
+        self.press_does_nothing, self.is_draft, self.checks_label = False, False, "检查完毕"
+        self.keyboard = MagicMock(press=AsyncMock())
         self.url = "https://studio.youtube.com/channel/" + CHANNEL
         self.link = f"https://youtu.be/{VIDEO}"
         for name, value in options.items():
@@ -170,7 +189,10 @@ class FakeStudio:
         return Element(self, selector)
 
     def get_by_text(self, pattern, **options):
-        return MagicMock(all=AsyncMock(return_value=[]))
+        return Element(self, "edit-draft") if pattern is browser_forms.YT_EDIT_DRAFT else MagicMock(all=AsyncMock(return_value=[]))
+
+    async def evaluate(self, script):
+        return [{"tag": "TP-YT-PAPER-DIALOG", "buttons": ["Publish"]}]
 
     async def goto(self, url, **options):
         self.log.append(("goto", url))
@@ -257,6 +279,48 @@ class FormTests(FormCase):
         page = FakeStudio(studio_sends={12: ["request"], 40: ["requestfinished"]})
         self.assertEqual("SUBMISSION_VERIFIED", self.run_form(page)[1]["state"])
         self.assertGreater(page.left_at[0], 40)
+        self.assertEqual(1, len(page.clicks("#done-button")))
+
+    def test_studios_warning_is_answered_by_going_back_and_pressing_once_more_after_its_checks(self):
+        """Public uploaders show Studio asking this when Publish goes in while its checks run. A field run's film stayed a draft, and the page wasn't captured."""
+        page = FakeStudio(warnings=1)
+        tx, result = self.run_form(page)
+        self.assertEqual("SUBMISSION_VERIFIED", result["state"])
+        self.assertEqual(2, len(page.clicks("#done-button")))
+        self.assertEqual(1, len(page.clicks(browser_forms.YT_CHECKS_WARNING)))
+        self.assertEqual(1, len(page.selected_files()))
+        self.assertEqual(2, result["final_presses"])
+        self.assertIn("checks_warning", result)
+
+    def test_a_warning_that_comes_back_is_left_as_a_draft_with_two_presses(self):
+        page = FakeStudio(warnings=5, visibility_text="", is_draft=True)
+        tx, result = self.run_form(page)
+        self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
+        self.assertTrue(result["still_a_draft"])
+        self.assertIn("vpub resume", result["note"])
+        self.assertEqual(2, len(page.clicks("#done-button")))
+
+    def test_checks_that_never_finish_get_no_second_press(self):
+        page = FakeStudio(warnings=5, checks_label="Checking", visibility_text="", is_draft=True)
+        with patch.object(browser_forms, "YT_CHECKS_SECONDS", 0):
+            tx, result = self.run_form(page)
+        self.assertTrue(result["still_a_draft"])
+        self.assertEqual(1, len(page.clicks("#done-button")))
+
+    def test_a_stop_during_the_wait_for_checks_holds_the_second_press(self):
+        page = FakeStudio(warnings=1, visibility_text="", is_draft=True)
+        with patch.object(browser_forms, "stop_check", side_effect=VpubError("stopped", "Stop.")), self.assertRaises(VpubError) as caught:
+            self.run_form(page)
+        self.assertEqual("stopped", caught.exception.code)
+        self.assertEqual(1, len(page.clicks("#done-button")))
+
+    def test_a_press_that_neither_closes_nor_warns_records_what_is_open(self):
+        """A field run had nothing to show for this moment."""
+        page = FakeStudio(press_does_nothing=True, visibility_text="", is_draft=True)
+        with patch.object(browser_forms, "YT_PRESS_ANSWER_SECONDS", 1):
+            tx, result = self.run_form(page)
+        self.assertEqual([{"tag": "TP-YT-PAPER-DIALOG", "buttons": ["Publish"]}], result["after_press"])
+        self.assertTrue(result["still_a_draft"])
         self.assertEqual(1, len(page.clicks("#done-button")))
 
     def test_a_save_with_no_request_seen_still_gets_the_longest_delay_seen(self):
@@ -482,6 +546,56 @@ class ResumeTests(Temporary):
             result = asyncio.run(execute(again, "youtube", CHANNEL, {"action": "resume", "plan": self.plan()}))
         self.assertEqual("inspect_existing_draft", result["error"]["code"])
         self.assertEqual([], again.selected_files())
+
+    def pressed_and_left_a_draft(self):
+        tx = Transaction("youtube", CHANNEL, self.plan())
+        tx.save(media_selected=True, upload_filename="crosscast-abc.mp4", draft_id=VIDEO, id=VIDEO, state="SUBMITTED_UNVERIFIED", final_submit_attempted=True, final_presses=1, visibility="public")
+
+    def draft_page(self, **options):
+        page = FakeStudio(is_draft=True, **options)
+        page.text.update({"#title-textarea #textbox": "My title", "#description-textarea #textbox": "Text"})
+        return page
+
+    def test_resume_presses_publish_on_a_draft_the_read_back_shows_and_uploads_nothing(self):
+        self.pressed_and_left_a_draft()
+        page = self.draft_page()
+        result = asyncio.run(execute(page, "youtube", CHANNEL, {"action": "resume", "plan": self.plan()}))
+        self.assertEqual(("SUBMISSION_VERIFIED", VIDEO), (result["state"], result["id"]))
+        self.assertFalse(result["still_a_draft"])
+        self.assertEqual(([], 1, 2), (page.selected_files(), len(page.clicks("#done-button")), result["final_presses"]))
+        self.assertEqual([], [entry for entry in page.log if entry[0] == "fill"])
+
+    def test_verify_only_says_so_and_presses_nothing(self):
+        self.pressed_and_left_a_draft()
+        page = self.draft_page()
+        receipt = read_json(Transaction("youtube", CHANNEL, self.plan(), resume=True).path)
+        result = asyncio.run(execute(page, "youtube", CHANNEL, {"action": "verify", "receipt": receipt}))
+        self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
+        self.assertTrue(result["still_a_draft"])
+        self.assertEqual(([], []), (page.clicks("edit-draft"), page.clicks("#done-button")))
+
+    def test_resume_presses_nothing_when_the_work_is_no_draft(self):
+        self.pressed_and_left_a_draft()
+        page = FakeStudio(visibility_text="Unlisted")
+        page.text["#title-textarea #textbox"] = "My title"
+        result = asyncio.run(execute(page, "youtube", CHANNEL, {"action": "resume", "plan": self.plan()}))
+        self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
+        self.assertFalse(result["still_a_draft"])
+        self.assertEqual(["visibility"], result["readback_differs"])
+        self.assertEqual([], page.clicks("#done-button"))
+
+    def test_a_draft_with_other_words_or_another_id_is_not_pressed(self):
+        for change, code in (({"#title-textarea #textbox": "Another title"}, "metadata_mismatch"), ({}, "wrong_work")):
+            with self.subTest(code=code):
+                self.pressed_and_left_a_draft()
+                page = self.draft_page()
+                page.text.update(change)
+                if code == "wrong_work":
+                    page.link = "https://youtu.be/aaaaaaaaaaa"
+                result = asyncio.run(execute(page, "youtube", CHANNEL, {"action": "resume", "plan": self.plan()}))
+                self.assertEqual(code, result["error"]["code"])
+                self.assertEqual([], page.clicks("#done-button"))
+                Transaction("youtube", CHANNEL, self.plan(), resume=True).path.unlink()
 
     def stopped_after_its_id(self):
         tx = Transaction("youtube", CHANNEL, self.plan())
