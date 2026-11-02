@@ -40,10 +40,11 @@ POST_FIELDS = r"""article => {
   const earlier = article.querySelector('[data-testid="tweetText"], [data-testid="User-Name"]');
   const block = earlier ? [...article.querySelectorAll('[data-testid="tweetText"]')].find(outside)
     : [...article.querySelectorAll('div[dir="auto"]')].find(e => outside(e) && !e.querySelector('a[href*="/status/"]') && e.innerText.trim());
+  const videos = [...article.querySelectorAll('video, [data-testid="videoPlayer"], [data-testid="videoComponent"]')].filter(e => !e.closest('[role="link"]'));
   return {href: own ? own.getAttribute('href') : null, text: block ? block.innerText : null,
           time: own?.querySelector('time')?.getAttribute('datetime') || null,
-          video: !!article.querySelector('video, [data-testid="videoPlayer"], [data-testid="videoComponent"]'),
-          poster: article.querySelector('video')?.getAttribute('poster') || null,
+          video: videos.length > 0,
+          poster: videos.find(e => e.tagName === 'VIDEO')?.getAttribute('poster') || null,
           lines: article.innerText.split('\n').map(line => line.trim())};
 }"""
 

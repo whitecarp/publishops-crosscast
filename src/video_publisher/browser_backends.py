@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 from .core import VpubError, atomic_json, file_sha, home, now, read_json, snapshot_file, stop_check
 from .browser_runtime import failure_message, failure_record, look_until, plain_address, platform_at, risk_check, unique_visible, visible
 from .progress import stage
-from .x_pages import own_posts, post_row, post_time
+from .x_pages import own_posts, post_fields, post_row, post_time
 
 MANAGE = "https://creator.douyin.com/creator-micro/content/manage"
 STUDIO_VISIBILITY = {"public": {"Public", "公开", "公開"}, "unlisted": {"Unlisted", "不公开列出", "不公開"}, "private": {"Private", "私享", "私人"}}
@@ -415,6 +415,23 @@ def x_new_works(platform, receipt, works):
     return [work for work in works if datetime.fromisoformat(post_time(work['id'])) >= began]
 
 
+async def x_post_reads_as_this_upload(page, receipt):
+    """Whether a post we sent reads back from its own row: exactly its words, and its own video. Reviews found a reply's words, or a quoted post's video, passed on the rest of the page.
+    A field read found a real post's video in its own row. A custom cover leaves no number to read, so a number can only rule a post out."""
+    from patchright.async_api import Error as BrowserError
+    media = re.search(r"/library/\d+_(\d+)", receipt.get("media_url") or "")
+    row = post_row(page, receipt["id"]).first
+
+    async def reads_right():
+        try:
+            fields = await post_fields(row)
+        except BrowserError:
+            return False
+        return bool(fields and fields["id"] == str(receipt["id"]) and normalize(fields["text"]) == normalize(receipt.get("expected_text") or receipt.get("title")) and fields["has_video"]
+                    and not (media and fields["media_id"] and fields["media_id"] != media[1]))
+    return bool(await look_until(page, reads_right, 6000))
+
+
 async def douyin_card_id(page, name, card):
     """The ID behind a card of the works list, or None if it can't be told, which says nothing about the other cards."""
     from patchright.async_api import Error as BrowserError
@@ -721,9 +738,7 @@ async def verify(page, platform, identity, receipt):
             actual = normalize(await page.locator("body").inner_text())
             present = present and normalize(expected) in actual
         if platform == 'x' and present and receipt.get('final_submit_attempted'):
-            # Media Studio posts videos, so its words with no video aren't this post. A field read found a real post's video in its own row on its own page. A custom cover leaves no number to compare, which only a scheduled post needs.
-            video = post_row(page, receipt['id']).locator('video, [data-testid="videoPlayer"], [data-testid="videoComponent"]')
-            present = bool(await look_until(page, video.count, 6000))
+            present = await x_post_reads_as_this_upload(page, receipt)
     if platform == 'douyin' and receipt.get('expected_text'):
         present = present and receipt['expected_text'] in found.get(str(receipt['id']), {}).get('text', '')
     if platform == 'douyin' and present and receipt.get('visibility') == 'private' and 'expected_caption' in receipt:

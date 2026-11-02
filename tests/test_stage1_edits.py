@@ -161,6 +161,17 @@ class LastMomentTests(SharedBrowser):
         self.assertNotIn("secret-form-words", record["text"])
         self.assertNotIn("请先完成封面设置", str(result))
 
+    async def test_no_kind_of_editable_box_reaches_the_record(self):
+        """From a review: only contenteditable="true" was taken out, so a box with an empty or plaintext-only value kept what was typed."""
+        from video_publisher.browser_runtime import FORM_FIELDS
+        atomic_json(home() / "config.json", {"page_diagnostics": True})
+        self.STAYS = '<div role="dialog">请先完成封面设置<div contenteditable>secret-empty</div><div contenteditable="plaintext-only">secret-plain</div><div contenteditable=""><p>secret-inherited</p></div><div contenteditable="false">kept-words</div></div>'
+        result, record = await self.stays_after_the_press()
+        for words in ("secret-empty", "secret-plain", "secret-inherited"):
+            self.assertNotIn(words, record["text"])
+        self.assertIn("kept-words", record["text"])
+        self.assertEqual(3, await self.page.locator("[role=dialog] " + FORM_FIELDS.split(",")[-1]).count())
+
     async def test_a_picture_it_cannot_take_does_not_lose_what_the_page_said(self):
         """From a field run: a screenshot of this page ran out of time waiting for its fonts."""
         atomic_json(home() / "config.json", {"page_diagnostics": True})
@@ -285,6 +296,23 @@ class DouyinPageTests(SharedBrowser):
         self.assertIn("Its fonts were loaded at the press and are loaded now", caught.exception.message)
         self.assertEqual([], self.saves)
         self.assertFalse(self.path.exists())
+
+    async def test_a_stop_during_the_font_wait_holds_finishing_the_cover(self):
+        """From a review: that wait can be long, and 完成 was pressed with a stop in place."""
+        async def fonts(page):
+            self.stop()
+            return "loaded"
+        with patch.object(browser_edits, "douyin_fonts", fonts), self.assertRaises(VpubError) as caught:
+            await self.cover()
+        self.assertEqual("stopped", caught.exception.code)
+        self.assertEqual([], self.saves)
+        self.assertTrue(await self.page.locator("#picker").is_visible())
+
+    async def test_a_covers_picture_holds_only_the_cover(self):
+        """From a review: a picture of the whole editor kept its words with diagnostics off."""
+        with patch.object(self.page, "screenshot", new=AsyncMock(side_effect=AssertionError("the whole page"))):
+            result = await self.cover(verify_only=True)
+        self.assertTrue(Path(result["screenshot"]).exists())
 
     async def test_finishing_a_cover_waits_for_the_pages_fonts(self):
         """From field runs: 完成 hung when pressed about 11 seconds after the file, and went through at about 73, on a page whose fonts take about 25."""

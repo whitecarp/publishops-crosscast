@@ -132,6 +132,9 @@ async def execute(page, platform, identity, payload):
             # In field runs 完成 hung when pressed about 11 seconds after the file and went through at about 73, on a page whose fonts take about 25. Why isn't known, and if it isn't this, the wait costs little.
             await look_until(page,lambda: douyin_fonts_loaded(page),DOUYIN_FONT_SECONDS*1000,step=1000)
             fonts=await douyin_fonts(page)
+            # That wait can be long, and a review found 完成 pressed with a stop in place.
+            await risk_check(page)
+            stop_check(platform)
             await dialog.get_by_role('button',name='完成',exact=True).click()
             from patchright.async_api import TimeoutError as BrowserTimeout
             try:
@@ -262,8 +265,8 @@ async def capture_cover(page,control,output,patch,save,url):
         if exc.code!='processing_timeout': raise
         preview=[]
     proof=output.with_suffix('.png')
-    # A picture waits for the page's fonts, and a field read found them taking about 25 seconds on this fresh load.
-    try: await page.screenshot(path=str(proof),timeout=DOUYIN_PICTURE_SECONDS*1000)
+    # A picture waits for the page's fonts, and a field read found them taking about 25 seconds on this fresh load. Only the cover's own element, because a review found a picture of the whole editor kept its words with diagnostics off.
+    try: await (await control.element_handle(timeout=5000)).screenshot(path=str(proof),timeout=DOUYIN_PICTURE_SECONDS*1000)
     except Exception: proof=None
     return save(state='EDIT_SUBMITTED_UNVERIFIED',url=url,readback_ready=bool(preview),
                 portrait_sha256=patch['portrait_sha256'],saved_preview=preview,screenshot=str(proof) if proof else None,

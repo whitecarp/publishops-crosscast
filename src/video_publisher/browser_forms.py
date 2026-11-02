@@ -151,8 +151,15 @@ async def x_send_scheduled(page, tx, form, video):
 
         async def tied():
             return await x_composer_is_this_files(form, video, caption, any_final)
+
+        # A review showed a class can hold anything, and this message is kept, so it only says whether the class says so.
+        async def class_says_off():
+            return bool(re.search('disabled', await any_final.get_attribute('class', timeout=2000) or '', re.I))
+
+        async def aria_says_off():
+            return await any_final.get_attribute('aria-disabled', timeout=2000) == 'true'
         seen = {'finals_showing': await read(any_final.count), 'finals': await read(page.locator('button.tweetbtn').count), 'says_done': await read(done.count),
-                'final_enabled': await read(lambda: enabled(any_final)), 'final_class': await read(lambda: any_final.get_attribute('class', timeout=2000)),
+                'final_enabled': await read(lambda: enabled(any_final)), 'final_class_says_off': await read(class_says_off), 'final_aria_says_off': await read(aria_says_off),
                 'calendar_open': await read(page.locator('fieldset.CalendarNavigation-monthFormSelect select:visible').count), 'times_showing': await read(chosen.count),
                 'time_is_this_schedule': await read(time_is_this_schedule), 'buttons_beside_final': await read(row.locator('button:visible').filter(has_text=re.compile(r'\S')).count),
                 'captions': await read(caption.count), 'words_are_the_plans': await read(words_are_the_plans), 'words_length': len(tx.options['post_text']), 'tied_to_the_file': await read(tied)}
@@ -424,8 +431,9 @@ async def publish_instagram(page, tx):
         await page.wait_for_timeout(2000)
         tx.save(cover={'state':'UI_ACCEPTED', 'source':'production_artwork', 'remote_pixels_verified':False})
     else:
-        # A field look found this step shows that button. With no cover to wait for, a press straight after the last could land before the step has come.
-        await look_until(page, lambda: visible(cover_button), 15000)
+        # A field look found this step shows that button. With no cover to wait for, a press straight after the last could land before the step has come, and a review showed pressing on without it would press the last step's Next again.
+        if not await look_until(page, lambda: visible(cover_button), 60000):
+            raise VpubError('layout_changed', "Instagram's next step did not come, so nothing was shared.")
     await page.get_by_role('button', name='Next', exact=True).click()
     tx.save(phase='caption')
     boxes = page.locator('textarea,[contenteditable=true]')
@@ -440,9 +448,19 @@ async def publish_instagram(page, tx):
             raise VpubError('metadata_mismatch', 'Instagram caption differs from the manifest.')
     await words_are_kept()
     # The native AI control is required when requested; never silently omit it.
-    switch = None
+    label = page.get_by_text('Add AI label', exact=True)
+
+    async def ai_switch():
+        """The AI label's switch. A field look found several switches in this step, each an input of its own, so the nearest one to the words has to be the only one that near, or it could be another setting."""
+        async def switches_in(row):
+            return [box for box in await row.locator('[role=switch],input[type=checkbox]').all() if await box.is_visible()]
+        ai = await visible(label)
+        if ai is None:
+            return None
+        row = ai.locator('..')
+        switches = await switches_in(row) or await switches_in(row.locator('..'))
+        return switches[0] if len(switches) == 1 else None
     if tx.options['ai_generated']:
-        label = page.get_by_text('Add AI label', exact=True)
         ai = await visible(label)
         if ai is None:
             advanced = await visible(page.get_by_text('Advanced settings', exact=True))
@@ -451,14 +469,9 @@ async def publish_instagram(page, tx):
             ai = await look_until(page, lambda: visible(label), 5000)
         if ai is None:
             raise VpubError('declaration_unverified', 'Instagram AI-label control is unavailable; upload retained, Share not clicked.')
-        # A field look found several switches in this step, each an input of its own. The nearest one to the words has to be the only one that near, or it could be another setting.
-        async def switches_in(row):
-            return [box for box in await row.locator('[role=switch],input[type=checkbox]').all() if await box.is_visible()]
-        row = ai.locator('..')
-        switches = await switches_in(row) or await switches_in(row.locator('..'))
-        if len(switches) != 1:
+        switch = await ai_switch()
+        if switch is None:
             raise VpubError('declaration_unverified', 'Instagram AI-label switch could not be identified.')
-        switch = switches[0]
         if not await switch.is_checked():
             await switch.click()
         if not await look_until(page, switch.is_checked, 3000):
@@ -470,8 +483,11 @@ async def publish_instagram(page, tx):
 
     async def still_says_it():
         await words_are_kept()
-        if switch is not None and not await switch.is_checked():
-            raise VpubError('declaration_unverified', 'Instagram AI label was not confirmed.')
+        if tx.options['ai_generated']:
+            # Found afresh, because a review showed a switch added in front could take the old one's place.
+            found = await ai_switch()
+            if found is None or not await found.is_checked():
+                raise VpubError('declaration_unverified', 'Instagram AI label was not confirmed.')
     await tx.submit(page, post, still_holds=still_says_it)
     # Its window may say this more than once, and an error about that here would read as a failed post after it has gone out.
     await page.get_by_text(re.compile(r'(Your (post|reel) has been shared|Post shared)', re.I)).filter(visible=True).first.wait_for(timeout=600000)

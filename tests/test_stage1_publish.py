@@ -192,6 +192,8 @@ class XFormTests(Form):
         self.schedule_reads = []
         self.post = post_made()
         self.post_video = "<video></video>"
+        self.own_words = None
+        self.reply_row = ""
         self.older_post = None
         self.final_class = ""
         self.final_goes = ""
@@ -212,7 +214,7 @@ class XFormTests(Form):
             return await self.json_at(route, {})
         if url.hostname == "studio.x.com":
             return await self.studio(route, url.path)
-        row = f'<article><a href="/{OWNER}/status/{self.post}"><time>now</time></a><div>{self.posted}</div>{self.post_video}</article>'
+        row = f'<article><a href="/{OWNER}/status/{self.post}"><time>now</time></a><div data-testid="tweetText" dir="auto">{self.own_words or self.posted}</div>{self.post_video}</article>{self.reply_row}'
         if url.path == f"/{OWNER}/status/{self.post}" and self.posted:
             return await self.page_at(route, row)
         if self.older_post and url.path == f"/{OWNER}/status/{self.older_post}" and self.posted:
@@ -275,6 +277,26 @@ class XFormTests(Form):
         result = await self.publish()
         self.assertEqual(("SUBMITTED_UNVERIFIED", True), (result["state"], result["final_submit_attempted"]))
         self.assertEqual(1, len(self.final))
+
+    async def test_a_quoted_posts_video_is_not_this_posts(self):
+        """From a review: any video inside the row passed."""
+        self.post_video = '<div role="link"><video></video></div>'
+        self.assertEqual("SUBMITTED_UNVERIFIED", (await self.publish())["state"])
+
+    async def test_words_in_a_reply_are_not_this_posts(self):
+        """From a review: its words anywhere on the page passed, with other words on the post itself."""
+        self.own_words = "My title and other words"
+        self.reply_row = '<article><div data-testid="tweetText" dir="auto">My title Words</div></article>'
+        self.assertEqual("SUBMITTED_UNVERIFIED", (await self.publish())["state"])
+
+    async def test_another_videos_number_rules_a_post_out_and_its_own_number_passes(self):
+        """From a review. The copy's file page is 1_2, so its number is 2."""
+        self.post_video = '<video poster="https://pbs.twimg.com/amplify_video_thumb/88/img/a.jpg"></video>'
+        self.assertEqual("SUBMITTED_UNVERIFIED", (await self.publish())["state"])
+
+    async def test_a_post_showing_its_own_number_passes(self):
+        self.post_video = '<video poster="https://pbs.twimg.com/amplify_video_thumb/2/img/a.jpg"></video>'
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
 
     async def test_a_video_elsewhere_on_the_page_is_not_this_posts(self):
         self.post_video = "</article><video></video><article>"
@@ -530,6 +552,16 @@ class InstagramFormTests(Form):
 
     async def test_words_changed_during_the_last_wait_share_nothing(self):
         await self.changes_during_the_last_wait("document.querySelector('textarea').value = 'Other words'", "metadata_mismatch")
+
+    async def test_a_switch_added_during_the_last_wait_shares_nothing(self):
+        """From a review: the old locator could land on a new checked switch in front, with the AI label's own gone off."""
+        await self.changes_during_the_last_wait("""document.querySelector('[role=switch]').insertAdjacentHTML('beforebegin', '<input type="checkbox" role="switch" checked>')""", "declaration_unverified")
+
+    async def test_a_step_that_never_comes_stops_with_nothing_shared(self):
+        """From a review: pressing on without it would press the last step's Next again."""
+        self.edit_late = True
+        await self.refused("layout_changed")
+        self.assertEqual(1, len(self.uploads))
 
     async def test_a_label_turned_off_during_the_last_wait_shares_nothing(self):
         await self.changes_during_the_last_wait("document.querySelector('[role=switch]').setAttribute('aria-checked', 'false')", "declaration_unverified")

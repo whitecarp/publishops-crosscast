@@ -55,7 +55,7 @@ SOMEONES_WORDS = """(e, others) => {
 # What a failure record says about a control: what it is, never what it holds.
 CONTROL_SHAPES = """es => es.map(e => ({tag: e.tagName, type: e.getAttribute('type'), name: e.getAttribute('name'), id: e.id, role: e.getAttribute('role'), testid: e.getAttribute('data-testid'),
                                        test_id: e.getAttribute('test-id'), placeholder: e.getAttribute('placeholder'), label: e.getAttribute('aria-label'), disabled: e.hasAttribute('disabled'), visible: e.getClientRects().length > 0}))"""
-FORM_FIELDS = "input,textarea,select,[contenteditable=true]"
+FORM_FIELDS = 'input,textarea,select,[contenteditable]:not([contenteditable="false"])'
 # A command's quoted arguments can hold a viewer's or a person's own words. Only a selector made of nothing but page structure stays.
 QUOTED = re.compile(r""""(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'""")
 PLAIN_SELECTOR = re.compile(r"[\w\s#.>:,*()\[\]-]*")
@@ -66,7 +66,7 @@ FIELD_NAME = re.compile(r"[A-Za-z_]\w{0,40}")
 # Why a press was refused, in Playwright's own fixed words.
 REFUSED_PRESS = re.compile(r"element is not \w+|element is outside of the viewport|element was detached|intercepts pointer events")
 # The page's words with its form fields taken out first, so even a record a person asked for holds nothing typed into one.
-PAGE_WORDS = """() => { const copy = document.body.cloneNode(true); copy.querySelectorAll('input,textarea,select,script,style,[contenteditable=true]').forEach(e => e.remove()); return copy.textContent; }"""
+PAGE_WORDS = """() => { const copy = document.body.cloneNode(true); copy.querySelectorAll('input,textarea,select,script,style,[contenteditable]:not([contenteditable="false"])').forEach(e => e.remove()); return copy.textContent; }"""
 SITES = {"x": ("x.com", "twitter.com"), "instagram": ("instagram.com",), "douyin": ("douyin.com", "bytedance.com"), "youtube": ("youtube.com", "google.com")}
 # Chrome can stop answering, and this process holds the profile lock until it ends.
 CLOSE_SECONDS = 30

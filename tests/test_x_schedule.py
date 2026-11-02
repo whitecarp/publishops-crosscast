@@ -383,8 +383,9 @@ class Calendar(ChromeCase):
         """From a field run: Done on the page, one button greyed out, and the same words for every cause."""
         greyed = page_html().replace("final.textContent = 'Done';", "final.textContent = 'Done'; final.disabled = true;")
         message = await self.refuses(greyed)
-        for said in ("'says_done': 1", "'final_enabled': False", "'finals': 1", "'calendar_open': 0", "'times_showing': 1", "'time_is_this_schedule': True", "'words_are_the_plans': True", "'words_length': 5", "'tied_to_the_file': True", "Button--primary tweetbtn"):
+        for said in ("'says_done': 1", "'final_enabled': False", "'finals': 1", "'calendar_open': 0", "'times_showing': 1", "'time_is_this_schedule': True", "'words_are_the_plans': True", "'words_length': 5", "'tied_to_the_file': True", "'final_class_says_off': False", "'final_aria_says_off': False"):
             self.assertIn(said, message)
+        self.assertNotIn("tweetbtn", message)
         self.assertNotIn("Words", message.split("Last look")[1].replace("words", ""))
 
     async def test_a_stop_for_another_files_composer_says_so(self):
