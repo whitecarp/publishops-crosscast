@@ -149,6 +149,14 @@ class OpeningMediaTests(ChromeCase):
         self.assertIn("vpub resume", message)
         self.assertEqual("https://studio.x.com/library", self.page.url)
 
+    async def test_a_page_that_opens_with_no_form_says_where_it_stopped_and_when(self):
+        """From a field run: one click, the name twice and this file's link, and ten minutes with no form. A fresh page then opened it at once."""
+        self.MEDIA = """<!doctype html><body><p>clip.mp4</p><p>clip.mp4</p><a download="clip.mp4" href="#">Download</a><button hidden>Change thumbnail</button>"""
+        message = await self.stops_without_filling(self.LIBRARY)
+        for said in ("'clicks': 1", "'names_showing': 2", "'links_showing': 1", "'change_buttons': 1", "'change_showing': 0", "'other_links': 0", "'path': '/library/<n>_<n>/edit'", "'first_click_at': 0", "'link_first_at'", "vpub resume"):
+            self.assertIn(said, message)
+        self.assertNotIn("13_77", message)
+
     async def test_after_a_timeout_a_resume_opens_the_file_on_a_fresh_page(self):
         """From a field run: ten minutes on the page it uploaded from, and then a fresh page opened the same file with one click. No second upload."""
         ready = self.LIBRARY

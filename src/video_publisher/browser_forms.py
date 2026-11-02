@@ -203,16 +203,24 @@ async def x_open_media(page, name, form, filename):
     So the file is open once its own form shows, and the address is not waited for. A click changes nothing, and comes again only while the name shows once and no form has come."""
     from patchright.async_api import Error as BrowserError
     clicked = None
+    began = time.monotonic()
     seen = {'clicks': 0}
+    change = page.locator('button').filter(has_text=X_CHANGE_THUMBNAIL)
 
     async def opened():
         nonlocal clicked
         if await x_form_shows(page, form, filename):
             return True
         showing = await x_names_showing(name)
-        seen.update(names=await name.count(), names_showing=len(showing), links_showing=await page.locator(x_file_link(filename) + ':visible').count())
+        # A field run stopped with one click, the name twice and this file's link showing, and a fresh page then opened its form at once. Those counts couldn't say why, so these are for the next one.
+        seen.update(names=await name.count(), names_showing=len(showing), links_showing=await page.locator(x_file_link(filename) + ':visible').count(),
+                    change_buttons=await change.count(), change_showing=len(await x_names_showing(change)), other_links=await page.locator(f'a[download]:not({x_file_link(filename)})').count(),
+                    path=re.sub(r'\d+', '<n>', x_studio_path(page.url)))
+        if seen['links_showing']:
+            seen.setdefault('link_first_at', round(time.monotonic() - began))
         if len(showing) == 1 and (clicked is None or time.monotonic() - clicked >= X_OPEN_SECONDS):
             clicked = time.monotonic()
+            seen.setdefault('first_click_at', round(clicked - began))
             seen['clicks'] += 1
             try:
                 await showing[0].click(timeout=X_OPEN_SECONDS * 1000)
