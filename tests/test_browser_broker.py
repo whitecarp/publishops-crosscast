@@ -295,7 +295,7 @@ class SignInBudgetTests(unittest.TestCase):
                     answer = (await broker.within("checking who is signed in", rt.signed_in_page(MagicMock(pages=[page]), "youtube"), broker.SIGN_IN_SECONDS))[1]
                 except VpubError as exc:
                     answer = exc.code
-            return answer, clock[0] - began
+            return answer, round(clock[0] - began)
         return asyncio.run(run())
 
     def test_a_slow_empty_page_that_loads_again_is_not_cut_off(self):
