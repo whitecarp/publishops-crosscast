@@ -115,7 +115,7 @@ class FileSelectionGuardTests(unittest.IsolatedAsyncioTestCase):
             outcome = 'returned'
             # The DOM warning detector is clear; the production guard and STOP
             # reader are not mocked. No browser, transport or media bytes exist.
-            with patch.object(backends, 'risk_check', AsyncMock(return_value=None)):
+            with patch.object(backends, 'risk_check', AsyncMock(return_value=None)), patch.object(forms, 'risk_check', AsyncMock(return_value=None)):
                 try:
                     if kind == 'x':
                         await forms.publish_x(page, tx)

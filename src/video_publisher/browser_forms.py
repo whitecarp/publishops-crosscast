@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from .categories import STUDIO_CATEGORIES
 from .core import VpubError, douyin_caption, stop_check
-from .browser_runtime import look_until, risk_check, unique_visible, visible
+from .browser_runtime import risk_check, unique_visible, visible
 from .progress import stage
 from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style,
                                upload_file, wait_until, work_url, works, verify, verify_scheduled_x, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
@@ -26,9 +26,8 @@ YT_PLAYLIST_ROWS = """boxes => boxes.map(box => {
 })"""
 
 
-X_MEDIA_PAGE = re.compile(r'https://studio\.x\.com/library/\d+_\d+/')
+X_MEDIA_PAGE = re.compile(r'/library/(\d+_\d+)(/.*)?')
 X_OPEN_SECONDS = 15
-X_FRESH_SECONDS = 90
 X_CHANGE_THUMBNAIL = re.compile(r'^\s*Change thumbnail\s*$')
 
 
@@ -108,10 +107,16 @@ async def x_send_scheduled(page, tx):
     return tx.save(**await verify_scheduled_x(page, tx.identity, tx.receipt))
 
 
+def x_studio_path(address):
+    """The path of an address on Media Studio itself, or an empty one. A review found a Studio address quoted inside another could be taken for the page."""
+    parts = urlsplit(address)
+    return parts.path if parts.scheme == 'https' and parts.netloc == 'studio.x.com' else ''
+
+
 def x_media_address(address):
     """The uploaded file's own page, once the address says which file it is. Field runs found its form can open before that."""
-    found = X_MEDIA_PAGE.search(address)
-    return {'media_url': found[0] + 'edit'} if found else {}
+    found = X_MEDIA_PAGE.fullmatch(x_studio_path(address))
+    return {'media_url': f'https://studio.x.com/library/{found[1]}/edit'} if found else {}
 
 
 def x_file_link(filename):
@@ -136,42 +141,15 @@ async def x_names_showing(name):
     return [item for item in await name.all() if await item.is_visible()]
 
 
-async def x_fresh_look(page, filename):
-    """A field run waited ten minutes on the page it uploaded from, and then a fresh page opened the same file with one click. So this looks in a tab of its own, which leaves an upload still going on this page alone.
-    The answer is the file's address, and only if its form shows there with its download link, which a file still uploading can't have."""
-    from patchright.async_api import Error as BrowserError
-    side = await page.context.new_page()
-    try:
-        await side.goto('https://studio.x.com/library', wait_until='domcontentloaded', timeout=60000)
-        await risk_check(side)
-        name = side.get_by_text(filename, exact=True)
-
-        async def one_name():
-            showing = await x_names_showing(name)
-            return showing[0] if len(showing) == 1 else None
-        item = await look_until(side, one_name, 10000)
-        if not item:
-            return None
-        await item.click(timeout=X_OPEN_SECONDS * 1000)
-        form = x_media_form(side, filename)
-        ready = await look_until(side, lambda: x_form_shows(side, form, filename), X_OPEN_SECONDS * 1000)
-        await risk_check(side)
-        return x_media_address(side.url).get('media_url') if ready else None
-    except BrowserError:
-        return None
-    finally:
-        await side.close()
-
-
 async def x_open_media(page, name, form, filename):
     """Field runs clicked the uploaded file's name as soon as it showed, and the address didn't change in 30 seconds, while 15 seconds on the name showed twice. A click two minutes after an upload opened the form at once.
     So the file is open once its own form shows, and the address is not waited for. A click changes nothing, and comes again only while the name shows once and no form has come."""
     from patchright.async_api import Error as BrowserError
-    clicked, looked = None, time.monotonic()
-    seen = {'clicks': 0, 'fresh_looks': 0}
+    clicked = None
+    seen = {'clicks': 0}
 
     async def opened():
-        nonlocal clicked, looked
+        nonlocal clicked
         if await x_form_shows(page, form, filename):
             return True
         showing = await x_names_showing(name)
@@ -183,12 +161,6 @@ async def x_open_media(page, name, form, filename):
                 await showing[0].click(timeout=X_OPEN_SECONDS * 1000)
             except BrowserError:
                 pass  # The next look says what happened.
-        if time.monotonic() - looked >= X_FRESH_SECONDS:
-            seen['fresh_looks'] += 1
-            address = await x_fresh_look(page, filename)
-            looked = time.monotonic()
-            if address:
-                await page.goto(address, wait_until='domcontentloaded', timeout=60000)
         return False
     try:
         await wait_until(page, opened, seconds=600, label="the uploaded file's form in Media Studio")
@@ -196,7 +168,8 @@ async def x_open_media(page, name, form, filename):
         if failure.code != 'processing_timeout':
             raise
         # A field run ended here with nothing to say which of several things had happened. These are counts, with no words from the page.
-        raise VpubError(failure.code, f"{failure.message} Last look: {seen}.", failure.hint) from None
+        # A fresh page then opened the same file with one click, which is what a resume does.
+        raise VpubError(failure.code, f"{failure.message} Last look: {seen}. vpub resume looks again on a fresh page without uploading again.", failure.hint) from None
 
 
 async def publish_x(page, tx):
@@ -230,6 +203,9 @@ async def publish_x(page, tx):
         tx.save(phase='opening_media', **x_media_address(page.url))
     await change.wait_for(state='visible', timeout=300000)
     tx.save(phase='media_ready', **x_media_address(page.url))
+    # The wait can be long, and what comes next changes the file's details.
+    await risk_check(page)
+    stop_check('x')
     if tx.cover() and not tx.receipt.get('cover'):
         await change.click()
         # Distinguish the image-only thumbnail input from the mixed media input.

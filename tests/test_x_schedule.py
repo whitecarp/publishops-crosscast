@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 from urllib.parse import urlsplit
 
 from video_publisher import browser_backends, browser_forms, cli, x_pages
-from video_publisher.core import VpubError, atomic_json, load_plan
+from video_publisher.core import VpubError, atomic_json, home, load_plan
 from shared_chrome import ChromeCase, async_playwright
 
 OWNER = "owner"
@@ -78,6 +78,11 @@ class OpeningMediaTests(ChromeCase):
             return None
 
     async def asyncSetUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        env = patch.dict(os.environ, {"VPUB_HOME": temp.name})
+        env.start()
+        self.addCleanup(env.stop)
         self.pw = await async_playwright().start()
         self.browser = await self.pw.chromium.launch(channel="chrome", headless=True)
         self.page = await self.browser.new_page(locale="en-US")
@@ -87,11 +92,11 @@ class OpeningMediaTests(ChromeCase):
             path = urlsplit(route.request.url).path
             if path == "/never.png":
                 return  # Never answered, so the page never finishes loading.
-            self.libraries_read += not path.endswith("/edit")
-            library = self.FRESH_LIBRARY if self.FRESH_LIBRARY and self.libraries_read > 1 else self.LIBRARY
-            await route.fulfill(status=200, content_type="text/html; charset=utf-8", body=self.MEDIA if path.endswith("/edit") else library)
-        self.FRESH_LIBRARY, self.libraries_read = None, 0
-        await self.page.context.route("**/*", answer)
+            if path == "/stop-now":
+                atomic_json(home() / "STOP.json", {"reason": "A person paused it."})
+                return await route.fulfill(status=200, body="")
+            await route.fulfill(status=200, content_type="text/html; charset=utf-8", body=self.MEDIA if path.endswith("/edit") else self.LIBRARY)
+        await self.page.route("**/*", answer)
 
     async def asyncTearDown(self):
         await self.browser.close()
@@ -120,36 +125,24 @@ class OpeningMediaTests(ChromeCase):
         message = await self.stops_without_filling(self.LIBRARY)
         self.assertIn("'clicks': 0", message)
         self.assertIn("'names_showing': 2", message)
+        self.assertIn("vpub resume", message)
         self.assertEqual("https://studio.x.com/library", self.page.url)
 
-    async def test_a_fresh_look_takes_over_when_this_page_stays_stuck(self):
-        """From a field run: ten minutes on the page it uploaded from, and then a fresh page opened the same file with one click."""
-        self.FRESH_LIBRARY = self.LIBRARY
-        self.LIBRARY = self.LIBRARY.replace("<p onclick", "<p>clip.mp4</p><p onclick")
+    async def test_after_a_timeout_a_resume_opens_the_file_on_a_fresh_page(self):
+        """From a field run: ten minutes on the page it uploaded from, and then a fresh page opened the same file with one click. No second upload."""
+        ready = self.LIBRARY
+        await self.stops_without_filling(self.LIBRARY.replace("<p onclick", "<p>clip.mp4</p><p onclick"))
+        self.LIBRARY = ready
         tx = self.Tx()
-        with patch.object(browser_forms, "X_FRESH_SECONDS", 1):
-            self.assertEqual("PREVIEW_READY", (await browser_forms.publish_x(self.page, tx))["state"])
+        self.assertEqual("PREVIEW_READY", (await browser_forms.publish_x(self.page, tx))["state"])
         self.assertEqual("https://studio.x.com/library/13_77/edit", tx.receipt["media_url"])
-        self.assertEqual([self.page], self.page.context.pages)
 
-    async def test_a_fresh_look_at_a_file_not_ready_leaves_this_page_alone(self):
-        """A file still uploading has no download link, and leaving this page would stop the upload."""
-        self.FRESH_LIBRARY = self.LIBRARY
-        self.LIBRARY = self.LIBRARY.replace("<p onclick", "<p>clip.mp4</p><p onclick")
-        self.MEDIA = self.MEDIA.replace('<a download="clip.mp4" href="#">Download</a>', "")
-        with patch.object(browser_forms, "X_FRESH_SECONDS", 1), patch.object(browser_forms, "X_OPEN_SECONDS", 1):
-            message = await self.stops_without_filling(self.LIBRARY, seconds=4)
-        self.assertEqual("https://studio.x.com/library", self.page.url)
-        self.assertEqual([self.page], self.page.context.pages)
-        self.assertNotIn("'fresh_looks': 0", message)
-
-    async def test_a_warning_in_the_fresh_look_stops_everything(self):
-        self.FRESH_LIBRARY = '<!doctype html><body><div role="alert">Verify your identity</div>'
-        self.LIBRARY = self.LIBRARY.replace("<p onclick", "<p>clip.mp4</p><p onclick")
-        with patch.object(browser_forms, "X_FRESH_SECONDS", 1), self.assertRaises(VpubError) as caught:
+    async def test_a_stop_that_comes_as_the_file_opens_holds_its_details_back(self):
+        self.LIBRARY = self.LIBRARY.replace("location.href='/library/13_77/edit'", "fetch('/stop-now').then(() => { location.href = '/library/13_77/edit'; })")
+        with self.assertRaises(VpubError) as caught:
             await browser_forms.publish_x(self.page, self.Tx())
-        self.assertEqual("human_verification_required", caught.exception.code)
-        self.assertEqual([self.page], self.page.context.pages)
+        self.assertEqual("stopped", caught.exception.code)
+        self.assertEqual("original", await self.page.get_by_placeholder("Title", exact=True).input_value())
 
     async def test_a_click_that_does_nothing_at_first_comes_again_while_the_name_is_on_the_tile_alone(self):
         self.LIBRARY = self.LIBRARY.replace("location.href=", "if (++window.clicks > 2) location.href=") + "<script>window.clicks = 0</script>"
@@ -166,9 +159,6 @@ class OpeningMediaTests(ChromeCase):
     async def stops_without_filling(self, library, seconds=3):
         self.LIBRARY = library
         real = browser_forms.wait_until
-
-        async def soon(page, predicate, *, seconds=seconds, label="page state"):
-            return await real(page, predicate, seconds=seconds, label=label)
 
         async def limited(page, predicate, *, label="page state", **_):
             return await real(page, predicate, seconds=seconds, label=label)
@@ -220,7 +210,9 @@ class OpeningMediaTests(ChromeCase):
 
     def test_an_address_gives_the_files_page_only_once_it_names_the_file(self):
         for address, wanted in (("https://studio.x.com/library/13_77/edit", {"media_url": "https://studio.x.com/library/13_77/edit"}), ("https://studio.x.com/library/13_77/compose", {"media_url": "https://studio.x.com/library/13_77/edit"}),
-                                ("https://studio.x.com/library", {}), ("https://elsewhere.example/library/13_77/edit", {})):
+                                ("https://studio.x.com/library", {}), ("https://elsewhere.example/library/13_77/edit", {}), ("http://studio.x.com/library/13_77/edit", {}),
+                                ("https://elsewhere.example/view?next=https://studio.x.com/library/13_77/edit", {}), ("https://elsewhere.example/quoted/https://studio.x.com/library/13_77/edit", {}),
+                                ("https://studio.x.com/library?quoted=https://studio.x.com/library/13_77/edit", {}), ("https://studio.x.com.elsewhere.example/library/13_77/edit", {})):
             with self.subTest(address=address):
                 self.assertEqual(wanted, browser_forms.x_media_address(address))
 
