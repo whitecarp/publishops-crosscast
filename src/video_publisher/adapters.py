@@ -322,7 +322,6 @@ def publish(platform, plan, options, checkpoint):
         return paid_api().publish(platform, plan, options, checkpoint)
     result = browser_call(platform, "publish", options["account"],
                           expected_identity=options.get("expected_identity"), plan={**plan, "options": options})
-    checkpoint(result)
     return result
 
 

@@ -844,12 +844,10 @@ class RouteTests(Temporary):
 
     def test_publish_and_verify_go_through_the_browser(self):
         options = {"method": "browser", "account": "default", "expected_identity": CHANNEL}
-        saved = []
         with patch.object(adapters, "browser_call", return_value={"state": "SUBMISSION_VERIFIED"}) as browser:
-            adapters.publish("youtube", {"video": "v"}, options, saved.append)
+            self.assertEqual({"state": "SUBMISSION_VERIFIED"}, adapters.publish("youtube", {"video": "v"}, options, None))
             self.assertEqual(("youtube", "publish", "default"), browser.call_args.args)
             self.assertEqual(CHANNEL, browser.call_args.kwargs["expected_identity"])
-            self.assertEqual([{"state": "SUBMISSION_VERIFIED"}], saved)
             adapters.verify("youtube", "default", {"id": VIDEO, "method": "browser", "identity": CHANNEL})
             self.assertEqual(("youtube", "verify", "default"), browser.call_args.args)
 
