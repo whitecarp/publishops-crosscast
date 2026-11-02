@@ -475,13 +475,18 @@ async def douyin_card_id(page, name, card):
     return await douyin_id_from_menu(page, douyin_card_words(await name.inner_text()))
 
 
+DOUYIN_LIST_SECONDS = 45
+DOUYIN_LIST_ENDS = re.compile('没有更多作品|暂无作品|暂无内容')
+
+
 async def works(page, platform, identity):
     if platform == "youtube":
         from .youtube_studio import works as studio_works
         return await studio_works(page, identity)
     url = MANAGE if platform == "douyin" else f"https://www.instagram.com/{identity}/" if platform == "instagram" else f"https://x.com/{identity}"
     await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-    for _ in range(10):
+    # A field read found Douyin's list empty at 5 seconds and filled by 15, so ten seconds could answer that an account had no works.
+    for _ in range(DOUYIN_LIST_SECONDS if platform == 'douyin' else 10):
         await page.wait_for_timeout(1000)
         await risk_check(page)
         found = await links(page, platform, identity)
@@ -501,6 +506,8 @@ async def works(page, platform, identity):
                     if k:
                         found[k] = {'id': k, 'url': work_url(platform, identity, k), 'text': text}
                 return found
+            if await page.get_by_text(DOUYIN_LIST_ENDS).locator('visible=true').count():
+                return {}
     return {}
 
 

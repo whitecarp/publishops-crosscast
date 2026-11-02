@@ -51,6 +51,57 @@ class WaitTests(ChromeCase):
         self.assertEqual("works_layout_unverified", caught.exception.code)
 
 
+class ListingWaitTests(ChromeCase):
+    """From a field read: nothing at 5 seconds, then a card by 15, so ten seconds could answer that an account had no works."""
+    CARD = '<div class="video-card-content-1"><div class="info-title-text-1" onclick="window.open(\'/creator-micro/work-management/work-detail/123\')">My work</div></div>'
+
+    async def asyncSetUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        env = patch.dict(os.environ, {"VPUB_HOME": temp.name})
+        env.start()
+        self.addCleanup(env.stop)
+        self.pw = await async_playwright().start()
+        self.browser = await self.pw.chromium.launch(channel="chrome", headless=True)
+        self.context = await self.browser.new_context()
+        self.page = await self.context.new_page()
+
+        async def answer(route):
+            body = "<!doctype html><body>Detail" if "/work-detail/" in route.request.url else "<!doctype html><body>"
+            await route.fulfill(status=200, content_type="text/html; charset=utf-8", body=body)
+        await self.context.route("**/*", answer)
+
+    async def asyncTearDown(self):
+        await self.browser.close()
+        await self.pw.stop()
+
+    async def works(self, comes_on_tick=None, fill=""):
+        from video_publisher.browser_backends import works
+        ticks = []
+
+        async def tick(ms):
+            ticks.append(ms)
+            if len(ticks) == comes_on_tick:
+                await self.page.evaluate("words => { document.body.innerHTML = words; }", fill)
+        with patch.object(self.page, "wait_for_timeout", tick):
+            return await works(self.page, "douyin", "me"), ticks
+
+    async def test_a_list_that_fills_late_is_still_read(self):
+        found, ticks = await self.works(comes_on_tick=15, fill=self.CARD)
+        self.assertEqual(["123"], list(found))
+        self.assertGreaterEqual(len(ticks), 15)
+
+    async def test_a_list_that_says_it_has_ended_is_not_waited_on(self):
+        found, ticks = await self.works(comes_on_tick=3, fill="<p>没有更多作品</p>")
+        self.assertEqual({}, found)
+        self.assertEqual(3, len(ticks))
+
+    async def test_those_words_kept_hidden_do_not_end_the_wait(self):
+        found, ticks = await self.works(comes_on_tick=3, fill="<p hidden>没有更多作品</p>")
+        self.assertEqual({}, found)
+        self.assertEqual(45, len(ticks))
+
+
 class DetailPageTests(unittest.IsolatedAsyncioTestCase):
     """A work's detail page opens in its own tab, and its address is all that's needed. A field run saw it not finish loading in 15 seconds."""
     CARD = '<div class="video-card-content-1"><div class="info-title-text-1" onclick="window.open(\'/creator-micro/work-management/work-detail/123\')">My work</div></div>'
