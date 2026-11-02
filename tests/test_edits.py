@@ -8,6 +8,68 @@ from video_publisher import adapters, edits, browser_edits, browser_backends
 from video_publisher.core import VpubError, atomic_json, digest
 
 
+class AdoptedPostAiLineTests(unittest.IsolatedAsyncioTestCase):
+    """An adopted post has no upload declaration to follow, so an edit keeps what its caption says. A work published here still follows its own."""
+
+    async def saved(self, before, post_text='New title\n\nNew text', keep=True):
+        page=MagicMock();page.wait_for_timeout=AsyncMock()
+        done=MagicMock();done.click=AsyncMock()
+        kept={'text':before}
+        def open_editor(*args):
+            editor=MagicMock();editor.wait_for=AsyncMock()
+            editor.inner_text=AsyncMock(side_effect=lambda: kept['text'])
+            async def fill(text): kept['text']=text
+            editor.fill=AsyncMock(side_effect=fill)
+            return editor
+        patch_={'post_text':post_text,**({'keep_ai_line':True} if keep else {})}
+        with tempfile.TemporaryDirectory() as tmp:
+            payload={'patch':patch_,'receipt':{'id':'Reel123'},'edit_receipt_path':str(Path(tmp)/'edit.json')}
+            with patch.object(browser_edits,'instagram_caption_editor',new_callable=AsyncMock,side_effect=open_editor), \
+                 patch.object(browser_edits,'unique_visible',new_callable=AsyncMock,return_value=done), \
+                 patch.object(browser_edits,'risk_check',new_callable=AsyncMock):
+                result=await browser_edits.execute(page,'instagram','owner',payload)
+        return result,kept['text']
+
+    async def test_a_caption_that_says_ai_generated_keeps_saying_it(self):
+        result,words=await self.saved('Old words\n\nAI-generated')
+        self.assertEqual(('EDIT_VERIFIED','New title\n\nNew text\n\nAI-generated'),(result['state'],words))
+
+    async def test_a_caption_that_says_nothing_gets_nothing_added(self):
+        result,words=await self.saved('Old words')
+        self.assertEqual(('EDIT_VERIFIED','New title\n\nNew text'),(result['state'],words))
+
+    async def test_the_line_stays_in_its_own_wording(self):
+        self.assertEqual('New title\n\nNew text\n\nAI 生成内容 / AI-generated',(await self.saved('旧文字\n\nAI 生成内容 / AI-generated'))[1])
+        self.assertEqual('New title\n\nNew text\n\nai generated',(await self.saved('Old words\nai generated'))[1])
+
+    async def test_new_words_that_already_say_it_do_not_say_it_twice(self):
+        self.assertEqual('New title\n\nAI-generated',(await self.saved('Old words\n\nAI-generated','New title\n\nAI-generated'))[1])
+
+    async def test_a_match_after_keeping_the_line_saves_nothing(self):
+        result,words=await self.saved('New title\n\nNew text\n\nAI-generated')
+        self.assertEqual(('EDIT_VERIFIED',True,0),(result['state'],result['unchanged'],result['platform_writes']))
+        self.assertEqual('New title\n\nNew text\n\nAI-generated',words)
+
+    async def test_the_words_ending_elsewhere_do_not_count(self):
+        self.assertEqual('New title\n\nNew text',(await self.saved('AI-generated art is fun'))[1])
+
+    async def test_the_line_cant_push_a_caption_past_the_limit(self):
+        with self.assertRaises(VpubError) as caught:
+            await self.saved('Old words\n\nAI-generated','a'*2195)
+        self.assertEqual('description_too_long',caught.exception.code)
+
+    async def test_a_work_published_here_is_left_to_its_own_declaration(self):
+        self.assertEqual('New title\n\nNew text',(await self.saved('Old words\n\nAI-generated',keep=False))[1])
+
+    def test_only_an_adopted_work_asks_for_it(self):
+        text={'expected_identity':'me','title':'T','description':'D','content_language':'en','metadata_language':'en','metadata_mode':'target_only'}
+        self.assertEqual(('T\n\nD',True),(lambda p:(p['post_text'],p['keep_ai_line']))(edits.validate_patch('x',text,False,None)))
+        self.assertNotIn('keep_ai_line',edits.validate_patch('x',text,False,True))
+        self.assertEqual('T\n\nD\n\nAI-generated',edits.validate_patch('x',text,False,True)['post_text'])
+        self.assertEqual('T\n\nD',edits.validate_patch('x',text,False,False)['post_text'])
+        self.assertNotIn('keep_ai_line',edits.validate_patch('youtube',text,False,None))
+
+
 class InstagramCaptionTests(unittest.IsolatedAsyncioTestCase):
     async def check_caption(self, before, after=None, verify_only=False):
         page=MagicMock();page.wait_for_timeout=AsyncMock()

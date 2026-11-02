@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from video_publisher import adapters, cli, overview
-from video_publisher.core import Ledger, VpubError, atomic_json, home, load_plan, publication_lock
+from video_publisher.core import Ledger, VpubError, atomic_json, digest, home, load_plan, publication_lock
 
 
 class OverviewFixture(unittest.TestCase):
@@ -52,6 +52,115 @@ class OverviewFixture(unittest.TestCase):
 
     def attention(self):
         return {item["key"]: item for item in overview.status()["publications"]["needs_attention"]}
+
+
+class UnconfirmedActionTests(OverviewFixture):
+    """Replies, messages and likes nobody has confirmed were found only by whoever kept the key. Local records only."""
+    HEX = "a" * 32
+    LONG = "b" * 64
+
+    def receipt(self, folder, name, **fields):
+        atomic_json(home() / folder / (name + ".json"), fields)
+
+    def actions(self):
+        return overview.status()["actions"]["unconfirmed"]
+
+    def test_each_kind_gets_the_command_that_settles_it(self):
+        self.receipt("operations/replies", self.LONG, state="REPLY_UNVERIFIED", platform="x", work_id="1", at="2026-11-01T01:00:00+00:00")
+        self.receipt("operations/dm-actions", self.HEX, state="DM_SUBMITTING", request={"platform": "x"}, at="2026-11-01T02:00:00+00:00")
+        self.receipt("operations/comment-actions", self.HEX, state="COMMENT_UNVERIFIED", request={"platform": "youtube", "work_id": "2"}, at="2026-11-01T03:00:00+00:00")
+        self.receipt("engagement/receipts", self.HEX, state="ACTION_UNVERIFIED", platform="douyin", work_id="3", at="2026-11-01T04:00:00+00:00")
+        self.receipt("operations/collections", self.LONG, state="UNVERIFIED", platform="douyin", started_at="2026-11-01T05:00:00+00:00")
+        self.receipt("operations/collections", "c" * 64, state="SUBMITTING", platform="youtube", started_at="2026-11-01T06:00:00+00:00")
+        self.receipt("operations/playlists", "d" * 64, state="UNVERIFIED", started_at="2026-11-01T07:00:00+00:00")
+        rows = {(row["kind"], row["next_command"]) for row in self.actions()}
+        self.assertEqual({("reply", "vpub comments verify-reply " + self.LONG), ("message", "vpub dm verify " + self.HEX), ("comment_action", "vpub comments verify-action " + self.HEX),
+                          ("like_or_save", "vpub engage verify " + self.HEX), ("collection_change", "vpub collection verify " + self.LONG), ("collection_change", "vpub playlist verify " + "c" * 64),
+                          ("playlist_change", "vpub playlist verify " + "d" * 64)}, rows)
+
+    def test_every_command_it_names_is_one_the_tool_takes(self):
+        self.test_each_kind_gets_the_command_that_settles_it()
+        self.receipt("widgets", "BV1xx411c7mD", rows=[{"state": "UNVERIFIED"}])
+        key = self.row("SUBMISSION_VERIFIED", platform="x", receipt={"id": "9"})
+        self.receipt("edits", "e" * 64, state="EDIT_SUBMITTED_UNVERIFIED", key=key, id="9")
+        for row in self.actions():
+            with self.subTest(command=row["next_command"]):
+                cli.parser().parse_args(row["next_command"].split()[1:])
+
+    def test_the_states_are_the_ones_each_module_treats_as_unfinished(self):
+        from video_publisher import comment_actions, direct_messages, engagement
+        states = {kind: states for kind, _, states, _ in overview.UNCONFIRMED}
+        self.assertEqual(direct_messages.PENDING, states["message"])
+        self.assertEqual(comment_actions.PENDING, states["comment_action"])
+        self.assertEqual(engagement.PENDING, states["like_or_save"])
+
+    def test_what_finished_or_never_went_is_left_out(self):
+        for number, (folder, state) in enumerate((("operations/replies", "REPLY_VERIFIED"), ("operations/replies", "REPLY_READY"), ("operations/dm-actions", "DM_VISIBLE"), ("operations/dm-actions", "DM_READY"),
+                                                  ("operations/dm-actions", "DM_FAILED"), ("operations/comment-actions", "COMMENT_VERIFIED"), ("engagement/receipts", "ACTION_VERIFIED"),
+                                                  ("engagement/receipts", "NO_CHANGE"), ("operations/collections", "CONFIRMED"), ("operations/collections", "READY"), ("edits", "EDIT_VERIFIED"), ("edits", "EDIT_MISMATCH"))):
+            self.receipt(folder, str(number), state=state)
+        self.receipt("widgets", "BV1xx411c7mD", rows=[{"state": "VERIFIED"}])
+        result = overview.status()
+        self.assertEqual({"unconfirmed_total": 0, "unconfirmed": []}, result["actions"])
+        self.assertNotIn("unconfirmed", result["summary"])
+
+    def test_no_message_words_or_recipient_appear(self):
+        self.receipt("operations/dm-actions", self.HEX, state="DM_UNVERIFIED", at="2026-11-01T02:00:00+00:00",
+                     request={"platform": "x", "recipient": "some_viewer", "text": "Private words", "work_id": "hidden"}, before={"items": [{"text": "Their private words"}]})
+        self.assertEqual({"kind": "message", "key": self.HEX, "platform": "x", "state": "DM_UNVERIFIED", "at": "2026-11-01T02:00:00+00:00", "next_command": "vpub dm verify " + self.HEX}, self.actions()[0])
+
+    def test_an_edit_on_a_recorded_work_or_an_adopted_one_gets_its_own_form(self):
+        key = self.row("SUBMISSION_VERIFIED", platform="x", receipt={"id": "9"})
+        self.receipt("edits", "e" * 64, state="EDIT_SUBMITTED_UNVERIFIED", key=key, id="9", at="2026-11-01T01:00:00+00:00")
+        self.assertEqual(f"vpub edit {key} FILE --verify-only", self.actions()[0]["next_command"])
+        (home() / "edits" / ("e" * 64 + ".json")).unlink()
+        atomic_json(home() / "operations/adopted" / (digest(["x", "77"]) + ".json"), {"platform": "x", "work_id": "77", "identity": "me"})
+        self.receipt("edits", "f" * 64, state="EDIT_SUBMITTING", key=digest(["adopted", "x", "77"]), at="2026-11-01T01:00:00+00:00")
+        row = self.actions()[0]
+        self.assertEqual(("x", "77", "vpub edit-work x 77 FILE --verify-only"), (row["platform"], row["work_id"], row["next_command"]))
+
+    def test_the_workers_own_record_has_the_work_and_no_key(self):
+        key = self.row("SUBMISSION_VERIFIED", platform="x", receipt={"id": "9"})
+        self.receipt("edits", "e" * 64, state="EDIT_SUBMITTING", id="9", platform="x", identity="me", at="2026-11-01T01:00:00+00:00")
+        self.assertEqual(f"vpub edit {key} FILE --verify-only", self.actions()[0]["next_command"])
+        (home() / "edits" / ("e" * 64 + ".json")).unlink()
+        atomic_json(home() / "operations/adopted" / (digest(["instagram", "Abc"]) + ".json"), {"platform": "instagram", "work_id": "Abc", "identity": "me"})
+        self.receipt("edits", "f" * 64, state="EDIT_SUBMITTING", id="Abc", platform="instagram", identity="me", at="2026-11-01T01:00:00+00:00")
+        self.assertEqual("vpub edit-work instagram Abc FILE --verify-only", self.actions()[0]["next_command"])
+
+    def test_an_edit_it_cant_place_still_shows_up(self):
+        self.receipt("edits", "e" * 64, state="EDIT_SUBMITTING", id="9", platform="x", at="2026-11-01T01:00:00+00:00")
+        row = self.actions()[0]
+        self.assertEqual(("edit", None), (row["kind"], row["next_command"]))
+
+    def test_widgets_not_yet_confirmed_are_counted_by_state(self):
+        self.receipt("widgets", "BV1xx411c7mD", rows=[{"state": "VERIFIED"}, {"state": "PENDING"}, {"state": "UNVERIFIED"}, {"state": "UNVERIFIED"}], updated_at="2026-11-01T01:00:00+00:00")
+        self.assertEqual({"kind": "widgets", "key": "BV1xx411c7mD", "platform": "bilibili", "work_id": "BV1xx411c7mD", "state": "PARTIAL", "widgets": {"PENDING": 1, "UNVERIFIED": 2},
+                          "at": "2026-11-01T01:00:00+00:00", "next_command": "vpub widgets verify BV1xx411c7mD"}, self.actions()[0])
+
+    def test_newest_first_with_a_limit_and_the_full_count(self):
+        for number in range(5):
+            self.receipt("operations/dm-actions", f"{number:032x}", state="DM_UNVERIFIED", request={"platform": "x"}, at=f"2026-11-01T0{number}:00:00+00:00")
+        result = overview.status(limit=2)["actions"]
+        self.assertEqual(5, result["unconfirmed_total"])
+        self.assertEqual([f"{4:032x}", f"{3:032x}"], [row["key"] for row in result["unconfirmed"]])
+
+    def test_the_summary_mentions_them(self):
+        self.receipt("operations/dm-actions", self.HEX, state="DM_UNVERIFIED", request={"platform": "x"})
+        self.assertTrue(any(words in overview.status()["summary"] for words in ("1 other action is still unconfirmed", "1 个回复")))
+
+    def test_a_damaged_record_is_skipped_and_status_still_answers(self):
+        (home() / "operations/dm-actions").mkdir(parents=True)
+        (home() / "operations/dm-actions" / (self.HEX + ".json")).write_text("broken")
+        self.receipt("operations/replies", self.LONG, state="REPLY_UNVERIFIED", platform="x", work_id="1")
+        self.assertEqual(["reply"], [row["kind"] for row in self.actions()])
+
+    def test_nothing_is_contacted(self):
+        self.receipt("operations/replies", self.LONG, state="REPLY_UNVERIFIED", platform="x", work_id="1")
+        with patch.object(adapters.subprocess, "run") as run, patch.object(adapters.subprocess, "Popen") as popen:
+            overview.status()
+        run.assert_not_called()
+        popen.assert_not_called()
 
 
 class StatusTests(OverviewFixture):

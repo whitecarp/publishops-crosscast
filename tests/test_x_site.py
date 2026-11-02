@@ -10,7 +10,7 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlsplit
 
 from video_publisher import browser_edits, browser_runtime as rt, comment_actions_browser, comment_actions_x, direct_messages_x, engagement, engagement_browser, message_sources, operations_browser as ops, work_discovery_browser as discovery, x_pages
@@ -438,6 +438,29 @@ class ChangeTests(Site):
         with patch.object(browser_edits, "READ_BACK_WAIT", 10):
             result = await browser_edits.execute(self.page, "x", OWNER, self.edit_payload(words))
         self.assertEqual("EDIT_SUBMITTED_UNVERIFIED", result["state"])
+
+    async def test_an_adopted_post_without_an_ai_line_gets_none(self):
+        adopted = self.edit_payload()
+        adopted["patch"]["keep_ai_line"] = True
+        result = await browser_edits.execute(self.page, "x", OWNER, adopted)
+        self.assertEqual("EDIT_VERIFIED", result["state"])
+        self.assertEqual([("edit", POST, "New words")], self.x.writes)
+
+    async def test_an_adopted_posts_ai_line_stays(self):
+        self.x.post_text = "Old words AI-generated"  # This page shows a line break as a space, and so can a real one.
+        adopted = self.edit_payload()
+        adopted["patch"]["keep_ai_line"] = True
+        result = await browser_edits.execute(self.page, "x", OWNER, adopted)
+        self.assertEqual("EDIT_VERIFIED", result["state"])
+        self.assertEqual([("edit", POST, "New words AI-generated")], [(kind, work, " ".join(words.split())) for kind, work, words in self.x.writes])
+
+    async def test_an_adopted_post_it_cant_read_is_left_alone(self):
+        adopted = self.edit_payload()
+        adopted["patch"]["keep_ai_line"] = True
+        with patch.object(browser_edits.x_pages, "post_fields", new=AsyncMock(return_value=None)), self.assertRaises(VpubError) as caught:
+            await browser_edits.execute(self.page, "x", OWNER, adopted)
+        self.assertEqual("state_unavailable", caught.exception.code)
+        self.assertEqual([], self.x.writes)
 
     async def test_checking_an_edit_changes_nothing(self):
         payload = {**self.edit_payload(self.x.post_text), "verify_only": True}

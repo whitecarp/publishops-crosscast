@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from video_publisher import comment_actions, operations
+from video_publisher import cli, comment_actions, operations
 from video_publisher.core import VpubError, atomic_json, digest, home, read_json
 
 OWNER = "UC" + "a" * 22
@@ -25,10 +25,89 @@ class Base(unittest.TestCase):
         return {row["id"]: row for row in read_json(self.path)["items"]}
 
 
+class EditWordsTests(Base):
+    """An edit keeps saying who wrote it, and has no way to carry a link."""
+
+    def edit(self, words, old="Mine", **options):
+        atomic_json(self.path, {"identity": OWNER, "items": [{"id": "c2", "text": old, "is_owner": True}]})
+        pressed = []
+
+        def site(request, operation="status", receipt_path=None):
+            if operation == "set":
+                pressed.append(request["desired"])
+                return {"state": "COMMENT_UNVERIFIED", "platform_writes": 1}
+            return {"identity": OWNER, "text": pressed[-1] if pressed else old}
+        with patch.object(comment_actions, "dispatch", side_effect=site):
+            result = comment_actions.mutate("youtube", WORK, "c2", "edit", words, **options)
+        return result, pressed
+
+    def test_new_words_get_the_ai_label_and_read_back_with_it(self):
+        result, pressed = self.edit("Thanks")
+        self.assertEqual(["Thanks (AI reply)"], pressed)
+        self.assertEqual("COMMENT_VERIFIED", result["state"])
+        self.assertEqual("Thanks (AI reply)", self.rows()["c2"]["text"])
+
+    def test_the_label_follows_the_words_language(self):
+        for words, old, options, expected in (("谢谢", "Mine", {}, "谢谢（AI 回复）"), ("ありがとう", "Mine", {}, "ありがとう（AI返信）"),
+                                              ("Merci", "Bonjour (réponse IA)", {}, "Merci (réponse IA)"), ("Danke", "Mine", {"language": "de"}, "Danke (KI-Antwort)"),
+                                              ("Thanks", "你好（AI 回复）", {"language": "en"}, "Thanks (AI reply)")):
+            with self.subTest(words=words):
+                self.assertEqual([expected], self.edit(words, old, **options)[1])
+
+    def test_words_that_already_carry_a_label_do_not_get_a_second(self):
+        self.assertEqual(["Thanks (AI reply)"], self.edit("Thanks (AI reply)")[1])
+        self.assertEqual(["Merci (réponse IA)"], self.edit("Merci (réponse IA)", language="en")[1])
+
+    def test_a_persons_own_words_go_as_written(self):
+        self.assertEqual(["Thanks"], self.edit("Thanks", written_by="person")[1])
+
+    def test_a_link_or_contact_detail_is_refused_with_no_way_round(self):
+        for words, options in (("see example.com", {}), ("see https://example.com", {"written_by": "person"}), ("mail me@example.com", {})):
+            with self.subTest(words=words), patch.object(comment_actions, "dispatch") as sent, self.assertRaises(VpubError) as caught:
+                comment_actions.mutate("youtube", WORK, "c2", "edit", words, **options)
+            self.assertEqual("contact_in_reply", caught.exception.code)
+            self.assertIn("no way round", caught.exception.hint)
+            sent.assert_not_called()
+        with self.assertRaises(SystemExit), patch("sys.stderr"):
+            cli.parser().parse_args(["comments", "edit", "youtube", WORK, "c2", "--text", "see example.com", "--allow-link"])
+
+    def test_a_secret_stays_refused(self):
+        with patch.object(comment_actions, "dispatch") as sent, self.assertRaises(VpubError) as caught:
+            comment_actions.mutate("youtube", WORK, "c2", "edit", "password: x", written_by="person")
+        self.assertEqual("unsafe_reply", caught.exception.code)
+        sent.assert_not_called()
+
+    def test_the_limit_counts_the_label(self):
+        with patch.object(comment_actions, "dispatch") as sent, self.assertRaises(VpubError) as caught:
+            comment_actions.mutate("youtube", WORK, "c2", "edit", "a" * 1995)
+        self.assertEqual("invalid_text", caught.exception.code)
+        sent.assert_not_called()
+        self.assertEqual(["a" * 1995], self.edit("a" * 1995, written_by="person")[1])
+
+    def test_the_same_words_already_there_change_nothing(self):
+        result, pressed = self.edit("Thanks", old="Thanks (AI reply)")
+        self.assertEqual(("NO_CHANGE", []), (result["state"], pressed))
+
+    def test_a_dry_run_shows_the_label_and_presses_nothing(self):
+        result, pressed = self.edit("Thanks", dry_run=True)
+        self.assertEqual(("DRY_RUN", "Thanks (AI reply)", []), (result["state"], result["request"]["desired"], pressed))
+
+    def test_the_command_line_reaches_it(self):
+        args = cli.parser().parse_args(["comments", "edit", "youtube", WORK, "c2", "--text", "Thanks", "--written-by", "person", "--language", "fr", "--dry-run"])
+        with patch.object(comment_actions, "mutate", return_value={}) as mutate:
+            cli.execute(args)
+        self.assertEqual({"written_by": "person", "language": "fr"}, mutate.call_args.kwargs)
+        args = cli.parser().parse_args(["comments", "pin", "youtube", WORK, "c2"])
+        with patch.object(comment_actions, "mutate", return_value={}) as mutate:
+            cli.execute(args)
+        self.assertEqual({}, mutate.call_args.kwargs)
+
+
 class ChangeTests(Base):
     def change(self, kind, comment, desired, before, press, after):
+        words = {"written_by": "person"} if kind == "edit" else {}
         with patch.object(comment_actions, "dispatch", side_effect=[before, press, after]):
-            return comment_actions.mutate("youtube", WORK, comment, kind, desired)
+            return comment_actions.mutate("youtube", WORK, comment, kind, desired, **words)
 
     def test_an_edit_that_read_back_updates_the_words_so_it_can_be_restored_straight_away(self):
         result = self.change("edit", "c2", "New", {"identity": OWNER, "text": "Mine"}, {"state": "COMMENT_UNVERIFIED", "platform_writes": 1}, {"identity": OWNER, "text": "New"})

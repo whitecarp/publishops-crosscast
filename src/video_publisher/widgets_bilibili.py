@@ -10,6 +10,7 @@ import time
 from . import adapters
 from .core import VpubError, atomic_json, digest, home, now, publication_lock, read_json, receipt_turn
 from .edits_bilibili import REFUSED
+from .safety import check_public_text
 
 GAP_SECONDS = 35  # bili-cli holds these 30 seconds apart, and four sent 35 apart on real videos all went through.
 SHOWS_AT_LEAST = 5
@@ -95,6 +96,7 @@ def validate(widgets, length=None):
     if not isinstance(widgets, list) or not widgets:
         raise bad("Widgets must be a list with at least one in it.")
     result = [clean(widget, length) for widget in widgets]
+    check_public_text(result)
     if len({(widget["page"], widget["time"]) for widget in result}) != len(result):
         raise bad("Two widgets at one moment would clash on Bilibili, so give each its own time.")
     votes = [widget["page"] for widget in result if widget["type"] == "vote"]

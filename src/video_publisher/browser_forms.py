@@ -139,7 +139,7 @@ async def x_composer_is_this_files(form, video, caption, final, *others):
     return await form.evaluate(X_COMPOSER_VIDEOS, handles) == [video]
 
 
-async def x_send_scheduled(page, tx, form, video):
+async def x_send_scheduled(page, tx, form, video, still_same_media=None):
     """The calendar's own Save only closes it, a field run found, and nothing is sent. The composer's final button then reads Done, and the button that opened the calendar shows the date and time.
     Done is the press that schedules, so it alone counts as the final submit, once what it is about to send reads back. If that button still says Post it would post at once, so anything else stops here with nothing posted.
     They have to be this file's composer's, and the time and Done have to sit side by side."""
@@ -188,6 +188,8 @@ async def x_send_scheduled(page, tx, form, video):
         return VpubError('schedule_unverified', f'{unconfirmed} Last look: {seen}.')
     if not await x_composer_is_this_files(form, video, caption, any_final, save):
         raise await not_ready()
+    if still_same_media:
+        still_same_media()
     await save.click(timeout=15000)
 
     async def says_done():
@@ -202,6 +204,8 @@ async def x_send_scheduled(page, tx, form, video):
             raise await not_ready()
         if await caption.input_value() != tx.options['post_text']:
             raise VpubError('metadata_mismatch', 'X post text differs from the manifest. Nothing was posted.')
+        if still_same_media:
+            still_same_media()
     if not await look_until(page, says_done, 15000):
         raise await not_ready()
     await ready_to_send()
@@ -348,14 +352,19 @@ async def publish_x(page, tx):
     # A clip already in Media Studio, from a plan that names its page. A field run's dry run left one, and uploading the same file again would give two tiles of one name, which get no click. Its form only counts if its file has this video's name.
     if tx.options.get('existing_media_url') and not tx.receipt['media_selected']:
         tx.save(media_selected=True, upload_filename=tx.media_name(), media_url=tx.options['existing_media_url'], reused_media=True)
+    retained_media_url = tx.receipt.get('media_url')
+
+    def still_same_media():
+        if retained_media_url and x_media_address(page.url).get('media_url') != retained_media_url:
+            raise VpubError('wrong_work', "Media Studio is no longer on this attempt's file, so no further changes were sent.", 'Look at the original file in Media Studio. Do not upload it again.')
+
     hold = 0
     if tx.receipt.get('media_url'):
         if not re.fullmatch(r'https://studio\.x\.com/library/\d+_\d+/edit', tx.receipt['media_url']):
             raise VpubError('invalid_media_url', 'Resume requires the original Media Studio asset URL.')
         await page.goto(tx.receipt['media_url'], wait_until='domcontentloaded', timeout=60000)
         # From a review: a page that went on to another file would have overwritten this attempt's address.
-        if x_media_address(page.url).get('media_url', tx.receipt['media_url']) != tx.receipt['media_url']:
-            raise VpubError('wrong_work', "Media Studio opened a different file from this attempt's, so nothing was changed.", 'Look at the file in Media Studio. Do not upload it again.')
+        still_same_media()
     elif not tx.receipt['media_selected']:
         media = tx.media()
         await upload_file(page, media, accept='video/')
@@ -367,13 +376,18 @@ async def publish_x(page, tx):
     if not tx.receipt.get('media_url'):
         look = await x_open_media(page, page.get_by_text(filename, exact=True), form, filename, hold)
         tx.save(phase='opening_media', open_look=look, **x_media_address(page.url))
+        retained_media_url = tx.receipt.get('media_url')
     await change.wait_for(state='visible', timeout=X_FORM_SECONDS * 1000)
-    if await x_link_names_another_video(form, filename, x_media_address(page.url).get('media_url') or tx.receipt.get('media_url')):
+    retained_media_url = retained_media_url or x_media_address(page.url).get('media_url')
+    still_same_media()
+    if await x_link_names_another_video(form, filename, retained_media_url):
         raise VpubError('wrong_work', "This form's file is a different video from the one its address names, so nothing was changed.", 'Look at the file in Media Studio. Do not upload it again.')
+    still_same_media()
     tx.save(phase='media_ready', **x_media_address(page.url))
     # The wait can be long, and what comes next changes the file's details.
     await risk_check(page)
     stop_check('x')
+    still_same_media()
     if tx.cover() and not tx.receipt.get('cover'):
         await change.click()
         # Distinguish the image-only thumbnail input from the mixed media input.
@@ -387,6 +401,7 @@ async def publish_x(page, tx):
         await page.wait_for_timeout(2000)
         tx.save(phase='cover_selected', cover={'source':'production_artwork', 'state':'UI_ACCEPTED', 'remote_pixels_verified':False})
     details = bool(await visible(form.get_by_placeholder('Title', exact=True)))
+    still_same_media()
     tx.save(media_details_filled=details)
     if details:
         media_title = await unique_visible(form.get_by_placeholder('Title', exact=True), 'X media title')
@@ -421,17 +436,20 @@ async def publish_x(page, tx):
     tx.save(file_video_seen=bool(file_video))
     if tx.options.get('duration_seconds') and not draft_only:
         await x_video_is_whole(page, file_form, tx.options['duration_seconds'])
+    still_same_media()
     await compose.click()
     caption = page.get_by_placeholder("What's happening?", exact=True)
     await caption.wait_for(timeout=20000)
+    still_same_media()
     await caption.fill(tx.options['post_text'])
     if await caption.input_value() != tx.options['post_text']:
         raise VpubError('metadata_mismatch', 'X post text differs from the manifest.')
+    still_same_media()
     tx.save(phase='preview', review_url=page.url, ai_disclosure='caption_text', metadata_readback=True, **x_media_address(page.url))
     if tx.options.get('submission_mode') == 'draft_only':
         return tx.save(state='PREVIEW_READY', note='Media saved in Studio; composer preview is not a confirmed persistent post draft.')
     if tx.options.get('schedule'):
-        return await x_send_scheduled(page, tx, file_form, file_video)
+        return await x_send_scheduled(page, tx, file_form, file_video, still_same_media=still_same_media)
     post = await unique_visible(page.locator('button[type="button"]').filter(has_text=re.compile('^Post$')), 'final Post')
     await wait_until(page, lambda: enabled(post), seconds=90, label='X final Post enabled')
 
@@ -440,6 +458,7 @@ async def publish_x(page, tx):
             raise VpubError('layout_changed', "X's composer could not be tied to this file's form and video. Nothing was posted.")
         if await caption.input_value() != tx.options['post_text']:
             raise VpubError('metadata_mismatch', 'X post text differs from the manifest. Nothing was posted.')
+        still_same_media()
     await still_this_files()
     await tx.submit(page, post, still_holds=still_this_files)
     # As with Done, leaving before its composer has closed could cut the post off. A field run's closed as soon as it was pressed. A minute on, reading the account says more than waiting would.

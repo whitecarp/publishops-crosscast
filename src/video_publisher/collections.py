@@ -5,6 +5,7 @@ from . import adapters
 from .core import VpubError, atomic_json, digest, error_fields, home, never_sent, now, publication_lock, read_json, receipt_turn, stop_check
 from .direct_messages import identity
 from .progress import stage
+from .safety import check_public_text
 
 PLATFORMS = ('instagram', 'x', 'douyin', 'bilibili', 'youtube')
 NEEDS_COVER = {'douyin', 'bilibili'}
@@ -114,6 +115,7 @@ def change(platform, action, collection=None, title=None, request_id=None, cover
         raise VpubError('request_id_required','Use --request-id once per intended change; reuse after interruption.')
     if action in {'create','rename'} and (not isinstance(title,str) or not title.strip() or title!=title.strip() or len(title)>({'x':25,'douyin':20,'instagram':100,'bilibili':80,'youtube':150}[platform]) or any(ord(c)<32 for c in title)):
         raise VpubError('invalid_title','Use a nonempty title without surrounding whitespace/control characters; maximum X 25, Douyin 20, Instagram 100, Bilibili 80, YouTube 150.')
+    check_public_text(title,description)
     intent=dict(action=action,collection=collection,title=title)
     extra={}
     if platform=='youtube':

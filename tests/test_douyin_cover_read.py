@@ -66,6 +66,9 @@ class DouyinCoverReadTests(unittest.IsolatedAsyncioTestCase):
         node.all = AsyncMock(return_value=[node])
         node.is_visible = AsyncMock(return_value=True)
         node.wait_for = AsyncMock()
+        node.element_handle = AsyncMock(return_value=node)
+        node.wait_for_element_state = AsyncMock()
+        node.count = AsyncMock(return_value=1)
         node.click = AsyncMock()
         node.inner_text = AsyncMock(return_value="保存")
         node.get_attribute = AsyncMock(return_value="")
@@ -152,10 +155,7 @@ class DouyinCoverReadTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.output.exists())
 
     def window_stops_with(self, problem):
-        async def wait_for(state=None, **kwargs):
-            if state == "hidden":
-                raise problem
-        self.control.wait_for = AsyncMock(side_effect=wait_for)
+        self.control.wait_for_element_state = AsyncMock(side_effect=problem)
 
     async def test_a_cover_window_that_runs_out_of_time_says_so_and_saves_nothing(self):
         self.window_stops_with(BrowserTimeout("Timeout exceeded"))

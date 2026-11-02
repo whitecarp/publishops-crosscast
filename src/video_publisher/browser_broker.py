@@ -39,8 +39,9 @@ YOUTUBE_EXTRA_SECONDS = 120
 MAX_LIFETIME_SECONDS = 3600
 CONNECT_SECONDS = 15
 BUSY_SECONDS = 180  # How long a command waits for the one the session is running now.
-SIGN_IN_SECONDS = 140  # The slowest sign-in check. A browser that takes longer has stopped answering.
-START_SECONDS = 150  # Longer than the slowest sign-in check, so a slow start is not mistaken for a failure.
+CHROME_SECONDS = 140  # Starting Chrome. A browser that takes longer has stopped answering.
+SIGN_IN_SECONDS = 240  # The slowest sign-in check: two page loads of up to a minute, with 45 seconds of looking after each, and room for slow reads. Longer means the same.
+START_SECONDS = CHROME_SECONDS + SIGN_IN_SECONDS + 10  # What a new session's own limits add up to, so its answer always arrives first and nothing else starts while it holds the profile.
 CLOSING_SECONDS = 100  # A session that just ended may still be closing Chrome and holding the profile lock; it ends by itself within this.
 RELEASE_SECONDS = 30
 LAST_COMMAND_SECONDS = 900  # What a command started just before the lifetime limit can still take, including closing.
@@ -298,7 +299,7 @@ async def run(platform, account, on_closing=None):
         async with async_playwright() as pw:
             context, usable = None, True
             try:
-                context = await within("starting Chrome", runtime.open_context(pw, platform, account), SIGN_IN_SECONDS)
+                context = await within("starting Chrome", runtime.open_context(pw, platform, account), CHROME_SECONDS)
                 page, owner = await within("checking who is signed in", runtime.signed_in_page(context, platform), SIGN_IN_SECONDS)
                 checked, first = time.monotonic(), True
 

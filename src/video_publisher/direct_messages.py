@@ -53,13 +53,15 @@ def validate_text(text, language):
         raise VpubError('language_required', 'Specify the recipient language; the host writes one language only.')
 
 
-def last_incoming(before):
-    """The newest message from the other person, when the page says who wrote what. X, Instagram and Douyin name the account as the sender of its own."""
+def from_them(before):
+    """What the other person wrote in this read, oldest first, when the page says who wrote what. X, Instagram and Douyin name the account as the sender of its own."""
     me = str(before.get('identity') or '').casefold()
-    for row in reversed(before.get('items') or []):
-        if isinstance(row, dict) and row.get('text') and row.get('from') != 'me' and not row.get('outgoing') and not row.get('is_owner') and not (me and str(row.get('sender') or '').casefold() == me):
-            return row['text']
-    return None
+    return [row['text'] for row in before.get('items') or []
+            if isinstance(row, dict) and row.get('text') and row.get('from') != 'me' and not row.get('outgoing') and not row.get('is_owner') and not (me and str(row.get('sender') or '').casefold() == me)]
+
+
+def last_incoming(before):
+    return next(iter(reversed(from_them(before))), None)
 
 
 def send(platform, who, text, language, dry_run=False, test_id=None, written_by='ai', allow_contact=False, person_approved=False):
@@ -88,7 +90,7 @@ def send(platform, who, text, language, dry_run=False, test_id=None, written_by=
         if before.get('identity') != expected or before.get('recipient') != who:
             raise VpubError('wrong_recipient', 'The live account/conversation does not match the requested target.')
         limits = {'kind': 'message', 'platform': platform, 'identity': expected, 'text': words, 'person': who,
-                  'incoming': last_incoming(before), 'allow_contact': allow_contact, 'person_approved': person_approved}
+                  'incoming': last_incoming(before), 'recent': from_them(before), 'allow_contact': allow_contact, 'person_approved': person_approved}
         if dry_run:
             safety.admit(**limits, reserve=False)
             return {'state': 'DRY_RUN', 'request': request, 'observed': before, 'platform_writes': 0}

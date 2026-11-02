@@ -2,7 +2,7 @@
 import re
 import uuid
 from . import adapters, operations as ops, safety
-from .core import VpubError, atomic_json, digest, error_fields, home, never_sent, now, publication_lock, read_json, receipt_turn, stop_check
+from .core import VpubError, atomic_json, digest, error_fields, home, language_tag, never_sent, now, publication_lock, read_json, receipt_turn, stop_check
 from .progress import stage
 
 SUPPORTED = {'bilibili': {'like', 'pin', 'delete', 'remove'}, 'instagram': {'like', 'delete'}, 'x': {'like', 'hide', 'delete'}, 'youtube': {'like', 'pin', 'edit', 'delete', 'remove', 'moderate'}, 'douyin': {'like', 'delete'}}
@@ -82,7 +82,18 @@ def matches(request, observed):
     return observed.get(key) == request['desired'] and (key in {'text','moderation_status'} or type(observed.get(key)) is bool)
 
 
-def mutate(platform, work, comment_id, kind, desired=True, dry_run=False, test_id=None):
+def edited_words(text, old, language, written_by):
+    """An edit says who wrote it, as a reply does. The label goes in the language of the one the new words already carry, then the one asked for, then their script, then the label on the old words."""
+    hint = ops.language_hint(text)
+    chosen = (safety.label_language(text) or (language_tag(language).lower().split('-')[0] if language != 'auto' else None)
+              or (hint if hint != 'und' else None) or safety.label_language(old))
+    words = safety.labelled(text, chosen, written_by)
+    if len(words) > 2000:
+        raise VpubError('invalid_text', 'Supply nonempty comment text of at most 2000 characters, including the AI label.')
+    return words
+
+
+def mutate(platform, work, comment_id, kind, desired=True, dry_run=False, test_id=None, written_by='ai', language='auto'):
     if kind not in SUPPORTED.get(platform, set()):
         raise VpubError('unsupported_operation', 'This comment action is not supported on this platform.')
     if kind=='moderate':
@@ -90,11 +101,14 @@ def mutate(platform, work, comment_id, kind, desired=True, dry_run=False, test_i
     elif kind == 'edit':
         if not isinstance(desired, str) or not desired.strip() or len(desired) > 2000 or '\x00' in desired:
             raise VpubError('invalid_text', 'Supply nonempty comment text of at most 2000 characters.')
-        safety.check_text(desired, True)
+        safety.check_text(desired, False, 'An edit has no way round this. Write it without them, or reply with --allow-link if a person chose to share them.')
     elif type(desired) is not bool or (kind in {'delete', 'remove'} and not desired):
         raise VpubError('invalid_action', 'Invalid target state.')
     if test_id and not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', test_id): raise VpubError('invalid_test_id', 'Use a short test label.')
-    request = {**target(platform, work, comment_id), 'kind': kind, 'desired': desired}
+    found = target(platform, work, comment_id)
+    if kind == 'edit':
+        desired = edited_words(desired, found['comment'].get('text'), language, written_by)
+    request = {**found, 'kind': kind, 'desired': desired}
     if kind=='moderate' and request['comment'].get('is_owner'):
         raise VpubError('other_author_required','Use a viewer comment for moderation. The live self-comment probe did not change state.')
     if kind in {'edit', 'delete'} and not request['comment'].get('is_owner'):

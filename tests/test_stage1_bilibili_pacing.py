@@ -53,6 +53,33 @@ class WhoSaidItTests(Temporary):
             adapters.bili([], program=SPACED_BY_THE_REAL_LIMITER)
         self.assertTrue(caught.exception.hint)
 
+    def test_a_short_gap_is_slept_through_by_bili_cli_itself(self):
+        answer = {"ok": True, "data": {}}
+        with patch.object(adapters.subprocess, "run", return_value=MagicMock(stdout=json.dumps(answer))) as run:
+            adapters.bili(["comment", "reply"])
+        self.assertEqual(["--wait", "comment", "reply"], run.call_args.args[0][3:])
+
+    def test_the_real_command_line_takes_the_switch(self):
+        self.assertIn("version", adapters.bili(["schema"]))
+
+    def test_its_own_auth_wait_is_left_to_it(self):
+        from bili_cli.main import GLOBAL_FLAGS
+        self.assertIn("--wait", GLOBAL_FLAGS)
+        answer = {"ok": True, "data": {}}
+        with patch.object(adapters.subprocess, "run", return_value=MagicMock(stdout=json.dumps(answer))) as run:
+            adapters.bili(["auth", "status", "--wait", "120"], signing_in=True)
+        self.assertEqual(["--wait", "auth", "status", "--wait", "120"], run.call_args.args[0][3:])
+
+    def test_a_gap_longer_than_it_will_sleep_still_comes_back_held(self):
+        spaced = SPACED_BY_THE_REAL_LIMITER.replace('guard.check("comment")', 'import bili_cli.output as out; out.settings.wait = True; guard.LIMITS["comment"] = (3600, 20); guard.check("comment")')
+        with self.assertRaises(VpubError) as caught:
+            adapters.bili([], program=spaced)
+        self.assertEqual(HELD_BACK, caught.exception.code)
+
+    def test_a_short_gap_goes_through_once_it_has_passed(self):
+        spaced = SPACED_BY_THE_REAL_LIMITER.replace('guard.check("comment")', 'import bili_cli.output as out; out.settings.wait = True; guard.LIMITS["comment"] = (1, 20); guard.check("comment"); out.success({"waited": True})')
+        self.assertEqual({"waited": True}, adapters.bili([], program=spaced))
+
     def test_bilibili_itself_saying_slow_down_still_stops_everything(self):
         answer = {"ok": False, "error": {"code": "rate_limited", "message": "B 站返回错误 12014", "detail": {"bili_code": 12014}}}
         with patch.object(adapters.subprocess, "run", return_value=MagicMock(stdout=json.dumps(answer))), self.assertRaises(VpubError) as caught:

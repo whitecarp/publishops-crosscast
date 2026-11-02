@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 from .core import Ledger, VpubError, atomic_json, digest, douyin_caption, file_sha, home, now, publication_lock, read_json, stop_check, title_limit
 from .language_policy import route
+from .safety import check_public_text, public_text_flags
 
 
 def validate_patch(platform, value, verifying=False, ai_generated=True):
@@ -34,6 +35,8 @@ def validate_patch(platform, value, verifying=False, ai_generated=True):
             raise VpubError('description_too_long','YouTube description exceeds the local 5000-byte budget.')
         if platform in {'instagram','x'}:
             p['post_text']=p['title']+'\n\n'+p['description']+('\n\nAI-generated' if ai_generated else '')
+            # None is an adopted post. No upload here declared anything, so the worker keeps whatever its caption says now.
+            if ai_generated is None: p['keep_ai_line']=True
             if platform=='instagram' and len(p['post_text'])>2200:
                 raise VpubError('description_too_long','Instagram caption exceeds 2200 characters; preserve both languages when shortening.')
         if 'tags' in p and (not isinstance(p['tags'],list) or not all(isinstance(t,str) and t.strip() and not any(c in t for c in ',\r\n\x00') for t in p['tags'])
@@ -64,6 +67,7 @@ def validate_patch(platform, value, verifying=False, ai_generated=True):
         if platform=='youtube': youtube_rules(p['chapters'],p['duration_seconds'])
     if not(metadata or 'portrait' in p or 'chapters' in p or 'cover' in p):
         raise VpubError('invalid_edit','No correction fields were supplied.')
+    if not verifying: check_public_text(p.get('title'),p.get('description'),p.get('tags'),p.get('chapters'))
     return p
 
 
@@ -73,7 +77,9 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
     if actual!=patch['expected_identity']: raise VpubError('wrong_account','Correction identity differs from the publication receipt.')
     stop_check(platform)
     edit_id=digest([key,patch]);path=home()/'edits'/(edit_id+'.json')
-    if dry_run: return {'key':key,'id':work_id,'patch':patch,'platform_writes':0,'edit_id':edit_id}
+    flags=public_text_flags(patch.get('title'),patch.get('description'),patch.get('tags'),patch.get('chapters'))
+    flagged={'text_flags':flags} if flags and not verify_only else {}
+    if dry_run: return {'key':key,'id':work_id,'patch':patch,'platform_writes':0,'edit_id':edit_id,**flagged}
     tried=False
     if path.exists():
         saved=read_json(path)
@@ -101,7 +107,7 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
     if verify_only and not tried and result.get('state')=='EDIT_SUBMITTED_UNVERIFIED': result={**result,'state':'EDIT_MISMATCH'}
     # A check can confirm an unclear save, and nothing less clears it: a page can show the old words for a while, and a cover cannot be compared at all.
     if verify_only and tried and result.get('state')!='EDIT_VERIFIED': result={**result,'state':'EDIT_SUBMITTED_UNVERIFIED'}
-    result={**result,**approved}
+    result={**result,**approved,**flagged}
     checkpoint(result)
     return result
 
@@ -112,7 +118,7 @@ def run_adopted(platform, work, patch_path, dry_run=False, verify_only=False, pe
     with publication_lock():
         adopted=binding(platform,work)
         if not adopted: raise VpubError('work_identity_required','Adopt this work first, so its owner is checked; nothing changed.',f'Run vpub ops adopt {platform} {work}.')
-        patch=validate_patch(platform,read_json(patch_path),verify_only)
+        patch=validate_patch(platform,read_json(patch_path),verify_only,None)
         if platform=='douyin' and 'caption' not in patch and not adopted.get('title'):
             raise VpubError('unsupported_edit','Douyin covers and chapters find the work by its title, and this adoption recorded none; nothing changed.')
         receipt={'id':work,'identity':adopted['identity'],'title':adopted.get('title')}

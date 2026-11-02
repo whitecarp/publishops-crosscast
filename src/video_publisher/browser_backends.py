@@ -82,7 +82,8 @@ def work_url(platform, identity, work_id):
 def instagram_address_is(address, identity, work_id):
     """Whether an address is this work's own page on Instagram. Field reads found it at /p/, /reel/ and /reels/, some with the owner's name in front."""
     parts = urlsplit(address)
-    return parts.hostname == "www.instagram.com" and re.fullmatch(rf"(/{re.escape(identity)})?/(p|reel|reels)/{re.escape(str(work_id))}/?", parts.path, re.I) is not None
+    # Account names ignore case; the work's shortcode must match exactly.
+    return parts.hostname == "www.instagram.com" and re.fullmatch(rf"(?i:(/{re.escape(identity)})?/(p|reel|reels))/{re.escape(str(work_id))}/?", parts.path) is not None
 
 
 async def click_named(scope, name):

@@ -8,11 +8,19 @@ import shutil
 import sys
 
 from . import adapters
-from .core import PLATFORMS, Ledger, VpubError, file_sha, home, how_to_clear_a_stop, part_left_undone, publication_lock, read_json, stop_check
+from .core import PLATFORMS, Ledger, VpubError, digest, file_sha, home, how_to_clear_a_stop, part_left_undone, publication_lock, read_json, stop_check
 from .process_lock import alive
 
 FINISHED = {"SUBMISSION_VERIFIED", "EXISTING_VERIFIED", "AGENT_REPORTED_VERIFIED", "AGENT_REPORTED_DELETED"}
 DRAFTS = {"PREVIEW_READY", "DRAFT_SAVED"}
+# Single actions that may have reached a platform and aren't confirmed, and the read-only command that settles each.
+UNCONFIRMED = (("reply", "operations/replies", {"REPLY_SUBMITTING", "REPLY_UNVERIFIED"}, "vpub comments verify-reply {key}"),
+               ("message", "operations/dm-actions", {"DM_SUBMITTING", "DM_UNVERIFIED"}, "vpub dm verify {key}"),
+               ("comment_action", "operations/comment-actions", {"COMMENT_SUBMITTING", "COMMENT_UNVERIFIED"}, "vpub comments verify-action {key}"),
+               ("like_or_save", "engagement/receipts", {"ACTION_SUBMITTING", "ACTION_UNVERIFIED"}, "vpub engage verify {key}"),
+               ("collection_change", "operations/collections", {"SUBMITTING", "UNVERIFIED"}, "vpub collection verify {key}"),
+               ("playlist_change", "operations/playlists", {"SUBMITTING", "SUBMITTED", "UNVERIFIED"}, "vpub playlist verify {key}"))
+EDIT_UNCONFIRMED = {"EDIT_SUBMITTING", "EDIT_SUBMITTED_UNVERIFIED"}
 
 
 def read_quietly(path, default=None):
@@ -230,7 +238,59 @@ def human_size(count):
     return f"{count:.1f} GB"
 
 
-def summary(stop, attention, reclaimable):
+def saved_receipts(folder):
+    root = home() / folder
+    if root.is_dir():
+        for path in root.glob("*.json"):
+            saved = read_quietly(path)
+            if isinstance(saved, dict):
+                yield path.stem, saved
+
+
+def action_row(kind, key, saved, command):
+    """No message or comment text and no recipient, only enough to find it: this view may be printed or logged."""
+    asked = saved.get("request") if isinstance(saved.get("request"), dict) else {}
+    work = None if kind == "message" else saved.get("work_id") or asked.get("work_id")
+    return {"kind": kind, "key": key, "platform": saved.get("platform") or asked.get("platform"), **({"work_id": work} if work else {}),
+            "state": saved.get("state"), "at": saved.get("submitted_at") or saved.get("started_at") or saved.get("at"), "next_command": command}
+
+
+def edit_rows(rows):
+    """An edit's record can be the worker's, with the work and no key, or the command's, with the key and perhaps no work, so its command comes from whichever it has."""
+    adopted = {}
+    for _, saved in saved_receipts("operations/adopted"):
+        adopted[digest(["adopted", saved.get("platform"), saved.get("work_id")])] = saved
+    for edit_id, saved in saved_receipts("edits"):
+        if saved.get("state") not in EDIT_UNCONFIRMED:
+            continue
+        work, platform = saved.get("id"), saved.get("platform")
+        row = next((row for row in rows if row["key"] == saved.get("key") or (work and row["platform"] == platform and (row["data"].get("receipt") or {}).get("id") == work)), None)
+        taken = adopted.get(saved.get("key")) or next((one for one in adopted.values() if work and (one.get("platform"), one.get("work_id")) == (platform, work)), None)
+        command = f"vpub edit {row['key']} FILE --verify-only" if row else f"vpub edit-work {taken['platform']} {taken['work_id']} FILE --verify-only" if taken else None
+        yield {**action_row("edit", edit_id, {**saved, "platform": platform or (row or taken or {}).get("platform"), "work_id": work or (taken or {}).get("work_id")}, command),
+               "note": "FILE is the correction that was sent. This only reads, and an unclear save stays blocked until it's confirmed."}
+
+
+def widget_rows():
+    for work, saved in saved_receipts("widgets"):
+        open_rows = [row for row in saved.get("rows") or [] if isinstance(row, dict) and row.get("state") != "VERIFIED"]
+        if open_rows:
+            yield {"kind": "widgets", "key": work, "platform": "bilibili", "work_id": work, "state": "PARTIAL", "widgets": dict(Counter(str(row.get("state")) for row in open_rows)),
+                   "at": saved.get("updated_at"), "next_command": f"vpub widgets verify {work}"}
+
+
+def unconfirmed_actions(rows):
+    """Replies, messages, likes and other single actions nobody has confirmed. Without this, they're only found by whoever kept the key."""
+    found = [action_row(kind, key, saved, command.format(key=key)) for kind, folder, states, command in UNCONFIRMED for key, saved in saved_receipts(folder) if saved.get("state") in states]
+    for row in found:
+        if row["kind"] == "playlist_change":  # The add-on's own records, which are always YouTube's.
+            row["platform"] = "youtube"
+        elif row["kind"] == "collection_change" and row["platform"] == "youtube":
+            row["next_command"] = f"vpub playlist verify {row['key']}"
+    return sorted([*found, *edit_rows(rows), *widget_rows()], key=lambda row: str(row.get("at") or ""), reverse=True)
+
+
+def summary(stop, attention, reclaimable, unconfirmed=0):
     from .operations import reporting_language
     chinese = reporting_language() == "zh"
     parts = []
@@ -240,6 +300,8 @@ def summary(stop, attention, reclaimable):
         parts.append(f"{attention} 条发布需要处理。" if attention else "没有需要处理的发布。")
     else:
         parts.append(f"{attention} publication{'s need' if attention != 1 else ' needs'} attention." if attention else "No publication needs attention.")
+    if unconfirmed:
+        parts.append(f"{unconfirmed} 个回复、私信、点赞等操作尚未确认，见 actions。" if chinese else f"{unconfirmed} other action{'s are' if unconfirmed != 1 else ' is'} still unconfirmed; see actions.")
     if reclaimable:
         size = human_size(reclaimable)
         parts.append(f"运行 vpub cleanup 可释放 {size}。" if chinese else f"vpub cleanup can free {size}.")
@@ -266,13 +328,15 @@ def status(limit=20):
     reclaimable = sum(item["bytes"] for item in folders if "kept_because" not in item)
     stop = stop_state()
     last_sync = quietly(lambda: sync_runs(1)["items"], [])
-    return {"summary": summary(stop, len(attention), reclaimable), "stop": stop, "workspace_busy": busy,
+    actions = quietly(lambda: unconfirmed_actions(rows), [])
+    return {"summary": summary(stop, len(attention), reclaimable, len(actions)), "stop": stop, "workspace_busy": busy,
             "paid_api_addon": adapters.addon_installed(),
             "platforms": {p: {"default_method": adapters.default_method(p), "sign_in": sign_in(p)} for p in PLATFORMS},
             "publications": {"total": len(rows), "by_state": dict(Counter(row["state"] for row in rows)),
                              "needs_attention_total": len(attention),
                              "needs_attention": [attempt(row, busy) for row in attention[:limit]],
                              "drafts": [attempt(row, busy) for row in drafts[:limit]]},
+            "actions": {"unconfirmed_total": len(actions), "unconfirmed": actions[:limit]},
             "background_browsers": background_browsers(),
             "messages_pending": quietly(lambda: messages(limit=1)["matching_total"]),
             "last_sync": last_sync[0] if last_sync else None,

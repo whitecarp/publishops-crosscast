@@ -8,6 +8,8 @@ from .browser_runtime import failure_record, look_until, risk_check, unique_visi
 from .browser_backends import choose_file, douyin_card_words, douyin_editor_address, douyin_editor_boxes, douyin_type_caption, normalize, work_url
 from .progress import stage
 
+# A post's AI line at the very end of its words, in the wordings this tool writes. A page can show the line break as a space, so any space will do: losing a declaration is worse than keeping one a sentence happened to end on.
+AI_LINE = re.compile(r'(?:\A|\s)((?:AI 生成[内內]容\s*/\s*)?AI[- ]generated)\s*\Z', re.I)
 READ_BACKS = 4
 READ_BACK_WAIT = 10000
 
@@ -29,6 +31,12 @@ async def instagram_caption_editor(page, work_id):
     editor=page.get_by_role('textbox',name='Add a caption...',exact=True)
     await editor.wait_for(state='visible',timeout=45000)
     return await unique_visible(editor,'work caption editor')
+
+
+def words_to_save(patch,caption):
+    """An adopted post has no upload declaration to follow, so its new words say what its caption says now: an AI line stays, and none is added."""
+    found=AI_LINE.search(caption or '') if patch.get('keep_ai_line') else None
+    return patch['post_text']+'\n\n'+found[1] if found and not AI_LINE.search(patch['post_text']) else patch['post_text']
 
 
 async def x_post_says(post,words):
@@ -57,14 +65,16 @@ async def execute(page, platform, identity, payload):
         url=f'https://www.instagram.com/p/{work_id}/'
         editor=await instagram_caption_editor(page,work_id)
         before=await editor.inner_text()
+        wanted=words_to_save(patch,before)
+        if len(wanted)>2200: raise VpubError('description_too_long','Instagram caption exceeds 2200 characters; preserve both languages when shortening.')
         evidence={'url':url,'verification_source':'work_caption_editor','cover_modified':False}
-        if normalize(before)==normalize(patch['post_text']):
+        if normalize(before)==normalize(wanted):
             return save(state='EDIT_VERIFIED',unchanged=True,caption=before,platform_writes=0,**evidence)
         if payload.get('verify_only'):
             return save(state='EDIT_MISMATCH',caption=before,platform_writes=0,
                         reason='The saved caption differs; no write attempted.',**evidence)
-        await editor.fill(patch['post_text'])
-        if normalize(await editor.inner_text())!=normalize(patch['post_text']): raise VpubError('metadata_mismatch','Instagram editor did not retain the intended text.')
+        await editor.fill(wanted)
+        if normalize(await editor.inner_text())!=normalize(wanted): raise VpubError('metadata_mismatch','Instagram editor did not retain the intended text.')
         save(state='EDIT_PREPARED',before=before)
         await submit(await unique_visible(page.get_by_role('button',name='Done',exact=True),'save caption'))
         await editor.wait_for(state='hidden',timeout=45000)
@@ -73,7 +83,7 @@ async def execute(page, platform, identity, payload):
             if attempt: await page.wait_for_timeout(READ_BACK_WAIT)
             saved_editor=await instagram_caption_editor(page,work_id)
             after=await saved_editor.inner_text()
-            matched=normalize(after)==normalize(patch['post_text'])
+            matched=normalize(after)==normalize(wanted)
             if matched: break
         return save(state='EDIT_VERIFIED' if matched else 'EDIT_SUBMITTED_UNVERIFIED',
                     before=before,caption=after,platform_writes=1,**evidence)
@@ -82,7 +92,12 @@ async def execute(page, platform, identity, payload):
         await page.goto(url,wait_until='domcontentloaded',timeout=60000)
         post=x_pages.post_row(page,work_id)
         await post.first.wait_for(state='visible',timeout=60000)
-        if await x_post_says(post,patch['post_text']):
+        wanted=patch['post_text']
+        if patch.get('keep_ai_line'):
+            fields=await x_pages.post_fields(post.first)
+            if not fields: raise VpubError('state_unavailable',"This post's words could not be read, so nothing was changed.",'Look at the post on X before trying again.')
+            wanted=words_to_save(patch,fields['text'])
+        if await x_post_says(post,wanted):
             return save(state='EDIT_VERIFIED',unchanged=True,url=url,platform_writes=0)
         if payload.get('verify_only'):
             return save(state='EDIT_SUBMITTED_UNVERIFIED',url=url,platform_writes=0)
@@ -97,7 +112,7 @@ async def execute(page, platform, identity, payload):
         await windows.first.wait_for(state='visible',timeout=15000)
         window=await unique_visible(windows,'post edit window')
         editor=await unique_visible(window.locator(x_pages.TEXT_BOX),'post text')
-        await fill_x_text(page,editor,patch['post_text'])
+        await fill_x_text(page,editor,wanted)
         update=await unique_visible(window.get_by_role('button',name=x_pages.UPDATE_POST),'post Update')
         if not await update.is_enabled(): raise VpubError('edit_not_ready','X cannot save this text; inspect its account/length constraints.')
         await submit(update)
@@ -107,7 +122,7 @@ async def execute(page, platform, identity, payload):
             if attempt: await page.wait_for_timeout(READ_BACK_WAIT)
             await page.reload(wait_until='domcontentloaded')
             await post.first.wait_for(state='visible',timeout=45000)
-            ok=await x_post_says(post,patch['post_text'])
+            ok=await x_post_says(post,wanted)
             if ok: break
         return save(state='EDIT_VERIFIED' if ok else 'EDIT_SUBMITTED_UNVERIFIED',url=url,platform_writes=1)
     if platform=='douyin':
@@ -116,7 +131,8 @@ async def execute(page, platform, identity, payload):
             url=douyin_editor_address(work_id)
             # A field run found the title box showing empty for a moment, so this waits for its title as the text route does.
             title,editor=await douyin_fields(page,url,work_id)
-            if receipt.get('title') and await title.input_value()!=receipt['title']: raise VpubError('wrong_work','Existing title differs from the receipt; inspect before applying a cover.')
+            title_at_first=await title.input_value()
+            if receipt.get('title') and title_at_first!=receipt['title']: raise VpubError('wrong_work','Existing title differs from the receipt; inspect before applying a cover.')
             words_at_first=douyin_card_words(await editor.inner_text())
             control=page.locator('[class^="coverControl-"]').filter(has=page.get_by_text('竖封面3:4',exact=True))
             if payload.get('verify_only'):
@@ -152,8 +168,9 @@ async def execute(page, platform, identity, payload):
             async def still_only_the_cover():
                 # A cover's Save sends the whole form, so a review asked that its words be the ones it found. Words that hadn't loaded at first aren't a change.
                 await douyin_can_press(page,save_button)
-                if words_at_first and douyin_card_words(await editor.inner_text())!=words_at_first:
-                    raise VpubError('wrong_work',"This work's words changed while its cover was being set, so nothing was saved.",'Look at the work on Douyin.')
+                if (await title.input_value()!=title_at_first
+                        or (words_at_first and douyin_card_words(await editor.inner_text())!=words_at_first)):
+                    raise VpubError('wrong_work',"This work's title or words changed while its cover was being set, so the work was not saved.",'Look at the work on Douyin.')
             await submit(save_button,still_holds=still_only_the_cover)
             stayed=await douyin_moved_on(page,pressed,output)
             if stayed: return save(state='EDIT_SUBMITTED_UNVERIFIED',platform_writes=1,url=url,after_press=stayed,note='Pressed once, and the page did not go back to the works list. See after_press; do not press again.')

@@ -25,7 +25,8 @@ def bili(args, timeout=210, program=BILI_MAIN, signing_in=False):
         if key in env:
             env[key] = ",".join(x for x in env[key].split(",") if ":" not in x)
     try:
-        cp = subprocess.run([sys.executable, "-c", program, *args],
+        # bili-cli's own spacing then sleeps through gaps of up to a minute, so a batch just works. A longer one still comes back as write_spacing.
+        cp = subprocess.run([sys.executable, "-c", program, *(["--wait"] if program == BILI_MAIN else []), *args],
                             capture_output=True, text=True, encoding="utf-8", env=env, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise VpubError("backend_timeout", "bili-cli did not finish in time.", "Inspect the original work before any retry; do not repeat a submission.") from None

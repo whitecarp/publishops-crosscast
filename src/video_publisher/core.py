@@ -398,6 +398,8 @@ def load_plan(path, selected=None):
         plans[platform] = {**v, "account": account_name(v.get("account", "default")),
                            "title": title, "description": desc, "tags": tags, "visibility": visibility,
                            "content_language": language_tag(v.get("content_language", m.get("content_language", "und")))}
+        from .safety import PLAN_TEXT, check_public_text
+        check_public_text(*(plans[platform].get(name) for name in PLAN_TEXT))
         if "metadata_language" in v:
             plans[platform]["metadata_language"] = language_tag(v["metadata_language"])
         if v.get("metadata_mode", "target_only") not in {"target_only", "bilingual"}:

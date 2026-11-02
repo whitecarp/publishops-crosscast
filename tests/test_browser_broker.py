@@ -264,6 +264,50 @@ class BrokerTests(unittest.TestCase):
         self.assertEqual("error", server.exit)
 
 
+class SignInBudgetTests(unittest.TestCase):
+    """From a review: a page that loads slowly, stays empty and loads again is a good sign-in, and the session's own limit cut it off. The clock here is made up, so nothing really waits."""
+
+    def sign_in(self, seconds_to_load, who_after_reload):
+        async def run():
+            loop = asyncio.get_running_loop()
+            clock = [loop.time()]
+            began = clock[0]
+            real_sleep = asyncio.sleep
+
+            async def elapse(seconds):
+                clock[0] += seconds
+                for _ in range(4):
+                    await real_sleep(0)  # Lets the loop's own timers run.
+
+            async def load(*args, **kwargs):
+                self.assertEqual(60000, kwargs["timeout"])
+                await elapse(seconds_to_load)
+
+            page = MagicMock(goto=AsyncMock(side_effect=load), reload=AsyncMock(side_effect=load))
+            page.locator.return_value.inner_text = AsyncMock(return_value="")
+
+            async def who(*args):
+                return who_after_reload if page.reload.await_count else None
+
+            with patch.object(loop, "time", side_effect=lambda: clock[0]), patch.object(rt, "stage"), patch.object(rt, "watch"), patch.object(rt, "risk_check", new=AsyncMock()), \
+                    patch.object(rt, "identity", new=who), patch.object(rt.asyncio, "sleep", new=elapse):
+                try:
+                    answer = (await broker.within("checking who is signed in", rt.signed_in_page(MagicMock(pages=[page]), "youtube"), broker.SIGN_IN_SECONDS))[1]
+                except VpubError as exc:
+                    answer = exc.code
+            return answer, clock[0] - began
+        return asyncio.run(run())
+
+    def test_a_slow_empty_page_that_loads_again_is_not_cut_off(self):
+        self.assertEqual(("owner", 145), self.sign_in(50, "owner"))
+
+    def test_the_slowest_empty_page_still_gets_its_own_answer(self):
+        self.assertEqual(("page_not_ready", 210), self.sign_in(60, None))
+
+    def test_a_new_sessions_own_limits_fit_inside_the_wait_for_it(self):
+        self.assertGreater(broker.START_SECONDS, broker.CHROME_SECONDS + broker.SIGN_IN_SECONDS)
+
+
 class HangingBrowserTests(unittest.TestCase):
     """The whole session with a browser that stops answering. Only Chrome is replaced."""
 
@@ -284,7 +328,7 @@ class HangingBrowserTests(unittest.TestCase):
         targets = [patch("patchright.async_api.async_playwright", return_value=pw), patch.object(rt, "open_context", opened or AsyncMock(return_value=context)),
                    patch.object(rt, "signed_in_page", signed_in or AsyncMock(return_value=(MagicMock(), "owner"))), patch.object(rt, "risk_check", self.risk_check),
                    patch("video_publisher.browser_worker.dispatch", self.dispatch),
-                   patch.object(rt, "CLOSE_SECONDS", 0.1), patch.object(broker, "SIGN_IN_SECONDS", 0.2)]
+                   patch.object(rt, "CLOSE_SECONDS", 0.1), patch.object(broker, "SIGN_IN_SECONDS", 0.2), patch.object(broker, "CHROME_SECONDS", 0.2)]
         for target in targets:
             target.start()
             self.addCleanup(target.stop)
