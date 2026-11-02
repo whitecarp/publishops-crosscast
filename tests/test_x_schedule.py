@@ -603,18 +603,18 @@ class ScheduleRowTests(ChromeCase):
 
     def row(self, day="Nov 8", weekday="Sun", clock="9:11 PM", words=None, media="Video"):
         return f"""<tr class="oLHZoSmM"><td class="UxBgyW8K"><div><div class="pJ3TNqK2">{day}</div><div>{weekday}</div></div></td><td class="Table-cell--alignLeft"><div>{clock}</div></td>
-          <td class="Table-cell--alignLeft"><div style="white-space: pre-wrap">{self.WORDS if words is None else words}</div></td>
-          <td class="Table-cell--alignLeft"><div class="pJnPcxVd" style="background-image: url(thumb.jpg)"></div><p>{media}</p></td><td class="Table-cell--alignLeft"><div></div></td>
+          <td class="Table-cell--alignLeft"><div class="xicUfVmZ" style="white-space: pre-wrap"><span>{self.WORDS if words is None else words}</span><span></span></div><div class="SC5SKZZJ"><div class="pJnPcxVd" style="background-image: url(thumb.jpg)"></div><p></p></div></td>
+          <td class="Table-cell--alignLeft"><div>{media}</div></td><td class="Table-cell--alignLeft"><div></div></td>
           <td class="Swu6H6Cr"><button aria-label="Delete" class="gRfJYjDA" style="display: none"><span class="Icon Icon--delete"></span></button></td><td class="_1U0n1L4m--Table-cell--fill"></td></tr>"""
 
-    def table(self, *rows, after=""):
-        head = "".join(f"<th>{name}</th>" for name in ("Date", "Time", "Post", "Media", "Monetization", ""))
-        return f'<!doctype html><body><table><thead><tr>{head}</tr></thead><tbody id="rows">{"".join(rows)}</tbody></table>{after}</body>'
+    def table(self, *rows, after="", headings=("Date", "Time", "Post", "Media", "Monetization", "")):
+        head = "".join(f"<th>{name}</th>" for name in headings)
+        return f'<table><thead><tr>{head}</tr></thead><tbody id="rows">{"".join(rows)}</tbody></table>{after}'
 
     async def read(self, *rows, after="", **extra):
-        self.html = self.table(*rows, after=after)
+        self.html = "<!doctype html><body>" + self.table(*rows, after=after)
         at = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
-        receipt = {"identity": OWNER, "title": "My title", "expected_text": self.WORDS, "before_ids": ["1"], "state": "SUBMITTED_UNVERIFIED", "schedule": {"at": at, **self.SCHEDULE}, **extra}
+        receipt = {"identity": OWNER, "title": "My title", "expected_text": self.WORDS, "before_ids": ["1"], "state": "SUBMITTED_UNVERIFIED", "schedule_rows_before": 0, "schedule": {"at": at, **self.SCHEDULE}, **extra}
         with patch.object(browser_backends, "X_SCHEDULE_SECONDS", 1):
             return await browser_backends.verify_scheduled_x(self.page, OWNER, receipt)
 
@@ -626,6 +626,86 @@ class ScheduleRowTests(ChromeCase):
         self.assertNotIn("id", result)
         self.assertIn("doesn't say which video", result["note"])
         self.assertIn("Verify again after that time", result["note"])
+
+    async def test_a_row_that_was_already_there_does_not_pass_for_this_post(self):
+        """From a review: an unchanged earlier row with the same words and minute confirmed a Done that did nothing."""
+        result = await self.read(self.row(), schedule_rows_before=1, final_submit_attempted=True)
+        self.assertEqual(("SUBMITTED_UNVERIFIED", "readback_pending", "studio_schedule_page"), (result["state"], result["phase"], result["verification_source"]))
+        self.assertEqual(1, result["schedule_rows_matching"])
+        self.assertIn("Before the upload it showed 1", result["note"])
+
+    async def test_a_row_with_nothing_to_show_it_is_new_stays_unconfirmed(self):
+        for before in (None, False, "0", 0.0, []):
+            with self.subTest(before=before):
+                result = await self.read(self.row(), schedule_rows_before=before)
+                self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
+                self.assertIn("an unknown number", result["note"])
+
+    async def test_a_receipt_from_before_that_read_stays_unconfirmed(self):
+        self.html = "<!doctype html><body>" + self.table(self.row())
+        receipt = {"identity": OWNER, "title": "My title", "expected_text": self.WORDS, "schedule": {"at": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(), **self.SCHEDULE}}
+        result = await browser_backends.verify_scheduled_x(self.page, OWNER, receipt)
+        self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
+
+    async def test_a_row_that_is_not_showing_does_not_count(self):
+        """From a review: a hidden row, kept through a redraw, confirmed a post while the table showed nothing."""
+        spaced = self.row().replace("</div><div>Sun", "</div> <div>Sun")
+        for name, row in (("not displayed", spaced.replace('<tr class=', '<tr style="display: none" class=', 1)), ("hidden", spaced.replace('<tr class=', '<tr style="visibility: hidden" class=', 1)),
+                          ("see-through", spaced.replace('<tr class=', '<tr style="opacity: 0" class=', 1))):
+            with self.subTest(name):
+                result = await self.read(row)
+                self.assertEqual(("SUBMITTED_UNVERIFIED", 0), (result["state"], result["schedule_rows_matching"]))
+
+    async def test_a_row_in_any_other_table_does_not_count(self):
+        """From a review: the schedule table was empty and a hidden table beside it held the row."""
+        spaced = self.row().replace("</div><div>Sun", "</div> <div>Sun")
+        for name, after in (("hidden", f'<table style="display: none"><tbody>{spaced}</tbody></table>'), ("showing, with no headings", f"<table><tbody>{spaced}</tbody></table>"),
+                            ("showing, with other headings", self.table(spaced, headings=("Date", "Time", "Words", "Media")))):
+            with self.subTest(name):
+                result = await self.read(after=after)
+                self.assertEqual(("SUBMITTED_UNVERIFIED", 0), (result["state"], result["schedule_rows_matching"]))
+
+    async def test_a_row_inside_one_of_the_tables_cells_does_not_count(self):
+        result = await self.read(f"<tr><td><table><tbody>{self.row()}</tbody></table></td></tr>")
+        self.assertEqual(("SUBMITTED_UNVERIFIED", 0), (result["state"], result["schedule_rows_matching"]))
+
+    async def test_two_tables_that_could_both_be_it_settle_nothing(self):
+        result = await self.read(self.row(), after=self.table())
+        self.assertEqual(("SUBMITTED_UNVERIFIED", 0), (result["state"], result["schedule_rows_matching"]))
+
+    async def test_a_table_in_another_order_is_not_read(self):
+        self.html = "<!doctype html><body>" + self.table(self.row(), headings=("Time", "Date", "Post", "Media"))
+        at = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+        with patch.object(browser_backends, "X_SCHEDULE_SECONDS", 1):
+            result = await browser_backends.verify_scheduled_x(self.page, OWNER, {"title": "My title", "expected_text": self.WORDS, "schedule_rows_before": 0, "schedule": {"at": at, **self.SCHEDULE}})
+        self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
+
+    async def test_a_table_redrawn_while_it_waits_is_read_again(self):
+        redraw = """<script>window.pending = 1; setTimeout(() => { document.querySelector('table').remove(); document.body.insertAdjacentHTML('beforeend', %s); window.pending = 0; }, 300);</script>""" % json.dumps(self.table(self.row()))
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.read(after=redraw))["state"])
+
+    async def baseline(self, html):
+        self.html = "<!doctype html><body>" + html
+        with patch.object(browser_backends, "X_SCHEDULE_SECONDS", 1):
+            return await browser_backends.x_schedule_baseline(self.page, self.WORDS, self.SCHEDULE)
+
+    async def test_the_read_before_the_upload_counts_rows_like_this_post(self):
+        empty = f"<p>{browser_backends.X_SCHEDULE_EMPTY}</p>"
+        for name, html, wanted in (("says it is empty, with its headings", self.table(after=empty), 0), ("says it is empty, with no table", empty, 0), ("other posts only", self.table(self.row(words="Other words"), self.row(clock="10:00 PM")), 0),
+                                   ("one like it", self.table(self.row(), self.row(words="Other words")), 1), ("two like it", self.table(self.row(), self.row()), 2)):
+            with self.subTest(name):
+                self.assertEqual(wanted, await self.baseline(html))
+
+    async def test_the_read_before_the_upload_does_not_guess(self):
+        empty = browser_backends.X_SCHEDULE_EMPTY
+        for name, html in (("headings and no rows yet", self.table()), ("an empty page", ""), ("its empty message hidden", self.table(after=f'<p style="display: none">{empty}</p>')),
+                           ("two tables", self.table(self.row(), after=self.table(after=f"<p>{empty}</p>")))):
+            with self.subTest(name):
+                self.assertIsNone(await self.baseline(html))
+
+    async def test_the_read_before_the_upload_waits_for_rows_to_come(self):
+        late = """<script>window.pending = 1; setTimeout(() => { document.getElementById('rows').insertAdjacentHTML('beforeend', %s); window.pending = 0; }, 300);</script>""" % json.dumps(self.row())
+        self.assertEqual(1, await self.baseline(self.table(after=late)))
 
     async def test_a_row_that_does_not_match_settles_nothing(self):
         for name, row in (("another time", self.row(clock="9:12 PM")), ("the morning", self.row(clock="9:11 AM")), ("another day", self.row(day="Nov 9", weekday="Mon")), ("another month", self.row(day="Dec 8", weekday="Tue")),

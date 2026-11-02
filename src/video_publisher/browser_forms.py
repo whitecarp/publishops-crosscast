@@ -12,7 +12,7 @@ from .core import VpubError, douyin_caption, stop_check
 from .browser_runtime import look_until, risk_check, unique_visible, visible
 from .progress import stage
 from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, X_CHOSEN_TIME, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style,
-                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, x_chosen_time_says, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
+                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, x_chosen_time_says, x_schedule_baseline, x_schedule_moment, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
 
 X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
 YT_DIALOG = 'ytcp-uploads-dialog'
@@ -95,7 +95,7 @@ async def x_schedule(page, when):
     if (await year.evaluate('e => e.options[e.selectedIndex].text') != str(local.year) or await month.input_value() != str(local.month - 1)
             or await chosen.count() != 1 or (await chosen.inner_text()).strip() != str(local.day) or (await clocks[0].input_value()).strip() != stamp):
         raise VpubError('schedule_unverified', unconfirmed)
-    return {'at': when.isoformat(), 'local': local.isoformat(), 'date': [local.year, local.month, local.day], 'time': [local.hour, local.minute], 'timezone_basis': 'computer'}
+    return x_schedule_moment(when)
 
 
 X_FILE_VIDEOS = """form => [...form.querySelectorAll('video')].map(video => video.currentSrc || video.src)"""
@@ -234,6 +234,10 @@ async def publish_x(page, tx):
     if before is None:
         before = await works(page, 'x', tx.identity)
     tx.save(before_ids=list(before), expected_text=tx.options['post_text'])
+    # Read once, before anything of this post's could be there, and kept, so that a row already there can't pass for its result.
+    if tx.options.get('schedule') and tx.options.get('submission_mode') != 'draft_only' and 'schedule_rows_before' not in tx.receipt:
+        when = datetime.fromisoformat(tx.options['schedule'].replace('Z', '+00:00'))
+        tx.save(schedule_rows_before=await x_schedule_baseline(page, tx.options['post_text'], x_schedule_moment(when)))
     await page.goto('https://studio.x.com/library', wait_until='domcontentloaded', timeout=60000)
     try:
         await page.locator('button').filter(has_text=re.compile(r'^\s*Upload Media\s*$')).wait_for(timeout=30000)

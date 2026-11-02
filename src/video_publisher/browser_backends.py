@@ -21,7 +21,15 @@ WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 X_CHOSEN_TIME = re.compile(r'([A-Z][a-z]{2}) (\d{1,2})(?:, (\d{4}))?, (1[0-2]|[1-9]):([0-5]\d) ([AP]M)')
 X_SCHEDULE_DAY = re.compile(r'([A-Z][a-z]{2} \d{1,2}) ([A-Z][a-z]{2})')
 X_SCHEDULE_PAGE = "https://studio.x.com/schedule"
-X_SCHEDULE_ROWS = "rows => rows.map(row => [...row.querySelectorAll('td')].map(cell => cell.innerText))"
+X_SCHEDULE_HEADINGS = ["Date", "Time", "Post", "Media"]
+X_SCHEDULE_EMPTY = "Schedule posts from your Library or Producer to see them here"
+X_SCHEDULE_TABLE = """headings => {
+  const shown = node => node.checkVisibility({checkOpacity: true, checkVisibilityCSS: true}) && node.getBoundingClientRect().height > 0;
+  const heads = row => shown(row) && headings.every((name, at) => row.cells[at]?.tagName === 'TH' && row.cells[at].textContent.trim() === name);
+  const tables = [...document.querySelectorAll('table')].filter(table => shown(table) && [...table.rows].some(heads));
+  if (tables.length > 1) return null;
+  return tables.length ? [...tables[0].rows].filter(row => shown(row) && row.cells[0]?.tagName === 'TD').map(row => [...row.cells].map(cell => cell.innerText)) : [];
+}"""
 X_SCHEDULE_SECONDS = 15
 # Studio writes dates and times in its interface language. Each style is (pattern, read, write).
 STUDIO_DATES = (
@@ -208,7 +216,7 @@ DOUYIN_NAME = '[class^="info-title-text-"]'
 DOUYIN_SCHEDULED = {'state': 'SUBMISSION_VERIFIED', 'phase': 'scheduled', 'error': None, 'verification_source': 'creator_card_title_and_time',
                     'note': 'Douyin shows this new card with its title and scheduled time, and no ID until the time comes. Verify again after that time.'}
 X_SCHEDULED = {'state': 'SUBMISSION_VERIFIED', 'phase': 'scheduled', 'error': None, 'verification_source': 'studio_schedule_row',
-               'note': "Studio's schedule page shows one row with exactly its words, its date and time, and a video. A row has no ID until the time comes and doesn't say which video. Verify again after that time."}
+               'note': "Studio's schedule page shows one row with exactly its words, its date and time, and a video, and showed none like it before the upload. A row has no ID until the time comes and doesn't say which video. Verify again after that time."}
 
 
 def douyin_card_is_waiting(text):
@@ -547,9 +555,43 @@ def x_row_says_schedule(day, clock, schedule):
     return bool(found) and found[2] == WEEKDAYS[datetime(*schedule['date']).weekday()] and x_chosen_time_says(f'{found[1]}, {normalize(clock)}', schedule)
 
 
+def x_schedule_moment(when):
+    """The date and time Studio shows for a moment. Its calendar, clock and schedule page all use this computer's time zone."""
+    local = when.astimezone()
+    return {'at': when.isoformat(), 'local': local.isoformat(), 'date': [local.year, local.month, local.day], 'time': [local.hour, local.minute], 'timezone_basis': 'computer'}
+
+
+def x_row_has_words(cells, words):
+    return len(cells) > 3 and normalize(cells[2]) == words
+
+
+def x_row_has_schedule(cells, schedule):
+    return x_row_says_schedule(cells[0], cells[1], schedule) and normalize(cells[3]) == "Video"
+
+
+async def x_schedule_read(page):
+    """What Studio's schedule page shows now: the cells of each row showing in the one table with these headings, read together so that nothing is combined across a redraw.
+    A review found rows in hidden or other tables could count. No rows is only an answer once the page says so in its own words, since a table can show its headings before its rows."""
+    rows = await page.evaluate(X_SCHEDULE_TABLE, X_SCHEDULE_HEADINGS)
+    if rows or (rows == [] and await visible(page.get_by_text(X_SCHEDULE_EMPTY, exact=True))):
+        return {"rows": rows}
+    return None
+
+
+async def x_schedule_baseline(page, post_text, schedule):
+    """How many rows already look like this post, read before anything of its own could be there. None if the page won't say."""
+    await page.goto(X_SCHEDULE_PAGE, wait_until="domcontentloaded", timeout=60000)
+    read = await look_until(page, lambda: x_schedule_read(page), X_SCHEDULE_SECONDS * 1000)
+    await risk_check(page)
+    if not read:
+        return None
+    return sum(x_row_has_words(cells, normalize(post_text)) and x_row_has_schedule(cells, schedule) for cells in read["rows"])
+
+
 async def verify_scheduled_x(page, identity, receipt):
     """A scheduled post has no address until it goes out. Before its time, a field read found its row on Studio's schedule page shows its words, date and time, and that it has a video, in that
-    order, with no ID or link. So one row with exactly its words, its date and time and a video settles that it's scheduled. It can't say which video, which is why the final press is tied to the file's own.
+    order, with no ID or link. A review showed a row already there would pass for it, so it only counts if the read before the upload found none like it. One such row settles that it's scheduled.
+    It can't say which video, which is why the final press is tied to the file's own, and an identical row added by someone else since that read would pass too.
     After its time, one new post with exactly its words, at about that time, showing the video Media Studio numbered, settles it. Without that number it is named as a candidate for a person to check."""
     moment = datetime.fromisoformat(receipt["schedule"]["at"])
     if datetime.now(timezone.utc) >= moment:
@@ -568,16 +610,17 @@ async def verify_scheduled_x(page, identity, receipt):
     words = normalize(receipt.get("expected_text") or receipt["title"])
 
     async def rows_with_its_words():
-        rows = await page.locator("tr").evaluate_all(X_SCHEDULE_ROWS)
-        return [cells for cells in rows if len(cells) > 3 and normalize(cells[2]) == words]
+        read = await x_schedule_read(page)
+        return [cells for cells in read["rows"] if x_row_has_words(cells, words)] if read else []
     rows = await look_until(page, rows_with_its_words, X_SCHEDULE_SECONDS * 1000)
     await risk_check(page)
-    matching = [cells for cells in rows if x_row_says_schedule(cells[0], cells[1], receipt["schedule"]) and normalize(cells[3]) == "Video"]
+    matching = [cells for cells in rows if x_row_has_schedule(cells, receipt["schedule"])]
+    before = receipt.get("schedule_rows_before")
     found = {"visibility": "scheduled", "review_url": X_SCHEDULE_PAGE, "verified_at": now(), "schedule_rows_with_its_words": len(rows), "schedule_rows_matching": len(matching)}
-    if len(matching) == 1:
+    if len(matching) == 1 and type(before) is int and before == 0:
         return {**receipt, **found, **X_SCHEDULED}
     return {**receipt, **found, "state": "SUBMITTED_UNVERIFIED", "phase": "readback_pending", "verification_source": "studio_schedule_page",
-            "note": f"Studio's schedule page shows {len(rows)} row(s) with exactly its words, and {len(matching)} with its date and time and a video, where one was expected. Check them there. Do not post again."}
+            "note": f"Studio's schedule page shows {len(rows)} row(s) with exactly its words, and {len(matching)} with its date and time and a video. Before the upload it showed {before if type(before) is int else 'an unknown number'} like that. One new row was expected, so check them there. Do not post again."}
 
 
 def posted_around(post, moment):

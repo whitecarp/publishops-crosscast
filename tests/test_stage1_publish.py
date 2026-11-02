@@ -183,6 +183,7 @@ class XFormTests(Form):
         self.form_video = '<video src="https://studio.x.com/this-file.mp4"></video>'
         self.studio_open = True
         self.never_shows = False
+        self.schedule_reads = []
 
     async def handle(self, route):
         url = urlsplit(route.request.url)
@@ -203,6 +204,9 @@ class XFormTests(Form):
     async def studio(self, route, path):
         if not self.studio_open:
             return await self.page_at(route, "<p>No access</p>")
+        if path == "/schedule":
+            self.schedule_reads.append(len(self.uploads))
+            return await self.page_at(route, f"<p>{browser_backends.X_SCHEDULE_EMPTY}</p>")
         account = f'<a href="https://analytics.twitter.com/user/{self.studio_account}/home">account</a>'
         if path.endswith("/edit"):
             keep = "" if self.keeps_text else "this.value = '';"
@@ -210,6 +214,35 @@ class XFormTests(Form):
             box = f"""<div id="box"><video src="https://studio.x.com/{self.composer_video}.mp4"></video><textarea placeholder="What's happening?" oninput="{keep}"></textarea><button type="button" onclick="fetch('/post', {{method: 'POST', body: JSON.stringify({{text: document.querySelector('textarea').value}})}})">Post</button></div>"""
             return await self.page_at(route, f"""{account}{self.check}<div><a download="{name}" href="#">Download</a><button type="button">Change thumbnail</button>{self.extra_video}{self.form_video}<button type="button" id="compose" onclick="const home = {'document.body' if self.composer_outside else 'this.parentElement'}; document.querySelector('video')?.remove(); this.remove(); home.insertAdjacentHTML('beforeend', document.getElementById('held').innerHTML)">Post</button></div><template id="held">{box}</template>""")
         await self.page_at(route, f"""{account}<button>Upload Media</button><input type="file" accept="video/mp4" onchange="fetch('/upload', {{method: 'POST', body: '{{}}'}}); const row = document.createElement('div'); row.textContent = this.files[0].name; row.onclick = () => location.href = '/library/1_2/edit?name=' + encodeURIComponent(row.textContent); document.body.append(row)">""")
+
+    def scheduled(self):
+        self.plan["options"]["schedule"] = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+
+    async def test_a_schedule_reads_its_page_once_before_anything_is_uploaded(self):
+        """From a review: with no read from before, a row already there could pass for this post's. This copy has no calendar, so it stops there."""
+        self.scheduled()
+        await self.refused("layout_changed")
+        self.assertEqual(([0], 0, 1), (self.schedule_reads, self.receipt()["schedule_rows_before"], len(self.uploads)))
+
+    async def test_a_read_already_kept_is_not_read_again(self):
+        """From a review: a new read on resuming could make a row look new when it wasn't."""
+        self.scheduled()
+        tx = Transaction("x", OWNER, self.plan)
+        tx.save(schedule_rows_before=3)
+        with self.assertRaises(VpubError):
+            await browser_forms.publish_x(self.page, tx)
+        self.assertEqual(([], 3), (self.schedule_reads, self.receipt()["schedule_rows_before"]))
+
+    async def test_a_draft_does_not_read_the_schedule_page(self):
+        self.scheduled()
+        self.plan["options"]["submission_mode"] = "draft_only"
+        self.assertEqual("PREVIEW_READY", (await self.publish())["state"])
+        self.assertEqual([], self.schedule_reads)
+        self.assertNotIn("schedule_rows_before", self.receipt())
+
+    async def test_a_post_with_no_schedule_does_not_read_the_schedule_page(self):
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
+        self.assertEqual([], self.schedule_reads)
 
     async def test_a_composer_outside_this_files_form_posts_nothing(self):
         """From a review, and a field read of where the composer really sits."""
