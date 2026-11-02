@@ -9,12 +9,13 @@ from urllib.parse import parse_qs, urlsplit
 
 from .categories import STUDIO_CATEGORIES
 from .core import VpubError, douyin_caption, stop_check
-from .browser_runtime import risk_check, unique_visible, visible
+from .browser_runtime import look_until, risk_check, unique_visible, visible
 from .progress import stage
-from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style,
+from .browser_backends import (MONTHS, STUDIO_DATES, STUDIO_TIMES, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style,
                                upload_file, wait_until, work_url, works, verify, verify_scheduled_x, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
 
 X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
+X_CHOSEN_TIME = re.compile(r'([A-Z][a-z]{2}) (\d{1,2})(?:, (\d{4}))?, (\d{1,2}):(\d{2}) ([AP]M)')
 YT_DIALOG = 'ytcp-uploads-dialog'
 YT_PLAYLISTS = 'ytcp-playlist-dialog'
 YT_TICK_MS = 5000
@@ -96,13 +97,45 @@ async def x_schedule(page, when):
     return {'at': when.isoformat(), 'local': local.isoformat(), 'date': [local.year, local.month, local.day], 'time': [local.hour, local.minute], 'timezone_basis': 'computer'}
 
 
+def x_chosen_time_says(words, schedule):
+    """Whether words like Nov 4, 6:26 PM, which a field run saw on the button that opened the calendar, are this schedule's date and time."""
+    found = X_CHOSEN_TIME.fullmatch(normalize(words))
+    if not found or found[1] not in MONTHS:
+        return False
+    date = (int(found[3] or schedule['date'][0]), MONTHS.index(found[1]) + 1, int(found[2]))
+    return date == tuple(schedule['date']) and (int(found[4]) % 12 + (12 if found[6] == 'PM' else 0), int(found[5])) == tuple(schedule['time'])
+
+
 async def x_send_scheduled(page, tx):
-    """With a time chosen the composer's final button becomes Save. One click, then Studio's schedule page says whether it is there."""
+    """The calendar's own Save only closes it, a field run found, and nothing is sent. The composer's final button then reads Done, and the button that opened the calendar shows the date and time.
+    Done is the press that schedules, so it alone counts as the final submit, once what it is about to send reads back. If that button still says Post it would post at once, so anything else stops here with nothing posted."""
+    from patchright.async_api import Error as BrowserError
+    unconfirmed = 'X Studio did not show this schedule ready to save. Nothing was posted.'
     when = datetime.fromisoformat(tx.options['schedule'].replace('Z', '+00:00'))
-    tx.save(schedule=await x_schedule(page, when))
-    save = await unique_visible(page.locator('button[type="button"]').filter(has_text=re.compile(r'^\s*Save\s*$')), 'X schedule Save')
-    await wait_until(page, lambda: enabled(save), seconds=30, label='X schedule Save enabled')
-    await tx.submit(page, save)
+    schedule = await x_schedule(page, when)
+    tx.save(schedule=schedule)
+    save = await unique_visible(page.locator('button[type="button"]').filter(has_text=re.compile(r'^\s*Save\s*$')), 'X calendar Save')
+    await wait_until(page, lambda: enabled(save), seconds=30, label='X calendar Save enabled')
+    await save.click(timeout=15000)
+    final = page.locator('button.tweetbtn:visible')
+
+    async def says_done():
+        return (await final.count() == 1 and normalize(await final.inner_text()) == 'Done' and await enabled(final)
+                and not await page.locator('fieldset.CalendarNavigation-monthFormSelect select:visible').count())
+    if not await look_until(page, says_done, 15000):
+        raise VpubError('schedule_unverified', unconfirmed)
+    shown = [normalize(await button.inner_text()) for button in await page.locator('button[type="button"]:visible').all()]
+    times = [words for words in shown if X_CHOSEN_TIME.fullmatch(words)]
+    if len(times) != 1 or not x_chosen_time_says(times[0], schedule):
+        raise VpubError('schedule_unverified', unconfirmed)
+    if await page.get_by_placeholder("What's happening?", exact=True).input_value() != tx.options['post_text']:
+        raise VpubError('metadata_mismatch', 'X post text differs from the manifest. Nothing was posted.')
+    await tx.submit(page, final)
+    # Leaving the page before Done has finished could cut it off.
+    try:
+        await final.wait_for(state='hidden', timeout=15000)
+    except BrowserError:
+        pass
     await page.wait_for_timeout(3000)
     return tx.save(**await verify_scheduled_x(page, tx.identity, tx.receipt))
 
@@ -232,7 +265,10 @@ async def publish_x(page, tx):
             await description.press('Tab')
         await page.wait_for_timeout(1500)
     # The non-icon detail Post button opens the composer; it does not publish.
-    compose = await unique_visible(form.locator('button[type="button"]').filter(has_text=re.compile('^Post$')), 'Studio compose button')
+    # A field run looked straight after filling the details and found no such button, and a moment later it was there.
+    compose_buttons = form.locator('button[type="button"]').filter(has_text=re.compile('^Post$'))
+    await wait_until(page, lambda: visible(compose_buttons), seconds=30, label='Studio compose button')
+    compose = await unique_visible(compose_buttons, 'Studio compose button')
     await compose.click()
     caption = page.get_by_placeholder("What's happening?", exact=True)
     await caption.wait_for(timeout=20000)

@@ -16,7 +16,8 @@ from shared_chrome import ChromeCase, async_playwright
 OWNER = "owner"
 
 
-def page_html(keep_clock=True):
+def page_html(keep_clock=True, final_after="Done", shows=None, closes=True):
+    """Follows what a field run saw: the calendar has its own Clear and Save, and only its Save changes the buttons below it, sending nothing."""
     months = "".join(f'<option value="{i}">{name}</option>' for i, name in enumerate("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split()))
     years = "".join(f'<option value="{year}">{year}</option>' for year in range(2026, 2032))
     return f"""<!doctype html><body><textarea name="tweetData.text" placeholder="What's happening?">Words</textarea>
@@ -26,6 +27,8 @@ def page_html(keep_clock=True):
         <fieldset class="CalendarNavigation-yearFormSelect"><select id="y">{years}</select></fieldset>
         <div class="Calendar Calendar--fixedHeight" id="days"></div>
         <input type="text" class="clock" id="clock" value="12:24 AM">
+        <button type="button" class="Button Button--small">Clear</button>
+        <button type="button" id="calendar-save" class="Button Button--primary Button--small">Save</button>
       </div>
       <input type="text" name="other" value="not a time">
       <button type="button" id="final" class="Button Button--primary tweetbtn">Post</button>
@@ -39,12 +42,19 @@ def page_html(keep_clock=True):
           const cell = document.createElement('div'); const other = day > count;
           cell.className = 'Calendar-day is-selectable' + (other ? ' is-adjacentMonth' : '');
           cell.innerHTML = '<span class="Calendar-dayText">' + (other ? day - count : day) + '</span>';
-          cell.onclick = () => {{ for (const c of days.children) c.classList.remove('is-rangeStart'); cell.classList.add('is-rangeStart'); final.disabled = false; }};
+          cell.onclick = () => {{ for (const c of days.children) c.classList.remove('is-rangeStart'); cell.classList.add('is-rangeStart'); }};
           days.append(cell);
         }}
       }}
       m.onchange = draw; y.onchange = draw; draw();
-      document.getElementById('open').onclick = () => {{ document.getElementById('panel').hidden = false; final.textContent = 'Save'; final.disabled = true; }};
+      document.getElementById('open').onclick = () => {{ document.getElementById('panel').hidden = false; }};
+      document.getElementById('calendar-save').onclick = () => {{
+        const names = 'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split(' ');
+        const day = document.querySelector('.is-rangeStart .Calendar-dayText').textContent;
+        document.getElementById('open').textContent = {repr(shows) if shows else "names[Number(m.value)] + ' ' + day + ', ' + document.getElementById('clock').value"};
+        document.getElementById('panel').hidden = {'true' if closes else 'false'};
+        final.textContent = {final_after!r};
+      }};
       {'' if keep_clock else "document.getElementById('clock').onchange = e => { e.target.value = '12:24 AM'; };"}
       final.onclick = () => fetch('/save', {{method: 'POST', body: JSON.stringify({{month: m.value, year: y.value, day: document.querySelector('.is-rangeStart .Calendar-dayText').textContent, clock: document.getElementById('clock').value}})}});
       </script>"""
@@ -101,6 +111,13 @@ class OpeningMediaTests(ChromeCase):
     async def asyncTearDown(self):
         await self.browser.close()
         await self.pw.stop()
+
+    async def test_a_post_button_that_is_gone_for_a_moment_after_the_details_is_waited_for(self):
+        """From a field run: one look straight after filling the details found no such button, and a moment later it was there."""
+        self.MEDIA += """<script>document.querySelector('input[placeholder=Title]').addEventListener('change', () => {
+          const post = [...document.querySelectorAll('button[type=button]')].find(button => button.textContent === 'Post');
+          post.hidden = true; setTimeout(() => { post.hidden = false; }, 3000); });</script>"""
+        self.assertEqual("PREVIEW_READY", (await browser_forms.publish_x(self.page, self.Tx()))["state"])
 
     async def test_a_hidden_copy_of_the_name_does_not_stop_the_click(self):
         """From a review: two copies of the name, one hidden, and no click at all in ten minutes."""
@@ -286,15 +303,54 @@ class Calendar(ChromeCase):
             await browser_forms.x_schedule(self.page, datetime(2040, 1, 3, 9, 0, tzinfo=timezone.utc))
         self.assertEqual("schedule_unverified", caught.exception.code)
 
-    async def test_saving_clicks_once_after_a_good_read_back_and_never_posts(self):
+    async def test_only_done_counts_as_the_final_press(self):
+        """From a field run: the calendar's own Save was taken for the final press, so the receipt said it had gone, and nothing had."""
         await self.open()
         tx = StubTx({"schedule": self.next_month_day().isoformat()})
         with patch.object(browser_forms, "verify_scheduled_x", new=AsyncMock(return_value={"state": "SUBMISSION_VERIFIED"})):
             result = await browser_forms.x_send_scheduled(self.page, tx)
         self.assertEqual("SUBMISSION_VERIFIED", result["state"])
+        self.assertEqual(["Done"], tx.pressed)
         self.assertEqual(1, len(self.saved))
         self.assertEqual("3:07 PM", self.saved[0]["clock"])
         self.assertTrue(tx.receipt["schedule"]["at"])
+
+    async def refuses(self, html, code="schedule_unverified", **options):
+        await self.open(html)
+        tx = StubTx({"schedule": self.next_month_day().isoformat(), **options})
+        with self.assertRaises(VpubError) as caught:
+            await browser_forms.x_send_scheduled(self.page, tx)
+        self.assertEqual(code, caught.exception.code)
+        self.assertIn("Nothing was posted", caught.exception.message)
+        self.assertEqual([], tx.pressed)
+        self.assertEqual([], self.saved)
+
+    async def test_a_final_button_that_still_says_post_is_never_pressed(self):
+        """It could post at once, in public, with the time ignored."""
+        await self.refuses(page_html(final_after="Post"))
+
+    async def test_a_final_button_with_any_other_word_is_never_pressed(self):
+        await self.refuses(page_html(final_after="Publish now"))
+
+    async def test_another_time_on_the_button_stops_it(self):
+        await self.refuses(page_html(shows="Jan 1, 1:11 AM"))
+
+    async def test_no_time_on_the_button_stops_it(self):
+        await self.refuses(page_html(shows="Schedule"))
+
+    async def test_a_calendar_that_stays_open_stops_it(self):
+        await self.refuses(page_html(closes=False))
+
+    async def test_words_that_changed_in_the_composer_stop_it(self):
+        await self.refuses(page_html(), code="metadata_mismatch", post_text="Other words")
+
+    def test_the_time_on_the_button_is_read_as_a_date_and_a_time(self):
+        evening, just_after_midnight, just_after_noon = {"date": [2026, 11, 4], "time": [18, 26]}, {"date": [2026, 11, 4], "time": [0, 5]}, {"date": [2026, 11, 4], "time": [12, 5]}
+        for words, schedule, wanted in (("Nov 4, 6:26 PM", evening, True), ("Nov 4, 2026, 6:26 PM", evening, True), ("Nov 4, 2027, 6:26 PM", evening, False), ("Nov 4, 6:26 AM", evening, False),
+                                        ("Nov 5, 6:26 PM", evening, False), ("Dec 4, 6:26 PM", evening, False), ("Schedule", evening, False), ("Done", evening, False), ("Xyz 4, 6:26 PM", evening, False),
+                                        ("Nov 4, 12:05 AM", just_after_midnight, True), ("Nov 4, 12:05 PM", just_after_midnight, False), ("Nov 4, 12:05 PM", just_after_noon, True)):
+            with self.subTest(words=words, schedule=schedule):
+                self.assertIs(wanted, browser_forms.x_chosen_time_says(words, schedule))
 
     async def test_a_schedule_that_fails_saves_nothing(self):
         await self.open(page_html(keep_clock=False))
@@ -307,13 +363,14 @@ class StubTx:
     identity = OWNER
 
     def __init__(self, options):
-        self.options, self.receipt = options, {}
+        self.options, self.receipt, self.pressed = {"post_text": "Words", **options}, {}, []
 
     def save(self, **changes):
         self.receipt.update(changes)
         return dict(self.receipt)
 
     async def submit(self, page, button):
+        self.pressed.append(await button.inner_text())
         await button.click(timeout=5000)
 
 
