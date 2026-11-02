@@ -48,6 +48,7 @@ def form(keep_time=True, shows_box=True, collections=("Recipes", "Recipes more")
 
 class StubTx:
     identity = OWNER
+    resuming = False
 
     def __init__(self, **options):
         self.options = {"title": TITLE, "description": "Words", "tags": [], "visibility": "public", "ai_generated": False, **options}
@@ -442,6 +443,121 @@ class ScheduledCardTests(Base):
         started = asyncio.get_running_loop().time()
         self.assertEqual({}, await browser_backends.works(self.page, "douyin", OWNER))
         self.assertLess(asyncio.get_running_loop().time() - started, 14)
+
+
+COVER_FORM = """<div class="coverControl-a"><span>竖封面3:4</span><div class="cover-b" style="width:10px;height:10px" onclick="document.getElementById('d').hidden = false"><img hidden></div></div>
+  <div role="dialog" id="d" hidden><p>上传封面</p><div class="semi-upload">点击上传文件或拖拽文件到这里<input type="file" class="semi-upload-hidden-input"></div>
+  <button onclick="if (%s) document.getElementById('d').hidden = true">完成</button></div>"""
+
+
+class CoverOnANewPostTests(Base):
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        settled = patch.object(browser_edits, "DOUYIN_COVER_SETTLE_SECONDS", 0)
+        settled.start()
+        self.addCleanup(settled.stop)
+        self.image = Path(tempfile.gettempdir()) / "douyin-cover-test.jpg"
+        self.image.write_bytes(b"synthetic")
+        self.addCleanup(self.image.unlink, True)
+        self.tx = StubTx()
+        self.tx.cover = lambda role="landscape": str(self.image) if role == "portrait" else None
+
+    async def post(self, closes="true"):
+        await self.open(form() + COVER_FORM % closes)
+        with patch.object(browser_forms, "finish", new=AsyncMock(return_value={"state": "SUBMITTED_UNVERIFIED"})):
+            return await browser_forms.finish_douyin_form(self.page, self.tx, {})
+
+    async def test_a_cover_goes_on_and_the_post_goes_out_once(self):
+        await self.post()
+        self.assertEqual("UI_ACCEPTED", self.tx.receipt["portrait_cover"]["state"])
+        self.assertEqual(["publish"], [write["word"] for write in self.writes])
+
+    async def test_its_window_gets_as_long_as_an_edits_and_then_nothing_goes_out(self):
+        """From a field run's first real post: a 30-second wait after 完成 ended it, with the video uploaded and nothing pressed."""
+        with patch.object(browser_edits, "DOUYIN_COVER_SECONDS", 1), self.assertRaises(VpubError) as caught:
+            await self.post("false")
+        self.assertEqual("cover_not_ready", caught.exception.code)
+        self.assertIn("nothing was published", caught.exception.message)
+        self.assertEqual([], self.writes)
+
+    def test_that_window_has_the_edit_routes_three_minutes(self):
+        self.assertEqual(180, browser_edits.DOUYIN_COVER_SECONDS)
+
+    async def test_a_press_waits_as_long_as_the_one_that_went_through(self):
+        """From field runs: 完成 hung at about 11 seconds after the file and went through at about 73."""
+        waits, real = [], self.page.wait_for_timeout
+
+        async def noted(ms):
+            waits.append(ms)
+            await real(min(ms, 50))
+        with patch.object(browser_edits, "DOUYIN_COVER_SETTLE_SECONDS", 75), patch.object(self.page, "wait_for_timeout", noted):
+            await self.post()
+        self.assertIn(75000, waits)
+
+    async def test_a_stop_holds_the_press(self):
+        await self.open(form() + COVER_FORM % "true")
+        atomic_json(home() / "STOP.json", {"reason": "A person paused it."})
+        with self.assertRaises(VpubError) as caught:
+            await browser_forms.finish_douyin_form(self.page, self.tx, {})
+        self.assertEqual("stopped", caught.exception.code)
+        self.assertEqual([], self.writes)
+
+
+class ResumeFromKeptDraftTests(Base):
+    """A field run's first real post stopped at its cover, with the video uploaded and nothing pressed."""
+    OFFER = """<!doctype html><meta charset="utf-8"><body><input type=file><button onclick="location.href='/creator-micro/content/post/video'">继续编辑</button><button>放弃</button>"""
+
+    def stopped(self, **receipt):
+        tx = StubTx()
+        tx.resuming = True
+        tx.media = lambda: "clip.mp4"
+        tx.receipt = {"media_selected": True, "before_ids": [], "draft_offered_before": False, **receipt}
+        return tx
+
+    async def resume(self, tx, upload_page=None, html=None):
+        self.upload_page = upload_page or self.OFFER
+        self.html = html or form() + "<span>重新上传</span>"
+        with patch.object(browser_forms, "finish", new=AsyncMock(return_value={"state": "SUBMITTED_UNVERIFIED"})), patch.object(browser_forms, "works", new=AsyncMock(return_value={})), \
+                patch.object(browser_forms, "upload_file", new=AsyncMock(side_effect=RuntimeError("selected"))) as self.selected:
+            return await browser_forms.publish_douyin(self.page, tx)
+
+    async def test_it_goes_back_into_its_form_and_publishes_once_with_no_second_upload(self):
+        tx = self.stopped()
+        self.assertEqual("SUBMITTED_UNVERIFIED", (await self.resume(tx))["state"])
+        self.selected.assert_not_called()
+        self.assertEqual(["publish"], [write["word"] for write in self.writes])
+        self.assertEqual("https://creator.douyin.com/creator-micro/content/post/video", tx.receipt["draft_url"])
+
+    async def test_a_draft_with_another_title_is_left_as_it_is(self):
+        with self.assertRaises(VpubError) as caught:
+            await self.resume(self.stopped(), html=form().replace(f'value="{TITLE}"', 'value="Another"') + "<span>重新上传</span>")
+        self.assertEqual("wrong_work", caught.exception.code)
+        self.assertEqual([], self.writes)
+
+    async def test_a_draft_that_was_there_before_this_attempt_is_not_opened(self):
+        with self.assertRaises(VpubError) as caught:
+            await self.resume(self.stopped(draft_offered_before=None))
+        self.assertEqual("existing_draft_requires_attention", caught.exception.code)
+        self.assertEqual("https://creator.douyin.com/creator-micro/content/upload", self.page.url)
+
+    async def test_words_the_draft_lost_are_typed_again_before_the_press(self):
+        html = form().replace(">Words</div>", ">Something else</div>") + "<span>重新上传</span>"
+        await self.resume(self.stopped(), html=html)
+        self.assertEqual(["publish"], [write["word"] for write in self.writes])  # The form's own check holds the press if they still differ.
+
+    async def test_with_nothing_on_offer_the_file_goes_up_again(self):
+        with self.assertRaises(RuntimeError):
+            await self.resume(self.stopped(), upload_page="<!doctype html><body><input type=file>")
+        self.selected.assert_awaited_once()
+
+    async def test_a_first_attempt_never_goes_near_a_kept_draft(self):
+        tx = StubTx()
+        tx.media = lambda: "clip.mp4"
+        tx.receipt = {"media_selected": False}
+        with self.assertRaises(VpubError) as caught:
+            await self.resume(tx)
+        self.assertEqual("existing_draft_requires_attention", caught.exception.code)
+        self.selected.assert_not_called()
 
 
 class KeptDraftTests(Base):

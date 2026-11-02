@@ -127,11 +127,7 @@ async def execute(page, platform, identity, payload):
             area=await unique_visible(dialog.locator('.semi-upload').filter(has_text='点击上传文件或拖拽文件到这里'),'cover file picker')
             if file_sha(patch['portrait'])!=patch['portrait_sha256']: raise VpubError('source_changed','Shared portrait changed before upload.')
             await choose_file(page,area.locator('input.semi-upload-hidden-input'),patch['portrait'])
-            # Field runs saw the new image in the crop window this long after choosing it. Nobody has seen it any sooner.
-            await page.wait_for_timeout(3000)
-            # In field runs 完成 hung when pressed about 11 seconds after the file and went through at about 73, on a page whose fonts take about 25. Why isn't known, and if it isn't this, the wait costs little.
-            await look_until(page,lambda: douyin_fonts_loaded(page),DOUYIN_FONT_SECONDS*1000,step=1000)
-            fonts=await douyin_fonts(page)
+            fonts=await douyin_cover_settles(page)
             # That wait can be long, and a review found 完成 pressed with a stop in place.
             await risk_check(page)
             stop_check(platform)
@@ -166,6 +162,14 @@ DOUYIN_SAVE_SECONDS=60
 DOUYIN_COVER_SECONDS=180
 DOUYIN_PICTURE_SECONDS=45
 DOUYIN_FONT_SECONDS=60
+DOUYIN_COVER_SETTLE_SECONDS=75
+
+
+async def douyin_cover_settles(page):
+    """In field runs 完成 hung when pressed about 11 seconds after the file and went through at about 73, on a page whose fonts take about 25. Why isn't known, and if it isn't this, the wait costs little. Says how the fonts stood."""
+    await page.wait_for_timeout(DOUYIN_COVER_SETTLE_SECONDS*1000)
+    await look_until(page,lambda: douyin_fonts_loaded(page),DOUYIN_FONT_SECONDS*1000,step=1000)
+    return await douyin_fonts(page)
 
 
 async def douyin_fonts(page):

@@ -30,7 +30,7 @@ vpub browser begin RECEIPT_KEY --identity OBSERVED_ACCOUNT
 | --- | --- | --- |
 | B站 | 透過 B站上傳頁自己送出的請求儲存草稿，並從它的草稿清單讀回 | `DRAFT_SAVED` |
 | YouTube | YouTube Studio 裡未發布的草稿，停在最後的儲存之前 | `PREVIEW_READY` |
-| 抖音 | 按一次抖音自己的「暂存离开」；上傳頁接著可能會在「继续编辑」下提供留下的草稿，CrossCast 只看不按（入口說不出是誰的草稿，打開它也可能把草稿用掉） | `PREVIEW_READY` |
+| 抖音 | 按一次抖音自己的「暂存离开」；上傳頁接著可能會在「继续编辑」下提供留下的草稿，試跑只看不按（入口說不出是誰的草稿，打開它也可能把草稿用掉）。在最終按下前停下的嘗試，`vpub resume` 會打開它，前提是這次嘗試開始前頁面沒有提供草稿，且打開後標題必須與這次嘗試完全相同，否則停下 | `PREVIEW_READY` |
 | Instagram | 未發布的預覽，關閉瀏覽器後不一定還在 | `PREVIEW_READY` |
 | X | 發文編輯器，媒體已存進 Media Studio；不是已確認保存的草稿 | `PREVIEW_READY` |
 

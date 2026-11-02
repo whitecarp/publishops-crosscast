@@ -211,6 +211,9 @@ class DouyinPageTests(SharedBrowser):
         self.portrait = self.root / "portrait.jpg"
         self.portrait.write_bytes(b"synthetic")
         self.path = self.root / "edit.json"
+        settled = patch.object(browser_edits, "DOUYIN_COVER_SETTLE_SECONDS", 0)
+        settled.start()
+        self.addCleanup(settled.stop)
 
     async def handle(self, route):
         url = urlsplit(route.request.url)
@@ -337,8 +340,9 @@ class DouyinPageTests(SharedBrowser):
         self.assertEqual([("/cover", "EDIT_SUBMITTING")], self.saves)
 
     async def test_the_new_image_gets_as_long_as_it_was_seen_to_need_before_it_is_finished(self):
-        await self.cover()
-        self.page.wait_for_timeout.assert_any_await(3000)
+        with patch.object(browser_edits, "DOUYIN_COVER_SETTLE_SECONDS", 75):
+            await self.cover()
+        self.page.wait_for_timeout.assert_any_await(75000)
 
     async def test_a_saved_covers_picture_waits_for_the_pages_fonts(self):
         """From a field run: a screenshot of this page ran out of time waiting for its fonts, which a later read found take about 25 seconds, longer than this used to wait."""

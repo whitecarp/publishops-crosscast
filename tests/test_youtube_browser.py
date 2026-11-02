@@ -478,10 +478,32 @@ class ResumeTests(Temporary):
         self.assertEqual("audience_unverified", result["error"]["code"])
         self.assertEqual(1, len(page.selected_files()))
         again = FakeStudio()
-        with self.assertRaises(VpubError) as caught:
-            asyncio.run(execute(again, "youtube", CHANNEL, {"action": "resume", "plan": self.plan()}))
-        self.assertEqual("inspect_existing_draft", caught.exception.code)
+        with patch("video_publisher.youtube_studio.drafts_named", new=AsyncMock(return_value=[])):
+            result = asyncio.run(execute(again, "youtube", CHANNEL, {"action": "resume", "plan": self.plan()}))
+        self.assertEqual("inspect_existing_draft", result["error"]["code"])
         self.assertEqual([], again.selected_files())
+
+    def stopped_after_its_id(self):
+        tx = Transaction("youtube", CHANNEL, self.plan())
+        tx.save(media_selected=True, upload_filename="crosscast-abc.mp4", draft_id=VIDEO, state="PREPARATION_INCOMPLETE", phase="blocked")
+
+    def test_a_draft_that_stopped_after_its_id_is_finished_from_its_own_row(self):
+        self.stopped_after_its_id()
+        again = FakeStudio()
+        with patch("video_publisher.youtube_studio.drafts_named", new=AsyncMock(return_value=[again.locator("ytcp-video-row")])) as named:
+            result = asyncio.run(execute(again, "youtube", CHANNEL, {"action": "resume", "plan": self.plan()}))
+        named.assert_awaited_once_with(again, CHANNEL, {"crosscast-abc", "My title"})
+        self.assertEqual(("SUBMISSION_VERIFIED", VIDEO), (result["state"], result["id"]))
+        self.assertEqual(([], 1), (again.selected_files(), len(again.clicks("#done-button"))))
+
+    def test_a_draft_with_another_videos_id_is_left_as_it_is(self):
+        self.stopped_after_its_id()
+        again = FakeStudio(link="https://youtu.be/aBcDeFgHiJk")
+        with patch("video_publisher.youtube_studio.drafts_named", new=AsyncMock(return_value=[again.locator("ytcp-video-row")])):
+            result = asyncio.run(execute(again, "youtube", CHANNEL, {"action": "resume", "plan": self.plan()}))
+        self.assertEqual("wrong_work", result["error"]["code"])
+        self.assertEqual([], [entry for entry in again.log if entry[0] == "fill"])
+        self.assertEqual([], again.clicks("#done-button"))
 
     def stopped_before_its_id(self):
         tx = Transaction("youtube", CHANNEL, self.plan())
@@ -492,7 +514,7 @@ class ResumeTests(Temporary):
         tx = Transaction("youtube", CHANNEL, self.plan(), resume=True)
         tx.save(hint="Inspect the existing draft", blocked_phase="uploading", error={"code": "processing_timeout"})
         again = FakeStudio()
-        with patch("video_publisher.youtube_studio.uploads_named", new=AsyncMock(return_value=[])):
+        with patch("video_publisher.youtube_studio.drafts_named", new=AsyncMock(return_value=[])):
             result = asyncio.run(execute(again, "youtube", CHANNEL, {"action": "resume", "plan": self.plan()}))
         self.assertEqual("SUBMISSION_VERIFIED", result["state"])
         self.assertEqual(1, len(again.selected_files()))
@@ -502,9 +524,9 @@ class ResumeTests(Temporary):
         """From a field run: its first vertical video stopped before its ID, and was in Studio as a draft named after the file."""
         self.stopped_before_its_id()
         again = FakeStudio()
-        with patch("video_publisher.youtube_studio.uploads_named", new=AsyncMock(return_value=[again.locator("ytcp-video-row")])) as named:
+        with patch("video_publisher.youtube_studio.drafts_named", new=AsyncMock(return_value=[again.locator("ytcp-video-row")])) as named:
             result = asyncio.run(execute(again, "youtube", CHANNEL, {"action": "resume", "plan": self.plan()}))
-        named.assert_awaited_once_with(again, CHANNEL, "crosscast-abc")
+        named.assert_awaited_once_with(again, CHANNEL, {"crosscast-abc"})
         self.assertEqual(("SUBMISSION_VERIFIED", VIDEO), (result["state"], result["id"]))
         self.assertEqual([], again.selected_files())
         self.assertEqual((1, 1), (len(again.clicks("edit-draft")), len(again.clicks("#done-button"))))
@@ -513,7 +535,7 @@ class ResumeTests(Temporary):
         self.stopped_before_its_id()
         again = FakeStudio()
         row = again.locator("ytcp-video-row")
-        with patch("video_publisher.youtube_studio.uploads_named", new=AsyncMock(return_value=[row, row])):
+        with patch("video_publisher.youtube_studio.drafts_named", new=AsyncMock(return_value=[row, row])):
             result = asyncio.run(execute(again, "youtube", CHANNEL, {"action": "resume", "plan": self.plan()}))
         self.assertEqual(("PREPARATION_INCOMPLETE", "inspect_existing_draft"), (result["state"], result["error"]["code"]))
         self.assertEqual(([], []), (again.selected_files(), again.clicks("edit-draft")))
@@ -521,7 +543,7 @@ class ResumeTests(Temporary):
 
     def test_a_first_attempt_never_looks_for_a_draft(self):
         page = FakeStudio()
-        with patch("video_publisher.youtube_studio.uploads_named", new=AsyncMock(return_value=[])) as named:
+        with patch("video_publisher.youtube_studio.drafts_named", new=AsyncMock(return_value=[])) as named:
             asyncio.run(execute(page, "youtube", CHANNEL, {"action": "publish", "plan": self.plan()}))
         named.assert_not_awaited()
 

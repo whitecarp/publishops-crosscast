@@ -310,7 +310,7 @@ class ContentListTests(Browser):
     async def test_a_stopped_uploads_draft_is_opened_from_the_list_it_is_on(self):
         """From a field read: under Shorts, with no link to an edit page, and the file's hyphen written as a space."""
         other = DRAFT.replace("e1bc62c1f38c4234", "aaaaaaaaaaaaaaaa")
-        self.site.lists = {"upload": content_row(VIDEO, "Wide"), "short": other + DRAFT}
+        self.site.lists = {"upload": content_row(VIDEO, "crosscast e1bc62c1f38c4234"), "short": other + DRAFT}
         tx = SimpleNamespace(identity=CHANNEL, receipt={"upload_filename": "crosscast-e1bc62c1f38c4234.mp4"})
         self.assertTrue(await browser_forms.yt_reopen_stopped_upload(self.page, tx))
         self.assertEqual("crosscast e1bc62c1f38c4234", await self.page.evaluate("window.opened", isolated_context=False))

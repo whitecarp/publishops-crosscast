@@ -508,11 +508,36 @@ async def publish_instagram(page, tx):
     return await finish(page, tx, before)
 
 
+async def douyin_reopen_kept_draft(page, tx, caption):
+    """Back into this attempt's form, if the upload page offers a kept draft. It's this attempt's if the page offered none before the attempt began, and the form comes back with its exact title. Returns whether it got back in. With nothing on offer the file goes up again, since nothing was ever pressed and there's nothing else to go back to."""
+    await page.goto('https://creator.douyin.com/creator-micro/content/upload', wait_until='domcontentloaded', timeout=60000)
+    await page.locator('input[type=file]').wait_for(state='attached', timeout=20000)
+    if not await douyin_offers_draft(page, 10):
+        return False
+    if tx.receipt.get('draft_offered_before') is not False:
+        raise VpubError('existing_draft_requires_attention', "Douyin's upload page is offering a kept draft that was there before this attempt, so it wasn't opened.", "Continue or discard that draft on Douyin's upload page yourself, then run this again.")
+    offer = await unique_visible(page.get_by_text('继续编辑', exact=True), 'Douyin 继续编辑')
+    await offer.click(timeout=15000)
+    await page.wait_for_url(re.compile(r'/content/(publish|post/video)'), timeout=60000)
+    title = page.locator('input[placeholder*="填写作品标题"]')
+    await look_until(page, title.input_value, 15000)
+    if await title.input_value() != tx.options['title']:
+        raise VpubError('wrong_work', "The draft Douyin reopened isn't titled as this attempt is, so nothing was changed.", "Look at it on Douyin's upload page yourself.")
+    editor = await unique_visible(page.locator('[contenteditable=true]'), 'Douyin description')
+    if douyin_card_words(await editor.inner_text()) != douyin_card_words(caption):
+        await douyin_type_caption(page, editor, caption)
+    await page.get_by_text('重新上传', exact=True).wait_for(state='visible', timeout=120000)
+    tx.save(phase='uploaded', draft_url=page.url)
+    return True
+
+
 async def publish_douyin(page, tx):
-    before = await works(page, 'douyin', tx.identity)
     caption = douyin_caption(tx.options['description'], tx.options['tags'])
     if len(caption.encode('utf-16-le')) // 2 > 1000:
         raise VpubError('description_too_long', 'Douyin description plus hashtags exceeds 1000 UTF-16 units. No video uploaded.')
+    if tx.resuming and tx.receipt['media_selected'] and await douyin_reopen_kept_draft(page, tx, caption):
+        return await finish_douyin_form(page, tx, tx.receipt['before_ids'])
+    before = await works(page, 'douyin', tx.identity)
     same_title = await douyin_cards_titled(page, tx.options['title'], caption)
     tx.save(before_ids=list(before), expected_text=tx.options['title'], expected_caption=caption, same_title_cards_before=len(same_title))
     if tx.options.get('schedule'):
@@ -621,9 +646,12 @@ async def finish_douyin_form(page, tx, before):
         await dialog.get_by_text('上传封面', exact=True).wait_for(timeout=20000)
         area = await unique_visible(dialog.locator('.semi-upload').filter(has_text='点击上传文件或拖拽文件到这里'), 'Douyin cover upload area')
         await choose_file(page, area.locator('input.semi-upload-hidden-input'), path)
-        await page.wait_for_timeout(1500)
+        from .browser_edits import DOUYIN_COVER_SECONDS, douyin_cover_settles, douyin_fonts
+        fonts = await douyin_cover_settles(page)
         done = dialog.get_by_role('button', name='完成', exact=True)
         await wait_until(page, lambda: enabled(done), seconds=90, label='Douyin cover ready')
+        await risk_check(page)
+        stop_check('douyin')
         await done.click()
         # First landscape save may offer a portrait upsell. Close it so the
         # explicit portrait asset below is applied through its own control.
@@ -631,7 +659,12 @@ async def finish_douyin_form(page, tx, before):
         later = await visible(page.get_by_role('button', name='暂不设置', exact=True))
         if later:
             await later.click()
-        await dialog.wait_for(state='hidden', timeout=30000)
+        from patchright.async_api import TimeoutError as BrowserTimeout
+        try:
+            await dialog.wait_for(state='hidden', timeout=DOUYIN_COVER_SECONDS * 1000)
+        except BrowserTimeout:
+            # A field run's first real post stopped here on a 30-second wait, as the edit route's window had stayed for over three minutes.
+            raise VpubError('cover_not_ready', f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so nothing was published. Its fonts were {fonts} at the press and are {await douyin_fonts(page)} now.", 'vpub resume tries again from the draft Douyin kept.') from None
         saved = await control.locator('img').count() > 0
         if not saved:
             raise VpubError('cover_unverified', 'Cover editor closed without a saved cover preview.')
@@ -712,12 +745,15 @@ async def yt_upload_look(page):
 
 
 async def yt_reopen_stopped_upload(page, tx):
-    """Back into this file's own upload dialog, if an upload that stopped before its ID left a draft. A field run's did, listed under its file's name with a button to edit it. Returns whether it did. The file goes up again only if Studio lists nothing of it."""
-    from .youtube_studio import uploads_named
-    rows = await uploads_named(page, tx.identity, Path(tx.receipt['upload_filename']).stem)
+    """Back into this attempt's own upload dialog, if it stopped before its final Save and left a draft. A field run's first vertical video did, listed under its file's name with a button to edit it. Once a title has gone in, the draft goes by that. Returns whether it got back in. The file goes up again only if this attempt has no video ID and Studio lists nothing of it."""
+    from .youtube_studio import drafts_named
+    has_id = tx.receipt.get('draft_id')
+    rows = await drafts_named(page, tx.identity, {Path(tx.receipt['upload_filename']).stem, tx.options['title']} if has_id else {Path(tx.receipt['upload_filename']).stem})
     if len(rows) > 1:
-        raise VpubError('inspect_existing_draft', 'Studio lists more than one draft of this file, so nothing was opened or uploaded.', 'Keep the one you want in YouTube Studio, then run vpub resume again.')
+        raise VpubError('inspect_existing_draft', 'Studio lists more than one draft of this attempt, so nothing was opened or uploaded.', 'Keep the one you want in YouTube Studio, then run vpub resume again.')
     if not rows:
+        if has_id:
+            raise VpubError('inspect_existing_draft', "Studio lists no draft of this attempt's video, so nothing was opened or uploaded.", 'Look for it in YouTube Studio. Never upload it again.')
         return False
     button = await unique_visible(rows[0].get_by_text(YT_EDIT_DRAFT), 'YouTube Edit draft button')
     await button.click(timeout=15000)
@@ -910,6 +946,8 @@ async def publish_youtube(page, tx):
         if failure.code != 'processing_timeout':
             raise
         raise VpubError(failure.code, f'{failure.message} Last look: {await yt_upload_look(page)}.', failure.hint) from None
+    if tx.receipt.get('draft_id') not in (None, video_id):
+        raise VpubError('wrong_work', "The draft Studio opened has another video ID from this attempt's, so nothing was changed.")
     tx.save(phase='editing', draft_id=video_id, draft_url=f'https://studio.youtube.com/video/{video_id}/edit')
     title = await unique_visible(title_box, 'YouTube title')
     await title.fill(options['title'])

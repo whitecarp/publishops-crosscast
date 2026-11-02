@@ -101,7 +101,7 @@ After the first sign-in, the CLI does the uploading itself: Bilibili through bil
 
 ### 🔁 Pick up where it stopped
 
-If an upload is interrupted, `vpub resume` continues the original task: X continues from the Studio media it already saved, and YouTube resumes the same upload session with the paid add-on. YouTube's free route stays in Studio: an upload that stopped before its video ID is reopened from the draft it left there, and it goes up again only if Studio lists nothing of it. Once it has an ID, what was uploaded stays in Studio as a draft. A submission with an unclear result is never clicked again automatically. `vpub status` lists what is unfinished with the exact next command, using local records only, and `vpub cleanup` frees the disk space taken by copies of finished videos.
+If an upload is interrupted, `vpub resume` continues the original task: X continues from the Studio media it already saved, and YouTube resumes the same upload session with the paid add-on. YouTube's free route and Douyin go back to the draft an upload left, and finish it from there. A file goes up again only if there's no draft of it and YouTube never gave it an ID. A submission with an unclear result is never clicked again automatically. `vpub status` lists what is unfinished with the exact next command, using local records only, and `vpub cleanup` frees the disk space taken by copies of finished videos.
 
 ### 🔍 A receipt for every step
 

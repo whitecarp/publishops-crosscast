@@ -70,6 +70,12 @@ class BrowserSafetyTests(unittest.TestCase):
             result=asyncio.run(execute(AsyncMock(),'x','tester',{'action':'resume','plan':self.plan}))
         verify.assert_awaited_once();self.assertEqual('SUBMITTED_UNVERIFIED',result['state'])
 
+    def test_resume_on_douyin_goes_to_its_form_to_look_for_the_kept_draft(self):
+        tx=Transaction('douyin','tester',self.plan);tx.save(media_selected=True,upload_filename='x.mp4',before_ids=[])
+        with patch('video_publisher.browser_forms.publish_douyin',new=AsyncMock(return_value={'state':'SUBMITTED_UNVERIFIED'})) as publish:
+            asyncio.run(execute(AsyncMock(),'douyin','tester',{'action':'resume','plan':self.plan}))
+        publish.assert_awaited_once()
+
     def test_selected_instagram_media_cannot_be_uploaded_again_by_resume(self):
         tx=Transaction('instagram','tester',self.plan);tx.save(media_selected=True)
         with self.assertRaises(VpubError) as e:

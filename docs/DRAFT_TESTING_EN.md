@@ -30,7 +30,7 @@ With the default routes, `vpub publish` does the whole run itself and stops befo
 | --- | --- | --- |
 | Bilibili | A draft saved through Bilibili's own upload requests and read back from its draft list | `DRAFT_SAVED` |
 | YouTube | An unpublished draft in YouTube Studio, before the final Save | `PREVIEW_READY` |
-| Douyin | Douyin's own 暂存离开 pressed once; the upload page may then offer a kept draft under 继续编辑, which CrossCast only looks at (it can't show whose draft that is, and opening it may use it up) | `PREVIEW_READY` |
+| Douyin | Douyin's own 暂存离开 pressed once; the upload page may then offer a kept draft under 继续编辑, which a dry run only looks at (it can't show whose draft that is, and opening it may use it up). `vpub resume` of an attempt that stopped before its final press does open it, if the page offered none before the attempt began, and stops unless it comes back with the attempt's exact title | `PREVIEW_READY` |
 | Instagram | The unpublished preview, which may not survive closing the browser | `PREVIEW_READY` |
 | X | The post composer, with the media saved in Media Studio; not a confirmed saved draft | `PREVIEW_READY` |
 

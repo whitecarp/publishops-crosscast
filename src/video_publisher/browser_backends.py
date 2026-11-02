@@ -791,7 +791,7 @@ async def execute(page, platform, identity, payload):
     if tx.receipt['final_submit_attempted']:
         result=await verify(page, platform, identity, tx.receipt)
         return tx.save(**await complete_pending_chapters(page,platform,identity,result))
-    if action == 'resume' and tx.receipt['media_selected'] and platform != 'x' and (platform != 'youtube' or tx.receipt.get('draft_id')):
+    if action == 'resume' and tx.receipt['media_selected'] and platform not in {'x', 'youtube', 'douyin'}:
         raise VpubError('inspect_existing_draft', 'An upload already started. Resume requires inspecting that existing draft; uploading again is prohibited.')
     for stale in ('hint', 'blocked_phase'):
         tx.receipt.pop(stale, None)

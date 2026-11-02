@@ -202,12 +202,12 @@ async def works(page, identity):
     return items
 
 
-async def uploads_named(page, identity, file_name):
-    """The rows Studio named after this file, with the page left on their list. A field read found a stopped upload's draft under Shorts, with its file's hyphen written as a space."""
-    wanted = file_name.replace("-", " ")
+async def drafts_named(page, identity, names):
+    """The rows of drafts with one of these names, with the page left on their list. A field read found a stopped upload's draft under Shorts, with no link to an edit page and its file's hyphen written as a space."""
+    wanted = {normalize(name).replace("-", " ") for name in names}
     for tab in STUDIO_LISTS:
         rows = await content_rows(page, identity, tab)
-        found = [at for at, row in enumerate(await rows.evaluate_all(WORK_ROWS)) if normalize(row["title"]).replace("-", " ") == wanted]
+        found = [at for at, row in enumerate(await rows.evaluate_all(WORK_ROWS)) if not row["href"] and normalize(row["title"]).replace("-", " ") in wanted]
         if found:
             return [rows.nth(at) for at in found]
     return []
