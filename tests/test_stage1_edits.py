@@ -302,6 +302,35 @@ class DouyinPageTests(SharedBrowser):
         self.assertEqual([], self.saves)
         self.assertFalse(self.path.exists())
 
+    async def test_a_cover_hang_says_how_many_windows_show_and_what_to_check_with_no_page_words(self):
+        """From a review: nothing here says the remote cover didn't change, since nobody can tell."""
+        self.cover_window_closes = False
+        with patch.object(browser_edits, "DOUYIN_COVER_SECONDS", 1), self.assertRaises(VpubError) as caught:
+            await self.cover()
+        self.assertIn("1 of 1 windows on the page are showing", caught.exception.message)
+        self.assertIn("isn't known", caught.exception.hint)
+        self.assertNotIn("Nothing changed", caught.exception.hint)
+
+    async def test_another_window_opening_does_not_answer_for_the_cover_window(self):
+        """From a review: the wait was on an index among the page's windows, so it could land on another."""
+        async def another_opens_at_the_press(page):
+            await page.evaluate("document.addEventListener('click', () => document.body.insertAdjacentHTML('afterbegin', '<div role=dialog hidden>Another</div>'), {once: true, capture: true})")
+            return "loaded"
+        self.cover_window_closes = False
+        with patch.object(browser_edits, "douyin_cover_settles", another_opens_at_the_press), patch.object(browser_edits, "DOUYIN_COVER_SECONDS", 1), self.assertRaises(VpubError) as caught:
+            await self.cover()
+        self.assertEqual("cover_not_ready", caught.exception.code)
+
+    async def test_words_that_change_while_a_cover_is_set_hold_the_save(self):
+        """A cover's Save sends the whole form, so a review asked that its words be the ones it found."""
+        async def words_change(page):
+            await page.evaluate("document.querySelector('[contenteditable]').innerText = 'Other words'")
+            return "loaded"
+        with patch.object(browser_edits, "douyin_cover_settles", words_change), self.assertRaises(VpubError) as caught:
+            await self.cover()
+        self.assertEqual("wrong_work", caught.exception.code)
+        self.assertEqual([], self.saves)
+
     async def test_a_stop_during_the_font_wait_holds_finishing_the_cover(self):
         """From a review: that wait can be long, and 完成 was pressed with a stop in place."""
         async def fonts(page):

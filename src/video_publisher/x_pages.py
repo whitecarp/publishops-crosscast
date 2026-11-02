@@ -40,7 +40,9 @@ POST_FIELDS = r"""article => {
   const earlier = article.querySelector('[data-testid="tweetText"], [data-testid="User-Name"]');
   const block = earlier ? [...article.querySelectorAll('[data-testid="tweetText"]')].find(outside)
     : [...article.querySelectorAll('div[dir="auto"]')].find(e => outside(e) && !e.querySelector('a[href*="/status/"]') && e.innerText.trim());
-  const videos = [...article.querySelectorAll('video, [data-testid="videoPlayer"], [data-testid="videoComponent"]')].filter(e => !e.closest('[role="link"]'));
+  const ownId = own?.getAttribute('href').match(/\/status\/(\d+)/)?.[1];
+  const linkedElsewhere = e => { const a = e.closest('a[href*="/status/"]'); return a && a.getAttribute('href').match(/\/status\/(\d+)/)?.[1] !== ownId; };
+  const videos = [...article.querySelectorAll('video, [data-testid="videoPlayer"], [data-testid="videoComponent"]')].filter(e => !e.closest('[role="link"]') && !linkedElsewhere(e));
   return {href: own ? own.getAttribute('href') : null, text: block ? block.innerText : null,
           time: own?.querySelector('time')?.getAttribute('datetime') || null,
           video: videos.length > 0,

@@ -90,7 +90,7 @@ def call_worker(payload, timeout):
         try:
             run([sys.executable, "-m", "video_publisher.browser_worker", "--job", str(request)], timeout)
         except subprocess.TimeoutExpired:
-            raise VpubError("browser_timeout", "Browser command timed out; existing receipts are retained.", "Inspect the existing draft/work; do not repeat an upload or final submit.")
+            raise VpubError("browser_timeout", "Browser command timed out; existing receipts are retained.", "Read the attempt's receipt, and look on the platform before running it again. Whether it kept a draft isn't known. Do not repeat an upload or final submit.")
         if not answer.exists():
             raise VpubError("browser_error", "Browser command returned no valid JSON receipt.")
         return read_json(answer)

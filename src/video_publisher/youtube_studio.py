@@ -888,8 +888,12 @@ async def edit(page, payload, save, submit):
         if file_sha(patch["cover"]) != patch["cover_sha256"]:
             raise VpubError("source_changed", "The cover changed before upload; nothing changed.")
         inputs = page.locator("input#file-loader")
-        if not await inputs.count():
+        found = await inputs.count()
+        if not found:
             raise VpubError("cover_unavailable", "YouTube offers no custom thumbnail on this channel yet; nothing changed.", "Custom thumbnails need a verified channel.")
+        # A field read found one, taking images. Anything else could send the picture somewhere it shouldn't go.
+        if found != 1 or "image/" not in (await inputs.first.get_attribute("accept") or ""):
+            raise VpubError("layout_changed", "Studio's thumbnail upload isn't the one image box it should be, so nothing changed.", "Inspect the page before trying again.")
         await choose_file(page, inputs.first, patch["cover"])
         changes = None
     else:

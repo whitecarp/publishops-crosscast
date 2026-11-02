@@ -93,7 +93,7 @@ class Element:
         return ""
 
     async def get_attribute(self, name):
-        return {"aria-pressed": self.page.pressed, "comment-id": "c1"}.get(name)
+        return {"aria-pressed": self.page.pressed, "comment-id": "c1", "accept": getattr(self.page, "file_accept", "image/jpeg,image/png")}.get(name)
 
     async def evaluate(self, script):
         if script == "e => e.hasAttribute('disabled')":
@@ -403,6 +403,13 @@ class EditTests(Temporary):
         result = self.run_edit(page, {"cover": str(cover), "cover_sha256": file_sha(cover)})
         self.assertIn(("files", "input#file-loader", str(cover)), page.log)
         self.assertFalse(result["cover"]["remote_pixels_verified"])
+        # From a review: the first such box on the page was taken with nothing to say it takes images. A field read found one that does.
+        other = FakePage()
+        other.file_accept = "video/*"
+        with self.assertRaises(VpubError) as caught:
+            self.run_edit(other, {"cover": str(cover), "cover_sha256": file_sha(cover)})
+        self.assertEqual("layout_changed", caught.exception.code)
+        self.assertNotIn(("files", "input#file-loader", str(cover)), other.log)
         # A pressed Save is not a saved thumbnail, so this never reads as confirmed.
         self.assertEqual("EDIT_SUBMITTED_UNVERIFIED", result["state"])
         cover.write_bytes(b"changed")

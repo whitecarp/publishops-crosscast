@@ -146,7 +146,7 @@ def worker_call(payload, timeout):
                             timeout=timeout,
                             env=dict(os.environ, PYTHONIOENCODING="utf-8"))
     except subprocess.TimeoutExpired:
-        raise VpubError("browser_timeout", "Browser command timed out; existing receipts are retained.", "Inspect the existing draft/work; do not repeat an upload or final submit.")
+        raise VpubError("browser_timeout", "Browser command timed out; existing receipts are retained.", "Read the attempt's receipt, and look on the platform before running it again. Whether it kept a draft isn't known. Do not repeat an upload or final submit.")
     try:
         return json.loads(cp.stdout)
     except ValueError:

@@ -179,6 +179,16 @@ class FileGoingUpTests(SharedBrowser):
         self.assertIsNone(await self.chosen())
 
 
+class FakeForm:
+    """A form whose download link says what a test needs."""
+
+    def __init__(self, href):
+        self.href = href
+
+    def locator(self, selector):
+        return type("Link", (), {"first": type("One", (), {"get_attribute": AsyncMock(return_value=self.href)})()})()
+
+
 class XFormTests(Form):
     platform = "x"
 
@@ -202,6 +212,7 @@ class XFormTests(Form):
         self.final_class = ""
         self.final_goes = ""
         self.compose_goes = "this.remove();"
+        self.file_link = "#"
         self.tile_icons = ""
         self.wrong_presses = []
 
@@ -238,7 +249,7 @@ class XFormTests(Form):
             keep = "" if self.keeps_text else "this.value = '';"
             name = parse_qs(urlsplit(route.request.url).query).get("name", [self.clip_in_studio])[0]
             box = f"""<div id="box"><video src="https://studio.x.com/{self.composer_video}.mp4"></video><textarea placeholder="What's happening?" oninput="{keep}"></textarea><button type="button" class="{self.final_class}" onclick="fetch('/post', {{method: 'POST', body: JSON.stringify({{text: document.querySelector('textarea').value}})}}); {self.final_goes}">Post</button></div>"""
-            return await self.page_at(route, f"""{account}{self.check}{self.tile_icons}<div><a download="{name}" href="#">Download</a><button type="button">Change thumbnail</button>{self.extra_video}{self.form_video}<button type="button" id="compose" onclick="const home = {'document.body' if self.composer_outside else 'this.parentElement'}; document.querySelector('video')?.remove(); {self.compose_goes} home.insertAdjacentHTML('beforeend', document.getElementById('held').innerHTML)">Post</button></div><template id="held">{box}</template>""")
+            return await self.page_at(route, f"""{account}{self.check}{self.tile_icons}<div><a download="{name}" href="{self.file_link}">Download</a><button type="button">Change thumbnail</button>{self.extra_video}{self.form_video}<button type="button" id="compose" onclick="const home = {'document.body' if self.composer_outside else 'this.parentElement'}; document.querySelector('video')?.remove(); {self.compose_goes} home.insertAdjacentHTML('beforeend', document.getElementById('held').innerHTML)">Post</button></div><template id="held">{box}</template>""")
         await self.page_at(route, f"""{account}<button>Upload Media</button><input type="file" accept="video/mp4" onchange="fetch('/upload', {{method: 'POST', body: '{{}}'}}); const row = document.createElement('div'); row.textContent = this.files[0].name; row.onclick = () => location.href = '/library/1_2/edit?name=' + encodeURIComponent(row.textContent); document.body.append(row)">""")
 
     async def test_a_clip_already_in_media_studio_is_posted_with_no_upload(self):
@@ -248,6 +259,50 @@ class XFormTests(Form):
         self.assertEqual(("SUBMISSION_VERIFIED", True), (result["state"], result["final_submit_attempted"]))
         self.assertEqual(([], 1), (self.uploads, len(self.final)))
         self.assertEqual((True, "https://studio.x.com/library/13_77/edit"), (result["reused_media"], result["media_url"]))
+
+    async def test_a_page_that_goes_on_to_another_file_is_not_taken_for_this_one(self):
+        """From a review: the file it landed on would have replaced this attempt's address."""
+        self.plan["options"]["existing_media_url"] = "https://studio.x.com/library/13_77/edit"
+        self.tile_icons = "<script>history.replaceState(null, '', '/library/13_88/edit')</script>"
+        await self.refused("wrong_work")
+        self.assertEqual([], self.uploads)
+
+    async def test_a_download_link_for_another_video_stops_it_and_this_ones_goes_through(self):
+        """A field read found the link under the address's second number."""
+        self.plan["options"]["existing_media_url"] = "https://studio.x.com/library/13_77/edit"
+        self.file_link = "https://video.twimg.com/amplify_video/88/vid/1920x1080/a.mp4"
+        await self.refused("wrong_work")
+        self.assertEqual([], self.uploads)
+
+    async def test_a_download_link_naming_this_video_or_nothing_we_can_read_goes_through(self):
+        for link in ("https://video.twimg.com/ext_tw_video/77/pu/vid/a.mp4", "https://video.twimg.com/tweet_video/a.mp4"):
+            with self.subTest(link=link):
+                self.assertFalse(await browser_forms.x_link_names_another_video(FakeForm(link), "a.mp4", "https://studio.x.com/library/13_77/edit"))
+
+    async def test_a_file_title_that_does_not_hold_stops_before_any_post(self):
+        """From a review: the file's own title and description were filled and never read back."""
+        self.extra_video = '<input placeholder="Title" oninput="this.value = \'\'"><input placeholder="Type a brief description here">'
+        await self.refused("metadata_mismatch")
+
+    async def test_a_file_title_and_description_that_hold_go_through(self):
+        self.extra_video = '<input placeholder="Title"><input placeholder="Type a brief description here">'
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
+
+    async def test_a_plan_with_a_length_stops_on_a_video_that_cannot_show_it(self):
+        """From a review: only a source was waited for, and a video still processing has one."""
+        self.plan["options"]["duration_seconds"] = 60
+        with patch.object(browser_forms, "X_VIDEO_SECONDS", 1):
+            await self.refused("video_unverified")
+
+    async def test_a_length_within_a_second_of_the_plan_passes_and_further_does_not(self):
+        form = FakeForm(None)
+        page = self.page
+        form.evaluate = AsyncMock(return_value=60.4)
+        await browser_forms.x_video_is_whole(page, form, 60)
+        form.evaluate = AsyncMock(return_value=70.0)
+        with self.assertRaises(VpubError) as caught:
+            await browser_forms.x_video_is_whole(page, form, 60)
+        self.assertEqual("video_unverified", caught.exception.code)
 
     async def test_a_clip_named_after_another_file_is_not_posted(self):
         self.plan["options"]["existing_media_url"] = "https://studio.x.com/library/13_77/edit"
@@ -301,6 +356,15 @@ class XFormTests(Form):
         """From a review: any video inside the row passed."""
         self.post_video = '<div role="link"><video></video></div>'
         self.assertEqual("SUBMITTED_UNVERIFIED", (await self.publish())["state"])
+
+    async def test_a_quoted_posts_video_in_a_plain_link_is_not_this_posts(self):
+        """From a review: only a role=link wrapper was looked at."""
+        self.post_video = '<a href="/someone/status/999"><video></video></a>'
+        self.assertEqual("SUBMITTED_UNVERIFIED", (await self.publish())["state"])
+
+    async def test_this_posts_own_video_in_a_link_to_itself_is_this_posts(self):
+        self.post_video = f'<a href="/{OWNER}/status/{self.post}/video/1"><video></video></a>'
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
 
     async def test_words_in_a_reply_are_not_this_posts(self):
         """From a review: its words anywhere on the page passed, with other words on the post itself."""

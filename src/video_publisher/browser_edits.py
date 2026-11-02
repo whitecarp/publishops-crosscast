@@ -115,8 +115,9 @@ async def execute(page, platform, identity, payload):
         if 'portrait' in patch:
             url=douyin_editor_address(work_id)
             # A field run found the title box showing empty for a moment, so this waits for its title as the text route does.
-            title,_=await douyin_fields(page,url,work_id)
+            title,editor=await douyin_fields(page,url,work_id)
             if receipt.get('title') and await title.input_value()!=receipt['title']: raise VpubError('wrong_work','Existing title differs from the receipt; inspect before applying a cover.')
+            words_at_first=douyin_card_words(await editor.inner_text())
             control=page.locator('[class^="coverControl-"]').filter(has=page.get_by_text('竖封面3:4',exact=True))
             if payload.get('verify_only'):
                 return await capture_cover(page,control,output,patch,save,url)
@@ -132,21 +133,28 @@ async def execute(page, platform, identity, payload):
             await risk_check(page)
             stop_check(platform)
             from patchright.async_api import TimeoutError as BrowserTimeout
+            # This window itself, since another one opening could otherwise answer for it.
+            window=await dialog.element_handle(timeout=5000)
             traffic=douyin_cover_traffic(page)
             try:
                 await dialog.get_by_role('button',name='完成',exact=True).click()
                 try:
-                    await dialog.wait_for(state='hidden',timeout=DOUYIN_COVER_SECONDS*1000)
+                    await window.wait_for_element_state('hidden',timeout=DOUYIN_COVER_SECONDS*1000)
                 except BrowserTimeout:
-                    # A field run saw the window greyed out and working for over three minutes after 完成. Why isn't known, and nothing has been saved at this point.
-                    raise VpubError('cover_not_ready',f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so the work was not saved. Its fonts were {fonts} at the press and are {await douyin_fonts(page)} now. {douyin_cover_requests(traffic())}",'Nothing changed. Try again later, or change the cover on Douyin\'s own page.') from None
+                    # A field run saw the window greyed out and working for over three minutes after 完成. Why isn't known, and the work's own Save hasn't been pressed at this point.
+                    raise VpubError('cover_not_ready',f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so the work was not saved. {await douyin_cover_stuck(page,fonts,traffic())}","The work's own Save wasn't pressed. Whether the cover went through isn't known, so look at the work on Douyin before trying again, or change the cover on Douyin's own page.") from None
             finally:
                 traffic(stop=True)
             save_button=await visible(page.get_by_role('button',name=re.compile(r'^(保存|保存修改|提交修改|发布)$')))
             if save_button is None: raise VpubError('layout_changed','Existing-work save button is unavailable; no video was uploaded.')
             await douyin_can_press(page,save_button)
             pressed=normalize(await save_button.inner_text())
-            await submit(save_button,still_holds=lambda: douyin_can_press(page,save_button))
+            async def still_only_the_cover():
+                # A cover's Save sends the whole form, so a review asked that its words be the ones it found. Words that hadn't loaded at first aren't a change.
+                await douyin_can_press(page,save_button)
+                if words_at_first and douyin_card_words(await editor.inner_text())!=words_at_first:
+                    raise VpubError('wrong_work',"This work's words changed while its cover was being set, so nothing was saved.",'Look at the work on Douyin.')
+            await submit(save_button,still_holds=still_only_the_cover)
             stayed=await douyin_moved_on(page,pressed,output)
             if stayed: return save(state='EDIT_SUBMITTED_UNVERIFIED',platform_writes=1,url=url,after_press=stayed,note='Pressed once, and the page did not go back to the works list. See after_press; do not press again.')
             await douyin_fields(page,url,work_id)
@@ -215,6 +223,12 @@ def douyin_cover_requests(seen):
     if seen['failed_hosts']:
         words += " Requests to the failed_hosts sites didn't get through, so a proxy or filter on this computer is worth checking before another try."
     return words
+
+
+async def douyin_cover_stuck(page,fonts,seen):
+    """What a stop can say about the page, with no words from it."""
+    windows=page.locator('[role=dialog]')
+    return f"Its fonts were {fonts} at the press and are {await douyin_fonts(page)} now. {await windows.locator('visible=true').count()} of {await windows.count()} windows on the page are showing. {douyin_cover_requests(seen)}"
 
 
 async def douyin_cover_settles(page):

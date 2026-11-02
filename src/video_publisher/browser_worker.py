@@ -97,7 +97,7 @@ def main():
     except Exception as e:
         out = {"ok": False, "error": {"code": e.code if isinstance(e, VpubError) else "browser_error",
                "message": e.message if isinstance(e, VpubError) else runtime.failure_message(e),
-               "hint": e.hint if isinstance(e, VpubError) else "Inspect the original draft/work and receipt before retrying; no automatic resubmission."}}
+               "hint": e.hint if isinstance(e, VpubError) else "Read the attempt's receipt first. Whether the platform kept a draft isn't known, so look there before running it again; nothing is submitted again automatically."}}
         if payload.get("job_path"):
             atomic_json(payload["job_path"], {"state": "FAILED", "platform": payload.get("platform"), **out})
     # On a hidden desktop there is no console to answer on.

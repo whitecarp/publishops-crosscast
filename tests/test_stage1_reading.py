@@ -115,6 +115,21 @@ class AccountTests(Pages):
             await rt.signed_in_page(Context, "douyin", "dy12345")
         self.assertEqual("wrong_account", caught.exception.code)
 
+    async def test_each_instagram_link_keeps_its_own_kind(self):
+        """A field read found a photo's link at /p/, and every link was being written as a Reel."""
+        from video_publisher import browser_backends
+        await self.open_page(f'<a href="/{OWNER}/p/PHOTO/">a</a><a href="/reel/REEL/">b</a>', "https://www.instagram.com/")
+        found = await browser_backends.links(self.page, "instagram", OWNER)
+        self.assertEqual({"PHOTO": "https://www.instagram.com/p/PHOTO/", "REEL": "https://www.instagram.com/reel/REEL/"}, {key: item["url"] for key, item in found.items()})
+
+    async def test_only_this_works_own_page_on_instagram_counts_as_it(self):
+        from video_publisher.browser_backends import instagram_address_is
+        for address, right in ((f"https://www.instagram.com/p/{WORK}/", True), (f"https://www.instagram.com/reels/{WORK}", True), (f"https://www.instagram.com/{OWNER}/reel/{WORK}/", True),
+                               (f"https://www.instagram.com/viewer/reel/{WORK}/", False), (f"https://www.instagram.com/stories/{WORK}/", False), (f"https://www.instagram.com/p/X{WORK}/", False),
+                               (f"https://evil.example/p/{WORK}/", False)):
+            with self.subTest(address=address):
+                self.assertEqual(right, instagram_address_is(address, OWNER, WORK))
+
     async def test_handles_differing_only_in_case_are_one_account(self):
         self.assertEqual("Owner", rt.check_identity("Owner", "owner"))
 

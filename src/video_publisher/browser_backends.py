@@ -79,6 +79,12 @@ def work_url(platform, identity, work_id):
     return f"https://www.instagram.com/reel/{work_id}/"
 
 
+def instagram_address_is(address, identity, work_id):
+    """Whether an address is this work's own page on Instagram. Field reads found it at /p/, /reel/ and /reels/, some with the owner's name in front."""
+    parts = urlsplit(address)
+    return parts.hostname == "www.instagram.com" and re.fullmatch(rf"(/{re.escape(identity)})?/(p|reel|reels)/{re.escape(str(work_id))}/?", parts.path, re.I) is not None
+
+
 async def click_named(scope, name):
     loc = scope.get_by_role("button", name=re.compile(name, re.I))
     target = await unique_visible(loc, name)
@@ -217,7 +223,11 @@ async def links(page, platform, identity):
         if platform == "x":
             match = re.fullmatch(r"/" + re.escape(identity) + r"/status/(\d+)", u.path, re.I) if u.hostname in {"x.com", "www.x.com"} else None
         elif platform == "instagram":
-            match = re.fullmatch(r"/(?:" + re.escape(identity) + r"/)?(?:reel|p)/([\w-]+)/?", u.path, re.I) if u.hostname == "www.instagram.com" else None
+            found = re.fullmatch(r"/(?:" + re.escape(identity) + r"/)?(reel|p)/([\w-]+)/?", u.path, re.I) if u.hostname == "www.instagram.com" else None
+            if found:
+                # A field read found a photo's link at /p/. Written as a Reel, its address would say something it isn't.
+                result[found[2]] = {"id": found[2], "url": f"https://www.instagram.com/{found[1].lower()}/{found[2]}/", "text": row["text"]}
+            continue
         else:
             match = re.fullmatch(r"/video/(\d+)", u.path) if u.hostname in {"www.douyin.com", "douyin.com"} else None
             if not match and u.hostname == "creator.douyin.com":
@@ -435,7 +445,7 @@ def x_new_works(platform, receipt, works):
 
 async def instagram_caption_says(page, identity, words):
     """Whether the post's own caption is exactly these words. Reviews found they passed from anywhere on the page, from the owner's own comment, and from inside a longer caption. A field read of a real post found a row holding the owner's link and a time, then the whole caption, with no list, article or lasting class around it. So the row comes from the first time on the page rather than from the words, and all of its words have to match.
-    That the caption's row comes before any comment is how Instagram lays out a post, not something that read showed: it was of a photo page with no comments on it, so a Reel's page is still to be seen. A page that differs stays unconfirmed. A post with no caption, whose first comment is the owner's and says these words, would still pass."""
+    That the caption's row comes before any comment is how Instagram lays out a post, not something that read showed: it was of a photo page with no comments on it, so a Reel's page is still to be seen. A review found the limit of that: an owner's comment with these words would pass on a post with no caption, or with another caption that has no time beside it, or with the comment above the caption. Until a real page with comments has been read, a pass here is not proof of the caption."""
     return await page.evaluate(INSTAGRAM_CAPTION, {"words": normalize(words), "owner": identity})
 
 
@@ -474,6 +484,10 @@ async def douyin_card_id(page, name, card):
                 return match[1] if match and urlsplit(detail.url).hostname == 'creator.douyin.com' else None
             finally:
                 await detail.close()
+        # From a review: a click that opens no new tab could move this one, and the rest would then be read from the wrong page. Never seen on a real account.
+        if urlsplit(page.url).path != urlsplit(MANAGE).path:
+            await page.goto(MANAGE, wait_until="domcontentloaded", timeout=60000)
+            return None
     return await douyin_id_from_menu(page, douyin_card_words(await name.inner_text()))
 
 
@@ -769,8 +783,7 @@ async def verify(page, platform, identity, receipt):
         if platform == "instagram":
             # An arbitrary video/player or the browser address is not evidence.
             author = await visible(page.locator('a[href="/'+identity+'/"]'))
-            present = bool(owned and author and await visible(page.locator('video')) and
-                           urlsplit(page.url).path.rstrip('/').endswith('/'+receipt['id']))
+            present = bool(owned and author and await visible(page.locator('video')) and instagram_address_is(page.url, identity, receipt['id']))
         if expected and platform == "instagram":
             present = present and await instagram_caption_says(page, identity, expected)
         elif expected:
@@ -834,7 +847,7 @@ async def execute(page, platform, identity, payload):
                        error={"code": e.code if isinstance(e, VpubError) else "browser_step_failed",
                               "message": e.message if isinstance(e, VpubError) else failure_message(e)},
                        user_action_required=human,
-                       hint="Inspect the existing draft/work. Progress is saved; no automatic upload or submit retry.")
+                       hint="Progress is saved here. Whether the platform kept a draft isn't known, so look there before running it again. Nothing is uploaded or submitted again automatically.")
 
 
 async def complete_pending_chapters(page,platform,identity,receipt):

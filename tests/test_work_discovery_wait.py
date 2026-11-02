@@ -171,6 +171,14 @@ class DetailPageTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(["123"], list(await browser_backends.works(self.page, "douyin", "me")))
 
 
+    async def test_a_card_that_moves_this_tab_does_not_lose_the_others(self):
+        """From a review: nothing brought the list back, so the rest would have been read from the wrong page."""
+        from video_publisher import browser_backends
+        self.CARD = '<div class="video-card-content-1"><div class="info-title-text-1" onclick="location.href = \'/elsewhere\'">Moves this tab</div></div>' + self.CARD
+        with patch.object(browser_backends, "POPUP_MS", 500):
+            self.assertEqual(["123"], list(await browser_backends.works(self.page, "douyin", "me")))
+
+
 class PrivateCardTests(unittest.IsolatedAsyncioTestCase):
     """From a field run: a private work's title opens nothing, and its card's own menu opens its edit page, whose address names it."""
     WORK = "7123456789012345678"

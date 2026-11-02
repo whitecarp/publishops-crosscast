@@ -113,6 +113,7 @@ async def x_schedule(page, when):
 
 
 X_FILE_VIDEOS = """form => [...form.querySelectorAll('video')].map(video => video.currentSrc || video.src)"""
+X_VIDEO_LENGTH = """form => { const video = form.querySelector('video'); return video && video.readyState >= 1 && Number.isFinite(video.duration) ? video.duration : null; }"""
 X_COMPOSER_VIDEOS = """(form, nodes) => {
   if (!form.isConnected || !nodes.every(node => form.contains(node))) return null;
   let around = nodes[0];
@@ -120,6 +121,13 @@ X_COMPOSER_VIDEOS = """(form, nodes) => {
   if (around === form) return null;
   return [...around.querySelectorAll('video')].map(video => video.currentSrc || video.src);
 }"""
+
+
+async def x_video_is_whole(page, form, planned):
+    """A plan that says how long its video is gets that checked before anything is posted, within a second. A field run's form showed a source while a video could still have been processing. Its size is no use here: a 1920x1080 film's preview played at 480x270."""
+    length = await look_until(page, lambda: form.evaluate(X_VIDEO_LENGTH), X_VIDEO_SECONDS * 1000)
+    if length is None or abs(length - planned) > 1:
+        raise VpubError('video_unverified', f"This file's video shows {length} seconds, not the {planned} the plan says, so nothing was posted.", 'Media Studio may still be processing it. vpub resume looks again without uploading.')
 
 
 async def x_composer_is_this_files(form, video, caption, final, *others):
@@ -222,6 +230,13 @@ def x_media_address(address):
 
 def x_file_link(filename):
     return 'a[download="' + filename.replace('\\', '\\\\').replace('"', '\\"') + '"]'
+
+
+async def x_link_names_another_video(form, filename, media_url):
+    """Whether this form's download link names a different video from the page's address. Field reads found its link on video.twimg.com under the address's second number. A link of any other shape says nothing either way."""
+    number = re.search(r'/library/\d+_(\d+)/', media_url or '')
+    found = re.match(r'https://video\.twimg\.com/(?:amplify_video|ext_tw_video)/(\d+)/', await form.locator(x_file_link(filename)).first.get_attribute('href') or '')
+    return bool(number and found and found[1] != number[1])
 
 
 def x_media_form(page, filename):
@@ -338,6 +353,9 @@ async def publish_x(page, tx):
         if not re.fullmatch(r'https://studio\.x\.com/library/\d+_\d+/edit', tx.receipt['media_url']):
             raise VpubError('invalid_media_url', 'Resume requires the original Media Studio asset URL.')
         await page.goto(tx.receipt['media_url'], wait_until='domcontentloaded', timeout=60000)
+        # From a review: a page that went on to another file would have overwritten this attempt's address.
+        if x_media_address(page.url).get('media_url', tx.receipt['media_url']) != tx.receipt['media_url']:
+            raise VpubError('wrong_work', "Media Studio opened a different file from this attempt's, so nothing was changed.", 'Look at the file in Media Studio. Do not upload it again.')
     elif not tx.receipt['media_selected']:
         media = tx.media()
         await upload_file(page, media, accept='video/')
@@ -350,6 +368,8 @@ async def publish_x(page, tx):
         look = await x_open_media(page, page.get_by_text(filename, exact=True), form, filename, hold)
         tx.save(phase='opening_media', open_look=look, **x_media_address(page.url))
     await change.wait_for(state='visible', timeout=X_FORM_SECONDS * 1000)
+    if await x_link_names_another_video(form, filename, x_media_address(page.url).get('media_url') or tx.receipt.get('media_url')):
+        raise VpubError('wrong_work', "This form's file is a different video from the one its address names, so nothing was changed.", 'Look at the file in Media Studio. Do not upload it again.')
     tx.save(phase='media_ready', **x_media_address(page.url))
     # The wait can be long, and what comes next changes the file's details.
     await risk_check(page)
@@ -374,11 +394,15 @@ async def publish_x(page, tx):
             raise VpubError('title_too_long', 'X Studio title must fit 70 characters; do not silently truncate.')
         await media_title.fill(tx.options['title'])
         await media_title.press('Tab')
+        description = None
         if len(tx.options['description']) <= 200:
             description = await unique_visible(form.get_by_placeholder('Type a brief description here', exact=True), 'X media description')
             await description.fill(tx.options['description'])
             await description.press('Tab')
         await page.wait_for_timeout(1500)
+        # From a review: a run could record its text as read back on the post's words alone.
+        if normalize(await media_title.input_value()) != normalize(tx.options['title']) or (description and normalize(await description.input_value()) != normalize(tx.options['description'])):
+            raise VpubError('metadata_mismatch', "X Studio's title or description differs from the manifest. Nothing was posted.")
     # The non-icon detail Post button opens the composer; it does not publish.
     # A field run looked straight after filling the details and found no such button, and a moment later it was there.
     compose_buttons = form.locator('button[type="button"]').filter(has_text=re.compile('^Post$'))
@@ -395,6 +419,8 @@ async def publish_x(page, tx):
         raise VpubError('layout_changed', "This file's form shows more than one video, so its composer couldn't be tied to it. Nothing was posted.")
     file_video = file_videos[0] if file_videos else None
     tx.save(file_video_seen=bool(file_video))
+    if tx.options.get('duration_seconds') and not draft_only:
+        await x_video_is_whole(page, file_form, tx.options['duration_seconds'])
     await compose.click()
     caption = page.get_by_placeholder("What's happening?", exact=True)
     await caption.wait_for(timeout=20000)
@@ -675,13 +701,15 @@ async def finish_douyin_form(page, tx, before):
         await dialog.get_by_text('上传封面', exact=True).wait_for(timeout=20000)
         area = await unique_visible(dialog.locator('.semi-upload').filter(has_text='点击上传文件或拖拽文件到这里'), 'Douyin cover upload area')
         await choose_file(page, area.locator('input.semi-upload-hidden-input'), path)
-        from .browser_edits import DOUYIN_COVER_SECONDS, douyin_cover_requests, douyin_cover_settles, douyin_cover_traffic, douyin_fonts
+        from .browser_edits import DOUYIN_COVER_SECONDS, douyin_cover_settles, douyin_cover_stuck, douyin_cover_traffic
         fonts = await douyin_cover_settles(page)
         done = dialog.get_by_role('button', name='完成', exact=True)
         await wait_until(page, lambda: enabled(done), seconds=90, label='Douyin cover ready')
         await risk_check(page)
         stop_check('douyin')
         from patchright.async_api import TimeoutError as BrowserTimeout
+        # This window itself, since another one opening could otherwise answer for it.
+        window = await dialog.element_handle(timeout=5000)
         traffic = douyin_cover_traffic(page)
         try:
             await done.click()
@@ -692,10 +720,10 @@ async def finish_douyin_form(page, tx, before):
             if later:
                 await later.click()
             try:
-                await dialog.wait_for(state='hidden', timeout=DOUYIN_COVER_SECONDS * 1000)
+                await window.wait_for_element_state('hidden', timeout=DOUYIN_COVER_SECONDS * 1000)
             except BrowserTimeout:
                 # A field run's first real post stopped here on a 30-second wait, as the edit route's window had stayed for over three minutes.
-                raise VpubError('cover_not_ready', f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so nothing was published. Its fonts were {fonts} at the press and are {await douyin_fonts(page)} now. {douyin_cover_requests(traffic())}", 'vpub resume tries again, and vpub resume KEY --no-cover goes without one.') from None
+                raise VpubError('cover_not_ready', f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so nothing was published. {await douyin_cover_stuck(page, fonts, traffic())}", 'vpub resume tries again, and vpub resume KEY --no-cover goes without one.') from None
         finally:
             traffic(stop=True)
         saved = await control.locator('img').count() > 0
