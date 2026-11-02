@@ -30,6 +30,7 @@ YT_PLAYLIST_ROWS = """boxes => boxes.map(box => {
 X_MEDIA_PAGE = re.compile(r'/library/(\d+_\d+)(/.*)?')
 X_OPEN_SECONDS = 15
 X_DONE_SECONDS = 60
+X_VIDEO_SECONDS = 30
 X_CHANGE_THUMBNAIL = re.compile(r'^\s*Change thumbnail\s*$')
 
 
@@ -112,16 +113,18 @@ X_COMPOSER_VIDEOS = """(form, nodes) => {
   if (!form.isConnected || !nodes.every(node => form.contains(node))) return null;
   let around = nodes[0];
   while (!around.contains(nodes[1])) around = around.parentElement;
+  if (around === form) return null;
   return [...around.querySelectorAll('video')].map(video => video.currentSrc || video.src);
 }"""
 
 
 async def x_composer_is_this_files(form, video, caption, final, *others):
-    """A field read found the composer sits inside the file's own form, which stays on the page though its selector stops matching once the composer opens, and that it shows the same video as the form did. So these all have to be inside that form, around that video.
-    Reviews showed being the only one on the page, or sharing some wider element, proves nothing about whose they are."""
+    """A field read found the composer sits inside the file's own form, which stays on the page though its selector stops matching once the composer opens, and that it shows the same video as the form did. So these all have to be inside that form, in something smaller than the form itself, around that video.
+    Reviews showed being the only one on the page, or sharing some wider element, proves nothing about whose they are, and that with no video from the form to compare, any video or none would pass. So no video on record means no final press."""
+    if not video:
+        return False
     handles = [await control.element_handle(timeout=5000) for control in (caption, final, *others)]
-    videos = await form.evaluate(X_COMPOSER_VIDEOS, handles)
-    return videos is not None and (videos == [video] if video else len(videos) <= 1)
+    return await form.evaluate(X_COMPOSER_VIDEOS, handles) == [video]
 
 
 async def x_send_scheduled(page, tx, form, video):
@@ -301,10 +304,16 @@ async def publish_x(page, tx):
     await wait_until(page, lambda: visible(compose_buttons), seconds=30, label='Studio compose button')
     compose = await unique_visible(compose_buttons, 'Studio compose button')
     file_form = await form.element_handle(timeout=15000)
-    file_videos = await file_form.evaluate(X_FILE_VIDEOS)
+
+    async def form_video():
+        return [source for source in await file_form.evaluate(X_FILE_VIDEOS) if source]
+    # A preview doesn't press anything final, so it doesn't wait. It only says what it saw, which is how a new upload's form can be found out without posting.
+    draft_only = tx.options.get('submission_mode') == 'draft_only'
+    file_videos = await form_video() if draft_only else await look_until(page, form_video, X_VIDEO_SECONDS * 1000) or []
     if len(file_videos) > 1:
         raise VpubError('layout_changed', "This file's form shows more than one video, so its composer couldn't be tied to it. Nothing was posted.")
     file_video = file_videos[0] if file_videos else None
+    tx.save(file_video_seen=bool(file_video))
     await compose.click()
     caption = page.get_by_placeholder("What's happening?", exact=True)
     await caption.wait_for(timeout=20000)
@@ -322,6 +331,8 @@ async def publish_x(page, tx):
     async def still_this_files():
         if not await x_composer_is_this_files(file_form, file_video, caption, post):
             raise VpubError('layout_changed', "X's composer could not be tied to this file's form and video. Nothing was posted.")
+        if await caption.input_value() != tx.options['post_text']:
+            raise VpubError('metadata_mismatch', 'X post text differs from the manifest. Nothing was posted.')
     await still_this_files()
     await tx.submit(page, post, still_holds=still_this_files)
     return await finish(page, tx, before)

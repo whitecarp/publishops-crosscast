@@ -83,6 +83,20 @@ class LastMomentTests(SharedBrowser):
         await self.edit()
         self.assertEqual(1, len(self.saves))
 
+    async def test_a_hold_that_comes_during_the_last_safety_wait_stops_the_press(self):
+        """From a review: the message and the grey button arrived while the safety checks waited, and the press went ahead and was recorded."""
+        real = browser_edits.risk_check
+
+        async def arrives(page):
+            await real(page)
+            await page.evaluate("t => document.body.insertAdjacentHTML('beforeend', t)", self.TIP)
+        with patch.object(browser_edits, "risk_check", arrives), self.assertRaises(VpubError) as caught:
+            await self.edit()
+        self.assertEqual("edit_held_by_review", caught.exception.code)
+        self.assertIn("nothing was saved", caught.exception.message)
+        self.assertEqual([], self.saves)
+        self.assertFalse(self.path.exists())
+
     async def test_a_press_that_leaves_this_message_says_so(self):
         self.stays = self.TIP
         with patch.object(browser_edits, "DOUYIN_SAVE_SECONDS", 1):

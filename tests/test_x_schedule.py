@@ -401,15 +401,13 @@ class Calendar(ChromeCase):
     async def test_a_composer_showing_another_video_is_not_this_files(self):
         await self.refuses(page_html(), video="https://studio.x.com/another-file.mp4")
 
-    async def test_a_form_that_had_no_video_to_compare_still_needs_its_composer_inside_it(self):
-        await self.open()
-        tx = StubTx({"schedule": self.next_month_day().isoformat()})
-        with patch.object(browser_forms, "verify_scheduled_x", new=AsyncMock(return_value={"state": "SUBMITTED_UNVERIFIED"})):
-            await self.send(tx, video=None)
-        self.assertEqual(["Done"], tx.pressed)
+    async def test_with_no_video_on_record_nothing_final_is_pressed(self):
+        """From a review: with nothing to compare, any video or none would pass."""
+        await self.refuses(page_html(), video=None)
 
-    async def test_with_no_video_to_compare_a_composer_outside_the_form_is_still_refused(self):
-        await self.refuses(page_html(), form="#panel", video=None)
+    async def test_a_composer_that_is_really_the_whole_form_is_not_one(self):
+        """From a review: the words in one part, the time and Done in another, and only the form around both, holding the one video."""
+        await self.refuses(page_html(both_elsewhere=True).replace('<div id="another-composer"><video src="https://studio.x.com/another-file.mp4"></video>', '<div id="another-composer">'))
 
     async def test_a_row_with_more_in_it_than_the_time_and_done_is_not_trusted(self):
         await self.refuses(page_html(row_extra='<button type="button">Another action</button>'))

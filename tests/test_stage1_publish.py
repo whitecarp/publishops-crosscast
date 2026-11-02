@@ -180,6 +180,7 @@ class XFormTests(Form):
         super().prepare()
         self.studio_account = OWNER
         self.composer_outside, self.composer_video, self.extra_video = False, "this-file", ""
+        self.form_video = '<video src="https://studio.x.com/this-file.mp4"></video>'
         self.studio_open = True
         self.never_shows = False
 
@@ -207,7 +208,7 @@ class XFormTests(Form):
             keep = "" if self.keeps_text else "this.value = '';"
             name = parse_qs(urlsplit(route.request.url).query)["name"][0]
             box = f"""<div id="box"><video src="https://studio.x.com/{self.composer_video}.mp4"></video><textarea placeholder="What's happening?" oninput="{keep}"></textarea><button type="button" onclick="fetch('/post', {{method: 'POST', body: JSON.stringify({{text: document.querySelector('textarea').value}})}})">Post</button></div>"""
-            return await self.page_at(route, f"""{account}{self.check}<div><a download="{name}" href="#">Download</a><button type="button">Change thumbnail</button>{self.extra_video}<video src="https://studio.x.com/this-file.mp4"></video><button type="button" id="compose" onclick="const home = {'document.body' if self.composer_outside else 'this.parentElement'}; document.querySelector('video').remove(); this.remove(); home.insertAdjacentHTML('beforeend', document.getElementById('held').innerHTML)">Post</button></div><template id="held">{box}</template>""")
+            return await self.page_at(route, f"""{account}{self.check}<div><a download="{name}" href="#">Download</a><button type="button">Change thumbnail</button>{self.extra_video}{self.form_video}<button type="button" id="compose" onclick="const home = {'document.body' if self.composer_outside else 'this.parentElement'}; document.querySelector('video')?.remove(); this.remove(); home.insertAdjacentHTML('beforeend', document.getElementById('held').innerHTML)">Post</button></div><template id="held">{box}</template>""")
         await self.page_at(route, f"""{account}<button>Upload Media</button><input type="file" accept="video/mp4" onchange="fetch('/upload', {{method: 'POST', body: '{{}}'}}); const row = document.createElement('div'); row.textContent = this.files[0].name; row.onclick = () => location.href = '/library/1_2/edit?name=' + encodeURIComponent(row.textContent); document.body.append(row)">""")
 
     async def test_a_composer_outside_this_files_form_posts_nothing(self):
@@ -219,6 +220,29 @@ class XFormTests(Form):
     async def test_a_form_with_two_videos_posts_nothing(self):
         self.extra_video = '<video src="https://studio.x.com/another-file.mp4"></video>'
         await self.refused("layout_changed")
+        self.assertEqual([], self.final)
+
+    async def test_a_new_upload_whose_form_never_shows_a_video_posts_nothing(self):
+        """From a review: with nothing recorded, the composer's video couldn't be tied to the file."""
+        self.form_video = ""
+        with patch.object(browser_forms, "X_VIDEO_SECONDS", 1):
+            await self.refused("layout_changed")
+        self.assertEqual([], self.final)
+
+    async def test_words_changed_during_the_last_wait_post_nothing(self):
+        real = browser_backends.risk_check
+        page = self.page
+
+        async def changes_them(*args):
+            await real(*args)
+            await page.evaluate("document.querySelector('textarea').value = 'Other words'")
+        original = Transaction.submit
+
+        async def submit(tx, page, button, still_holds=None):
+            with patch.object(browser_backends, "risk_check", changes_them):
+                return await original(tx, page, button, still_holds)
+        with patch.object(Transaction, "submit", submit):
+            await self.refused("metadata_mismatch")
         self.assertEqual([], self.final)
 
     async def test_a_composer_showing_another_video_posts_nothing(self):

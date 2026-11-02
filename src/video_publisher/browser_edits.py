@@ -45,9 +45,10 @@ async def execute(page, platform, identity, payload):
         # A check only reads. What it means for a save already tried is for edits.send to record, so a check cut off here leaves that save on record.
         if not payload.get('verify_only'): atomic_json(output,result)
         return result
-    async def submit(button):
+    async def submit(button,still_holds=None):
         await risk_check(page)
         stop_check(platform)
+        if still_holds: await still_holds()  # What was read before that wait may not be true after it.
         save(state='EDIT_SUBMITTING')
         stage('pressing')
         await button.click(timeout=20000)
@@ -132,8 +133,9 @@ async def execute(page, platform, identity, payload):
             await dialog.wait_for(state='hidden',timeout=30000)
             save_button=await visible(page.get_by_role('button',name=re.compile(r'^(保存|保存修改|提交修改|发布)$')))
             if save_button is None: raise VpubError('layout_changed','Existing-work save button is unavailable; no video was uploaded.')
+            await douyin_can_press(page,save_button)
             pressed=normalize(await save_button.inner_text())
-            await submit(save_button)
+            await submit(save_button,still_holds=lambda: douyin_can_press(page,save_button))
             stayed=await douyin_moved_on(page,pressed,output)
             if stayed: return save(state='EDIT_SUBMITTED_UNVERIFIED',platform_writes=1,url=url,after_press=stayed,note='Pressed once, and the page did not go back to the works list. See after_press; do not press again.')
             await page.goto(url,wait_until='domcontentloaded')
@@ -161,8 +163,8 @@ async def douyin_says_held(page):
     return False
 
 
-def douyin_held():
-    return VpubError('edit_held_by_review','Douyin is not allowing changes to this work while a review runs, so nothing was typed or pressed.','Try the same edit again once the review has finished.')
+def douyin_held(what_happened='nothing was typed or pressed'):
+    return VpubError('edit_held_by_review',f'Douyin is not allowing changes to this work while a review runs, so {what_happened}.','Try the same edit again once the review has finished.')
 
 
 async def douyin_greyed(button):
@@ -172,6 +174,13 @@ async def douyin_greyed(button):
 
 async def not_greyed(button):
     return not await douyin_greyed(button)
+
+
+async def douyin_can_press(page,button):
+    """Raises unless this button can do something now. A field read found it grey on a work with nothing held and no change yet, so it gets a moment to turn once the new words are in."""
+    if await douyin_says_held(page): raise douyin_held('nothing was saved')
+    if await douyin_greyed(button) and not await look_until(page,lambda: not_greyed(button),5000):
+        raise VpubError('edit_not_ready','Douyin kept its save button grey, so it was not pressed and nothing was saved.')
 
 
 async def douyin_moved_on(page,pressed,output):
@@ -212,12 +221,9 @@ async def douyin_text(page,work_id,patch,save,submit,output,verify_only=False):
         raise VpubError('metadata_mismatch','Douyin\'s form did not keep the intended text; nothing was saved.')
     button=await visible(page.get_by_role('button',name=re.compile(r'^(保存|保存修改|提交修改|发布)$')))
     if button is None: raise VpubError('layout_changed','Existing-work save button is unavailable; nothing was saved.')
-    if await douyin_says_held(page): raise douyin_held()
-    # It may turn from grey once the new words have been taken in.
-    if await douyin_greyed(button) and not await look_until(page,lambda: not_greyed(button),5000):
-        raise VpubError('edit_not_ready','Douyin kept its save button grey, so it was not pressed and nothing was saved.')
+    await douyin_can_press(page,button)
     pressed=normalize(await button.inner_text())
-    await submit(button)
+    await submit(button,still_holds=lambda: douyin_can_press(page,button))
     stayed=await douyin_moved_on(page,pressed,output)
     if stayed: return save(state='EDIT_SUBMITTED_UNVERIFIED',platform_writes=1,url=url,after_press=stayed,note='Pressed once, and the page did not go back to the works list. See after_press; do not press again.')
     title,editor=await douyin_fields(page,url,work_id)
