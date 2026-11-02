@@ -258,13 +258,21 @@ def action_row(kind, key, saved, command):
 def edit_rows(rows):
     """An edit's record can be the worker's, with the work and no key, or the command's, with the key and perhaps no work, so its command comes from whichever it has."""
     adopted = {}
+    matched = {}  # Only this report's already-loaded ledger snapshot; never cache receipts.
     for _, saved in saved_receipts("operations/adopted"):
         adopted[digest(["adopted", saved.get("platform"), saved.get("work_id")])] = saved
     for edit_id, saved in saved_receipts("edits"):
         if saved.get("state") not in EDIT_UNCONFIRMED:
             continue
         work, platform = saved.get("id"), saved.get("platform")
-        row = next((row for row in rows if row["key"] == saved.get("key") or (work and row["platform"] == platform and (row["data"].get("receipt") or {}).get("id") == work)), None)
+        lookup = (saved.get("key"), platform, work)
+        cacheable = all(isinstance(value, (str, type(None))) for value in lookup)
+        if not cacheable or lookup not in matched:
+            row = next((row for row in rows if row["key"] == saved.get("key") or (work and row["platform"] == platform and (row["data"].get("receipt") or {}).get("id") == work)), None)
+            if cacheable:
+                matched[lookup] = row
+        else:
+            row = matched[lookup]
         taken = adopted.get(saved.get("key")) or next((one for one in adopted.values() if work and (one.get("platform"), one.get("work_id")) == (platform, work)), None)
         command = f"vpub edit {row['key']} FILE --verify-only" if row else f"vpub edit-work {taken['platform']} {taken['work_id']} FILE --verify-only" if taken else None
         yield {**action_row("edit", edit_id, {**saved, "platform": platform or (row or taken or {}).get("platform"), "work_id": work or (taken or {}).get("work_id")}, command),
