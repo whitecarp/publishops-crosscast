@@ -188,6 +188,7 @@ class XFormTests(Form):
         held.start()
         self.addCleanup(held.stop)
         self.studio_account = OWNER
+        self.clip_in_studio = f"crosscast-{self.plan['video_sha256'][:16]}.mp4"
         self.composer_outside, self.composer_video, self.extra_video = False, "this-file", ""
         self.form_video = '<video src="https://studio.x.com/this-file.mp4"></video>'
         self.studio_open = True
@@ -235,10 +236,25 @@ class XFormTests(Form):
         account = f'<a href="https://analytics.twitter.com/user/{self.studio_account}/home">account</a>'
         if path.endswith("/edit"):
             keep = "" if self.keeps_text else "this.value = '';"
-            name = parse_qs(urlsplit(route.request.url).query)["name"][0]
+            name = parse_qs(urlsplit(route.request.url).query).get("name", [self.clip_in_studio])[0]
             box = f"""<div id="box"><video src="https://studio.x.com/{self.composer_video}.mp4"></video><textarea placeholder="What's happening?" oninput="{keep}"></textarea><button type="button" class="{self.final_class}" onclick="fetch('/post', {{method: 'POST', body: JSON.stringify({{text: document.querySelector('textarea').value}})}}); {self.final_goes}">Post</button></div>"""
             return await self.page_at(route, f"""{account}{self.check}{self.tile_icons}<div><a download="{name}" href="#">Download</a><button type="button">Change thumbnail</button>{self.extra_video}{self.form_video}<button type="button" id="compose" onclick="const home = {'document.body' if self.composer_outside else 'this.parentElement'}; document.querySelector('video')?.remove(); {self.compose_goes} home.insertAdjacentHTML('beforeend', document.getElementById('held').innerHTML)">Post</button></div><template id="held">{box}</template>""")
         await self.page_at(route, f"""{account}<button>Upload Media</button><input type="file" accept="video/mp4" onchange="fetch('/upload', {{method: 'POST', body: '{{}}'}}); const row = document.createElement('div'); row.textContent = this.files[0].name; row.onclick = () => location.href = '/library/1_2/edit?name=' + encodeURIComponent(row.textContent); document.body.append(row)">""")
+
+    async def test_a_clip_already_in_media_studio_is_posted_with_no_upload(self):
+        """From a field run: its dry run left the clip there, and uploading the file again would make two tiles of one name."""
+        self.plan["options"]["existing_media_url"] = "https://studio.x.com/library/13_77/edit"
+        result = await self.publish()
+        self.assertEqual(("SUBMISSION_VERIFIED", True), (result["state"], result["final_submit_attempted"]))
+        self.assertEqual(([], 1), (self.uploads, len(self.final)))
+        self.assertEqual((True, "https://studio.x.com/library/13_77/edit"), (result["reused_media"], result["media_url"]))
+
+    async def test_a_clip_named_after_another_file_is_not_posted(self):
+        self.plan["options"]["existing_media_url"] = "https://studio.x.com/library/13_77/edit"
+        self.clip_in_studio = "crosscast-0000000000000000.mp4"
+        with patch.object(browser_forms, "X_FORM_SECONDS", 1), self.assertRaises(Exception):
+            await self.publish()
+        self.assertEqual(([], []), (self.uploads, self.final))
 
     async def test_the_library_tiles_post_icons_are_not_the_final_press(self):
         """A field read of the open composer: one type=button Post, the tweetbtn, beside Post icons with no type on the Library's tiles."""
@@ -418,6 +434,7 @@ class InstagramFormTests(Form):
         self.edit_late = False
         self.shared_words = "<p>Your reel has been shared.</p>"
         self.own_caption = None
+        self.share_row = '<div><div><span>Share to</span></div><div><span>Facebook</span><input type="checkbox" role="switch" style="width:10px;height:10px"></div></div>'
         self.caption_head = f'<a href="/{OWNER}/">{OWNER}</a> <time>3d</time>'
         self.comments = ""
 
@@ -450,7 +467,7 @@ class InstagramFormTests(Form):
           <div class="step" hidden><button>Select from computer</button><input type="file" accept="video/mp4" onchange="fetch('/upload', {{method: 'POST', body: '{{}}'}}); showPart(1)"></div>
           <div class="step" hidden><svg aria-label="Select crop" width="10" height="10"></svg><span>Original</span><button onclick="{to_edit}">Next</button></div>
           <div class="step" hidden><div role="button">Select from computer</div><button onclick="{to_caption}">Next</button></div>
-          <div class="step" hidden><textarea oninput="{keep}"></textarea>{label}<button onclick="fetch('/share', {{method: 'POST', body: JSON.stringify({{text: document.querySelector('textarea').value}})}}).then(() => document.getElementById('done').hidden = false)">Share</button><div id="done" hidden>{self.shared_words}</div></div>
+          <div class="step" hidden><textarea oninput="{keep}"></textarea>{label}{self.share_row}<footer><a href="https://www.threads.net/">Threads</a></footer><button onclick="fetch('/share', {{method: 'POST', body: JSON.stringify({{text: document.querySelector('textarea').value}})}}).then(() => document.getElementById('done').hidden = false)">Share</button><div id="done" hidden>{self.shared_words}</div></div>
           <script>function showPart(number) {{ document.querySelectorAll('.step').forEach((part, index) => part.hidden = index !== number); }}</script>"""
 
     async def test_an_ai_video_turns_the_platforms_own_label_on_before_sharing(self):
@@ -608,6 +625,24 @@ class InstagramFormTests(Form):
         self.plan["options"]["post_text"] = "My title @friend #tag"
         self.own_caption = 'My title <a href="/friend/">@friend</a> <a href="/explore/tags/tag/">#tag</a>'
         self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
+
+    async def test_the_share_to_switch_on_shares_nothing(self):
+        """The plan says Instagram, and that switch would post it somewhere else too."""
+        self.share_row = self.share_row.replace('role="switch"', 'role="switch" checked')
+        await self.refused("shares_elsewhere")
+
+    async def test_a_threads_link_in_the_footer_and_no_share_to_row_are_nothing_to_stop_for(self):
+        """From a field run: a check that took that footer link for a posting switch stopped a real post."""
+        self.share_row = ""
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
+
+    async def test_a_preview_says_whether_it_would_share_elsewhere(self):
+        self.plan["options"]["submission_mode"] = "draft_only"
+        self.share_row = self.share_row.replace('role="switch"', 'role="switch" checked')
+        self.assertIs(True, (await self.publish())["shares_elsewhere"])
+
+    async def test_a_share_to_switch_turned_on_during_the_last_wait_shares_nothing(self):
+        await self.changes_during_the_last_wait("document.querySelector('[type=checkbox]').checked = true", "shares_elsewhere")
 
     async def test_a_switch_added_during_the_last_wait_shares_nothing(self):
         """From a review: the old locator could land on a new checked switch in front, with the AI label's own gone off."""

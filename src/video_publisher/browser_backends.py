@@ -166,10 +166,13 @@ class Transaction:
         atomic_json(self.path, self.receipt)
         return dict(self.receipt)
 
+    def media_name(self):
+        return "crosscast-" + self.plan["video_sha256"][:16] + Path(self.plan["video"]).suffix
+
     def media(self):
         src = Path(self.plan["video"])
         # The upload's file name, as a link to the private snapshot rather than a second copy of the video.
-        dst = snapshot_file(src, src.with_name("crosscast-" + self.plan["video_sha256"][:16] + src.suffix), self.plan["video_sha256"], link=True)
+        dst = snapshot_file(src, src.with_name(self.media_name()), self.plan["video_sha256"], link=True)
         self.save(phase="selecting_media", media_selected=True, upload_filename=dst.name)
         stage("uploading")
         return dst
@@ -791,8 +794,6 @@ async def execute(page, platform, identity, payload):
     if tx.receipt['final_submit_attempted']:
         result=await verify(page, platform, identity, tx.receipt)
         return tx.save(**await complete_pending_chapters(page,platform,identity,result))
-    if action == 'resume' and tx.receipt['media_selected'] and platform not in {'x', 'youtube', 'douyin'}:
-        raise VpubError('inspect_existing_draft', 'An upload already started. Resume requires inspecting that existing draft; uploading again is prohibited.')
     for stale in ('hint', 'blocked_phase'):
         tx.receipt.pop(stale, None)
     tx.save(state='PREPARING', error=None, user_action_required=False)

@@ -32,6 +32,7 @@ YT_PLAYLIST_ROWS = """boxes => boxes.map(box => {
 
 X_MEDIA_PAGE = re.compile(r'/library/(\d+_\d+)(/.*)?')
 X_OPEN_SECONDS = 15
+X_FORM_SECONDS = 300
 X_FIRST_CLICK_SECONDS = 120
 X_UPLOAD_BYTES_PER_SECOND = 2_000_000
 X_DONE_SECONDS = 60
@@ -322,6 +323,9 @@ async def publish_x(page, tx):
     hrefs = await account_link.evaluate_all('es => es.map(e=>e.href)')
     if not any('/user/'+tx.identity.casefold()+'/' in h.casefold() for h in hrefs):
         raise VpubError('wrong_account', 'Media Studio account does not match the signed-in publishing account.')
+    # A clip already in Media Studio, from a plan that names its page. A field run's dry run left one, and uploading the same file again would give two tiles of one name, which get no click. Its form only counts if its file has this video's name.
+    if tx.options.get('existing_media_url') and not tx.receipt['media_selected']:
+        tx.save(media_selected=True, upload_filename=tx.media_name(), media_url=tx.options['existing_media_url'], reused_media=True)
     hold = 0
     if tx.receipt.get('media_url'):
         if not re.fullmatch(r'https://studio\.x\.com/library/\d+_\d+/edit', tx.receipt['media_url']):
@@ -338,7 +342,7 @@ async def publish_x(page, tx):
     if not tx.receipt.get('media_url'):
         look = await x_open_media(page, page.get_by_text(filename, exact=True), form, filename, hold)
         tx.save(phase='opening_media', open_look=look, **x_media_address(page.url))
-    await change.wait_for(state='visible', timeout=300000)
+    await change.wait_for(state='visible', timeout=X_FORM_SECONDS * 1000)
     tx.save(phase='media_ready', **x_media_address(page.url))
     # The wait can be long, and what comes next changes the file's details.
     await risk_check(page)
@@ -414,7 +418,17 @@ async def publish_x(page, tx):
     return await finish(page, tx, before)
 
 
+async def instagram_shares_elsewhere(page):
+    """Whether the step's own Share to row has a switch on, which would post this somewhere the plan doesn't say. A field read found that row's words and its one switch under the same grandparent, and the word Threads only in the page's footer, so words elsewhere on the page say nothing."""
+    heading = await visible(page.get_by_text('Share to', exact=True))
+    if heading is None:
+        return False
+    switches = heading.locator('../..').locator('[role=switch],input[type=checkbox]')
+    return any([await box.is_checked() for box in await switches.all() if await box.is_visible()])
+
+
 async def publish_instagram(page, tx):
+    """One upload through Instagram's own steps. A resume starts them over, because the composer keeps nothing until Share: a field run's preview closed with the account's posts unchanged, and its form said it may not outlast the browser."""
     before = await works(page, 'instagram', tx.identity)
     caption = tx.options['post_text']
     if len(caption) > 2200:
@@ -490,13 +504,15 @@ async def publish_instagram(page, tx):
             await switch.click()
         if not await look_until(page, switch.is_checked, 3000):
             raise VpubError('declaration_unverified', 'Instagram AI label was not confirmed.')
-    tx.save(phase='preview', metadata_readback=True, ai_disclosure='native_control')
+    tx.save(phase='preview', metadata_readback=True, ai_disclosure='native_control', shares_elsewhere=await instagram_shares_elsewhere(page))
     if tx.options.get('submission_mode') == 'draft_only':
         return tx.save(state='PREVIEW_READY', note='Reached unpublished preview; this web composer may not persist after the browser closes.')
     post = await unique_visible(page.get_by_role('button', name='Share', exact=True), 'Instagram final Share')
 
     async def still_says_it():
         await words_are_kept()
+        if await instagram_shares_elsewhere(page):
+            raise VpubError('shares_elsewhere', "Instagram's Share to switch is on, so this would also go to another platform. Nothing was shared.", 'Turn it off on Instagram, then run vpub resume.')
         if tx.options['ai_generated']:
             # Found afresh, because a review showed a switch added in front could take the old one's place.
             found = await ai_switch()

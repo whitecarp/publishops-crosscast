@@ -19,7 +19,7 @@ vpub verify RECEIPT_KEY
 vpub works x
 ```
 
-Use `expected_identity` for the intended handle. Media Studio access is checked before upload, including the managed account identity. If processing or a selector fails before Post, `resume KEY` can reopen the same saved media; after Post it only verifies. Existing receipts prevent another upload. `--draft-only` stops at preview, which is not a guaranteed persistent post draft. This route uses current account audience and does not alter protected-account settings.
+Use `expected_identity` for the intended handle. Media Studio access is checked before upload, including the managed account identity. If processing or a selector fails before Post, `resume KEY` can reopen the same saved media; after Post it only verifies. A plan can set `existing_media_url` to a clip's own page in Media Studio, and it then posts that clip with no upload, provided the page's file has this video's `crosscast-<hash>` name. Existing receipts prevent another upload. `--draft-only` stops at preview, which is not a guaranteed persistent post draft. This route uses current account audience and does not alter protected-account settings.
 
 Production cover upload and episode-two publication were observed; [validation](VALIDATION_EN.md) records the repairs and limits. Custom thumbnails require actual Media Studio access; a subscription alone is not a guarantee. Native AI-label control was not observed in Studio, so this route retains the explicit AI-generated caption disclosure.
 

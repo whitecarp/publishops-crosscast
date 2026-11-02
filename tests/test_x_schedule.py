@@ -863,6 +863,26 @@ class PlanTests(unittest.TestCase):
         atomic_json(self.path, self.value)
         return load_plan(self.path)
 
+    def test_a_clip_already_in_media_studio_can_be_named(self):
+        self.value["platforms"]["x"]["existing_media_url"] = "https://studio.x.com/library/13_77/edit"
+        self.assertEqual("https://studio.x.com/library/13_77/edit", self.plan()["platforms"]["x"]["existing_media_url"])
+
+    def test_only_a_clips_own_page_on_the_browser_route_can_be_named(self):
+        self.value.pop("cover")
+        for address, method in (("https://example.com/library/13_77/edit", "browser"), ("https://studio.x.com/library/13_77/edit?x=1", "browser"), ("https://studio.x.com/library", "browser"), (7, "browser"),
+                                ("https://studio.x.com/library/13_77/edit", "native"), ("https://studio.x.com/library/13_77/edit", "api")):
+            with self.subTest(address=address, method=method):
+                self.value["platforms"]["x"].update(existing_media_url=address, method=method)
+                with self.assertRaises(VpubError) as caught:
+                    self.plan()
+                self.assertEqual("invalid_media_url", caught.exception.code)
+
+    def test_instagram_takes_no_such_thing(self):
+        self.value["platforms"] = {"instagram": {"account": "default", "method": "browser", "visibility": "account", "ai_generated": True, "existing_media_url": "https://studio.x.com/library/13_77/edit"}}
+        with self.assertRaises(VpubError) as caught:
+            self.plan()
+        self.assertEqual("invalid_manifest", caught.exception.code)
+
     def test_the_browser_route_takes_a_future_time(self):
         when = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
         self.value["platforms"]["x"]["schedule"] = when

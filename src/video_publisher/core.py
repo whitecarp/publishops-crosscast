@@ -272,6 +272,7 @@ def load_plan(path, selected=None):
         permitted |= {"category_id", "made_for_kids", "expected_channel_id", "method", "playlist_ids", "playlist_titles", "create_missing_playlists", "submission_mode"} if platform == "youtube" else set()
         permitted |= {"method", "expected_identity", "submission_mode", "collection_title"} if platform == "douyin" else set()
         permitted |= {"method", "expected_identity", "submission_mode"} if platform in {"x", "instagram"} else set()
+        permitted |= {"existing_media_url"} if platform == "x" else set()
         if set(v) - permitted:
             raise VpubError("invalid_manifest", f"Unsupported {platform} options: {sorted(set(v) - permitted)}")
         for field in ("method", "visibility", "metadata_mode", "submission_mode"):
@@ -327,6 +328,8 @@ def load_plan(path, selected=None):
                 raise VpubError("invalid_collection", "Use the exact title of one of the account's Douyin collections, on the browser route.")
         if platform == "x" and v.get("expected_identity") is not None and not re.fullmatch(r"[A-Za-z0-9_]{1,15}", str(v["expected_identity"])):
             raise VpubError("invalid_identity", "Use the X handle without @, as observed in the signed-in profile.")
+        if platform == "x" and "existing_media_url" in v and (v.get("method", "browser") != "browser" or not re.fullmatch(r"https://studio\.x\.com/library/\d+_\d+/edit", str(v["existing_media_url"]))):
+            raise VpubError("invalid_media_url", "Use the address of the clip's own page in Media Studio, on the browser route.")
         if platform == "x" and cover and v.get("method", "browser") == "native":
             raise VpubError("unsupported_cover", "X native alpha uses the video's default thumbnail; shared covers are not implemented.")
         title = v.get("title", m.get("title", ""))

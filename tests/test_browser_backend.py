@@ -105,11 +105,13 @@ class BrowserSafetyTests(unittest.TestCase):
             self.resume_record('--no-cover',method='cli')
         self.assertEqual('invalid_resume',caught.exception.code)
 
-    def test_selected_instagram_media_cannot_be_uploaded_again_by_resume(self):
-        tx=Transaction('instagram','tester',self.plan);tx.save(media_selected=True)
-        with self.assertRaises(VpubError) as e:
-            asyncio.run(execute(AsyncMock(),'instagram','tester',{'action':'resume','plan':self.plan}))
-        self.assertEqual('inspect_existing_draft',e.exception.code)
+    def test_an_instagram_attempt_that_never_pressed_share_starts_over(self):
+        tx=Transaction('instagram','tester',self.plan);tx.save(media_selected=True,hint='Inspect it',blocked_phase='preview')
+        with patch('video_publisher.browser_forms.publish_instagram',new=AsyncMock(side_effect=lambda page,tx: tx.save(state='SUBMITTED_UNVERIFIED'))) as publish:
+            result=asyncio.run(execute(AsyncMock(),'instagram','tester',{'action':'resume','plan':self.plan}))
+        publish.assert_awaited_once()
+        self.assertNotIn('hint',result)
+        self.assertNotIn('blocked_phase',result)
 
     def test_changed_media_rejected_before_upload(self):
         tx=Transaction('douyin','tester',self.plan)
