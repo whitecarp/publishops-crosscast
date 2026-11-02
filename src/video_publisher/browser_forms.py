@@ -11,11 +11,10 @@ from .categories import STUDIO_CATEGORIES
 from .core import VpubError, douyin_caption, stop_check
 from .browser_runtime import look_until, risk_check, unique_visible, visible
 from .progress import stage
-from .browser_backends import (MONTHS, STUDIO_DATES, STUDIO_TIMES, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style,
-                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
+from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, X_CHOSEN_TIME, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style,
+                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, x_chosen_time_says, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
 
 X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
-X_CHOSEN_TIME = re.compile(r'([A-Z][a-z]{2}) (\d{1,2})(?:, (\d{4}))?, (1[0-2]|[1-9]):([0-5]\d) ([AP]M)')
 YT_DIALOG = 'ytcp-uploads-dialog'
 YT_PLAYLISTS = 'ytcp-playlist-dialog'
 YT_TICK_MS = 5000
@@ -97,15 +96,6 @@ async def x_schedule(page, when):
             or await chosen.count() != 1 or (await chosen.inner_text()).strip() != str(local.day) or (await clocks[0].input_value()).strip() != stamp):
         raise VpubError('schedule_unverified', unconfirmed)
     return {'at': when.isoformat(), 'local': local.isoformat(), 'date': [local.year, local.month, local.day], 'time': [local.hour, local.minute], 'timezone_basis': 'computer'}
-
-
-def x_chosen_time_says(words, schedule):
-    """Whether words like Nov 4, 6:26 PM, which a field run saw on the button that opened the calendar, are this schedule's date and time."""
-    found = X_CHOSEN_TIME.fullmatch(normalize(words))
-    if not found or found[1] not in MONTHS:
-        return False
-    date = (int(found[3] or schedule['date'][0]), MONTHS.index(found[1]) + 1, int(found[2]))
-    return date == tuple(schedule['date']) and (int(found[4]) % 12 + (12 if found[6] == 'PM' else 0), int(found[5])) == tuple(schedule['time'])
 
 
 X_FILE_VIDEOS = """form => [...form.querySelectorAll('video')].map(video => video.currentSrc || video.src)"""

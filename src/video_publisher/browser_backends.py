@@ -17,6 +17,12 @@ from .x_pages import own_posts
 MANAGE = "https://creator.douyin.com/creator-micro/content/manage"
 STUDIO_VISIBILITY = {"public": {"Public", "公开", "公開"}, "unlisted": {"Unlisted", "不公开列出", "不公開"}, "private": {"Private", "私享", "私人"}}
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+X_CHOSEN_TIME = re.compile(r'([A-Z][a-z]{2}) (\d{1,2})(?:, (\d{4}))?, (1[0-2]|[1-9]):([0-5]\d) ([AP]M)')
+X_SCHEDULE_DAY = re.compile(r'([A-Z][a-z]{2} \d{1,2}) ([A-Z][a-z]{2})')
+X_SCHEDULE_PAGE = "https://studio.x.com/schedule"
+X_SCHEDULE_ROWS = "rows => rows.map(row => [...row.querySelectorAll('td')].map(cell => cell.innerText))"
+X_SCHEDULE_SECONDS = 15
 # Studio writes dates and times in its interface language. Each style is (pattern, read, write).
 STUDIO_DATES = (
     (r"(\d{4})年(\d{1,2})月(\d{1,2})日", lambda m: (int(m[1]), int(m[2]), int(m[3])), lambda d: f"{d.year}年{d.month}月{d.day}日"),
@@ -201,6 +207,8 @@ DOUYIN_CARD = '[class^="video-card-content-"]'
 DOUYIN_NAME = '[class^="info-title-text-"]'
 DOUYIN_SCHEDULED = {'state': 'SUBMISSION_VERIFIED', 'phase': 'scheduled', 'error': None, 'verification_source': 'creator_card_title_and_time',
                     'note': 'Douyin shows this new card with its title and scheduled time, and no ID until the time comes. Verify again after that time.'}
+X_SCHEDULED = {'state': 'SUBMISSION_VERIFIED', 'phase': 'scheduled', 'error': None, 'verification_source': 'studio_schedule_row',
+               'note': "Studio's schedule page shows one row with exactly its words, its date and time, and a video. A row has no ID until the time comes and doesn't say which video. Verify again after that time."}
 
 
 def douyin_card_is_waiting(text):
@@ -524,10 +532,25 @@ async def verify_youtube(page, receipt):
             **({"schedule_evidence": {"intended_at": schedule.get("at"), "scheduled_time_elapsed": passed, "on_time_publication_verified": False}} if schedule else {})}
 
 
+def x_chosen_time_says(words, schedule):
+    """Whether words like Nov 4, 6:26 PM, which a field run saw on the button that opened the calendar, are this schedule's date and time."""
+    found = X_CHOSEN_TIME.fullmatch(normalize(words))
+    if not found or found[1] not in MONTHS:
+        return False
+    date = (int(found[3] or schedule['date'][0]), MONTHS.index(found[1]) + 1, int(found[2]))
+    return date == tuple(schedule['date']) and (int(found[4]) % 12 + (12 if found[6] == 'PM' else 0), int(found[5])) == tuple(schedule['time'])
+
+
+def x_row_says_schedule(day, clock, schedule):
+    """Whether a row's Nov 8 Sun and 9:11 PM, as a field read found them on Studio's schedule page, are this schedule's. They carry no year, so the day of the week has to agree too."""
+    found = X_SCHEDULE_DAY.fullmatch(normalize(day))
+    return bool(found) and found[2] == WEEKDAYS[datetime(*schedule['date']).weekday()] and x_chosen_time_says(f'{found[1]}, {normalize(clock)}', schedule)
+
+
 async def verify_scheduled_x(page, identity, receipt):
-    """A scheduled post has no address until it goes out. Words on Studio's schedule page don't prove which post that is, its time
-    or its video, so before its time this only reports them. After its time, one new post with exactly its words, at about that time,
-    showing the video Media Studio numbered, settles it. Without that number it is named as a candidate for a person to check."""
+    """A scheduled post has no address until it goes out. Before its time, a field read found its row on Studio's schedule page shows its words, date and time, and that it has a video, in that
+    order, with no ID or link. So one row with exactly its words, its date and time and a video settles that it's scheduled. It can't say which video, which is why the final press is tied to the file's own.
+    After its time, one new post with exactly its words, at about that time, showing the video Media Studio numbered, settles it. Without that number it is named as a candidate for a person to check."""
     moment = datetime.fromisoformat(receipt["schedule"]["at"])
     if datetime.now(timezone.utc) >= moment:
         words = normalize(receipt.get("expected_text") or receipt["title"])
@@ -541,13 +564,20 @@ async def verify_scheduled_x(page, identity, receipt):
             return {**receipt, "state": "SUBMITTED_UNVERIFIED", "phase": "readback_pending", "candidate_id": matches[0]["id"], "candidate_url": address,
                     "note": "One new post has its exact words at about its time, but nothing here proves it carries this video. Check that post; do not post again."}
         return await verify(page, "x", identity, {**receipt, "id": matches[0]["id"], "url": address})
-    await page.goto("https://studio.x.com/schedule", wait_until="domcontentloaded", timeout=60000)
-    await page.wait_for_timeout(4000)
+    await page.goto(X_SCHEDULE_PAGE, wait_until="domcontentloaded", timeout=60000)
+    words = normalize(receipt.get("expected_text") or receipt["title"])
+
+    async def rows_with_its_words():
+        rows = await page.locator("tr").evaluate_all(X_SCHEDULE_ROWS)
+        return [cells for cells in rows if len(cells) > 3 and normalize(cells[2]) == words]
+    rows = await look_until(page, rows_with_its_words, X_SCHEDULE_SECONDS * 1000)
     await risk_check(page)
-    mentions = normalize(await page.locator("body").inner_text()).count(normalize(receipt["title"]))
-    return {**receipt, "state": "SUBMITTED_UNVERIFIED", "phase": "readback_pending", "visibility": "scheduled", "schedule_page_mentions": mentions,
-            "verification_source": "studio_schedule_page", "verified_at": now(),
-            "note": f"Studio's schedule page shows this title {mentions} time(s). That does not prove the post, its time or its video, so check them there. Do not post again."}
+    matching = [cells for cells in rows if x_row_says_schedule(cells[0], cells[1], receipt["schedule"]) and normalize(cells[3]) == "Video"]
+    found = {"visibility": "scheduled", "review_url": X_SCHEDULE_PAGE, "verified_at": now(), "schedule_rows_with_its_words": len(rows), "schedule_rows_matching": len(matching)}
+    if len(matching) == 1:
+        return {**receipt, **found, **X_SCHEDULED}
+    return {**receipt, **found, "state": "SUBMITTED_UNVERIFIED", "phase": "readback_pending", "verification_source": "studio_schedule_page",
+            "note": f"Studio's schedule page shows {len(rows)} row(s) with exactly its words, and {len(matching)} with its date and time and a video, where one was expected. Check them there. Do not post again."}
 
 
 def posted_around(post, moment):

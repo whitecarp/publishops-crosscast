@@ -433,10 +433,10 @@ class Calendar(ChromeCase):
     async def test_a_composer_that_closes_after_done_is_then_read_back(self):
         await self.open()
         tx = StubTx({"schedule": self.next_month_day().isoformat()})
-        with patch.object(browser_forms, "verify_scheduled_x", new=AsyncMock(return_value={"state": "SUBMITTED_UNVERIFIED", "schedule_page_mentions": 1})) as read_back:
+        with patch.object(browser_forms, "verify_scheduled_x", new=AsyncMock(return_value={"state": "SUBMISSION_VERIFIED", "phase": "scheduled"})) as read_back:
             result = await self.send(tx)
         read_back.assert_awaited_once()
-        self.assertEqual(1, result["schedule_page_mentions"])
+        self.assertEqual("scheduled", result["phase"])
 
     def test_the_time_on_the_button_is_read_as_a_date_and_a_time(self):
         evening, just_after_midnight, just_after_noon = {"date": [2026, 11, 4], "time": [18, 26]}, {"date": [2026, 11, 4], "time": [0, 5]}, {"date": [2026, 11, 4], "time": [12, 5]}
@@ -512,13 +512,6 @@ class ReadBackTests(unittest.IsolatedAsyncioTestCase):
         page.get_by_text = lambda *a, **k: AsyncMock(all=AsyncMock(return_value=[]))
         return page
 
-    async def test_before_its_time_words_on_the_schedule_page_are_reported_and_prove_nothing(self):
-        for body, mentions in (("Scheduled posts My title Words", 1), ("My title at 3pm. My title at 5pm.", 2), ("Nothing scheduled", 0)):
-            with self.subTest(body=body):
-                result = await browser_backends.verify_scheduled_x(self.page(body), OWNER, self.receipt())
-                self.assertEqual(("SUBMITTED_UNVERIFIED", "readback_pending", "scheduled", mentions), (result["state"], result["phase"], result["visibility"], result["schedule_page_mentions"]))
-                self.assertIn("Do not post again", result["note"])
-
     async def after_its_time(self, posts, **extra):
         moment = datetime.now(timezone.utc) - timedelta(minutes=5)
         receipt = self.receipt(schedule={"at": moment.isoformat()}, **extra)
@@ -586,6 +579,88 @@ class ReadBackTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(browser_backends, "verify_scheduled_x", new=AsyncMock(return_value={"state": "X"})) as scheduled:
             self.assertEqual("X", (await browser_backends.verify(self.page(""), "x", OWNER, self.receipt()))["state"])
         scheduled.assert_awaited_once()
+
+
+class ScheduleRowTests(ChromeCase):
+    """Before its time, against a copy of what a field run read on Studio's schedule page once a post had been scheduled: seven cells and no ID, with its date, time, words and media in that order."""
+    quick_pauses = True
+    WORDS = "My title\n\nThe words of the post."
+    SCHEDULE = {"date": [2026, 11, 8], "time": [21, 11]}  # A Sunday.
+
+    async def asyncSetUp(self):
+        self.pw = await async_playwright().start()
+        self.browser = await self.pw.chromium.launch(channel="chrome", headless=True)
+        self.page = await self.browser.new_page(locale="en-US")
+        self.page.set_default_timeout(5000)
+        await self.page.route("**/*", self.handle)
+
+    async def asyncTearDown(self):
+        await self.browser.close()
+        await self.pw.stop()
+
+    async def handle(self, route):
+        await route.fulfill(status=200, content_type="text/html; charset=utf-8", body=self.html)
+
+    def row(self, day="Nov 8", weekday="Sun", clock="9:11 PM", words=None, media="Video"):
+        return f"""<tr class="oLHZoSmM"><td class="UxBgyW8K"><div><div class="pJ3TNqK2">{day}</div><div>{weekday}</div></div></td><td class="Table-cell--alignLeft"><div>{clock}</div></td>
+          <td class="Table-cell--alignLeft"><div style="white-space: pre-wrap">{self.WORDS if words is None else words}</div></td>
+          <td class="Table-cell--alignLeft"><div class="pJnPcxVd" style="background-image: url(thumb.jpg)"></div><p>{media}</p></td><td class="Table-cell--alignLeft"><div></div></td>
+          <td class="Swu6H6Cr"><button aria-label="Delete" class="gRfJYjDA" style="display: none"><span class="Icon Icon--delete"></span></button></td><td class="_1U0n1L4m--Table-cell--fill"></td></tr>"""
+
+    def table(self, *rows, after=""):
+        head = "".join(f"<th>{name}</th>" for name in ("Date", "Time", "Post", "Media", "Monetization", ""))
+        return f'<!doctype html><body><table><thead><tr>{head}</tr></thead><tbody id="rows">{"".join(rows)}</tbody></table>{after}</body>'
+
+    async def read(self, *rows, after="", **extra):
+        self.html = self.table(*rows, after=after)
+        at = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+        receipt = {"identity": OWNER, "title": "My title", "expected_text": self.WORDS, "before_ids": ["1"], "state": "SUBMITTED_UNVERIFIED", "schedule": {"at": at, **self.SCHEDULE}, **extra}
+        with patch.object(browser_backends, "X_SCHEDULE_SECONDS", 1):
+            return await browser_backends.verify_scheduled_x(self.page, OWNER, receipt)
+
+    async def test_one_row_with_its_words_date_time_and_a_video_settles_that_it_is_scheduled(self):
+        result = await self.read(self.row())
+        self.assertEqual(("SUBMISSION_VERIFIED", "scheduled", "scheduled", "studio_schedule_row", None), (result["state"], result["phase"], result["visibility"], result["verification_source"], result["error"]))
+        self.assertEqual((1, 1), (result["schedule_rows_with_its_words"], result["schedule_rows_matching"]))
+        self.assertEqual("https://studio.x.com/schedule", result["review_url"])
+        self.assertNotIn("id", result)
+        self.assertIn("doesn't say which video", result["note"])
+        self.assertIn("Verify again after that time", result["note"])
+
+    async def test_a_row_that_does_not_match_settles_nothing(self):
+        for name, row in (("another time", self.row(clock="9:12 PM")), ("the morning", self.row(clock="9:11 AM")), ("another day", self.row(day="Nov 9", weekday="Mon")), ("another month", self.row(day="Dec 8", weekday="Tue")),
+                          ("this date in another year", self.row(weekday="Mon")), ("more words", self.row(words=self.WORDS + " And more")), ("fewer words", self.row(words="My title")),
+                          ("no video", self.row(media="Image")), ("no media", self.row(media=""))):
+            with self.subTest(name):
+                result = await self.read(row)
+                self.assertEqual(("SUBMITTED_UNVERIFIED", "readback_pending", 0), (result["state"], result["phase"], result["schedule_rows_matching"]))
+                self.assertIn("Do not post again", result["note"])
+
+    async def test_an_empty_page_or_two_rows_that_could_both_be_it_settle_nothing(self):
+        for rows, wanted in (((), (0, 0)), ((self.row(), self.row()), (2, 2))):
+            with self.subTest(rows=len(rows)):
+                result = await self.read(*rows)
+                self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
+                self.assertEqual(wanted, (result["schedule_rows_with_its_words"], result["schedule_rows_matching"]))
+
+    async def test_the_same_words_at_another_time_do_not_get_in_the_way(self):
+        result = await self.read(self.row(clock="10:00 PM"), self.row())
+        self.assertEqual("SUBMISSION_VERIFIED", result["state"])
+        self.assertEqual((2, 1), (result["schedule_rows_with_its_words"], result["schedule_rows_matching"]))
+
+    async def test_a_row_that_shows_a_moment_after_the_page_is_still_found(self):
+        late = '''<script>window.pending = 1; setTimeout(() => { document.getElementById('rows').insertAdjacentHTML('beforeend', %s); window.pending = 0; }, 300);</script>''' % json.dumps(self.row())
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.read(after=late))["state"])
+
+    async def test_a_row_that_has_gone_takes_a_scheduled_receipt_back_to_unconfirmed(self):
+        result = await self.read(state="SUBMISSION_VERIFIED", phase="scheduled", verification_source="studio_schedule_row")
+        self.assertEqual(("SUBMITTED_UNVERIFIED", "readback_pending", "studio_schedule_page"), (result["state"], result["phase"], result["verification_source"]))
+
+    def test_a_rows_date_and_time_are_read_with_the_day_of_the_week(self):
+        for day, clock, wanted in (("Nov 8\nSun", "9:11 PM", True), ("Nov 8 Sun", " 9:11 PM ", True), ("Nov 8\nMon", "9:11 PM", False), ("Nov 8", "9:11 PM", False), ("Nov 8\nSun", "9:11 AM", False),
+                                   ("Xyz 8\nSun", "9:11 PM", False), ("", "", False), ("Nov 8\nSun", "", False)):
+            with self.subTest(day=day, clock=clock):
+                self.assertIs(wanted, browser_backends.x_row_says_schedule(day, clock, self.SCHEDULE))
 
 
 class OwnPostsTests(ChromeCase):
