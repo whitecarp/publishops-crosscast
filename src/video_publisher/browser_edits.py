@@ -131,8 +131,10 @@ async def execute(page, platform, identity, payload):
             await dialog.wait_for(state='hidden',timeout=30000)
             save_button=await visible(page.get_by_role('button',name=re.compile(r'^(保存|保存修改|提交修改|发布)$')))
             if save_button is None: raise VpubError('layout_changed','Existing-work save button is unavailable; no video was uploaded.')
+            pressed=normalize(await save_button.inner_text())
             await submit(save_button)
-            await page.wait_for_url(re.compile('/content/manage'),timeout=60000)
+            stayed=await douyin_moved_on(page,pressed)
+            if stayed: return save(state='EDIT_SUBMITTED_UNVERIFIED',platform_writes=1,url=url,after_press=stayed,note='Pressed once, and the page did not go back to the works list. See after_press; do not press again.')
             await page.goto(url,wait_until='domcontentloaded')
             await title.wait_for(timeout=30000)
             return await capture_cover(page,control,output,patch,save,url)
@@ -145,6 +147,29 @@ async def execute(page, platform, identity, payload):
         from .youtube_studio import edit
         return await edit(page,payload,save,submit)
     raise VpubError('unsupported_edit','Unsupported platform.')
+
+
+DOUYIN_SAVE_SECONDS=60
+
+
+async def douyin_after_press(page,pressed):
+    """A field run pressed save on a work's edit page and the page stayed, with the old words still saved and nothing to say why. So this notes what the page itself says then: the button pressed, the buttons there, and its own dialogs and messages. The form's words are left out."""
+    async def shown(selector,limit):
+        words=[normalize(await node.inner_text())[:limit] for node in await page.locator(selector).all() if await node.is_visible()]
+        return [text for text in words if text][:8]
+    return {'pressed':pressed,'still_on_edit_page':'/content/post/video' in urlsplit(page.url).path,'buttons':await shown('button',20),
+            'dialogs':await shown('[role=dialog],[role=alertdialog],.semi-modal-content',200),
+            'messages':await shown('.semi-toast,.semi-notification-notice,[role=alert],[class*="error-"],[class*="-error"]',200)}
+
+
+async def douyin_moved_on(page,pressed):
+    """None once a press has taken the page back to the works list. Otherwise what the page says instead, because a press is never repeated."""
+    from patchright.async_api import Error as BrowserError
+    try:
+        await page.wait_for_url(re.compile('/content/manage'),timeout=DOUYIN_SAVE_SECONDS*1000)
+    except BrowserError:
+        return await douyin_after_press(page,pressed)
+    return None
 
 
 async def douyin_fields(page,url,work_id):
@@ -168,8 +193,10 @@ async def douyin_text(page,work_id,patch,save,submit,verify_only=False):
         raise VpubError('metadata_mismatch','Douyin\'s form did not keep the intended text; nothing was saved.')
     button=await visible(page.get_by_role('button',name=re.compile(r'^(保存|保存修改|提交修改|发布)$')))
     if button is None: raise VpubError('layout_changed','Existing-work save button is unavailable; nothing was saved.')
+    pressed=normalize(await button.inner_text())
     await submit(button)
-    await page.wait_for_url(re.compile('/content/manage'),timeout=60000)
+    stayed=await douyin_moved_on(page,pressed)
+    if stayed: return save(state='EDIT_SUBMITTED_UNVERIFIED',platform_writes=1,url=url,after_press=stayed,note='Pressed once, and the page did not go back to the works list. See after_press; do not press again.')
     title,editor=await douyin_fields(page,url,work_id)
     matched=await current(title,editor)==wanted
     return save(state='EDIT_VERIFIED' if matched else 'EDIT_SUBMITTED_UNVERIFIED',platform_writes=1,url=url,note='Douyin may review the change, and the old text may show until that finishes.')

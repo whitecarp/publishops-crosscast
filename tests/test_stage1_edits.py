@@ -33,6 +33,7 @@ class LastMomentTests(SharedBrowser):
     def prepare(self):
         self.saves = []
         self.title, self.words = "Old title", "Old words"
+        self.stays = None
 
     async def handle(self, route):
         if route.request.method == "POST":
@@ -42,13 +43,26 @@ class LastMomentTests(SharedBrowser):
         if urlsplit(route.request.url).path == "/creator-micro/content/post/video":
             return await self.page_at(route, f"""<input placeholder="填写作品标题，为作品获得更多流量" value="{self.title}"><div contenteditable="true" id="c">{self.words}</div>
               <button id="go">发布</button><script>document.getElementById('go').onclick = async () => {{
-                await fetch('/save', {{method: 'POST', body: JSON.stringify({{title: document.querySelector('input').value, words: document.getElementById('c').innerText}})}}); location.href = '/creator-micro/content/manage'; }};</script>""")
+                await fetch('/save', {{method: 'POST', body: JSON.stringify({{title: document.querySelector('input').value, words: document.getElementById('c').innerText}})}}); {"document.body.insertAdjacentHTML('beforeend', " + repr(self.stays) + ")" if self.stays else "location.href = '/creator-micro/content/manage'"}; }};</script>""")
         await self.page_at(route, "manage")
 
     async def edit(self):
         checked = edits.validate_patch("douyin", {**TEXT, "metadata_language": "zh-Hans", "content_language": "zh-Hans"})
         self.path = self.root / "edit.json"
         return await browser_edits.execute(self.page, "douyin", OWNER, {"patch": checked, "receipt": {"id": "123", "title": "Old title"}, "edit_receipt_path": str(self.path)})
+
+    async def test_a_save_that_does_not_move_on_says_what_the_page_says_and_is_not_repeated(self):
+        """From a field run: pressed once, the page stayed and the old words stayed, and nothing recorded why."""
+        self.stays = '<div role="dialog">请先完成封面设置</div>'
+        with patch.object(browser_edits, "DOUYIN_SAVE_SECONDS", 1):
+            result = await self.edit()
+        self.assertEqual(("EDIT_SUBMITTED_UNVERIFIED", 1), (result["state"], result["platform_writes"]))
+        self.assertEqual(1, len(self.saves))
+        seen = result["after_press"]
+        self.assertEqual(("发布", True, ["请先完成封面设置"]), (seen["pressed"], seen["still_on_edit_page"], seen["dialogs"]))
+        self.assertIn("发布", seen["buttons"])
+        self.assertNotIn("New text", str(seen))
+        self.assertEqual(result["state"], read_json(self.path)["state"])
 
     async def test_a_stop_that_arrives_during_an_edit_holds_the_save(self):
         self.stop()

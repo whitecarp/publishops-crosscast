@@ -159,13 +159,15 @@ class Transaction:
             asset = self.plan.get('covers', {}).get('instagram', {}).get('portrait')
         return asset["path"] if asset else shared
 
-    async def submit(self, page, button):
+    async def submit(self, page, button, still_holds=None):
         if self.options.get("submission_mode") == "draft_only":
             raise VpubError("draft_only", "Final submission is forbidden in draft-only mode.")
         if self.receipt["final_submit_attempted"]:
             raise VpubError("already_submitted", "A final submission was already attempted.")
         await risk_check(page)
         stop_check(self.platform)
+        if still_holds:
+            await still_holds()  # What was read before that wait may not be true after it.
         self.save(state="UNKNOWN", phase="submitting", final_submit_attempted=True, review_url=page.url)
         stage("pressing")
         # Persist BEFORE clicking. A timeout must never cause another click.

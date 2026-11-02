@@ -16,12 +16,12 @@ from shared_chrome import ChromeCase, async_playwright
 OWNER = "owner"
 
 
-def page_html(keep_clock=True, final_after="Done", shows=None, closes=True):
+def page_html(keep_clock=True, final_after="Done", shows=None, closes=True, done_closes=True, final_elsewhere=False, row_extra=""):
     """Follows what a field run saw: the calendar has its own Clear and Save, and only its Save changes the buttons below it, sending nothing."""
     months = "".join(f'<option value="{i}">{name}</option>' for i, name in enumerate("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split()))
     years = "".join(f'<option value="{year}">{year}</option>' for year in range(2026, 2032))
-    return f"""<!doctype html><body><textarea name="tweetData.text" placeholder="What's happening?">Words</textarea>
-      <button type="button" id="open" class="Button Button--link">Schedule</button>
+    final_button = '<button type="button" id="final" class="Button Button--primary tweetbtn">Post</button>'
+    return f"""<!doctype html><body><div id="page"><div id="composer"><textarea name="tweetData.text" placeholder="What's happening?">Words</textarea>
       <div id="panel" hidden>
         <fieldset class="CalendarNavigation-monthFormSelect"><select id="m">{months}</select></fieldset>
         <fieldset class="CalendarNavigation-yearFormSelect"><select id="y">{years}</select></fieldset>
@@ -31,7 +31,8 @@ def page_html(keep_clock=True, final_after="Done", shows=None, closes=True):
         <button type="button" id="calendar-save" class="Button Button--primary Button--small">Save</button>
       </div>
       <input type="text" name="other" value="not a time">
-      <button type="button" id="final" class="Button Button--primary tweetbtn">Post</button>
+      <div class="row"><button type="button" id="open" class="Button Button--link">Schedule</button>{row_extra}{"" if final_elsewhere else final_button}</div></div>
+      {f'<div id="another-composer"><div class="row">{final_button}</div></div>' if final_elsewhere else ""}</div>
       <script>
       const m = document.getElementById('m'), y = document.getElementById('y'), days = document.getElementById('days'), final = document.getElementById('final');
       const now = new Date(); m.value = String(now.getMonth()); y.value = String(now.getFullYear());
@@ -56,7 +57,7 @@ def page_html(keep_clock=True, final_after="Done", shows=None, closes=True):
         final.textContent = {final_after!r};
       }};
       {'' if keep_clock else "document.getElementById('clock').onchange = e => { e.target.value = '12:24 AM'; };"}
-      final.onclick = () => fetch('/save', {{method: 'POST', body: JSON.stringify({{month: m.value, year: y.value, day: document.querySelector('.is-rangeStart .Calendar-dayText').textContent, clock: document.getElementById('clock').value}})}});
+      final.onclick = () => fetch('/save', {{method: 'POST', body: JSON.stringify({{month: m.value, year: y.value, day: document.querySelector('.is-rangeStart .Calendar-dayText').textContent, clock: document.getElementById('clock').value}})}}){".then(() => { final.hidden = true; })" if done_closes else ""};
       </script>"""
 
 
@@ -344,11 +345,81 @@ class Calendar(ChromeCase):
     async def test_words_that_changed_in_the_composer_stop_it(self):
         await self.refuses(page_html(), code="metadata_mismatch", post_text="Other words")
 
+    async def changed_during_the_last_safety_wait(self, script, code):
+        """From a review: all of it was read, then the safety checks waited, and what had been read had changed by the press."""
+        class Changes(StubTx):
+            async def submit(self, page, button, still_holds=None):
+                await page.evaluate(script)
+                await super().submit(page, button, still_holds)
+        await self.open()
+        tx = Changes({"schedule": self.next_month_day().isoformat()})
+        with self.assertRaises(VpubError) as caught:
+            await browser_forms.x_send_scheduled(self.page, tx)
+        self.assertEqual(code, caught.exception.code)
+        self.assertEqual(([], []), (tx.pressed, self.saved))
+
+    async def test_a_button_that_turns_back_to_post_during_the_last_safety_wait_is_not_pressed(self):
+        await self.changed_during_the_last_safety_wait("document.getElementById('final').textContent = 'Post'", "schedule_unverified")
+
+    async def test_words_that_change_during_the_last_safety_wait_are_not_sent(self):
+        await self.changed_during_the_last_safety_wait("document.querySelector('textarea').value = 'Other words'", "metadata_mismatch")
+
+    async def test_a_time_that_changes_during_the_last_safety_wait_is_not_sent(self):
+        await self.changed_during_the_last_safety_wait("document.getElementById('open').textContent = 'Jan 1, 1:11 AM'", "schedule_unverified")
+
+    async def test_a_label_that_changes_in_the_very_last_moment_still_cannot_be_pressed(self):
+        """The press itself asks for the word Done."""
+        from patchright.async_api import Error as BrowserError
+
+        class TurnsBack(StubTx):
+            async def submit(self, page, button, still_holds=None):
+                await still_holds()
+                await page.evaluate("document.getElementById('final').textContent = 'Post'")
+                await button.click(timeout=1000)
+        await self.open()
+        with self.assertRaises(BrowserError):
+            await browser_forms.x_send_scheduled(self.page, TurnsBack({"schedule": self.next_month_day().isoformat()}))
+        self.assertEqual([], self.saved)
+
+    async def test_a_done_button_in_another_composer_is_not_this_ones(self):
+        """From a review: the words and the time from one composer, and the only final button on the page in another."""
+        await self.refuses(page_html(final_elsewhere=True))
+
+    async def test_a_row_with_more_in_it_than_the_time_and_done_is_not_trusted(self):
+        await self.refuses(page_html(row_extra='<button type="button">Another action</button>'))
+
+    async def test_a_row_with_an_icon_beside_them_is_still_their_row(self):
+        await self.open(page_html(row_extra='<button type="button" aria-label="Help"><svg width="9" height="9"></svg></button>'))
+        tx = StubTx({"schedule": self.next_month_day().isoformat()})
+        with patch.object(browser_forms, "verify_scheduled_x", new=AsyncMock(return_value={"state": "SUBMITTED_UNVERIFIED"})):
+            await browser_forms.x_send_scheduled(self.page, tx)
+        self.assertEqual(["Done"], tx.pressed)
+
+    async def test_a_composer_that_stays_open_after_done_is_not_left_behind(self):
+        """From a review: the wait for it to close could time out, and the page moved on regardless, which could cut off what Done had started."""
+        await self.open(page_html(done_closes=False))
+        tx = StubTx({"schedule": self.next_month_day().isoformat()})
+        with patch.object(browser_forms, "X_DONE_SECONDS", 1), patch.object(browser_forms, "verify_scheduled_x", new=AsyncMock(side_effect=AssertionError("left the page"))):
+            result = await browser_forms.x_send_scheduled(self.page, tx)
+        self.assertEqual(("SUBMITTED_UNVERIFIED", "readback_pending"), (result["state"], result["phase"]))
+        self.assertIn("do not post again", result["note"])
+        self.assertEqual(["Done"], tx.pressed)
+        self.assertEqual(1, len(self.saved))
+
+    async def test_a_composer_that_closes_after_done_is_then_read_back(self):
+        await self.open()
+        tx = StubTx({"schedule": self.next_month_day().isoformat()})
+        with patch.object(browser_forms, "verify_scheduled_x", new=AsyncMock(return_value={"state": "SUBMITTED_UNVERIFIED", "schedule_page_mentions": 1})) as read_back:
+            result = await browser_forms.x_send_scheduled(self.page, tx)
+        read_back.assert_awaited_once()
+        self.assertEqual(1, result["schedule_page_mentions"])
+
     def test_the_time_on_the_button_is_read_as_a_date_and_a_time(self):
         evening, just_after_midnight, just_after_noon = {"date": [2026, 11, 4], "time": [18, 26]}, {"date": [2026, 11, 4], "time": [0, 5]}, {"date": [2026, 11, 4], "time": [12, 5]}
         for words, schedule, wanted in (("Nov 4, 6:26 PM", evening, True), ("Nov 4, 2026, 6:26 PM", evening, True), ("Nov 4, 2027, 6:26 PM", evening, False), ("Nov 4, 6:26 AM", evening, False),
                                         ("Nov 5, 6:26 PM", evening, False), ("Dec 4, 6:26 PM", evening, False), ("Schedule", evening, False), ("Done", evening, False), ("Xyz 4, 6:26 PM", evening, False),
-                                        ("Nov 4, 12:05 AM", just_after_midnight, True), ("Nov 4, 12:05 PM", just_after_midnight, False), ("Nov 4, 12:05 PM", just_after_noon, True)):
+                                        ("Nov 4, 12:05 AM", just_after_midnight, True), ("Nov 4, 12:05 PM", just_after_midnight, False), ("Nov 4, 12:05 PM", just_after_noon, True),
+                                        ("Nov 4, 18:26 PM", evening, False), ("Nov 4, 0:05 AM", just_after_midnight, False), ("Nov 4, 24:05 PM", just_after_noon, False), ("Nov 4, 6:75 PM", evening, False)):
             with self.subTest(words=words, schedule=schedule):
                 self.assertIs(wanted, browser_forms.x_chosen_time_says(words, schedule))
 
@@ -369,9 +440,42 @@ class StubTx:
         self.receipt.update(changes)
         return dict(self.receipt)
 
-    async def submit(self, page, button):
+    async def submit(self, page, button, still_holds=None):
+        if still_holds:
+            await still_holds()
         self.pressed.append(await button.inner_text())
         await button.click(timeout=5000)
+
+
+class FinalPressTests(unittest.IsolatedAsyncioTestCase):
+    """The real receipt's order: the safety checks wait, then what was read is read again, and only then is the press recorded and made."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        env = patch.dict(os.environ, {"VPUB_HOME": temp.name})
+        env.start()
+        self.addCleanup(env.stop)
+        self.tx = browser_backends.Transaction("x", OWNER, {"confirmation": "a" * 64, "video_sha256": "0" * 64, "options": {"title": "T"}})
+        self.button = AsyncMock()
+        self.page = AsyncMock(url="https://studio.x.com/library/1_2/edit")
+
+    async def press(self, still_holds):
+        with patch.object(browser_backends, "risk_check", new=AsyncMock()):
+            await self.tx.submit(self.page, self.button, still_holds=still_holds)
+
+    async def test_a_check_that_fails_records_nothing_and_presses_nothing(self):
+        with self.assertRaises(VpubError):
+            await self.press(AsyncMock(side_effect=VpubError("schedule_unverified", "No.")))
+        self.button.click.assert_not_awaited()
+        self.assertIs(False, self.tx.receipt["final_submit_attempted"])
+
+    async def test_a_check_that_holds_is_followed_by_one_recorded_press(self):
+        async def holds():
+            self.assertIs(False, self.tx.receipt["final_submit_attempted"])
+        await self.press(holds)
+        self.button.click.assert_awaited_once()
+        self.assertIs(True, self.tx.receipt["final_submit_attempted"])
 
 
 class ReadBackTests(unittest.IsolatedAsyncioTestCase):
