@@ -131,13 +131,16 @@ async def execute(page, platform, identity, payload):
             # That wait can be long, and a review found 完成 pressed with a stop in place.
             await risk_check(page)
             stop_check(platform)
-            await dialog.get_by_role('button',name='完成',exact=True).click()
             from patchright.async_api import TimeoutError as BrowserTimeout
+            traffic=douyin_cover_traffic(page)
+            await dialog.get_by_role('button',name='完成',exact=True).click()
             try:
                 await dialog.wait_for(state='hidden',timeout=DOUYIN_COVER_SECONDS*1000)
             except BrowserTimeout:
                 # A field run saw the window greyed out and working for over three minutes after 完成. Why isn't known, and nothing has been saved at this point.
-                raise VpubError('cover_not_ready',f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so the work was not saved. Its fonts were {fonts} at the press and are {await douyin_fonts(page)} now.",'Nothing changed. Try again later, or change the cover on Douyin\'s own page.') from None
+                raise VpubError('cover_not_ready',f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so the work was not saved. Its fonts were {fonts} at the press and are {await douyin_fonts(page)} now. Requests since the press: {traffic()}.",'Nothing changed. Try again later, or change the cover on Douyin\'s own page.') from None
+            finally:
+                traffic(stop=True)
             save_button=await visible(page.get_by_role('button',name=re.compile(r'^(保存|保存修改|提交修改|发布)$')))
             if save_button is None: raise VpubError('layout_changed','Existing-work save button is unavailable; no video was uploaded.')
             await douyin_can_press(page,save_button)
@@ -163,6 +166,41 @@ DOUYIN_COVER_SECONDS=180
 DOUYIN_PICTURE_SECONDS=45
 DOUYIN_FONT_SECONDS=60
 DOUYIN_COVER_SETTLE_SECONDS=75
+
+
+def douyin_cover_traffic(page):
+    """Counts what the page asks for from 完成 on, by site, with no addresses. Field runs saw this window hang, with the wait before the press making no clear difference and the one success changing nothing visible, so a stop has to say whether a request is still open, failed or never went."""
+    seen={'started':0,'finished':0,'failed':0,'open':{},'failed_hosts':{}}
+    host=lambda request: urlsplit(request.url).hostname or 'other'
+
+    def started(request):
+        seen['started']+=1
+        seen['open'][host(request)]=seen['open'].get(host(request),0)+1
+
+    def ended(request,failed=False):
+        name=host(request)
+        seen['open'][name]=seen['open'].get(name,1)-1
+        if not seen['open'][name]:
+            del seen['open'][name]
+        seen['failed' if failed else 'finished']+=1
+        if failed:
+            seen['failed_hosts'][name]=seen['failed_hosts'].get(name,0)+1
+
+    def finished(request):
+        ended(request)
+
+    def failed(request):
+        ended(request,True)
+    page.on('request',started)
+    page.on('requestfinished',finished)
+    page.on('requestfailed',failed)
+
+    def look(stop=False):
+        if stop:
+            for event,listener in (('request',started),('requestfinished',finished),('requestfailed',failed)):
+                page.remove_listener(event,listener)
+        return dict(seen)
+    return look
 
 
 async def douyin_cover_settles(page):

@@ -668,12 +668,13 @@ async def finish_douyin_form(page, tx, before):
         await dialog.get_by_text('上传封面', exact=True).wait_for(timeout=20000)
         area = await unique_visible(dialog.locator('.semi-upload').filter(has_text='点击上传文件或拖拽文件到这里'), 'Douyin cover upload area')
         await choose_file(page, area.locator('input.semi-upload-hidden-input'), path)
-        from .browser_edits import DOUYIN_COVER_SECONDS, douyin_cover_settles, douyin_fonts
+        from .browser_edits import DOUYIN_COVER_SECONDS, douyin_cover_settles, douyin_cover_traffic, douyin_fonts
         fonts = await douyin_cover_settles(page)
         done = dialog.get_by_role('button', name='完成', exact=True)
         await wait_until(page, lambda: enabled(done), seconds=90, label='Douyin cover ready')
         await risk_check(page)
         stop_check('douyin')
+        traffic = douyin_cover_traffic(page)
         await done.click()
         # First landscape save may offer a portrait upsell. Close it so the
         # explicit portrait asset below is applied through its own control.
@@ -686,7 +687,9 @@ async def finish_douyin_form(page, tx, before):
             await dialog.wait_for(state='hidden', timeout=DOUYIN_COVER_SECONDS * 1000)
         except BrowserTimeout:
             # A field run's first real post stopped here on a 30-second wait, as the edit route's window had stayed for over three minutes.
-            raise VpubError('cover_not_ready', f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so nothing was published. Its fonts were {fonts} at the press and are {await douyin_fonts(page)} now.", 'vpub resume tries again from the draft Douyin kept.') from None
+            raise VpubError('cover_not_ready', f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so nothing was published. Its fonts were {fonts} at the press and are {await douyin_fonts(page)} now. Requests since the press: {traffic()}.", 'vpub resume tries again, and vpub resume KEY --no-cover goes without one.') from None
+        finally:
+            traffic(stop=True)
         saved = await control.locator('img').count() > 0
         if not saved:
             raise VpubError('cover_unverified', 'Cover editor closed without a saved cover preview.')

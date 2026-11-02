@@ -478,7 +478,28 @@ class CoverOnANewPostTests(Base):
             await self.post("false")
         self.assertEqual("cover_not_ready", caught.exception.code)
         self.assertIn("nothing was published", caught.exception.message)
+        self.assertIn("Requests since the press: {'started': ", caught.exception.message)
         self.assertEqual([], self.writes)
+
+    async def test_a_stop_says_which_request_is_open_and_which_failed_with_no_address(self):
+        """From field runs: nothing could say whether the window was waiting on a request, or a request had failed."""
+        async def answer(route):
+            if "/stuck" in route.request.url:
+                return  # Never answered.
+            if "/broken" in route.request.url:
+                return await route.abort()
+            await route.fulfill(status=200, body="{}")
+        await self.open(form() + COVER_FORM % "false")
+        await self.page.route("**/stuck*", answer)
+        await self.page.route("**/broken*", answer)
+        traffic = browser_edits.douyin_cover_traffic(self.page)
+        await self.page.evaluate("fetch('https://cdn.example.org/stuck?id=secret'); fetch('https://other.example.org/broken?id=secret').catch(() => {})")
+        await self.page.wait_for_timeout(300)
+        seen = traffic(stop=True)
+        self.assertEqual({"cdn.example.org": 1}, seen["open"])
+        self.assertEqual({"other.example.org": 1}, seen["failed_hosts"])
+        self.assertEqual(1, seen["failed"])
+        self.assertNotIn("secret", str(seen))
 
     def test_that_window_has_the_edit_routes_three_minutes(self):
         self.assertEqual(180, browser_edits.DOUYIN_COVER_SECONDS)

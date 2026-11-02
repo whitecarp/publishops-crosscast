@@ -298,6 +298,7 @@ class DouyinPageTests(SharedBrowser):
         self.assertEqual("cover_not_ready", caught.exception.code)
         self.assertIn("not saved", caught.exception.message)
         self.assertIn("Its fonts were loaded at the press and are loaded now", caught.exception.message)
+        self.assertIn("Requests since the press: {'started': ", caught.exception.message)
         self.assertEqual([], self.saves)
         self.assertFalse(self.path.exists())
 
