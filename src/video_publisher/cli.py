@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 from . import __version__, adapters
-from .core import Ledger, NOT_ON_SALE, PLATFORMS, VpubError, atomic_json, config, file_sha, home, how_to_clear_a_stop, load_plan, never_sent, now, part_left_undone, presses_on_record, publication_lock, read_json, receipt_turn, snapshot_file, stop_check, platform_check, wrong_file
+from .core import Ledger, NOT_ON_SALE, PLATFORMS, VpubError, atomic_json, config, file_sha, home, how_to_clear_a_stop, load_plan, never_sent, now, part_left_undone, publication_lock, read_json, receipt_turn, verified_over, snapshot_file, stop_check, platform_check, wrong_file
 from .overview import DRAFTS
 from .safety import pushed_back
 
@@ -920,11 +920,11 @@ def verify_attempt(ledger, old, holds_the_lock):
     if result["state"] == "BROWSER_VERIFICATION_REQUIRED":
         return {"key": key, **result}
     if holds_the_lock:
-        return {"key": key, **keep_verified(ledger, old, result)}
+        return {"key": key, **keep_verified(ledger, old, receipt, result)}
     # It takes the lock now only to save, so no writer is part way through the two places this goes, and it saves only if nothing moved on while it read. What it read isn't worth what saving would lose.
     try:
         with publication_lock():
-            kept = keep_verified(ledger, old, result, seen)
+            kept = keep_verified(ledger, old, receipt, result, seen)
     except VpubError as exc:
         if exc.code not in {"busy", "attempt_busy"}:
             raise
@@ -932,14 +932,14 @@ def verify_attempt(ledger, old, holds_the_lock):
     return {"key": key, **kept} if kept else {"key": key, **result, "not_saved": "Another command was running or changed this record during this check, so this answer was not saved. Run vpub verify again."}
 
 
-def keep_verified(ledger, old, result, seen=None):
+def keep_verified(ledger, old, read, result, seen=None):
     """A verify's answer, in the ledger and for a browser attempt in the receipt resume reads. Returns what was saved, or None if the record has moved on since `seen`."""
     key = old["key"]
     plan_hash = old['data'].get('plan_hash') or old['data'].get('approved_plan', {}).get('confirmation')
     durable = home() / 'browser-receipts' / (plan_hash+'-'+old['platform']+'.json') if result.get('method') == 'browser' and plan_hash else None
     with receipt_turn(durable) if durable else contextlib.nullcontext():
         if durable and durable.exists():
-            result = {**result, **presses_on_record(read_json(durable), result)}
+            result = verified_over(read, result, read_json(durable))
         old["data"]["receipt"] = result
         if seen is None:
             ledger.save(key, result["state"], old["data"])

@@ -571,6 +571,21 @@ class TwoVerifiesTests(Temporary):
         for receipt in (result, read_json(path), self.stored(key)["data"]["receipt"]):
             self.assertEqual((True, 1, True), (receipt["final_submit_attempted"], receipt["final_presses"], receipt["media_selected"]))
 
+    def test_what_the_verify_didnt_look_at_stays_as_the_workers_copy_has_it(self):
+        """From a review: replacing the file lost upload_filename, so resume then failed before it reached the saved file."""
+        key, path = self.browser_attempt({"phase": "preview", "still_a_draft": True}, {"phase": "media_ready", "media_selected": True, "upload_filename": "crosscast-abc.mp4", "still_a_draft": True})
+
+        def found_something(platform, account, receipt, checkpoint=None):
+            answer = {**receipt, "state": "SUBMISSION_VERIFIED", "id": "123"}
+            del answer["still_a_draft"]
+            return answer
+        with patch.object(adapters, "verify", found_something):
+            result = self.verify_command(key)
+        for receipt in (result, read_json(path), self.stored(key)["data"]["receipt"]):
+            self.assertEqual(("SUBMISSION_VERIFIED", "123", "media_ready", True, "crosscast-abc.mp4"),
+                             (receipt["state"], receipt["id"], receipt["phase"], receipt["media_selected"], receipt["upload_filename"]))
+            self.assertNotIn("still_a_draft", receipt)
+
     def test_a_second_press_on_record_is_not_taken_back_by_an_older_count(self):
         key, path = self.browser_attempt({"final_submit_attempted": True, "final_presses": 2}, {"final_submit_attempted": True, "final_presses": 1})
         with patch.object(adapters, "verify", side_effect=lambda platform, account, receipt, checkpoint=None: {**receipt, "state": "SUBMITTED_UNVERIFIED"}):
@@ -606,8 +621,8 @@ class TwoVerifiesTests(Temporary):
         plan = {"confirmation": "plan", "video_sha256": "s", "options": {"title": "T"}}
         path = home() / "browser-receipts" / "plan-x.json"
         atomic_json(path, {"video_sha256": "s", "identity": "me", "final_submit_attempted": False})
-        kept = browser_backends.Transaction("x", "me", plan, resume=True, prior_receipt={"final_submit_attempted": True, "final_presses": 1})
-        self.assertEqual((True, 1), (kept.receipt["final_submit_attempted"], kept.receipt["final_presses"]))
+        kept = browser_backends.Transaction("x", "me", plan, resume=True, prior_receipt={"final_submit_attempted": True, "final_presses": 1, "media_selected": True, "upload_filename": "crosscast-abc.mp4"})
+        self.assertEqual((True, 1, True, "crosscast-abc.mp4"), (kept.receipt["final_submit_attempted"], kept.receipt["final_presses"], kept.receipt["media_selected"], kept.receipt["upload_filename"]))
         atomic_json(path, {"video_sha256": "s", "identity": "me", "final_submit_attempted": True, "final_presses": 1})
         kept = browser_backends.Transaction("x", "me", plan, resume=True, prior_receipt={"final_submit_attempted": False})
         self.assertEqual((True, 1), (kept.receipt["final_submit_attempted"], kept.receipt["final_presses"]))
