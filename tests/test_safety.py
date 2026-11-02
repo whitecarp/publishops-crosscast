@@ -270,6 +270,7 @@ class ReplyFlowTests(Temporary):
     def test_a_reply_tricked_into_revealing_a_secret_is_stopped_before_sending(self):
         with patch.object(ops, "backend") as send:
             self.refused("unsafe_reply", ops.reply, "youtube", WORK, "comment123", "密码：123456")
+            self.refused("unsafe_reply", ops.reply, "youtube", WORK, "comment123", '{"access_token":"madeUpValueOnly"}', allow_contact=True, person_approved=True)
             self.refused("contact_in_reply", ops.reply, "youtube", WORK, "comment123", "请看 example.com")
         send.assert_not_called()
         self.assertEqual([], list((home() / "operations/replies").glob("*.json")))
@@ -345,6 +346,11 @@ class MessageFlowTests(Temporary):
             safety.set_limits(messages_per_day=0)
             self.refused("daily_limit_reached", dm.send, "x", "viewer", "Hi", "en")
         self.assertEqual(["read"] * 3, [call.args[1] for call in worker.call_args_list])
+
+    def test_a_credential_in_quotes_never_goes_whoever_approved_it(self):
+        with patch.object(dm, "dispatch", side_effect=self.worker) as worker:
+            self.refused("unsafe_reply", dm.send, "x", "viewer", '{"password":"madeUpValueOnly"}', "en", allow_contact=True, person_approved=True)
+        self.assertEqual({"read"}, {call.args[1] for call in worker.call_args_list})
 
     def test_the_newest_message_of_theirs_is_what_a_repeat_goes_by(self):
         self.assertEqual("b", dm.last_incoming({"items": [{"from": "them", "text": "a"}, {"from": "them", "text": "b"}, {"from": "me", "text": "c"}]}))

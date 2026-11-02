@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from video_publisher import cli, collections, edits, safety, widgets_bilibili
+from video_publisher import cli, collections, comment_actions, edits, safety, widgets_bilibili
 from video_publisher.core import VpubError, atomic_json, load_plan
 
 SECRETS = ["password: x", "my password: hunter2", "密码：123456", "我的密码：123456，别告诉别人", "password=abc123 then log in", "passcode = 8675309",
@@ -34,6 +34,13 @@ class WordsTests(unittest.TestCase):
         for text in ORDINARY:
             with self.subTest(text=text):
                 safety.check_public_text(text)
+
+    def test_replies_messages_and_comment_edits_refuse_all_of_it_too(self):
+        """From a review: the stricter list for these missed a credential in quotes, so it reached the fake send."""
+        for text in SECRETS:
+            with self.subTest(text=text), self.assertRaises(VpubError) as caught:
+                safety.check_text(text, True)
+            self.assertEqual("unsafe_reply", caught.exception.code)
 
     def test_the_refusal_never_repeats_the_words(self):
         with self.assertRaises(VpubError) as caught:
@@ -65,6 +72,28 @@ class Workspace(unittest.TestCase):
         env = patch.dict(os.environ, {"VPUB_HOME": str(self.root / "runtime")})
         env.start()
         self.addCleanup(env.stop)
+
+
+class QuotedCredentialTests(Workspace):
+    """The real paths for a reply, a message and a comment edit, stopped before anything is sent. A person's approval and permission for a link change nothing here."""
+    WORDS = ('{"access_token":"madeUpValueOnly"}', '{"password":"madeUpValueOnly"}', '{"api_key":"madeUpValueOnly"}')
+
+    def test_a_reply_or_a_message_with_every_switch_on_is_still_refused(self):
+        for kind in ("reply", "message"):
+            for words in self.WORDS:
+                with self.subTest(kind=kind, words=words), self.assertRaises(VpubError) as caught:
+                    safety.admit(kind, "x", "me", text=words, person="someone", allow_contact=True, person_approved=True, reserve=False)
+                self.assertEqual("unsafe_reply", caught.exception.code)
+
+    def test_a_comment_edit_by_a_person_is_still_refused(self):
+        for words in self.WORDS:
+            with self.subTest(words=words), patch.object(comment_actions, "dispatch") as sent, self.assertRaises(VpubError) as caught:
+                comment_actions.mutate("youtube", "dQw4w9WgXcQ", "c1", "edit", words, written_by="person")
+            self.assertEqual("unsafe_reply", caught.exception.code)
+            sent.assert_not_called()
+
+    def test_an_ordinary_reply_still_goes(self):
+        safety.check_text("Thanks for watching", False)
 
 
 class PlanTests(Workspace):

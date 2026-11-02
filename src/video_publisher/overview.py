@@ -94,7 +94,7 @@ def next_step(row, busy):
         return f"vpub resume {key}", "The command stopped before finishing. Resume checks the saved state and never submits twice."
     if receipt.get("still_a_draft"):
         return f"vpub resume {key}", "Studio shows this as a draft, so viewers can't see it. Resume presses Publish on the same draft and uploads nothing."
-    return f"vpub verify {key}", "Read-only check of the original attempt. Never upload it again."
+    return f"vpub verify {key}", "Checks the original attempt and uploads nothing. It can also finish chapters or widgets its plan asked for."
 
 
 def progress(row):

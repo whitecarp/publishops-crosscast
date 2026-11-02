@@ -236,8 +236,8 @@ def sent_to(data, names):
 
 def check_text(text, allow_contact, contact_hint="If a person chose to share them, add --allow-link."):
     text = plain(text)
-    # The reason is named, the text never is: this message may be printed or logged.
-    if NEVER_SEND.search(text):
+    # The reason is named, the text never is: this message may be printed or logged. What public text refuses goes for these too: a review found quoted credentials got past the stricter list alone.
+    if NEVER_SEND.search(text) or NEVER_PUBLISH.search(text):
         raise VpubError("unsafe_reply", "This text looks like it contains a password, sign-in data or a private file path, so it was not sent.",
                         "Viewer messages can try to trick an agent into revealing these. Rewrite it without them.")
     if not allow_contact and CONTACT.search(text):

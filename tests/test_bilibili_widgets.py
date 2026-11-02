@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from video_publisher import adapters, cli, edits_bilibili, overview, widgets_bilibili as widgets
-from video_publisher.core import VpubError, part_left_undone
+from video_publisher.core import VpubError, atomic_json, part_left_undone
 
 WORK = "BV1xx411c7mD"
 OTHER = "BV1yy4y1k7yy"
@@ -233,6 +233,32 @@ class FinishTests(Base):
         self.assertEqual(1, len(self.bili.sent))
         self.bili.items = [{"id": "9", "kind": "rating", "time": 40.0}]
         self.assertEqual("VERIFIED", widgets.finish(result, self.checkpoint)["widgets_state"])
+        self.assertEqual(1, len(self.bili.sent))
+
+    def test_a_second_verify_that_loaded_the_receipt_earlier_sends_nothing_more(self):
+        """From a review: two verifies load the same receipt, the first's send ends unclear with the list still empty, and the second then finds nothing there."""
+        self.bili.loses_writes = True
+        self.bili.write_errors["rating"] = VpubError("backend_timeout", "bili-cli did not finish in time.")
+        loaded_by_both = self.receipt(RATING)
+        self.assertEqual("UNVERIFIED", widgets.finish(loaded_by_both, self.checkpoint)["widgets"][0]["state"])
+        second = widgets.finish(loaded_by_both, self.checkpoint)
+        self.assertEqual(1, len(self.bili.sent))
+        self.assertEqual(("UNVERIFIED", "PARTIAL"), (second["widgets"][0]["state"], second["widgets_state"]))
+
+    def test_one_that_finds_another_mid_send_reports_how_the_record_stands(self):
+        loaded = self.receipt(RATING)
+        atomic_json(widgets.record_path(WORK), {"work": WORK, "rows": [{"widget": widgets.validate([RATING])[0], "state": "SUBMITTING"}]})
+        with patch.object(widgets, "receipt_turn", side_effect=VpubError("attempt_busy", "Another step is moving this attempt on, so nothing was sent.")):
+            result = widgets.finish(loaded, self.checkpoint)
+        self.assertEqual([], self.bili.sent)
+        self.assertEqual(("SUBMITTING", "SUBMITTING"), (result["widgets"][0]["state"], result["widgets_state"]))
+        self.assertIn("Another command", result["widgets_next"])
+
+    def test_a_plans_widgets_and_vpub_widgets_share_one_record(self):
+        self.bili.loses_writes = True
+        self.bili.write_errors["rating"] = VpubError("backend_timeout", "bili-cli did not finish in time.")
+        widgets.finish(self.receipt(RATING), self.checkpoint)
+        self.assertEqual("UNVERIFIED", widgets.verify(WORK)["widgets"][0]["state"])
         self.assertEqual(1, len(self.bili.sent))
 
     def test_an_attempt_a_crash_left_on_record_counts_as_maybe_gone(self):

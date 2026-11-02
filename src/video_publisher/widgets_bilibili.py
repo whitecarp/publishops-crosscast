@@ -230,19 +230,28 @@ def finish(receipt, checkpoint=None):
     if not wanted or receipt.get("widgets_state") == "VERIFIED" or checkpoint is None:
         return receipt
     kept = {key: value for key, value in receipt.items() if key not in {"widgets_reason", "widgets_error", "widgets_next"}}
-
-    def save(rows):
-        checkpoint({**kept, "widgets": rows, "widgets_state": "SUBMITTING"})
-    path = record_path(receipt["id"])
+    work = receipt["id"]
+    loaded = receipt.get("widgets") or new_rows(wanted)
+    path = record_path(work)
     path.parent.mkdir(parents=True, exist_ok=True)
-    # vpub verify holds no other lock, and two of them at once would both find these missing. The second reads first when its turn comes, so it finds them there.
+    # vpub verify holds no other lock, and two of them at once could both load these as not yet sent. A review found that a list still empty after the first one's unclear ending let the second send again,
+    # because a list that shows nothing doesn't undo an attempt. So the record, written before each send, is what decides once this one's turn comes.
     try:
         with receipt_turn(path):
-            rows, answer = send(receipt["id"], receipt.get("widgets") or new_rows(wanted), save)
+            record, rows, others = latest(work, loaded)
+
+            def keep(now_rows):
+                atomic_json(path, {**record, "rows": others + now_rows, "updated_at": now()})
+
+            def save(now_rows):
+                keep(now_rows)
+                checkpoint({**kept, "widgets": now_rows, "widgets_state": "SUBMITTING"})
+            rows, answer = send(work, rows, save)
+            keep(rows)
     except VpubError as exc:
         if exc.code != "attempt_busy":
             raise
-        return {**kept, "widgets_next": "Another command is sending this video's widgets. Run vpub verify again in a minute."}
+        return {**kept, "widgets": latest(work, loaded)[1], "widgets_state": "SUBMITTING", "widgets_next": "Another command is sending this video's widgets. Run vpub verify again in a minute."}
     result = {**kept, "widgets": rows, "widgets_state": answer["state"]}
     for name, field in (("error", "widgets_error"), ("reason", "widgets_reason"), ("next", "widgets_next")):
         if name in answer:
@@ -278,6 +287,14 @@ def record_of(work):
     return read_json(path) if path.exists() else {"work": work, "rows": []}
 
 
+def latest(work, loaded):
+    """These rows as the record has them, since another command may have moved them on after they were loaded, and any others it holds. Returns the record too."""
+    record = record_of(work)
+    known = {digest(row["widget"]): row for row in record["rows"]}
+    asked = {digest(row["widget"]) for row in loaded}
+    return record, [known.get(digest(row["widget"]), row) for row in loaded], [row for key, row in known.items() if key not in asked]
+
+
 def listing(work, page=1):
     return {"work": checked_work(work), "page": page, "items": read(work, page), "platform_writes": 0}
 
@@ -297,11 +314,7 @@ def add(work, file, dry_run=False, again=False):
     path = record_path(work)
     path.parent.mkdir(parents=True, exist_ok=True)
     with publication_lock(), receipt_turn(path):
-        record = record_of(work)
-        known = {digest(row["widget"]): row for row in record["rows"]}
-        wanted = {digest(widget) for widget in widgets}
-        rows = [known.get(digest(widget)) or {"widget": widget, "state": "PENDING"} for widget in widgets]
-        others = [row for key, row in known.items() if key not in wanted]
+        record, rows, others = latest(work, new_rows(widgets))
 
         def save(now_rows):
             atomic_json(path, {**record, "rows": others + now_rows, "updated_at": now()})
