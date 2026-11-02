@@ -21,7 +21,7 @@ class Text:
     @property
     def first(self): return self
     async def wait_for(self, **kwargs): pass
-    async def inner_text(self): return self.value
+    async def inner_text(self, **options): return self.value
 
 
 class StudioPage:

@@ -127,14 +127,18 @@ async def execute(page, platform, identity, payload):
             area=await unique_visible(dialog.locator('.semi-upload').filter(has_text='点击上传文件或拖拽文件到这里'),'cover file picker')
             if file_sha(patch['portrait'])!=patch['portrait_sha256']: raise VpubError('source_changed','Shared portrait changed before upload.')
             await choose_file(page,area.locator('input.semi-upload-hidden-input'),patch['portrait'])
-            await page.wait_for_timeout(1500)
+            # Field runs saw the new image in the crop window this long after choosing it. Nobody has seen it any sooner.
+            await page.wait_for_timeout(3000)
+            # In field runs 完成 hung when pressed about 11 seconds after the file and went through at about 73, on a page whose fonts take about 25. Why isn't known, and if it isn't this, the wait costs little.
+            await look_until(page,lambda: douyin_fonts_loaded(page),DOUYIN_FONT_SECONDS*1000,step=1000)
+            fonts=await douyin_fonts(page)
             await dialog.get_by_role('button',name='完成',exact=True).click()
             from patchright.async_api import TimeoutError as BrowserTimeout
             try:
                 await dialog.wait_for(state='hidden',timeout=DOUYIN_COVER_SECONDS*1000)
             except BrowserTimeout:
                 # A field run saw the window greyed out and working for over three minutes after 完成. Why isn't known, and nothing has been saved at this point.
-                raise VpubError('cover_not_ready',f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so the work was not saved.",'Nothing changed. Try again later, or change the cover on Douyin\'s own page.') from None
+                raise VpubError('cover_not_ready',f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so the work was not saved. Its fonts were {fonts} at the press and are {await douyin_fonts(page)} now.",'Nothing changed. Try again later, or change the cover on Douyin\'s own page.') from None
             save_button=await visible(page.get_by_role('button',name=re.compile(r'^(保存|保存修改|提交修改|发布)$')))
             if save_button is None: raise VpubError('layout_changed','Existing-work save button is unavailable; no video was uploaded.')
             await douyin_can_press(page,save_button)
@@ -157,6 +161,20 @@ async def execute(page, platform, identity, payload):
 
 DOUYIN_SAVE_SECONDS=60
 DOUYIN_COVER_SECONDS=180
+DOUYIN_PICTURE_SECONDS=45
+DOUYIN_FONT_SECONDS=60
+
+
+async def douyin_fonts(page):
+    """How far this page has got with its fonts, which a stop reports too. It holds no words from the page."""
+    try:
+        return await page.evaluate('document.fonts.status')
+    except Exception:
+        return 'unknown'
+
+
+async def douyin_fonts_loaded(page):
+    return await douyin_fonts(page)=='loaded'
 
 
 async def douyin_says_held(page):
@@ -244,7 +262,8 @@ async def capture_cover(page,control,output,patch,save,url):
         if exc.code!='processing_timeout': raise
         preview=[]
     proof=output.with_suffix('.png')
-    try: await page.screenshot(path=str(proof),timeout=5000)
+    # A picture waits for the page's fonts, and a field read found them taking about 25 seconds on this fresh load.
+    try: await page.screenshot(path=str(proof),timeout=DOUYIN_PICTURE_SECONDS*1000)
     except Exception: proof=None
     return save(state='EDIT_SUBMITTED_UNVERIFIED',url=url,readback_ready=bool(preview),
                 portrait_sha256=patch['portrait_sha256'],saved_preview=preview,screenshot=str(proof) if proof else None,

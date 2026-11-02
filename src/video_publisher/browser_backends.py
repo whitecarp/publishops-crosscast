@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 from .core import VpubError, atomic_json, file_sha, home, now, read_json, snapshot_file, stop_check
 from .browser_runtime import failure_message, failure_record, look_until, plain_address, platform_at, risk_check, unique_visible, visible
 from .progress import stage
-from .x_pages import own_posts
+from .x_pages import own_posts, post_row, post_time
 
 MANAGE = "https://creator.douyin.com/creator-micro/content/manage"
 STUDIO_VISIBILITY = {"public": {"Public", "公开", "公開"}, "unlisted": {"Unlisted", "不公开列出", "不公開"}, "private": {"Private", "私享", "私人"}}
@@ -32,6 +32,7 @@ X_SCHEDULE_TABLE = """headings => {
   return tables.length ? [...tables[0].rows].filter(row => shown(row) && row.cells[0]?.tagName === 'TD').map(row => [...row.cells].map(cell => cell.innerText)) : [];
 }"""
 X_SCHEDULE_SECONDS = 15
+X_CLOCK_GRACE = timedelta(minutes=5)
 # Studio writes dates and times in its interface language. Each style is (pattern, read, write).
 STUDIO_DATES = (
     (r"(\d{4})年(\d{1,2})月(\d{1,2})日", lambda m: (int(m[1]), int(m[2]), int(m[3])), lambda d: f"{d.year}年{d.month}月{d.day}日"),
@@ -121,7 +122,7 @@ async def upload_file(page, path, trigger=None, accept=None):
 
 
 class Transaction:
-    def __init__(self, platform, identity, plan, resume=False):
+    def __init__(self, platform, identity, plan, resume=False, prior_receipt=None):
         self.platform, self.identity, self.plan = platform, identity, plan
         self.options = plan["options"]
         self.path = home() / "browser-receipts" / (plan["confirmation"] + "-" + platform + ".json")
@@ -131,12 +132,14 @@ class Transaction:
                         "identity": identity, "title": self.options["title"], "phase": "initial",
                         "video_sha256": plan["video_sha256"], "final_submit_attempted": False,
                         "media_selected": False, "started_at": now()}
-        # No receipt means this attempt never reached the page, so it can start from the beginning.
+        # No receipt means this attempt never reached the page, so it can start from the beginning. A review found that file going missing was enough to upload again, though the attempt's own record said a file was chosen.
         if resume and self.path.exists():
             saved = read_json(self.path)
             if saved.get('video_sha256') != plan['video_sha256'] or saved.get('identity') != identity:
                 raise VpubError('receipt_conflict', 'Resume must use the same account and media.')
             self.receipt = saved
+        elif resume and prior_receipt and (prior_receipt.get('media_selected') or prior_receipt.get('final_submit_attempted')):
+            raise VpubError('receipt_missing', "This attempt's browser receipt is gone, and its record says a file was already chosen, so nothing was uploaded again.", 'Inspect the platform, and use vpub verify to read the work back. Never upload it again.')
         elif platform=='douyin' and self.options.get('chapters'):
             self.receipt['pending_chapters']={'chapters':self.options['chapters'],
                                              'duration_seconds':self.options['duration_seconds']}
@@ -403,6 +406,15 @@ def douyin_new_works(platform, receipt, works):
     return [work for work in works if douyin_card_words(work.get('text')) in wanted]
 
 
+def x_new_works(platform, receipt, works):
+    """Of the works new since an upload began and carrying its title, those that can be that upload.
+    The list read before it holds only the posts that first showed, so an older post with the same words can look new, and would be taken for this one if this one never went out. An X post's ID says when it was made. The grace is for this computer's clock."""
+    if platform != 'x' or not receipt.get('started_at'):
+        return works
+    began = datetime.fromisoformat(receipt['started_at']) - X_CLOCK_GRACE
+    return [work for work in works if datetime.fromisoformat(post_time(work['id'])) >= began]
+
+
 async def douyin_card_id(page, name, card):
     """The ID behind a card of the works list, or None if it can't be told, which says nothing about the other cards."""
     from patchright.async_api import Error as BrowserError
@@ -511,7 +523,8 @@ async def verify_youtube(page, receipt):
                 break
             await page.wait_for_timeout(1000)
         seen["description"] = normalize(await page.locator("#description-textarea #textbox").first.inner_text())
-        shown = await page.locator("ytcp-video-metadata-visibility #visibility-text").first.inner_text()
+        # The one field read on a real channel came three seconds after the title, so it gets that long to fill in here too.
+        shown = await look_until(page, lambda: page.locator("ytcp-video-metadata-visibility #visibility-text").first.inner_text(timeout=1000), 3000)
         seen["visibility"] = studio_visibility(shown)
         if schedule:
             dates, times = studio_moments(shown)
@@ -658,8 +671,8 @@ async def verify(page, platform, identity, receipt):
         return await verify_scheduled_x(page, identity, receipt)
     if not receipt.get('id') and receipt.get('final_submit_attempted') and 'before_ids' in receipt:
         found = await works(page, platform, identity)
-        matches = douyin_new_works(platform, receipt, [v for k,v in found.items() if k not in receipt['before_ids'] and
-                                                       receipt.get('title') and normalize(receipt['title']) in normalize(v['text'])])
+        matches = x_new_works(platform, receipt, douyin_new_works(platform, receipt, [v for k,v in found.items() if k not in receipt['before_ids'] and
+                                                                                      receipt.get('title') and normalize(receipt['title']) in normalize(v['text'])]))
         if len(matches) == 1:
             receipt = {**receipt, 'id':matches[0]['id'], 'url':matches[0]['url']}
     if not receipt.get("id"):
@@ -707,6 +720,10 @@ async def verify(page, platform, identity, receipt):
         if expected:
             actual = normalize(await page.locator("body").inner_text())
             present = present and normalize(expected) in actual
+        if platform == 'x' and present and receipt.get('final_submit_attempted'):
+            # Media Studio posts videos, so its words with no video aren't this post. A field read found a real post's video in its own row on its own page. A custom cover leaves no number to compare, which only a scheduled post needs.
+            video = post_row(page, receipt['id']).locator('video, [data-testid="videoPlayer"], [data-testid="videoComponent"]')
+            present = bool(await look_until(page, video.count, 6000))
     if platform == 'douyin' and receipt.get('expected_text'):
         present = present and receipt['expected_text'] in found.get(str(receipt['id']), {}).get('text', '')
     if platform == 'douyin' and present and receipt.get('visibility') == 'private' and 'expected_caption' in receipt:
@@ -734,7 +751,7 @@ async def execute(page, platform, identity, payload):
         return await complete_pending_chapters(page,platform,identity,result)
     if action not in {"publish", "resume"}:
         raise VpubError("unsupported_action", "Use status, works, publish or verify.")
-    tx = Transaction(platform, identity, payload["plan"], resume=action == 'resume')
+    tx = Transaction(platform, identity, payload["plan"], resume=action == 'resume', prior_receipt=payload.get('prior_receipt'))
     if tx.receipt['final_submit_attempted']:
         result=await verify(page, platform, identity, tx.receipt)
         return tx.save(**await complete_pending_chapters(page,platform,identity,result))

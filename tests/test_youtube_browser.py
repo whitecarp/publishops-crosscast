@@ -11,7 +11,7 @@ import time
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from video_publisher import adapters, browser_forms, browser_runtime, cli, hidden_desktop
+from video_publisher import adapters, browser_forms, browser_runtime, cli, hidden_desktop, youtube_studio
 from video_publisher.browser_backends import Transaction, execute, studio_visibility, work_url
 from video_publisher.browser_forms import youtube_link_id
 from video_publisher.core import VpubError, atomic_json, file_sha, home, load_plan, read_json
@@ -54,7 +54,8 @@ class Element:
         if "ancestor-or-self" in self.key:
             return 0
         if "ytcp-chip" in self.key:
-            return self.page.chips
+            self.page.chip_reads += 1
+            return self.page.chips if self.page.chip_reads > self.page.chips_late else 0
         return 1 if self.exists() else 0
 
     async def is_visible(self):
@@ -110,6 +111,9 @@ class Element:
 
     async def inner_text(self, **options):
         if "ytcp-video-metadata-visibility" in self.key:
+            if self.page.visibility_blank_reads:
+                self.page.visibility_blank_reads -= 1
+                return ""
             return self.page.visibility_text if self.page.visibility_text is not None else {"PUBLIC": "Public", "UNLISTED": "Unlisted", "PRIVATE": "Private"}.get(self.page.chosen_visibility(), "")
         if "#category" in self.key:
             return self.page.category or "Choose"
@@ -150,6 +154,8 @@ class FakeStudio:
         self.category, self.saved, self.at_final_click, self.polls_at_final_click = None, False, None, None
         self.has_link, self.ignore_fill, self.refuse_radio, self.lost_tags = True, False, False, 0
         self.uploading_polls, self.visibility_text, self.receipt_path = 0, None, None
+        self.visibility_blank_reads, self.chip_reads, self.chips_late = 0, 0, 0
+        self.listeners, self.studio_sends, self.ticks, self.left_at = {}, {}, 0, []
         self.playlists, self.ticked, self.picker_open, self.refuse_tick = [], set(), False, False
         self.date_text, self.time_text, self.scheduler_text, self.refuse_schedule = "2026年10月31日", "18:00", "", False
         self.url = "https://studio.youtube.com/channel/" + CHANNEL
@@ -165,9 +171,22 @@ class FakeStudio:
     async def goto(self, url, **options):
         self.log.append(("goto", url))
         self.url = url
+        if self.saved:
+            self.left_at.append(self.ticks)
+
+    def on(self, event, listener):
+        self.listeners.setdefault(event, []).append(listener)
+
+    def remove_listener(self, event, listener):
+        self.listeners[event].remove(listener)
 
     async def wait_for_timeout(self, ms):
-        return None
+        # Each pause after the final Save is one tick, and Studio's own requests go out on the ticks a test names.
+        if self.saved:
+            self.ticks += 1
+            for event in self.studio_sends.get(self.ticks, ()):
+                for listener in list(self.listeners.get(event, ())):
+                    listener(MagicMock(url="https://studio.youtube.com/youtubei/v1/video_manager/metadata_update"))
 
     async def screenshot(self, **options):
         return None
@@ -228,6 +247,22 @@ class FormTests(FormCase):
         self.assertEqual(3, page.steps)
         self.assertEqual(("goto", f"https://studio.youtube.com/video/{VIDEO}/edit"), [e for e in page.log if e[0] == "goto"][-1])
         self.assertEqual(result, read_json(tx.path))
+
+    def test_the_page_is_not_left_until_studios_own_request_has_ended(self):
+        """From a field run on Studio's other saves: Save greyed out at once, the change went out about six seconds later, and leaving before it ended cancelled it."""
+        page = FakeStudio(studio_sends={12: ["request"], 40: ["requestfinished"]})
+        self.assertEqual("SUBMISSION_VERIFIED", self.run_form(page)[1]["state"])
+        self.assertGreater(page.left_at[0], 40)
+        self.assertEqual(1, len(page.clicks("#done-button")))
+
+    def test_a_save_with_no_request_seen_still_gets_the_longest_delay_seen(self):
+        page = FakeStudio()
+        self.run_form(page)
+        self.assertEqual(youtube_studio.PIN_TICKS, page.left_at[0])
+
+    def test_tags_that_show_a_moment_after_typing_do_not_stop_it(self):
+        page = FakeStudio(chips_late=2)
+        self.assertEqual("SUBMISSION_VERIFIED", self.run_form(page)[1]["state"])
 
     def test_every_setting_reaches_the_form(self):
         page = FakeStudio()
@@ -465,6 +500,16 @@ class ReadBackTests(Temporary):
         result = self.verify(self.studio())
         self.assertEqual("SUBMISSION_VERIFIED", result["state"])
         self.assertEqual([], result["readback_differs"])
+
+    def test_a_visibility_that_fills_in_after_the_title_is_waited_for(self):
+        page = self.studio()
+        page.visibility_blank_reads = 2
+        self.assertEqual("SUBMISSION_VERIFIED", self.verify(page)["state"])
+
+    def test_a_visibility_that_never_fills_in_stays_unverified(self):
+        page = self.studio()
+        page.visibility_text = ""
+        self.assertEqual(["visibility"], self.verify(page)["readback_differs"])
 
     def test_a_difference_stays_unverified_and_names_the_field(self):
         for key, value, field in [("#title-textarea #textbox", "Another", "title"), ("#description-textarea #textbox", "Another", "description")]:

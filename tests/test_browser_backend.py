@@ -46,6 +46,24 @@ class BrowserSafetyTests(unittest.TestCase):
         with self.assertRaises(VpubError): Transaction('x','tester',self.plan)
         with self.assertRaises(VpubError): Transaction('x','someone_else',self.plan,resume=True)
 
+    def test_a_missing_receipt_is_no_reason_to_upload_again(self):
+        """From a review: the file going missing reset an attempt whose record said a file was already chosen, and reached the upload again."""
+        for prior in ({'media_selected':True},{'final_submit_attempted':True}):
+            with self.subTest(prior=prior), self.assertRaises(VpubError) as caught:
+                Transaction('x','tester',self.plan,resume=True,prior_receipt=prior)
+            self.assertEqual('receipt_missing',caught.exception.code)
+
+    def test_an_attempt_that_never_started_can_still_start(self):
+        for prior in (None,{},{'media_selected':False,'final_submit_attempted':False,'state':'PREPARING'}):
+            with self.subTest(prior=prior):
+                self.assertFalse(Transaction('x','tester',self.plan,resume=True,prior_receipt=prior).receipt['media_selected'])
+
+    def test_a_receipt_that_is_there_decides_whatever_the_record_says(self):
+        first=Transaction('x','tester',self.plan)
+        first.save(media_selected=True,upload_filename='clip.mp4')
+        again=Transaction('x','tester',self.plan,resume=True,prior_receipt={'media_selected':True})
+        self.assertEqual('clip.mp4',again.receipt['upload_filename'])
+
     def test_resume_after_submit_only_verifies(self):
         tx=Transaction('x','tester',self.plan);tx.save(final_submit_attempted=True,id='123')
         with patch('video_publisher.browser_backends.verify',new=AsyncMock(return_value={'state':'SUBMITTED_UNVERIFIED'})) as verify:
@@ -98,13 +116,15 @@ class BrowserSafetyTests(unittest.TestCase):
         self.assertEqual('Fixture caption',found['Abc_12']['text'])
 
     def test_finish_saves_verified_result_with_existing_phase(self):
+        import time
         from video_publisher.browser_forms import finish
         tx=Transaction('x','tester',self.plan)
-        with patch('video_publisher.browser_forms.works',new=AsyncMock(return_value={'123':{'id':'123','url':'https://x.com/tester/status/123','text':'Fixture'}})), \
-             patch('video_publisher.browser_forms.verify',new=AsyncMock(return_value={'state':'SUBMISSION_VERIFIED','phase':'complete','id':'123'})):
+        post=str((int(time.time()*1000)-1288834974657)<<22)  # An X post's ID carries the moment it was made.
+        with patch('video_publisher.browser_forms.works',new=AsyncMock(return_value={post:{'id':post,'url':f'https://x.com/tester/status/{post}','text':'Fixture'}})), \
+             patch('video_publisher.browser_forms.verify',new=AsyncMock(return_value={'state':'SUBMISSION_VERIFIED','phase':'complete','id':post})):
             result=asyncio.run(finish(AsyncMock(),tx,[]))
         self.assertEqual('SUBMISSION_VERIFIED',result['state'])
-        self.assertEqual('123',read_json(tx.path)['id'])
+        self.assertEqual(post,read_json(tx.path)['id'])
 
     def test_portrait_only_instagram_artwork_is_not_silently_ignored(self):
         self.plan['covers']={'instagram':{'portrait':{'path':'portrait.jpg'}}}

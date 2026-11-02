@@ -12,7 +12,7 @@ from .core import VpubError, douyin_caption, stop_check
 from .browser_runtime import look_until, risk_check, unique_visible, visible
 from .progress import stage
 from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, X_CHOSEN_TIME, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style,
-                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, x_chosen_time_says, x_schedule_baseline, x_schedule_moment, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
+                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, x_chosen_time_says, x_new_works, x_schedule_baseline, x_schedule_moment, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
 
 X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
 YT_DIALOG = 'ytcp-uploads-dialog'
@@ -51,7 +51,7 @@ async def finish(page, tx, before):
                 return tx.save(**DOUYIN_SCHEDULED)
         fresh = [v for k, v in found.items() if k not in before]
         matches = [v for v in fresh if tx.options['title'] in v.get('text', '')]
-        candidates = douyin_new_works(tx.platform, tx.receipt, matches)
+        candidates = x_new_works(tx.platform, tx.receipt, douyin_new_works(tx.platform, tx.receipt, matches))
         if len(candidates) == 1:
             item = candidates[0]
             receipt = tx.save(state='SUBMITTED_UNVERIFIED', phase='readback', id=item['id'], url=item['url'])
@@ -130,13 +130,36 @@ async def x_send_scheduled(page, tx, form, video):
     tx.save(schedule=schedule)
     save = await unique_visible(page.locator('button[type="button"]').filter(has_text=re.compile(r'^\s*Save\s*$')), 'X calendar Save')
     await wait_until(page, lambda: enabled(save), seconds=30, label='X calendar Save enabled')
-    if not await x_composer_is_this_files(form, video, caption, any_final, save):
-        raise VpubError('schedule_unverified', unconfirmed)
-    await save.click(timeout=15000)
     # The press itself asks for the word Done, because a review showed the label could change between looking and pressing.
     done = any_final.filter(has_text=re.compile(r'^\s*Done\s*$'))
     chosen = page.locator('button[type="button"]:visible').filter(has_text=X_CHOSEN_TIME)
     row = any_final.locator('xpath=..')  # A field run's read of the page has the time and the final button side by side under one parent.
+
+    async def not_ready():
+        """A field run stopped here with Done on the page and one button greyed out, and nothing to say whose, so a stop says what these checks saw. It holds no words from the page."""
+        async def read(look):
+            try:
+                return await look()
+            except BrowserError:
+                return None
+
+        async def time_is_this_schedule():
+            return x_chosen_time_says(await chosen.inner_text(timeout=2000), schedule)
+
+        async def words_are_the_plans():
+            return await caption.input_value(timeout=2000) == tx.options['post_text']
+
+        async def tied():
+            return await x_composer_is_this_files(form, video, caption, any_final)
+        seen = {'finals_showing': await read(any_final.count), 'finals': await read(page.locator('button.tweetbtn').count), 'says_done': await read(done.count),
+                'final_enabled': await read(lambda: enabled(any_final)), 'final_class': await read(lambda: any_final.get_attribute('class', timeout=2000)),
+                'calendar_open': await read(page.locator('fieldset.CalendarNavigation-monthFormSelect select:visible').count), 'times_showing': await read(chosen.count),
+                'time_is_this_schedule': await read(time_is_this_schedule), 'buttons_beside_final': await read(row.locator('button:visible').filter(has_text=re.compile(r'\S')).count),
+                'captions': await read(caption.count), 'words_are_the_plans': await read(words_are_the_plans), 'words_length': len(tx.options['post_text']), 'tied_to_the_file': await read(tied)}
+        return VpubError('schedule_unverified', f'{unconfirmed} Last look: {seen}.')
+    if not await x_composer_is_this_files(form, video, caption, any_final, save):
+        raise await not_ready()
+    await save.click(timeout=15000)
 
     async def says_done():
         return (await any_final.count() == 1 and await done.count() == 1 and await enabled(done)
@@ -147,11 +170,11 @@ async def x_send_scheduled(page, tx, form, video):
                 or await row.locator('button[type="button"]:visible').filter(has_text=X_CHOSEN_TIME).count() != 1
                 or await row.locator('button:visible').filter(has_text=re.compile(r'\S')).count() != 2
                 or await page.locator('button.tweetbtn').count() != 1 or await caption.count() != 1 or not await x_composer_is_this_files(form, video, caption, any_final, chosen)):
-            raise VpubError('schedule_unverified', unconfirmed)
+            raise await not_ready()
         if await caption.input_value() != tx.options['post_text']:
             raise VpubError('metadata_mismatch', 'X post text differs from the manifest. Nothing was posted.')
     if not await look_until(page, says_done, 15000):
-        raise VpubError('schedule_unverified', unconfirmed)
+        raise await not_ready()
     await ready_to_send()
     await tx.submit(page, done, still_holds=ready_to_send)
     # Leaving the page before Done has finished could cut it off, so while its composer is open this stays put, and says so if it never closes.
@@ -198,14 +221,35 @@ async def x_names_showing(name):
     return [item for item in await name.all() if await item.is_visible()]
 
 
+X_NAME_AMONG_TILES = r"""(name, link) => {
+  let around = name;
+  while (!around.contains(link)) around = around.parentElement;
+  return [...around.querySelectorAll('button')].some(button => /^\s*Upload Media\s*$/.test(button.textContent));
+}"""
+
+
+async def x_names_among_tiles(names, link):
+    """Of the names showing, those out among Library's tiles rather than in this file's details: a field read found Upload Media further out than everything around this file's link."""
+    from patchright.async_api import Error as BrowserError
+    try:
+        if await link.count() != 1:
+            return []
+        around = await link.element_handle(timeout=5000)
+        return [name for name in names if await name.evaluate(X_NAME_AMONG_TILES, around, timeout=5000)]
+    except BrowserError:
+        return []  # The page is still changing, and the next look says what it became.
+
+
 async def x_open_media(page, name, form, filename):
     """Field runs clicked the uploaded file's name as soon as it showed, and the address didn't change in 30 seconds, while 15 seconds on the name showed twice. A click two minutes after an upload opened the form at once.
-    So the file is open once its own form shows, and the address is not waited for. A click changes nothing, and comes again only while the name shows once and no form has come."""
+    So the file is open once its own form shows, and the address is not waited for. A click changes nothing, and comes again only while no form has come.
+    Two field runs in a row clicked five seconds in and got the file's details instead: this file's link and its title box, still on /library, with no Change thumbnail anywhere for ten minutes, while a fresh page's click reached the form. So once those details show, the click comes again on the name out among the tiles. A click can't cut off an upload the way leaving the page could."""
     from patchright.async_api import Error as BrowserError
     clicked = None
     began = time.monotonic()
     seen = {'clicks': 0}
     change = page.locator('button').filter(has_text=X_CHANGE_THUMBNAIL)
+    link = page.locator(x_file_link(filename) + ':visible')
 
     async def opened():
         nonlocal clicked
@@ -213,22 +257,25 @@ async def x_open_media(page, name, form, filename):
             return True
         showing = await x_names_showing(name)
         # A field run stopped with one click, the name twice and this file's link showing, and a fresh page then opened its form at once. Those counts couldn't say why, so these are for the next one.
-        seen.update(names=await name.count(), names_showing=len(showing), links_showing=await page.locator(x_file_link(filename) + ':visible').count(),
+        seen.update(names=await name.count(), names_showing=len(showing), links_showing=await link.count(),
                     change_buttons=await change.count(), change_showing=len(await x_names_showing(change)), other_links=await page.locator(f'a[download]:not({x_file_link(filename)})').count(),
                     path=re.sub(r'\d+', '<n>', x_studio_path(page.url)))
         if seen['links_showing']:
             seen.setdefault('link_first_at', round(time.monotonic() - began))
-        if len(showing) == 1 and (clicked is None or time.monotonic() - clicked >= X_OPEN_SECONDS):
+        due = clicked is None or time.monotonic() - clicked >= X_OPEN_SECONDS
+        target = showing if len(showing) == 1 else await x_names_among_tiles(showing, link) if due else []
+        if due and len(target) == 1:
             clicked = time.monotonic()
             seen.setdefault('first_click_at', round(clicked - began))
             seen['clicks'] += 1
             try:
-                await showing[0].click(timeout=X_OPEN_SECONDS * 1000)
+                await target[0].click(timeout=X_OPEN_SECONDS * 1000)
             except BrowserError:
                 pass  # The next look says what happened.
         return False
     try:
         await wait_until(page, opened, seconds=600, label="the uploaded file's form in Media Studio")
+        return seen  # So a run that gets through can show whether a second click was what did it.
     except VpubError as failure:
         if failure.code != 'processing_timeout':
             raise
@@ -268,8 +315,8 @@ async def publish_x(page, tx):
     form = x_media_form(page, filename)
     change = form.locator('button:visible').filter(has_text=X_CHANGE_THUMBNAIL)
     if not tx.receipt.get('media_url'):
-        await x_open_media(page, page.get_by_text(filename, exact=True), form, filename)
-        tx.save(phase='opening_media', **x_media_address(page.url))
+        look = await x_open_media(page, page.get_by_text(filename, exact=True), form, filename)
+        tx.save(phase='opening_media', open_look=look, **x_media_address(page.url))
     await change.wait_for(state='visible', timeout=300000)
     tx.save(phase='media_ready', **x_media_address(page.url))
     # The wait can be long, and what comes next changes the file's details.
@@ -337,6 +384,12 @@ async def publish_x(page, tx):
             raise VpubError('metadata_mismatch', 'X post text differs from the manifest. Nothing was posted.')
     await still_this_files()
     await tx.submit(page, post, still_holds=still_this_files)
+    # As with Done, leaving before its composer has closed could cut the post off. A field run's closed as soon as it was pressed. A minute on, reading the account says more than waiting would.
+    from patchright.async_api import Error as BrowserError
+    try:
+        await page.locator('button.tweetbtn:visible').wait_for(state='hidden', timeout=X_DONE_SECONDS * 1000)
+    except BrowserError:
+        pass
     return await finish(page, tx, before)
 
 
@@ -364,46 +417,64 @@ async def publish_instagram(page, tx):
     tx.save(crop='original', video_modified=False)
     await page.get_by_role('button', name='Next', exact=True).click()
     tx.save(phase='cover')
+    cover_button = page.get_by_text('Select from computer', exact=True)
     if tx.cover():
-        cover_button = page.get_by_text('Select from computer', exact=True)
         await cover_button.wait_for(state='visible', timeout=60000)
         await choose_in_picker(page, cover_button, tx.cover())
         await page.wait_for_timeout(2000)
         tx.save(cover={'state':'UI_ACCEPTED', 'source':'production_artwork', 'remote_pixels_verified':False})
+    else:
+        # A field look found this step shows that button. With no cover to wait for, a press straight after the last could land before the step has come.
+        await look_until(page, lambda: visible(cover_button), 15000)
     await page.get_by_role('button', name='Next', exact=True).click()
     tx.save(phase='caption')
-    editor = await unique_visible(page.locator('textarea,[contenteditable=true]'), 'Instagram caption')
+    boxes = page.locator('textarea,[contenteditable=true]')
+    # Field runs found Instagram's menus and buttons come a moment after a press, and finding no box here would stop an upload that was going fine.
+    await wait_until(page, lambda: visible(boxes), seconds=30, label='Instagram caption')
+    editor = await unique_visible(boxes, 'Instagram caption')
     await editor.fill(caption)
-    actual = await editor.input_value() if await editor.evaluate('e=>e.tagName')=='TEXTAREA' else await editor.inner_text()
-    if normalize(actual) != normalize(caption):
-        raise VpubError('metadata_mismatch', 'Instagram caption differs from the manifest.')
+
+    async def words_are_kept():
+        actual = await editor.input_value() if await editor.evaluate('e=>e.tagName')=='TEXTAREA' else await editor.inner_text()
+        if normalize(actual) != normalize(caption):
+            raise VpubError('metadata_mismatch', 'Instagram caption differs from the manifest.')
+    await words_are_kept()
     # The native AI control is required when requested; never silently omit it.
+    switch = None
     if tx.options['ai_generated']:
-        ai = await visible(page.get_by_text('Add AI label', exact=True))
+        label = page.get_by_text('Add AI label', exact=True)
+        ai = await visible(label)
         if ai is None:
             advanced = await visible(page.get_by_text('Advanced settings', exact=True))
             if advanced:
                 await advanced.click()
-            ai = await visible(page.get_by_text('Add AI label', exact=True))
+            ai = await look_until(page, lambda: visible(label), 5000)
         if ai is None:
             raise VpubError('declaration_unverified', 'Instagram AI-label control is unavailable; upload retained, Share not clicked.')
+        # A field look found several switches in this step, each an input of its own. The nearest one to the words has to be the only one that near, or it could be another setting.
+        async def switches_in(row):
+            return [box for box in await row.locator('[role=switch],input[type=checkbox]').all() if await box.is_visible()]
         row = ai.locator('..')
-        switch = await visible(row.locator('[role=switch],input[type=checkbox]'))
-        if switch is None:
-            switch = await visible(row.locator('..').locator('[role=switch],input[type=checkbox]'))
-        if switch is None:
+        switches = await switches_in(row) or await switches_in(row.locator('..'))
+        if len(switches) != 1:
             raise VpubError('declaration_unverified', 'Instagram AI-label switch could not be identified.')
-        checked = await switch.get_attribute('aria-checked')
-        if checked != 'true':
+        switch = switches[0]
+        if not await switch.is_checked():
             await switch.click()
-        if await switch.get_attribute('aria-checked') != 'true' and not await switch.is_checked():
+        if not await look_until(page, switch.is_checked, 3000):
             raise VpubError('declaration_unverified', 'Instagram AI label was not confirmed.')
     tx.save(phase='preview', metadata_readback=True, ai_disclosure='native_control')
     if tx.options.get('submission_mode') == 'draft_only':
         return tx.save(state='PREVIEW_READY', note='Reached unpublished preview; this web composer may not persist after the browser closes.')
     post = await unique_visible(page.get_by_role('button', name='Share', exact=True), 'Instagram final Share')
-    await tx.submit(page, post)
-    await page.get_by_text(re.compile(r'(Your (post|reel) has been shared|Post shared)', re.I)).wait_for(timeout=600000)
+
+    async def still_says_it():
+        await words_are_kept()
+        if switch is not None and not await switch.is_checked():
+            raise VpubError('declaration_unverified', 'Instagram AI label was not confirmed.')
+    await tx.submit(page, post, still_holds=still_says_it)
+    # Its window may say this more than once, and an error about that here would read as a failed post after it has gone out.
+    await page.get_by_text(re.compile(r'(Your (post|reel) has been shared|Post shared)', re.I)).filter(visible=True).first.wait_for(timeout=600000)
     return await finish(page, tx, before)
 
 
@@ -772,7 +843,7 @@ async def publish_youtube(page, tx):
     if normalize(await title.inner_text()) != normalize(options['title']) or normalize(await description.inner_text()) != normalize(options['description']):
         raise VpubError('metadata_mismatch', 'YouTube title or description differs from the manifest.')
     if tx.cover():
-        if not await page.locator(f'{YT_DIALOG} input#file-loader').count():
+        if not await look_until(page, page.locator(f'{YT_DIALOG} input#file-loader').count, 5000):
             raise VpubError('cover_unavailable', 'YouTube offers no custom thumbnail on this channel yet. The upload is kept as a draft; nothing was published.',
                             'Custom thumbnails need a verified channel. Verify it in YouTube Studio, or plan without a cover.')
         await choose_file(page, page.locator(f'{YT_DIALOG} input#file-loader').first, tx.cover())
@@ -787,7 +858,10 @@ async def publish_youtube(page, tx):
     if options['tags']:
         box = await unique_visible(page.locator(f'{YT_DIALOG} #tags-container input'), 'YouTube tags box')
         await box.press_sequentially(','.join(options['tags']) + ',')
-        if await page.locator(f'{YT_DIALOG} #tags-container ytcp-chip').count() != len(set(options['tags'])):
+
+        async def tags_shown():
+            return await page.locator(f'{YT_DIALOG} #tags-container ytcp-chip').count() == len(set(options['tags']))
+        if not await look_until(page, tags_shown, 3000):
             raise VpubError('metadata_mismatch', 'YouTube tags differ from the manifest.')
     await yt_category(page, options['category_id'])
     if options.get('playlist_titles'):
@@ -813,7 +887,9 @@ async def publish_youtube(page, tx):
     done = await unique_visible(page.locator(f'{YT_DIALOG} #done-button'), 'YouTube final Save')
     await wait_until(page, lambda: yt_button_ready(done), seconds=120, label='YouTube final Save enabled')
     tx.save(id=video_id, url=work_url('youtube', tx.identity, video_id))
-    await tx.submit(page, done)
+    # On a real channel Studio greyed a Save out at once and sent the change about six seconds later, and leaving before it ended cancelled it. The read-back below leaves this page.
+    from .youtube_studio import PIN_TICKS, act_and_settle
+    await act_and_settle(page, lambda: tx.submit(page, done), PIN_TICKS)
     try:
         await done.wait_for(state='hidden', timeout=60000)
     except Exception:

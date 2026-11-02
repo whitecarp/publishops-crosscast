@@ -157,6 +157,44 @@ class OpeningMediaTests(ChromeCase):
             self.assertIn(said, message)
         self.assertNotIn("13_77", message)
 
+    def library_with_details(self, then="", tile_goes=""):
+        """What a field run's click five seconds in opened: this file's link and title box, still on /library, with no Change thumbnail. The name in the details opens the wrong page, to show if it gets clicked."""
+        details = """<div id="details"><h2>Media details</h2><p onclick="location.href='/library/99_99/edit'">clip.mp4</p><a download="clip.mp4" href="#">Download</a><input placeholder="Title" value="original"><textarea placeholder="Type a brief description here"></textarea></div>"""
+        return f"""<!doctype html><body><a href="https://analytics.twitter.com/user/{OWNER}/home">Analytics</a><div id="library"><button>Upload Media</button>
+          <p onclick="if (window.opened) {{ {then} return; }} window.opened = true; {tile_goes} document.getElementById('spot').innerHTML = document.getElementById('held').innerHTML;">clip.mp4</p></div>
+          <div id="spot"></div><template id="held">{details}</template>"""
+
+    async def test_a_second_click_on_the_tile_gets_from_the_files_details_to_its_form(self):
+        """From two field runs in a row: ten minutes in those details, because two names showing stopped any further click. No page was left, so no upload could be cut off."""
+        self.LIBRARY = self.library_with_details(then="location.href = '/library/13_77/edit';")
+        tx = self.Tx()
+        with patch.object(browser_forms, "X_OPEN_SECONDS", 1):
+            self.assertEqual("PREVIEW_READY", (await browser_forms.publish_x(self.page, tx))["state"])
+        self.assertEqual("https://studio.x.com/library/13_77/edit", tx.receipt["media_url"])
+        self.assertEqual(2, tx.receipt["open_look"]["clicks"])
+
+    async def test_details_that_stay_are_clicked_past_on_the_tile_and_filled_in_no_form(self):
+        with patch.object(browser_forms, "X_OPEN_SECONDS", 1):
+            message = await self.stops_without_filling(self.library_with_details())
+        self.assertNotIn("'clicks': 1", message)
+        for said in ("'names_showing': 2", "'links_showing': 1", "'change_buttons': 0", "'path': '/library'", "vpub resume"):
+            self.assertIn(said, message)
+        self.assertEqual("https://studio.x.com/library", self.page.url)
+
+    async def test_with_no_name_out_among_the_tiles_nothing_more_is_clicked(self):
+        library = self.library_with_details(tile_goes="this.hidden = true; document.getElementById('held').content.getElementById('details').insertAdjacentHTML('beforeend', '<p>clip.mp4</p>');")
+        with patch.object(browser_forms, "X_OPEN_SECONDS", 1):
+            message = await self.stops_without_filling(library)
+        self.assertIn("'clicks': 1", message)
+        self.assertIn("'names_showing': 2", message)
+
+    async def test_two_names_out_among_the_tiles_are_not_guessed_between(self):
+        library = self.library_with_details(tile_goes="this.insertAdjacentHTML('afterend', '<p>clip.mp4</p>');")
+        with patch.object(browser_forms, "X_OPEN_SECONDS", 1):
+            message = await self.stops_without_filling(library)
+        self.assertIn("'clicks': 1", message)
+        self.assertIn("'names_showing': 3", message)
+
     async def test_after_a_timeout_a_resume_opens_the_file_on_a_fresh_page(self):
         """From a field run: ten minutes on the page it uploaded from, and then a fresh page opened the same file with one click. No second upload."""
         ready = self.LIBRARY
@@ -339,6 +377,19 @@ class Calendar(ChromeCase):
         self.assertIn("Nothing was posted", caught.exception.message)
         self.assertEqual([], tx.pressed)
         self.assertEqual([], self.saved)
+        return caught.exception.message
+
+    async def test_a_stop_says_what_its_checks_saw(self):
+        """From a field run: Done on the page, one button greyed out, and the same words for every cause."""
+        greyed = page_html().replace("final.textContent = 'Done';", "final.textContent = 'Done'; final.disabled = true;")
+        message = await self.refuses(greyed)
+        for said in ("'says_done': 1", "'final_enabled': False", "'finals': 1", "'calendar_open': 0", "'times_showing': 1", "'time_is_this_schedule': True", "'words_are_the_plans': True", "'words_length': 5", "'tied_to_the_file': True", "Button--primary tweetbtn"):
+            self.assertIn(said, message)
+        self.assertNotIn("Words", message.split("Last look")[1].replace("words", ""))
+
+    async def test_a_stop_for_another_files_composer_says_so(self):
+        message = await self.refuses(page_html(), video="https://studio.x.com/another-file.mp4")
+        self.assertIn("'tied_to_the_file': False", message)
 
     async def test_a_final_button_that_still_says_post_is_never_pressed(self):
         """It could post at once, in public, with the time ignored."""

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlsplit
@@ -20,6 +21,11 @@ OWNER = "owner"
 POST = "2115117485020135559"
 REEL = "Cabcde12345"
 BVID = "BV1xx411c7mD"
+
+
+def post_made(seconds_ago=0):
+    """An X post's ID, which carries the moment it was made."""
+    return str(int((time.time() - seconds_ago) * 1000 - 1288834974657) << 22)
 
 
 class Form(SharedBrowser):
@@ -184,6 +190,14 @@ class XFormTests(Form):
         self.studio_open = True
         self.never_shows = False
         self.schedule_reads = []
+        self.post = post_made()
+        self.post_video = "<video></video>"
+        self.older_post = None
+        self.final_class = ""
+        self.final_goes = ""
+        self.compose_goes = "this.remove();"
+        self.tile_icons = ""
+        self.wrong_presses = []
 
     async def handle(self, route):
         url = urlsplit(route.request.url)
@@ -193,13 +207,19 @@ class XFormTests(Form):
             elif url.path == "/post":
                 self.note_final(route)
                 self.posted = json.loads(route.request.post_data)["text"]
+            elif url.path == "/wrong":
+                self.wrong_presses.append(1)
             return await self.json_at(route, {})
         if url.hostname == "studio.x.com":
             return await self.studio(route, url.path)
-        if url.path == f"/{OWNER}/status/{POST}" and self.posted:
-            return await self.page_at(route, f'<article><a href="/{OWNER}/status/{POST}">now</a><div>{self.posted}</div></article>')
-        shown = f'<article><a href="/{OWNER}/status/{POST}">now</a><div>{self.posted}</div></article>' if self.posted and not self.never_shows else ""
-        await self.page_at(route, f"<main>{shown}</main>")
+        row = f'<article><a href="/{OWNER}/status/{self.post}"><time>now</time></a><div>{self.posted}</div>{self.post_video}</article>'
+        if url.path == f"/{OWNER}/status/{self.post}" and self.posted:
+            return await self.page_at(route, row)
+        if self.older_post and url.path == f"/{OWNER}/status/{self.older_post}" and self.posted:
+            return await self.page_at(route, row.replace(self.post, self.older_post))
+        shown = row if self.posted and not self.never_shows else ""
+        older = row.replace(self.post, self.older_post) if self.older_post and self.posted else ""
+        await self.page_at(route, f"<main>{shown}{older}</main>")
 
     async def studio(self, route, path):
         if not self.studio_open:
@@ -211,9 +231,74 @@ class XFormTests(Form):
         if path.endswith("/edit"):
             keep = "" if self.keeps_text else "this.value = '';"
             name = parse_qs(urlsplit(route.request.url).query)["name"][0]
-            box = f"""<div id="box"><video src="https://studio.x.com/{self.composer_video}.mp4"></video><textarea placeholder="What's happening?" oninput="{keep}"></textarea><button type="button" onclick="fetch('/post', {{method: 'POST', body: JSON.stringify({{text: document.querySelector('textarea').value}})}})">Post</button></div>"""
-            return await self.page_at(route, f"""{account}{self.check}<div><a download="{name}" href="#">Download</a><button type="button">Change thumbnail</button>{self.extra_video}{self.form_video}<button type="button" id="compose" onclick="const home = {'document.body' if self.composer_outside else 'this.parentElement'}; document.querySelector('video')?.remove(); this.remove(); home.insertAdjacentHTML('beforeend', document.getElementById('held').innerHTML)">Post</button></div><template id="held">{box}</template>""")
+            box = f"""<div id="box"><video src="https://studio.x.com/{self.composer_video}.mp4"></video><textarea placeholder="What's happening?" oninput="{keep}"></textarea><button type="button" class="{self.final_class}" onclick="fetch('/post', {{method: 'POST', body: JSON.stringify({{text: document.querySelector('textarea').value}})}}); {self.final_goes}">Post</button></div>"""
+            return await self.page_at(route, f"""{account}{self.check}{self.tile_icons}<div><a download="{name}" href="#">Download</a><button type="button">Change thumbnail</button>{self.extra_video}{self.form_video}<button type="button" id="compose" onclick="const home = {'document.body' if self.composer_outside else 'this.parentElement'}; document.querySelector('video')?.remove(); {self.compose_goes} home.insertAdjacentHTML('beforeend', document.getElementById('held').innerHTML)">Post</button></div><template id="held">{box}</template>""")
         await self.page_at(route, f"""{account}<button>Upload Media</button><input type="file" accept="video/mp4" onchange="fetch('/upload', {{method: 'POST', body: '{{}}'}}); const row = document.createElement('div'); row.textContent = this.files[0].name; row.onclick = () => location.href = '/library/1_2/edit?name=' + encodeURIComponent(row.textContent); document.body.append(row)">""")
+
+    async def test_the_library_tiles_post_icons_are_not_the_final_press(self):
+        """A field read of the open composer: one type=button Post, the tweetbtn, beside Post icons with no type on the Library's tiles."""
+        self.final_class = "Button Button--primary tweetbtn"
+        self.tile_icons = """<button aria-label="Post" class="EOtWHsw6" onclick="fetch('/wrong', {method: 'POST', body: '{}'})">Post</button>""" * 4
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
+        self.assertEqual((1, []), (len(self.final), self.wrong_presses))
+
+    async def test_a_compose_button_still_showing_beside_the_final_one_presses_nothing(self):
+        """Both say Post, and the field read has only one by then. Two means the right one can't be told."""
+        self.compose_goes = ""
+        await self.refused("layout_changed")
+
+    async def after_the_press(self):
+        seen = []
+
+        async def reads_the_account(page, tx, before):
+            seen.append(await page.locator("button.tweetbtn:visible").count())
+            return {"state": "read"}
+        with patch.object(browser_forms, "finish", reads_the_account):
+            await self.publish()
+        self.assertEqual(1, len(self.final))
+        return seen
+
+    async def test_the_account_is_not_read_until_the_composer_has_closed(self):
+        """As with Done: leaving before it has closed could cut the post off."""
+        self.final_class = "tweetbtn"
+        self.final_goes = "setTimeout(() => this.remove(), 300);"
+        self.assertEqual([0], await self.after_the_press())
+
+    async def test_a_composer_that_never_closes_still_gets_the_account_read(self):
+        self.final_class = "tweetbtn"
+        with patch.object(browser_forms, "X_DONE_SECONDS", 1):
+            self.assertEqual([1], await self.after_the_press())
+
+    async def test_its_words_on_a_post_with_no_video_are_not_called_published(self):
+        """Media Studio posts videos, and a field read found a real post's in its own row."""
+        self.post_video = ""
+        result = await self.publish()
+        self.assertEqual(("SUBMITTED_UNVERIFIED", True), (result["state"], result["final_submit_attempted"]))
+        self.assertEqual(1, len(self.final))
+
+    async def test_a_video_elsewhere_on_the_page_is_not_this_posts(self):
+        self.post_video = "</article><video></video><article>"
+        self.assertEqual("SUBMITTED_UNVERIFIED", (await self.publish())["state"])
+
+    async def test_an_older_post_with_the_same_words_is_not_taken_for_this_one(self):
+        """The list from before holds only what first showed, so an older post can look new. This one never showed."""
+        self.never_shows = True
+        self.older_post = post_made(seconds_ago=86400)
+        result = await self.publish()
+        self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
+        self.assertNotIn("id", result)
+
+    async def test_a_later_verify_does_not_take_an_older_post_for_this_one_either(self):
+        self.never_shows = True
+        self.older_post = post_made(seconds_ago=86400)
+        await self.publish()
+        result = await browser_backends.verify(self.page, "x", OWNER, self.receipt())
+        self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
+        self.assertNotIn("id", result)
+
+    async def test_a_post_made_a_little_before_this_computers_clock_says_the_upload_began_is_still_found(self):
+        self.post = post_made(seconds_ago=120)
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
 
     def scheduled(self):
         self.plan["options"]["schedule"] = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
@@ -303,6 +388,10 @@ class InstagramFormTests(Form):
         self.label_turns_on = True
         self.never_shows = False
         self.label_presses = 0
+        self.label_row = None
+        self.caption_late = False
+        self.edit_late = False
+        self.shared_words = "<p>Your reel has been shared.</p>"
 
     async def handle(self, route):
         url = urlsplit(route.request.url)
@@ -324,11 +413,14 @@ class InstagramFormTests(Form):
         keep = "" if self.keeps_text else "this.value = '';"
         turn = "this.setAttribute('aria-checked', 'true');" if self.label_turns_on else ""
         label = f"""<div><span>Add AI label</span><div role="switch" aria-checked="false" style="width:10px;height:10px" onclick="fetch('/label', {{method: 'POST', body: '{{}}'}}); {turn}"></div></div>""" if self.offers_label else ""
+        label = self.label_row if self.label_row is not None else label
+        to_edit = "window.editComes = true" if self.edit_late else "showPart(2)"
+        to_caption = "setTimeout(() => showPart(3), 300)" if self.caption_late else "showPart(3)"
         return f"""<svg aria-label="New post" width="10" height="10" onclick="showPart(0)"></svg>
           <div class="step" hidden><button>Select from computer</button><input type="file" accept="video/mp4" onchange="fetch('/upload', {{method: 'POST', body: '{{}}'}}); showPart(1)"></div>
-          <div class="step" hidden><svg aria-label="Select crop" width="10" height="10"></svg><span>Original</span><button onclick="showPart(2)">Next</button></div>
-          <div class="step" hidden><button onclick="showPart(3)">Next</button></div>
-          <div class="step" hidden><textarea oninput="{keep}"></textarea>{label}<button onclick="fetch('/share', {{method: 'POST', body: JSON.stringify({{text: document.querySelector('textarea').value}})}}).then(() => document.getElementById('done').hidden = false)">Share</button><p id="done" hidden>Your reel has been shared.</p></div>
+          <div class="step" hidden><svg aria-label="Select crop" width="10" height="10"></svg><span>Original</span><button onclick="{to_edit}">Next</button></div>
+          <div class="step" hidden><div role="button">Select from computer</div><button onclick="{to_caption}">Next</button></div>
+          <div class="step" hidden><textarea oninput="{keep}"></textarea>{label}<button onclick="fetch('/share', {{method: 'POST', body: JSON.stringify({{text: document.querySelector('textarea').value}})}}).then(() => document.getElementById('done').hidden = false)">Share</button><div id="done" hidden>{self.shared_words}</div></div>
           <script>function showPart(number) {{ document.querySelectorAll('.step').forEach((part, index) => part.hidden = index !== number); }}</script>"""
 
     async def test_an_ai_video_turns_the_platforms_own_label_on_before_sharing(self):
@@ -350,6 +442,97 @@ class InstagramFormTests(Form):
     async def test_a_label_that_will_not_turn_on_stops_before_sharing(self):
         self.label_turns_on = False
         await self.refused("declaration_unverified")
+
+    # A saved look at the real composer found the switch is an input of its own, with several of them in the step.
+    SWITCH = """<input type="checkbox" role="switch" %s onclick="fetch('/label', {method: 'POST', body: '{}'})">"""
+
+    async def test_the_switch_a_saved_look_found_is_turned_on(self):
+        self.label_row = f"<div><span>Add AI label</span>{self.SWITCH % ''}</div>"
+        await self.publish()
+        await self.page.evaluate("1")
+        self.assertEqual(1, self.label_presses)
+        self.assertEqual(1, len(self.final))
+
+    async def test_a_switch_that_is_already_on_is_left_on(self):
+        """Reading only its attribute took it for off, and pressing it turned the label off and stopped the post. A video can arrive labelled."""
+        self.label_row = f"<div><span>Add AI label</span>{self.SWITCH % 'checked'}</div>"
+        await self.publish()
+        await self.page.evaluate("1")
+        self.assertEqual(0, self.label_presses)
+        self.assertEqual(1, len(self.final))
+
+    async def test_a_switch_that_turns_on_a_moment_after_its_press_counts(self):
+        self.label_row = """<div><span>Add AI label</span><div role="switch" aria-checked="false" style="width:10px;height:10px" onclick="fetch('/label', {method: 'POST', body: '{}'}); window.switchComes = this"></div></div>"""
+
+        async def turns_on(ms):
+            await self.page.evaluate("if (window.switchComes) window.switchComes.setAttribute('aria-checked', 'true')", isolated_context=False)
+        self.page.wait_for_timeout.side_effect = turns_on
+        await self.publish()
+        self.assertEqual(1, len(self.final))
+
+    async def test_a_label_beside_several_switches_stops_before_any_is_pressed(self):
+        """The step holds several, so the first one near the words could be another setting, and the post would go out saying it was labelled."""
+        self.label_row = f"<div><div><span>Add AI label</span></div>{self.SWITCH % ''}{self.SWITCH % ''}</div>"
+        await self.refused("declaration_unverified")
+        await self.page.evaluate("1")
+        self.assertEqual(0, self.label_presses)
+
+    async def test_a_label_that_comes_a_moment_after_advanced_settings_is_found(self):
+        """A look straight after the press could miss it, and the upload would stop for nothing."""
+        row = f"<div><span>Add AI label</span>{self.SWITCH % ''}</div>"
+        self.label_row = f"""<div onclick="window.labelComes = true">Advanced settings</div><div id="advanced" hidden>{row}</div>"""
+
+        async def comes(ms):
+            await self.page.evaluate("if (window.labelComes) document.getElementById('advanced').hidden = false", isolated_context=False)
+        self.page.wait_for_timeout.side_effect = comes
+        await self.publish()
+        await self.page.evaluate("1")
+        self.assertEqual(1, self.label_presses)
+        self.assertEqual(1, len(self.final))
+
+    async def test_a_caption_box_that_comes_a_moment_after_next_is_waited_for(self):
+        """Looking straight after the press could find no box, and stop an upload that was going fine."""
+        self.caption_late = True
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
+        self.assertEqual(1, len(self.final))
+
+    async def test_a_second_next_waits_for_the_step_it_belongs_to(self):
+        """A press straight after the first could land before the next step has come. A run with no cover never waited for it."""
+        self.edit_late = True
+
+        async def comes(ms):
+            await self.page.evaluate("if (window.editComes) { window.editComes = false; showPart(2); }", isolated_context=False)
+        self.page.wait_for_timeout.side_effect = comes
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
+        self.assertEqual(1, len(self.final))
+
+    async def test_a_window_that_says_it_was_shared_twice_still_counts(self):
+        """After the press, an error from how many times it says so would read as a failed post."""
+        self.shared_words = "<h2>Post shared</h2><p>Your post has been shared.</p>"
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
+        self.assertEqual(1, len(self.final))
+
+    async def changes_during_the_last_wait(self, script, code):
+        real = browser_backends.risk_check
+        page = self.page
+
+        async def changes(*args):
+            await real(*args)
+            await page.evaluate(script)
+        original = Transaction.submit
+
+        async def submit(tx, page, button, still_holds=None):
+            with patch.object(browser_backends, "risk_check", changes):
+                return await original(tx, page, button, still_holds)
+        with patch.object(Transaction, "submit", submit):
+            await self.refused(code)
+        self.assertIs(False, self.receipt()["final_submit_attempted"])
+
+    async def test_words_changed_during_the_last_wait_share_nothing(self):
+        await self.changes_during_the_last_wait("document.querySelector('textarea').value = 'Other words'", "metadata_mismatch")
+
+    async def test_a_label_turned_off_during_the_last_wait_shares_nothing(self):
+        await self.changes_during_the_last_wait("document.querySelector('[role=switch]').setAttribute('aria-checked', 'false')", "declaration_unverified")
 
 
 del Form

@@ -350,9 +350,10 @@ async def failure_record(page, exc, path, picture=None, **fields):
     record = {"at": now(), **fields, "error": exc.message if isinstance(exc, VpubError) else failure_message(exc), "url": plain_address(page.url), "controls": controls}
     if wanted:
         record["text"] = (await page.evaluate(PAGE_WORDS))[:18000]
-        if picture:
-            await page.screenshot(path=str(picture), timeout=3000, mask=[frame.locator(FORM_FIELDS) for frame in page.frames])
+    # First, because a picture waits for a page's fonts: a field run's ran out of time on them, and what the page said matters more than how it looked.
     atomic_json(path, record)
+    if wanted and picture:
+        await page.screenshot(path=str(picture), timeout=3000, mask=[frame.locator(FORM_FIELDS) for frame in page.frames])
 
 
 def failure_message(exc):

@@ -35,11 +35,13 @@ class LastMomentTests(SharedBrowser):
         self.title, self.words = "Old title", "Old words"
         self.stays = None
         self.tip, self.button_class = "", ""
+        self.saved_shows = True
 
     async def handle(self, route):
         if route.request.method == "POST":
             self.saves.append(json.loads(route.request.post_data))
-            self.title, self.words = self.saves[-1]["title"], self.saves[-1]["words"]
+            if self.saved_shows:
+                self.title, self.words = self.saves[-1]["title"], self.saves[-1]["words"]
             return await self.json_at(route, {})
         if urlsplit(route.request.url).path == "/creator-micro/content/post/video":
             return await self.page_at(route, f"""<input placeholder="填写作品标题，为作品获得更多流量" value="{self.title}"><div contenteditable="true" id="c">{self.words}</div>
@@ -47,12 +49,40 @@ class LastMomentTests(SharedBrowser):
                 await fetch('/save', {{method: 'POST', body: JSON.stringify({{title: document.querySelector('input').value, words: document.getElementById('c').innerText}})}}); {"document.body.insertAdjacentHTML('beforeend', " + repr(self.stays) + ")" if self.stays else "location.href = '/creator-micro/content/manage'"}; }};</script>""")
         await self.page_at(route, "manage")
 
-    async def edit(self):
-        checked = edits.validate_patch("douyin", {**TEXT, "metadata_language": "zh-Hans", "content_language": "zh-Hans"})
+    async def edit(self, verify_only=False, **fields):
+        checked = edits.validate_patch("douyin", {**TEXT, "metadata_language": "zh-Hans", "content_language": "zh-Hans", **fields})
         self.path = self.root / "edit.json"
-        return await browser_edits.execute(self.page, "douyin", OWNER, {"patch": checked, "receipt": {"id": "123", "title": "Old title"}, "edit_receipt_path": str(self.path)})
+        return await browser_edits.execute(self.page, "douyin", OWNER, {"patch": checked, "receipt": {"id": "123", "title": "Old title"}, "edit_receipt_path": str(self.path), "verify_only": verify_only})
 
     TIP = '<div class="modify-tip-JHqxpV">作品修改审核中，暂不支持修改</div>'
+    # The shape of a real video's edit page, from a field read: a mark, a new line and a star where each paragraph began, and a mark and a space after the last one.
+    STARRED = "第一段。\u200b<br>*第二段。\u200b<br>*【第三段】。\u200b<br>*\u200b #标签"
+    WITHOUT_STARS = {"description": "第一段。\n\n第二段。\n\n【第三段】。", "tags": ["标签"]}
+
+    async def test_taking_only_the_stars_out_is_a_change_and_goes_once(self):
+        self.title, self.words = TEXT["title"], self.STARRED
+        result = await self.edit(**self.WITHOUT_STARS)
+        self.assertEqual(("EDIT_VERIFIED", 1, 1), (result["state"], result["platform_writes"], len(self.saves)))
+        self.assertNotIn("unchanged", result)
+        self.assertNotIn("*", self.saves[0]["words"])
+
+    async def test_a_check_sees_the_stars_as_a_difference_and_touches_nothing(self):
+        self.title, self.words = TEXT["title"], self.STARRED
+        result = await self.edit(verify_only=True, **self.WITHOUT_STARS)
+        self.assertEqual(("EDIT_MISMATCH", 0, []), (result["state"], result["platform_writes"], self.saves))
+        self.assertIn("*", await self.page.locator("#c").inner_text())
+
+    async def test_the_same_words_are_not_pressed_again_and_cost_no_change(self):
+        """A field read found the page says at most 5 changes per work."""
+        self.title, self.words = TEXT["title"], "第一段。\u200b<br>\u200b<br>第二段。\u200b<br>\u200b<br>【第三段】。\u200b<br>\u200b<br>#标签\u200b"
+        result = await self.edit(**self.WITHOUT_STARS)
+        self.assertEqual(("EDIT_VERIFIED", True, 0, []), (result["state"], result["unchanged"], result["platform_writes"], self.saves))
+
+    async def test_old_words_showing_after_a_save_are_not_called_saved(self):
+        self.saved_shows = False
+        result = await self.edit()
+        self.assertEqual(("EDIT_SUBMITTED_UNVERIFIED", 1, 1), (result["state"], result["platform_writes"], len(self.saves)))
+        self.assertIn("old text may show", result["note"])
 
     async def test_a_work_douyin_says_it_cannot_change_yet_is_left_alone(self):
         """From a field run: this message, above a grey button that reported itself enabled, and a click that did nothing."""
@@ -131,6 +161,14 @@ class LastMomentTests(SharedBrowser):
         self.assertNotIn("secret-form-words", record["text"])
         self.assertNotIn("请先完成封面设置", str(result))
 
+    async def test_a_picture_it_cannot_take_does_not_lose_what_the_page_said(self):
+        """From a field run: a screenshot of this page ran out of time waiting for its fonts."""
+        atomic_json(home() / "config.json", {"page_diagnostics": True})
+        with patch.object(self.page, "screenshot", new=AsyncMock(side_effect=TimeoutError("fonts"))):
+            result, record = await self.stays_after_the_press()
+        self.assertIn("请先完成封面设置", record["text"])
+        self.assertEqual("edit.error.json", result["after_press"]["record"])
+
     async def test_a_stop_that_arrives_during_an_edit_holds_the_save(self):
         self.stop()
         with self.assertRaises(VpubError) as caught:
@@ -155,6 +193,7 @@ class DouyinPageTests(SharedBrowser):
         self.title = "Old title"
         self.title_shows = True
         self.cover_window_closes = True
+        self.font_seconds = None
         self.saved_chapters = []
         self.keeps_chapter_titles = True
         self.portrait = self.root / "portrait.jpg"
@@ -169,6 +208,9 @@ class DouyinPageTests(SharedBrowser):
             if url.path == "/chapters":
                 self.saved_chapters = json.loads(route.request.post_data)
             return await self.json_at(route, {})
+        if url.path == "/slow-font.ttf":
+            await asyncio.sleep(self.font_seconds)
+            return await route.fulfill(status=200, body=b"")
         if url.path == "/creator-micro/content/post/video":
             return await self.cover_page(route)
         if url.path == "/creator-micro/content/manage":
@@ -176,8 +218,9 @@ class DouyinPageTests(SharedBrowser):
         await self.page_at(route, "elsewhere")
 
     async def cover_page(self, route):
-        await self.page_at(route, f"""<input placeholder="填写作品标题，为作品获得更多流量" value="{self.title if self.title_shows else ''}"><div contenteditable="true">Words</div>
-          <div class="coverControl-a"><span>竖封面3:4</span><div class="cover-a" onclick="document.getElementById('picker').hidden = false">cover</div></div>
+        font = '<style>@font-face { font-family: Slow; src: url(/slow-font.ttf); }</style><p style="font-family: Slow">x</p>' if self.font_seconds else ""
+        await self.page_at(route, f"""{font}<input placeholder="填写作品标题，为作品获得更多流量" value="{self.title if self.title_shows else ''}"><div contenteditable="true">Words</div>
+          <div class="coverControl-a"><span>竖封面3:4</span><div class="cover-a" style="background-image: url(/preview.png)" onclick="document.getElementById('picker').hidden = false">cover</div></div>
           <div role="dialog" id="picker" hidden><div class="semi-upload">点击上传文件或拖拽文件到这里<input class="semi-upload-hidden-input" type="file"></div><button onclick="document.getElementById('picker').hidden = {'true' if self.cover_window_closes else 'false'}">完成</button></div>
           <button onclick="fetch('/cover', {{method: 'POST', body: '{{}}'}}).then(() => location.href = '/creator-micro/content/manage')">保存</button>""")
 
@@ -239,8 +282,47 @@ class DouyinPageTests(SharedBrowser):
             await self.cover()
         self.assertEqual("cover_not_ready", caught.exception.code)
         self.assertIn("not saved", caught.exception.message)
+        self.assertIn("Its fonts were loaded at the press and are loaded now", caught.exception.message)
         self.assertEqual([], self.saves)
         self.assertFalse(self.path.exists())
+
+    async def test_finishing_a_cover_waits_for_the_pages_fonts(self):
+        """From field runs: 完成 hung when pressed about 11 seconds after the file, and went through at about 73, on a page whose fonts take about 25."""
+        coming = ["loading", "loading", "loaded"]
+        pressed_with = []
+
+        async def fonts(page):
+            value = coming.pop(0) if coming else "loaded"
+            pressed_with.append(value)
+            return value
+        with patch.object(browser_edits, "douyin_fonts", fonts):
+            await self.cover()
+        self.assertEqual(["loading", "loading", "loaded"], pressed_with[:3])
+        self.assertEqual([("/cover", "EDIT_SUBMITTING")], self.saves)
+
+    async def test_fonts_that_never_load_do_not_stop_a_cover(self):
+        async def fonts(page):
+            return "loading"
+        with patch.object(browser_edits, "douyin_fonts", fonts), patch.object(browser_edits, "DOUYIN_FONT_SECONDS", 1):
+            await self.cover()
+        self.assertEqual([("/cover", "EDIT_SUBMITTING")], self.saves)
+
+    async def test_the_new_image_gets_as_long_as_it_was_seen_to_need_before_it_is_finished(self):
+        await self.cover()
+        self.page.wait_for_timeout.assert_any_await(3000)
+
+    async def test_a_saved_covers_picture_waits_for_the_pages_fonts(self):
+        """From a field run: a screenshot of this page ran out of time waiting for its fonts, which a later read found take about 25 seconds, longer than this used to wait."""
+        self.font_seconds = 6
+        result = await self.cover(verify_only=True)
+        self.assertTrue(Path(result["screenshot"]).exists())
+
+    async def test_a_picture_that_runs_out_of_time_leaves_the_result_as_it_is(self):
+        self.font_seconds = 4
+        with patch.object(browser_edits, "DOUYIN_PICTURE_SECONDS", 1):
+            result = await self.cover(verify_only=True)
+        self.assertEqual("EDIT_SUBMITTED_UNVERIFIED", result["state"])
+        self.assertIsNone(result["screenshot"])
 
     async def test_a_cover_file_that_changed_since_the_check_is_not_sent(self):
         checked = edits.validate_patch("douyin", {"expected_identity": OWNER, "portrait": str(self.portrait)})

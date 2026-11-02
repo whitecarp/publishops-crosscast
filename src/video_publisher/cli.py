@@ -682,7 +682,7 @@ def run_command(args):
                 plan, opts = record.get('upload_plan', record['approved_plan']), record['options']
                 check_upload_copy(plan)
                 result = adapters.browser_call(row['platform'], 'resume', row['account'],
-                    expected_identity=record['identity']['identity'], plan={**plan, 'options':opts})
+                    expected_identity=record['identity']['identity'], plan={**plan, 'options':opts}, prior_receipt=record.get('receipt'))
                 record['receipt'] = result
                 ledger.save(args.key, result['state'], record)
                 return {'key':args.key, **result}
