@@ -571,9 +571,22 @@ class TwoVerifiesTests(Temporary):
         for receipt in (result, read_json(path), self.stored(key)["data"]["receipt"]):
             self.assertEqual((True, 1, True), (receipt["final_submit_attempted"], receipt["final_presses"], receipt["media_selected"]))
 
-    def test_what_the_verify_didnt_look_at_stays_as_the_workers_copy_has_it(self):
+    def test_a_new_look_that_finds_nothing_stands_over_an_older_success(self):
+        """From a review: the new look's answer matched the ledger's older one, so it counted as no change, and the worker's earlier success came back as ok: true."""
+        key, path = self.browser_attempt({}, {"state": "SUBMISSION_VERIFIED", "phase": "complete"})
+
+        def finds_nothing(platform, account, receipt, checkpoint=None):
+            return {**receipt, "state": "SUBMITTED_UNVERIFIED", "phase": "readback_pending", "note": "Not yet verified."}
+        with patch.object(adapters, "verify", finds_nothing):
+            result = self.verify_command(key)
+        for receipt in (result, read_json(path), self.stored(key)["data"]["receipt"]):
+            self.assertEqual(("SUBMITTED_UNVERIFIED", "readback_pending"), (receipt["state"], receipt["phase"]))
+        self.assertEqual("SUBMITTED_UNVERIFIED", self.stored(key)["state"])
+        self.assertFalse(cli.finished(result))
+
+    def test_what_the_verify_never_had_stays_as_the_workers_copy_has_it(self):
         """From a review: replacing the file lost upload_filename, so resume then failed before it reached the saved file."""
-        key, path = self.browser_attempt({"phase": "preview", "still_a_draft": True}, {"phase": "media_ready", "media_selected": True, "upload_filename": "crosscast-abc.mp4", "still_a_draft": True})
+        key, path = self.browser_attempt({"still_a_draft": True}, {"phase": "media_ready", "media_selected": True, "upload_filename": "crosscast-abc.mp4", "still_a_draft": True})
 
         def found_something(platform, account, receipt, checkpoint=None):
             answer = {**receipt, "state": "SUBMISSION_VERIFIED", "id": "123"}

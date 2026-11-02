@@ -47,10 +47,9 @@ def presses_on_record(saved, other):
 
 
 def verified_over(read, result, saved):
-    """A verify's answer on top of the worker's own copy of a receipt, which can be newer than what it read: what it found changes, and what it didn't look at stays as that copy has it.
-    A review found that replacing the copy lost the name resume finds the chosen file by."""
-    found = {name: value for name, value in result.items() if name not in read or read[name] != value}
-    merged = {**{name: value for name, value in saved.items() if name in result or name not in read}, **found}
+    """A verify's answer on top of the worker's own copy of a receipt, which can be newer than what it read. What it answers stands, even if that's the same as before, and what it took away stays away.
+    Only what it never had stays as that copy has it. Reviews found that replacing the copy lost the name resume finds the chosen file by, and that going by what changed let an older success outlive a new look that found nothing."""
+    merged = {**{name: value for name, value in saved.items() if name not in read}, **result}
     for copy in (saved, result):
         merged.update(presses_on_record(copy, merged))
     return merged
