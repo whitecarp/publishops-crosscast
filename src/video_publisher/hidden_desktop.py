@@ -92,28 +92,38 @@ def end_job(kernel32, job, wait):
                         "Existing receipts are retained. Inspect the attempt and browser before retrying; do not repeat an upload or final submit.")
 
 
+def end_tree(pid):
+    """Follows parents, so it reaches what the job can miss. A venv's python.exe only starts the real one, and a review found that a job joined a moment too late holds that starter and nothing else.
+    It has a limit and answers nothing, because what went wrong before this is already the answer."""
+    try:
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=CLEANUP_SECONDS)
+    except subprocess.TimeoutExpired:
+        pass
+
+
 def run(argv, timeout):
     """Run argv on the hidden desktop until it exits, and return once the job says nothing it started is still running. After a timeout, end all of it.
     The job only keeps track of those processes, so where one can't be made or joined the command still runs. It has no kill-on-close on purpose: a command that is killed
     leaves its worker to finish and close its browser properly, as other routes do, and a browser ended at once loses its newest cookies, while Google replaces its sign-in cookies as they are used."""
     user32, kernel32, desktop, process = launch(argv)
-    job, tracked, wait = None, False, 0
+    job, tracked, finished = None, False, False
     try:
         job = kernel32.CreateJobObjectW(None, None)
-        # It joins as it starts, long before Python has loaded enough to start anything, and what it starts later joins with it. From a review: started suspended to close that gap, a parent killed in that moment left a process that could never run or close.
+        # It joins a moment after it starts, and what it starts later joins with it. A review found that starting it suspended to close that moment left a process that could never run or close if the parent was killed in it.
+        # What that moment misses is no worse off than with no job at all: on a timeout end_tree reaches it, and on a normal exit it closes itself.
         tracked = bool(job and kernel32.AssignProcessToJobObject(job, process.hProcess))
         status = kernel32.WaitForSingleObject(process.hProcess, int(timeout * 1000))
         if status == WAIT_TIMEOUT:
             raise subprocess.TimeoutExpired(argv, timeout)
         if status != WAIT_OBJECT_0:
             raise VpubError("browser_error", "Could not wait for the background browser worker.", "Read the attempt's receipt before retrying; do not repeat an upload or final submit.")
-        wait = CLOSES_ITSELF_SECONDS
+        finished = True
     finally:
         try:
+            if not finished:
+                end_tree(process.dwProcessId)
             if tracked:
-                end_job(kernel32, job, wait)
-            elif not wait:
-                subprocess.run(["taskkill", "/PID", str(process.dwProcessId), "/T", "/F"], capture_output=True, timeout=CLEANUP_SECONDS)
+                end_job(kernel32, job, CLOSES_ITSELF_SECONDS if finished else 0)
         finally:
             if job:
                 kernel32.CloseHandle(job)

@@ -30,6 +30,9 @@ class RunnerTests(unittest.TestCase):
                        patch.object(hd, "launch", return_value=(self.user, self.kernel, 105, self.process))):
             self.launch = target.start()
             self.addCleanup(target.stop)
+        taskkill = patch.object(hd.subprocess, "run")  # The process here is made up, so this must never really run.
+        self.taskkill = taskkill.start()
+        self.addCleanup(taskkill.stop)
 
     def query(self, job, kind, info, size, returned):
         info._obj.ActiveProcesses = self.active.pop(0) if len(self.active) > 1 else self.active[0]
@@ -82,14 +85,24 @@ class RunnerTests(unittest.TestCase):
         with patch.object(hd, "CLOSES_ITSELF_SECONDS", 0):
             self.assertIsNone(hd.run(["worker"], 1))
         self.kernel.TerminateJobObject.assert_called_once_with(104, 1)
+        self.taskkill.assert_not_called()
         self.closed(101, 102, 104)
 
-    def test_a_timeout_ends_everything_at_once_with_no_taskkill(self):
+    def test_a_taskkill_that_hangs_still_leaves_the_job_ended(self):
         self.kernel.WaitForSingleObject.return_value = hd.WAIT_TIMEOUT
         self.active = [3]
-        with patch.object(hd.subprocess, "run") as taskkill, self.assertRaises(subprocess.TimeoutExpired):
+        self.taskkill.side_effect = subprocess.TimeoutExpired(["taskkill"], hd.CLEANUP_SECONDS)
+        with self.assertRaises(subprocess.TimeoutExpired) as caught:
             hd.run(["worker"], 1)
-        taskkill.assert_not_called()
+        self.assertEqual(["worker"], caught.exception.cmd)
+        self.kernel.TerminateJobObject.assert_called_once_with(104, 1)
+
+    def test_a_timeout_follows_parents_and_ends_the_job_at_once(self):
+        self.kernel.WaitForSingleObject.return_value = hd.WAIT_TIMEOUT
+        self.active = [3]
+        with self.assertRaises(subprocess.TimeoutExpired):
+            hd.run(["worker"], 1)
+        self.assertEqual(["taskkill", "/PID", "103", "/T", "/F"], self.taskkill.call_args.args[0])
         self.kernel.TerminateJobObject.assert_called_once_with(104, 1)
         self.assertEqual(2, self.called("QueryInformationJobObject"))
         self.closed(101, 102, 104)
@@ -295,7 +308,32 @@ class RealProcessTests(unittest.TestCase):
         self.assertEqual([None], results)
         self.assert_all_gone()
 
-    def test_a_timeout_ends_the_whole_tree_with_no_taskkill(self):
+    def test_a_job_joined_too_late_still_has_its_whole_tree_ended_on_a_timeout(self):
+        """From a review: a venv's python.exe only starts the real one, so a late join can hold nothing else. These are real processes and a real taskkill, on this test's own tree."""
+        told, real, root = threading.Event(), hd.libraries, self.root
+        self.addCleanup(told.set)
+
+        class JoinsLate(TimesOutWhenTold):
+            def AssignProcessToJobObject(self, job, handle):
+                deadline = time.monotonic() + 120
+                while not (root / "worker.json").exists() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                return self.kernel32.AssignProcessToJobObject(job, handle)
+
+        def libraries():
+            user32, kernel32 = real()
+            return user32, JoinsLate(kernel32, told)
+        with patch.object(hd, "libraries", libraries):
+            thread, results = self.run_in_a_thread()
+            self.wait_for_tree()
+            self.assert_profile_is_busy()
+            told.set()
+            thread.join(60)
+        self.assertEqual(1, len(results))
+        self.assertIsInstance(results[0], subprocess.TimeoutExpired)
+        self.assert_all_gone()
+
+    def test_the_job_alone_ends_the_whole_tree_on_a_timeout(self):
         told, real = threading.Event(), hd.libraries
         self.addCleanup(told.set)
 
@@ -308,7 +346,7 @@ class RealProcessTests(unittest.TestCase):
             self.assert_profile_is_busy()
             told.set()
             thread.join(60)
-        taskkill.assert_not_called()
+        taskkill.assert_called_once()
         self.assertEqual(1, len(results))
         self.assertIsInstance(results[0], subprocess.TimeoutExpired)
         self.assertFalse((self.root / "finished.json").exists())

@@ -457,9 +457,10 @@ class CoverOnANewPostTests(Base):
         settled = patch.object(browser_edits, "DOUYIN_COVER_SETTLE_SECONDS", 0)
         settled.start()
         self.addCleanup(settled.stop)
-        self.image = Path(tempfile.gettempdir()) / "douyin-cover-test.jpg"
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.image = Path(folder.name) / "cover.jpg"
         self.image.write_bytes(b"synthetic")
-        self.addCleanup(self.image.unlink, True)
         self.tx = StubTx()
         self.tx.cover = lambda role="landscape": str(self.image) if role == "portrait" else None
 
