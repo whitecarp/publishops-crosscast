@@ -745,7 +745,8 @@ async def verify(page, platform, identity, receipt):
         found = await works(page, platform, identity)
         present = str(receipt["id"]) in found
     else:
-        await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        # A field run found a Reel's own address goes on to its viewer, which has no caption to read, while /p/ shows the same post with one.
+        await page.goto(f"https://www.instagram.com/p/{receipt['id']}/" if platform == 'instagram' else url, wait_until="domcontentloaded", timeout=60000)
         if platform == 'x':
             try:
                 await page.locator('article').filter(has_text=receipt.get('title','')).first.wait_for(timeout=20000)

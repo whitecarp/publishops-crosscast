@@ -450,6 +450,9 @@ class InstagramFormTests(Form):
                 self.label_presses += 1
             return await self.json_at(route, {})
         if url.path.rstrip("/") == f"/reel/{REEL}":
+            # From a field run: this address goes on to the Reels viewer, whose page has the video and the owner, but no caption row.
+            return await self.page_at(route, f'<video width="10" height="10"></video><a href="/{OWNER}/">{OWNER}</a><span>{self.posted}</span>')
+        if url.path.rstrip("/") == f"/p/{REEL}":
             caption = self.posted if self.own_caption is None else self.own_caption
             # The row and its order are those of a field read, and the date under everything is how Instagram lays out a post.
             return await self.page_at(route, f'<video width="10" height="10"></video><a href="/{OWNER}/">{OWNER}</a><div><div>{self.caption_head}</div><span>{caption}</span></div>{self.comments}<div><time>November 2</time></div>')
