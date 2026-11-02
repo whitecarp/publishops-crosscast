@@ -105,6 +105,34 @@ class BrowserSafetyTests(unittest.TestCase):
             self.resume_record('--no-cover',method='cli')
         self.assertEqual('invalid_resume',caught.exception.code)
 
+    def test_a_resume_can_be_given_a_cover_its_plan_did_not_have(self):
+        image=Path(self.tmp.name)/'new-cover.jpg';image.write_bytes(b'cover')
+        _,call=self.resume_record('--cover',str(image))
+        plan=call.call_args.kwargs['plan']
+        self.assertEqual((str(image.resolve()),file_sha(image)),(plan['cover'],plan['cover_sha256']))
+        self.assertEqual(['x'],list(plan['covers']))
+
+    def test_a_cover_that_is_not_an_image_is_refused_before_anything_opens(self):
+        wrong=Path(self.tmp.name)/'cover.gif';wrong.write_bytes(b'cover')
+        with self.assertRaises(VpubError) as caught:
+            self.resume_record('--cover',str(wrong))
+        self.assertEqual('invalid_cover',caught.exception.code)
+
+    def test_a_cover_that_is_not_there_is_refused_before_anything_opens(self):
+        with self.assertRaises(VpubError) as caught:
+            self.resume_record('--cover',str(Path(self.tmp.name)/'missing.jpg'))
+        self.assertEqual('invalid_cover',caught.exception.code)
+
+    def test_a_cover_can_not_be_both_added_and_left_out(self):
+        with self.assertRaises(SystemExit),patch('sys.stderr'):
+            cli.parser().parse_args(['resume','key','--no-cover','--cover','a.jpg'])
+
+    def test_giving_a_cover_is_only_for_a_browser_attempt(self):
+        image=Path(self.tmp.name)/'new-cover.jpg';image.write_bytes(b'cover')
+        with self.assertRaises(VpubError) as caught:
+            self.resume_record('--cover',str(image),method='cli')
+        self.assertEqual('invalid_resume',caught.exception.code)
+
     def test_an_instagram_attempt_that_never_pressed_share_starts_over(self):
         tx=Transaction('instagram','tester',self.plan);tx.save(media_selected=True,hint='Inspect it',blocked_phase='preview')
         with patch('video_publisher.browser_forms.publish_instagram',new=AsyncMock(side_effect=lambda page,tx: tx.save(state='SUBMITTED_UNVERIFIED'))) as publish:

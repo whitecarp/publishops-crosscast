@@ -38,6 +38,14 @@ def without_cover(plan, platform):
     return {**plan, 'cover': None, 'covers': {name: value for name, value in (plan.get('covers') or {}).items() if name != platform}}
 
 
+def with_cover(plan, platform, path):
+    """This plan with one more cover, for one run. A person looking at a stopped attempt's post-to-be can ask for what its plan left out, and a new plan for the same video would only find the old record."""
+    image = Path(path).resolve()
+    if not image.is_file() or image.suffix.lower() not in {'.jpg', '.jpeg', '.png'}:
+        raise VpubError('invalid_cover', 'Cover must be an existing JPG or PNG.')
+    return {**without_cover(plan, platform), 'cover': str(image), 'cover_sha256': file_sha(image)}
+
+
 def check_upload_copy(plan):
     """The private copy an attempt uploads. Cleanup only removes copies of finished publications."""
     if not Path(plan['video']).is_file():
@@ -503,7 +511,9 @@ def parser():
     q.add_argument("--out")
     q = sub.add_parser("resume", help="Resume a saved YouTube upload session or inspect an existing browser attempt; never blindly resubmit.")
     q.add_argument("key")
-    q.add_argument("--no-cover", action="store_true", help="Finish a browser attempt without its planned cover, when the cover is what keeps stopping it.")
+    covering = q.add_mutually_exclusive_group()
+    covering.add_argument("--no-cover", action="store_true", help="Finish a browser attempt without its planned cover, when the cover is what keeps stopping it.")
+    covering.add_argument("--cover", help="Finish a browser attempt with this JPG or PNG as its cover, when its plan had none and it hasn't been pressed yet.")
     q = sub.add_parser("verify", help="Verify an existing work and complete its pending Douyin chapter step; never upload.")
     q.add_argument("key")
     q = sub.add_parser('edit', help='Correct an existing recorded work by ID; never upload/delete a video.')
@@ -660,8 +670,8 @@ def run_command(args):
                 if not row:
                     raise VpubError('invalid_resume', 'Use an existing upload receipt key.')
                 record = row['data']
-                if args.no_cover and record.get('options', {}).get('method') != 'browser':
-                    raise VpubError('invalid_resume', '--no-cover is only for an attempt on a browser route.')
+                if (args.no_cover or args.cover) and record.get('options', {}).get('method') != 'browser':
+                    raise VpubError('invalid_resume', '--no-cover and --cover are only for an attempt on a browser route.')
                 if row['platform'] == 'youtube' and record.get('options', {}).get('method') == 'api':
                     receipt = record.get('receipt', {})
                     options = {**record['options'], 'expected_channel_id': record['identity']['identity']}
@@ -700,6 +710,8 @@ def run_command(args):
                 check_upload_copy(plan)
                 if args.no_cover:
                     plan = without_cover(plan, row['platform'])
+                if args.cover:
+                    plan = with_cover(plan, row['platform'], args.cover)
                 result = adapters.browser_call(row['platform'], 'resume', row['account'],
                     expected_identity=record['identity']['identity'], plan={**plan, 'options':opts}, prior_receipt=record.get('receipt'))
                 if args.no_cover:
