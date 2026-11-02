@@ -479,7 +479,7 @@ DOUYIN_LIST_SECONDS = 45
 DOUYIN_LIST_ENDS = re.compile('没有更多作品|暂无作品|暂无内容')
 
 
-async def works(page, platform, identity):
+async def works(page, platform, identity, must_answer=False):
     if platform == "youtube":
         from .youtube_studio import works as studio_works
         return await studio_works(page, identity)
@@ -496,7 +496,7 @@ async def works(page, platform, identity):
             # Creator Center cards use click handlers rather than hrefs.
             # Opening a work's own page or edit page is read-only; nothing is saved or deleted here.
             titles = page.locator('[class^="info-title-text-"]')
-            if await titles.count():
+            if await titles.locator('visible=true').count():
                 for title in (await titles.all())[:10]:
                     text = await title.inner_text()
                     card = title.locator('xpath=ancestor::div[starts-with(@class,"video-card-content-")]')
@@ -508,6 +508,8 @@ async def works(page, platform, identity):
                 return found
             if await page.get_by_text(DOUYIN_LIST_ENDS).locator('visible=true').count():
                 return {}
+    if must_answer:
+        raise VpubError('list_not_ready', "The account's list of works didn't load, so nothing could be compared with it. No video was selected.", 'Try again in a moment.')
     return {}
 
 

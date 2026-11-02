@@ -556,8 +556,11 @@ async def publish_douyin(page, tx):
         raise VpubError('description_too_long', 'Douyin description plus hashtags exceeds 1000 UTF-16 units. No video uploaded.')
     if tx.resuming and tx.receipt['media_selected'] and await douyin_reopen_kept_draft(page, tx, caption):
         return await finish_douyin_form(page, tx, tx.receipt['before_ids'])
-    before = await works(page, 'douyin', tx.identity)
+    before = await works(page, 'douyin', tx.identity, must_answer=True)
     same_title = await douyin_cards_titled(page, tx.options['title'], caption)
+    # An attempt starting over goes up again, so it's held to a work with these words already being there. A new plan for a repost isn't.
+    if tx.resuming and tx.receipt['media_selected'] and same_title:
+        raise VpubError('inspect_existing_work', 'Douyin already lists a work with this title and caption, so nothing was uploaded again.', 'Look at it on Douyin, and use vpub verify to read it back.')
     tx.save(before_ids=list(before), expected_text=tx.options['title'], expected_caption=caption, same_title_cards_before=len(same_title))
     if tx.options.get('schedule'):
         stamp = douyin_card_stamp(datetime.fromisoformat(tx.options['schedule'].replace('Z', '+00:00')))

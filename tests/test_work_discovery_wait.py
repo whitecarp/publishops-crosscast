@@ -96,6 +96,22 @@ class ListingWaitTests(ChromeCase):
         self.assertEqual({}, found)
         self.assertEqual(3, len(ticks))
 
+    async def test_a_list_that_never_loads_is_no_answer_when_one_is_needed(self):
+        from video_publisher.browser_backends import works
+        ticks = []
+
+        async def tick(ms):
+            ticks.append(ms)
+        with patch.object(self.page, "wait_for_timeout", tick), self.assertRaises(VpubError) as caught:
+            await works(self.page, "douyin", "me", must_answer=True)
+        self.assertEqual("list_not_ready", caught.exception.code)
+        self.assertEqual(45, len(ticks))
+
+    async def test_a_hidden_title_is_no_answer_either(self):
+        found, ticks = await self.works(comes_on_tick=2, fill=self.CARD.replace('class="video-card-content-1"', 'class="video-card-content-1" hidden'))
+        self.assertEqual({}, found)
+        self.assertEqual(45, len(ticks))
+
     async def test_those_words_kept_hidden_do_not_end_the_wait(self):
         found, ticks = await self.works(comes_on_tick=3, fill="<p hidden>没有更多作品</p>")
         self.assertEqual({}, found)

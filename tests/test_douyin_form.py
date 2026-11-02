@@ -556,6 +556,27 @@ class ResumeFromKeptDraftTests(Base):
             await self.resume(self.stopped(), upload_page="<!doctype html><body><input type=file>")
         self.selected.assert_awaited_once()
 
+    async def test_a_work_with_its_title_and_words_already_listed_is_not_uploaded_again(self):
+        tx = self.stopped()
+        cards = f'<div class="video-card-content-1"><div class="info-title-text-1">{TITLE} Words</div></div>'
+        self.html = '<!doctype html><meta charset="utf-8"><body>' + cards
+        with patch.object(browser_forms, "douyin_reopen_kept_draft", new=AsyncMock(return_value=False)), patch.object(browser_forms, "works", new=AsyncMock(return_value={})), \
+                patch.object(browser_forms, "upload_file", new=AsyncMock(side_effect=RuntimeError("selected"))) as selected, self.assertRaises(VpubError) as caught:
+            await self.page.goto("https://creator.douyin.com/creator-micro/content/manage")
+            await browser_forms.publish_douyin(self.page, tx)
+        self.assertEqual("inspect_existing_work", caught.exception.code)
+        selected.assert_not_called()
+
+    async def test_a_new_plan_with_the_same_words_is_not_held_by_that(self):
+        tx = StubTx()
+        tx.media = lambda: "clip.mp4"
+        tx.receipt = {"media_selected": False}
+        self.html = f'<!doctype html><meta charset="utf-8"><body><div class="video-card-content-1"><div class="info-title-text-1">{TITLE} Words</div></div>'
+        with patch.object(browser_forms, "works", new=AsyncMock(return_value={})), patch.object(browser_forms, "upload_file", new=AsyncMock(side_effect=RuntimeError("selected"))) as selected, self.assertRaises(RuntimeError):
+            await self.page.goto("https://creator.douyin.com/creator-micro/content/manage")
+            await browser_forms.publish_douyin(tx=tx, page=self.page)
+        selected.assert_awaited_once()
+
     async def test_a_first_attempt_never_goes_near_a_kept_draft(self):
         tx = StubTx()
         tx.media = lambda: "clip.mp4"
