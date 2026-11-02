@@ -33,6 +33,18 @@ X_SCHEDULE_TABLE = """headings => {
 }"""
 X_SCHEDULE_SECONDS = 15
 X_CLOCK_GRACE = timedelta(minutes=5)
+INSTAGRAM_CAPTION = r"""({words, owner}) => {
+  const said = text => (text || '').replace(/\s+/g, ' ').trim();
+  const profile = a => /^\/[^/]+\/$/.test(a.getAttribute('href') || '');
+  return [...document.querySelectorAll('h1, span, div, p')].some(e => {
+    if (!e.getClientRects().length || said(e.innerText) !== words) return false;
+    for (let around = e.parentElement; around; around = around.parentElement) {
+      const people = [...around.querySelectorAll('a[href]')].filter(a => profile(a) && !e.contains(a));
+      if (people.length) return people.every(a => a.getAttribute('href').toLowerCase() === '/' + owner.toLowerCase() + '/');
+    }
+    return false;
+  });
+}"""
 # Studio writes dates and times in its interface language. Each style is (pattern, read, write).
 STUDIO_DATES = (
     (r"(\d{4})年(\d{1,2})月(\d{1,2})日", lambda m: (int(m[1]), int(m[2]), int(m[3])), lambda d: f"{d.year}年{d.month}月{d.day}日"),
@@ -415,6 +427,11 @@ def x_new_works(platform, receipt, works):
     return [work for work in works if datetime.fromisoformat(post_time(work['id'])) >= began]
 
 
+async def instagram_caption_says(page, identity, words):
+    """Whether the post's owner says exactly these words. A review found they passed from anywhere on the page, such as a comment, or inside a longer caption. A field read of a real post found its caption in a span with no list, article or lasting class around it, so what ties it to the owner is the nearest person's link above it. Anything else stays unconfirmed."""
+    return await page.evaluate(INSTAGRAM_CAPTION, {"words": normalize(words), "owner": identity})
+
+
 async def x_post_reads_as_this_upload(page, receipt):
     """Whether a post we sent reads back from its own row: exactly its words, and its own video. Reviews found a reply's words, or a quoted post's video, passed on the rest of the page.
     A field read found a real post's video in its own row. A custom cover leaves no number to read, so a number can only rule a post out."""
@@ -725,7 +742,7 @@ async def verify(page, platform, identity, receipt):
             # Everything read below, as soon as all of it shows. A page that never shows it gets the same four seconds.
             async def shown():
                 return (await visible(page.locator('a[href="/'+identity+'/"]')) and await visible(page.locator('video'))
-                        and (not expected or normalize(expected) in normalize(await page.locator("body").inner_text())))
+                        and (not expected or await instagram_caption_says(page, identity, expected)))
             await look_until(page, shown, 4000)
         await risk_check(page)
         present = str(receipt["id"]) in await links(page, platform, identity)
@@ -734,7 +751,9 @@ async def verify(page, platform, identity, receipt):
             author = await visible(page.locator('a[href="/'+identity+'/"]'))
             present = bool(owned and author and await visible(page.locator('video')) and
                            urlsplit(page.url).path.rstrip('/').endswith('/'+receipt['id']))
-        if expected:
+        if expected and platform == "instagram":
+            present = present and await instagram_caption_says(page, identity, expected)
+        elif expected:
             actual = normalize(await page.locator("body").inner_text())
             present = present and normalize(expected) in actual
         if platform == 'x' and present and receipt.get('final_submit_attempted'):

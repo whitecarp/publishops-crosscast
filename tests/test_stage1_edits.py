@@ -165,11 +165,12 @@ class LastMomentTests(SharedBrowser):
         """From a review: only contenteditable="true" was taken out, so a box with an empty or plaintext-only value kept what was typed."""
         from video_publisher.browser_runtime import FORM_FIELDS
         atomic_json(home() / "config.json", {"page_diagnostics": True})
-        self.STAYS = '<div role="dialog">请先完成封面设置<div contenteditable>secret-empty</div><div contenteditable="plaintext-only">secret-plain</div><div contenteditable=""><p>secret-inherited</p></div><div contenteditable="false">kept-words</div></div>'
+        self.STAYS = '<div role="dialog">请先完成封面设置<div contenteditable>secret-empty</div><div contenteditable="plaintext-only">secret-plain</div><div contenteditable=""><p>secret-inherited</p></div><div contenteditable="false">kept-words</div><div contenteditable="FALSE">kept-too</div></div>'
         result, record = await self.stays_after_the_press()
         for words in ("secret-empty", "secret-plain", "secret-inherited"):
             self.assertNotIn(words, record["text"])
         self.assertIn("kept-words", record["text"])
+        self.assertIn("kept-too", record["text"])
         self.assertEqual(3, await self.page.locator("[role=dialog] " + FORM_FIELDS.split(",")[-1]).count())
 
     async def test_a_picture_it_cannot_take_does_not_lose_what_the_page_said(self):

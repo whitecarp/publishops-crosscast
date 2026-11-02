@@ -414,6 +414,8 @@ class InstagramFormTests(Form):
         self.caption_late = False
         self.edit_late = False
         self.shared_words = "<p>Your reel has been shared.</p>"
+        self.own_caption = None
+        self.comments = ""
 
     async def handle(self, route):
         url = urlsplit(route.request.url)
@@ -427,7 +429,8 @@ class InstagramFormTests(Form):
                 self.label_presses += 1
             return await self.json_at(route, {})
         if url.path.rstrip("/") == f"/reel/{REEL}":
-            return await self.page_at(route, f'<a href="/{OWNER}/">{OWNER}</a><video width="10" height="10"></video><div>{self.posted}</div>')
+            caption = self.posted if self.own_caption is None else self.own_caption
+            return await self.page_at(route, f'<video width="10" height="10"></video><div><div><a href="/{OWNER}/">{OWNER}</a></div><span>{caption}</span></div>{self.comments}')
         grid = f'<a href="/{OWNER}/reel/{REEL}/">{self.plan["options"]["title"]}</a>' if self.posted and not self.never_shows else ""
         await self.page_at(route, f"""{self.check}<main>{grid}</main>{self.composer()}""")
 
@@ -552,6 +555,27 @@ class InstagramFormTests(Form):
 
     async def test_words_changed_during_the_last_wait_share_nothing(self):
         await self.changes_during_the_last_wait("document.querySelector('textarea').value = 'Other words'", "metadata_mismatch")
+
+    async def test_a_comment_saying_its_words_is_not_its_caption(self):
+        """From a review: the words passed from anywhere on the page."""
+        self.own_caption = "Something else"
+        self.comments = '<div><div><a href="/someone/">someone</a></div><span>My title Words</span></div>'
+        result = await self.publish()
+        self.assertEqual(("SUBMITTED_UNVERIFIED", 1), (result["state"], len(self.final)))
+
+    async def test_a_caption_with_more_words_is_not_its_caption(self):
+        self.own_caption = "My title Words and more"
+        self.assertEqual("SUBMITTED_UNVERIFIED", (await self.publish())["state"])
+
+    async def test_a_comment_repeating_the_words_does_not_get_in_the_way(self):
+        self.comments = '<div><div><a href="/someone/">someone</a></div><span>My title Words</span></div>'
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
+
+    async def test_a_caption_with_a_tag_and_a_person_in_it_is_still_its_caption(self):
+        """A link inside the words isn't the person who wrote them."""
+        self.plan["options"]["post_text"] = "My title @friend #tag"
+        self.own_caption = 'My title <a href="/friend/">@friend</a> <a href="/explore/tags/tag/">#tag</a>'
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
 
     async def test_a_switch_added_during_the_last_wait_shares_nothing(self):
         """From a review: the old locator could land on a new checked switch in front, with the AI label's own gone off."""

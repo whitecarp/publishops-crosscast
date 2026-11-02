@@ -130,6 +130,9 @@ class InstagramPage(Clock):
     def locator(self, selector):
         return Shown(self, selector)
 
+    async def evaluate(self, script, words):
+        return self.ready() and words["words"] == "My caption"
+
 
 class InstagramVerifyTests(Temporary):
     def verify(self, page):
