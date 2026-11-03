@@ -268,5 +268,102 @@ class PlaylistEmptyReadTests(TemporaryHomes):
         self.assertEqual(([{"id": "old"}], True), result)
 
 
+class PlaylistExtractionTests(TemporaryHomes):
+    class Page:
+        def __init__(self, pages):
+            self.pages, self.index = pages, 0
+
+        @property
+        def first(self):
+            return self
+
+        def locator(self, selector):
+            assert selector == "#navigate-after"
+            return self
+
+        async def evaluate_all(self, script):
+            return self.pages[self.index]
+
+        async def count(self):
+            return len(self.pages[self.index])
+
+        async def inner_text(self):
+            return "Synthetic page " + str(self.index)
+
+        async def get_attribute(self, name):
+            assert name == "aria-disabled"
+            return "true" if self.index == len(self.pages) - 1 else "false"
+
+        async def click(self, **kwargs):
+            self.index += 1
+
+        async def wait_for_timeout(self, milliseconds):
+            pass
+
+    def ensure(self, pages):
+        page, sent = self.Page(pages), []
+
+        async def create(page, identity, payload, before_submit, known):
+            before_submit(payload, identity)
+            sent.append((payload, known))
+            return {"collection_id": "PLcreated"}
+
+        with patch.object(studio, "open_playlist_list", new=AsyncMock(return_value=page)), \
+                patch.object(studio, "visible", new=AsyncMock(side_effect=lambda locator: locator)), \
+                patch.object(studio, "create_playlist", side_effect=create) as dispatch:
+            try:
+                result = immediate(studio.ensure_playlists(page, "fixture-owner", ["Wanted"]))
+            except core.VpubError:
+                dispatch.assert_not_called()
+                raise
+        return result, sent
+
+    def test_disabled_next_does_not_make_dropped_or_untitled_rows_complete(self):
+        other = {"href": "/playlist/PLother123/edit", "title": "Other"}
+        for bad in ({"href": "", "title": "Wanted"}, {"href": "/playlist/PLwanted/edit"},
+                    {"href": "/playlist/PLwanted/edit", "title": ""}, {"href": "/playlist/PLwanted/edit", "title": " \t\n"}):
+            with self.subTest(bad=bad), self.assertRaises(core.VpubError) as caught:
+                self.ensure([[other, bad]])
+            self.assertEqual("read_incomplete", caught.exception.code)
+
+    def test_duplicate_ids_cannot_hide_a_title_on_one_page(self):
+        for first_title in ("Wanted", "Other"):
+            raw = [{"href": "/playlist/PLsame/edit", "title": first_title},
+                   {"href": "/playlist/PLsame/edit", "title": "Other"}]
+            with self.subTest(first_title=first_title), self.assertRaises(core.VpubError) as caught:
+                self.ensure([raw])
+            self.assertEqual("read_incomplete", caught.exception.code)
+
+    def test_incomplete_extraction_stays_incomplete_on_a_later_intact_last_page(self):
+        other = {"href": "/playlist/PLother/edit", "title": "Other"}
+        last = {"href": "/playlist/PLlast/edit", "title": "Last"}
+        for bad in ({"href": "", "title": "Wanted"}, {"href": "/playlist/PLwanted/edit", "title": " "}):
+            with self.subTest(bad=bad), self.assertRaises(core.VpubError) as caught:
+                self.ensure([[other, bad], [last]])
+            self.assertEqual("read_incomplete", caught.exception.code)
+
+    def test_duplicate_ids_across_pages_cannot_become_absence_proof(self):
+        for first_title in ("Wanted", "Other"):
+            pages = [[{"href": "/playlist/PLsame/edit", "title": first_title}],
+                     [{"href": "/playlist/PLsame/edit", "title": "Other"}]]
+            with self.subTest(first_title=first_title), self.assertRaises(core.VpubError) as caught:
+                self.ensure(pages)
+            self.assertEqual("read_incomplete", caught.exception.code)
+
+    def test_complete_unique_pages_allow_one_private_creation(self):
+        pages = [[{"href": "/playlist/PLfirst/edit", "title": "First"}],
+                 [{"href": "/playlist/PLlast/edit", "title": "Last"}]]
+        result, sent = self.ensure(pages)
+        self.assertEqual([{"id": "PLcreated", "title": "Wanted"}], result)
+        self.assertEqual([({"title": "Wanted", "privacy": "private"}, ["PLfirst", "PLlast"])], sent)
+
+    def test_nonplaylist_consumer_keeps_existing_extraction_behavior(self):
+        page = self.Page([[{"href": "/video/abcdefghijk/edit", "title": "Video"}, {"href": "", "title": "Unparsed"}]])
+        with patch.object(studio, "visible", new=AsyncMock(side_effect=lambda locator: locator)):
+            rows, complete = immediate(studio.studio_table(page, page, studio.VIDEO_LINKS, studio.playlist_videos))
+        self.assertEqual([{"id": "abcdefghijk", "title": "Video"}], rows)
+        self.assertTrue(complete)
+
+
 if __name__ == "__main__":
     unittest.main()

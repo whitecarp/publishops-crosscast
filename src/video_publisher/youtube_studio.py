@@ -450,15 +450,23 @@ def playlist_videos(rows):
 
 
 async def studio_table(page, rows, script, parse, *, require_last_page=False):
-    """Every page of a Studio list. It is complete only when its own Next button says there is no more."""
+    """Walk a Studio list. Strict playlist reads need a last-page control and complete ID/title extraction."""
     items = {}
+    extracted = True
     for _ in range(TABLE_PAGES):
-        items.update(parse(await rows.evaluate_all(script)))
+        raw = await rows.evaluate_all(script)
+        found = parse(raw)
+        if require_last_page:
+            # A dropped row, blank title or repeated ID can hide the requested playlist.
+            # Once that happens, even a later intact last page cannot prove its absence.
+            extracted = (extracted and len(found) == len(raw) and not (items.keys() & found.keys())
+                         and all(item.get("title") for item in found.values()))
+        items.update(found)
         after = await visible(page.locator("#navigate-after"))
         if after is None:
             return list(items.values()), bool(items) and not require_last_page
         if await after.get_attribute("aria-disabled") == "true":
-            return list(items.values()), True
+            return list(items.values()), extracted
         first = await rows.first.inner_text()
         await after.click(timeout=15000)
         for _ in range(20):
