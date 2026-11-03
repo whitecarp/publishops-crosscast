@@ -83,12 +83,21 @@
       <div class="hero-copy">
         <h1 id="heroTitle"><span data-i18n="h1a">一句话，</span><span data-i18n="h1b">发往你选的所有平台。</span></h1>
         <p class="lead" data-i18n="lead">把视频交给你正在用的 AI 助手（如 Codex、Claude）：它为 B站、YouTube、抖音、Instagram 和 X 各写一版标题和简介，vpub 适配封面，首次登录之后在后台逐个平台提交，读回到作品才算发布。发完之后，改稿、回评论、看数据也能接着交给它。</p>
+        <aside class="before-start" aria-labelledby="beforeStartTitle">
+          <h2 id="beforeStartTitle" data-i18n="beforeTitle">开始之前</h2>
+          <ul>
+            <li data-i18n="beforeAgent">用能运行本机命令的 AI 助手，如 Codex 或 Claude Code；只有聊天功能的窗口不够。</li>
+            <li data-i18n="beforeNetwork">在中国大陆使用 YouTube、Instagram 或 X，需要自己想办法哦。</li>
+            <li data-i18n="beforeX">X 需要订阅，而且账号确实能进入 Media Studio；仅付费不保证可用。</li>
+          </ul>
+          <p data-i18n-html="beginnerGuide"><a href="https://github.com/whitecarp/publishops-crosscast/blob/main/docs/GUIDE.md#新手完整提示词" rel="noopener">不熟悉电脑？复制完整的新手提示词</a>，含首次预览和安全反馈步骤。</p>
+        </aside>
         <div class="prompt-box">
           <div class="prompt-head">
             <span data-i18n="promptLabel">对你的 AI 助手说</span>
             <button type="button" class="copy" data-copy="installPrompt" data-i18n="copy" aria-label="复制这段话" data-i18n-aria="copyPromptA">复制</button>
           </div>
-          <p class="prompt" id="installPrompt" data-i18n="installPrompt">帮我从 https://github.com/whitecarp/publishops-crosscast 安装 PublishOps CrossCast，运行 vpub doctor 并读取它给出的 skill 文件。然后把 final.mp4 公开发布到 B站、YouTube、抖音、Instagram 和 X，封面用 cover.jpg，标题和简介按平台来写。这条视频是中文的，（有/没有）用 AI 制作，讲的是：（用一句话说说）</p>
+          <p class="prompt" id="installPrompt" data-i18n="installPrompt">帮我从 https://github.com/whitecarp/publishops-crosscast 安装 PublishOps CrossCast，运行 vpub doctor 并读取它给出的 skill 文件。然后把 final.mp4 公开发布到[我选择的平台]，封面用 cover.jpg，标题和简介按平台来写，首次先给我看本地预演。这条视频是中文的，（有/没有）用 AI 制作，讲的是：（用一句话说说）</p>
           <p class="prompt-hint" data-i18n="promptHint">把文件名和内容换成你的；平台和公开范围可以按需修改。</p>
         </div>
         <div class="cta-row">
@@ -230,7 +239,7 @@
           </thead>
           <tbody role="rowgroup">
             <tr role="row" class="mx-group"><th role="columnheader" colspan="6" scope="colgroup" data-i18n="mxGroupPub">发布时</th></tr>
-            <tr role="row"><th role="rowheader" scope="row"><span data-i18n="mxR1">公开发布并读回</span><small data-i18n="mxR1d">标记以 CrossCast 原生读回核验为准</small></th><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evIndependent">已独立读回；CrossCast 原生回执未核验</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td></tr>
+            <tr role="row"><th role="rowheader" scope="row"><span data-i18n="mxR1">公开发布并读回</span><small data-i18n="mxR1d">标记以 CrossCast 原生读回核验为准</small></th><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td></tr>
             <tr role="row"><th role="rowheader" scope="row"><span data-i18n="mxR2">定时发布</span><small data-i18n="mxR2d">还没有一条真正走到发布时间</small></th><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-none" aria-hidden="true"></i><span class="sr" data-i18n="evNone">平台没有，或免费版不提供</span></td><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td></tr>
             <tr role="row"><th role="rowheader" scope="row"><span data-i18n="mxR3">存草稿或停在预览</span><small data-i18n="mxR3d">只上传，不发布</small></th><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td></tr>
             <tr role="row"><th role="rowheader" scope="row"><span data-i18n="mxR4">上传时加入合集或播放列表</span></th><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-none" aria-hidden="true"></i><span class="sr" data-i18n="evNone">平台没有，或免费版不提供</span></td><td role="cell"><i class="ev ev-none" aria-hidden="true"></i><span class="sr" data-i18n="evNone">平台没有，或免费版不提供</span></td></tr>
@@ -413,7 +422,7 @@ vpub verify RECEIPT_KEY</code></pre>
         <p class="section-sub" data-i18n-html="faqSub">没找到答案？可以到 <a href="https://github.com/whitecarp/publishops-crosscast/issues" rel="noopener">GitHub</a> 提问，提问前请先移除账号和私密信息。</p>
       </div>
       <div class="faq-list">
-        <details><summary data-i18n="q0">发布前还要我再确认吗？</summary><p data-i18n-html="a0">不用。你说要发布，就是授权：它按你说的平台、账号和公开范围直接提交。只有内容、账号、平台、受众或任务范围变了，它才会再问你。想先看一眼，就说“先别发”，或者用 <code>--dry-run</code> 预演。</p></details>
+        <details><summary data-i18n="q0">发布前还要我再确认吗？</summary><p data-i18n-html="a0">首次发布，助手先展示本地预演，等你说“发”。之后按你的发布指令执行；保存了“每次先给我看”时，才每次等你看过当前方案。内容、账号、平台、受众或范围改变，仍需确认。偏好不等于长期发布授权。</p></details>
         <details><summary data-i18n="q1">需要单独的模型 API Key 吗？</summary><p data-i18n="a1">不需要。CrossCast 不内置模型，标题和简介由你正在用的 AI 助手来写。只有付费的 YouTube API 路径才需要自行配置 Google OAuth 桌面客户端；免费路径由后台 Chrome 在 YouTube Studio 上发布。</p></details>
         <details><summary data-i18n="q2">它会帮我登录账号吗？</summary><p data-i18n="a2">登录在官方页面完成，扫码、密码和验证码都由你本人操作。平台可能把 CrossCast 的专用浏览器当成新设备，要求验证或找回账号，同样由你本人在官方页面处理。不要在对话、日志或仓库里提供 Cookie、密码、验证码或令牌。这个页面也不收集任何信息。</p></details>
         <details><summary data-i18n="q3">只在终端里运行 vpub，能直接发出去吗？</summary><p data-i18n="a3">能。首次登录之后，CLI 自己在后台完成上传，不需要 AI 助手一步步操作浏览器。登录过期或平台要求验证时，需要你回到官方页面处理。</p></details>
