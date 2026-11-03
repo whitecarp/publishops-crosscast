@@ -652,7 +652,7 @@ class PlanTests(unittest.TestCase):
         (self.root / "clip.mp4").write_bytes(b"synthetic")
         (self.root / "cover.jpg").write_bytes(b"synthetic")
         self.value = cli.template(self.root / "clip.mp4", "en")
-        self.value.update(cover="cover.jpg", tags=["tag"], covers={"douyin": {"portrait": "cover.jpg"}})
+        self.value.update(title="Plan fixture", cover="cover.jpg", tags=["tag"], covers={"douyin": {"portrait": "cover.jpg"}})
         self.value["platforms"]["youtube"].update(category_id="22", method="browser")
         self.value["platforms"]["bilibili"]["method"] = "cli"
         self.path = self.root / "publish.json"

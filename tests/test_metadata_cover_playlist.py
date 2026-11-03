@@ -20,6 +20,7 @@ class MetadataTests(unittest.TestCase):
         self.cover.write_bytes(b'not a real cover; structural fixture')
         self.path = self.root / 'publish.json'
         self.value = cli.template(self.video, 'ja')
+        self.value['title'] = 'Metadata fixture'
         self.value['platforms']['youtube']['category_id']='1'  # Synthetic fixture only.
         self.value['platforms']['instagram'] = {'method':'native','visibility':'account','ai_generated':True}
         self.value['platforms']['x'] = {'method':'native','visibility':'account','ai_generated':True}

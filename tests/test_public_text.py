@@ -103,6 +103,7 @@ class PlanTests(Workspace):
         self.video.write_bytes(b"\x00\x00\x00\x18ftypisom\x00\x00\x00\x00isommp42")  # Container header, not a playable upload.
         self.manifest = self.root / "publish.json"
         self.value = cli.template(self.video)
+        self.value["title"] = "Public text fixture"
         self.value["platforms"]["youtube"]["category_id"] = "1"
 
     def plan(self, **changes):

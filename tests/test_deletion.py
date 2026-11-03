@@ -17,6 +17,7 @@ class DeletionTests(unittest.TestCase):
         video.write_bytes(b'synthetic offline fixture')
         self.manifest = self.root/'plan.json'
         self.value = cli.template(video, 'en')
+        self.value['title'] = 'Deletion fixture'
         self.value['platforms'] = {'instagram': {'method':'native', 'visibility':'account',
                                                 'ai_generated':True, 'expected_identity':'fixture_account'}}
         atomic_json(self.manifest, self.value)

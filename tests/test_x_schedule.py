@@ -855,7 +855,7 @@ class PlanTests(unittest.TestCase):
         (self.root / "clip.mp4").write_bytes(b"synthetic")
         (self.root / "cover.jpg").write_bytes(b"synthetic")
         self.value = cli.template(self.root / "clip.mp4", "en")
-        self.value.update(cover="cover.jpg", tags=["tag"])
+        self.value.update(title="Schedule fixture", cover="cover.jpg", tags=["tag"])
         self.value["platforms"] = {"x": {"account": "default", "method": "browser", "visibility": "account", "ai_generated": True}}
         self.path = self.root / "publish.json"
 

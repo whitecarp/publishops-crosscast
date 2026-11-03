@@ -23,6 +23,7 @@ class WorkflowTests(unittest.TestCase):
         self.video.write_bytes(b"\x00\x00\x00\x18ftypisom\x00\x00\x00\x00isommp42")  # Container header, not a playable upload.
         self.manifest = self.root / "publish.json"
         self.value = cli.template(self.video)
+        self.value["title"] = "Workflow fixture"
         self.value["platforms"]["youtube"]["category_id"] = "1"  # Explicit synthetic fixture choice.
         self.save()
 
@@ -159,6 +160,9 @@ class WorkflowTests(unittest.TestCase):
         args = cli.parser().parse_args(["init", "--video", str(self.video), "--out", str(output),
                                        "--platforms", "instagram,x", "--draft-only"])
         cli.execute(args)
+        value = read_json(output)
+        value["title"] = "Draft fixture"
+        atomic_json(output, value)
         plan = load_plan(output)
         self.assertTrue(all(o["submission_mode"] == "draft_only" for o in plan["platforms"].values()))
         args.out = str(self.root / "other-init.json")
@@ -381,6 +385,7 @@ class WorkflowTests(unittest.TestCase):
         cli.execute(cli.parser().parse_args(["init", "--video", str(self.video), "--out", str(out), "--platforms", ",".join(cli.PLATFORMS)]))
         value = read_json(out)
         self.assertNotIn('category_id', value['platforms']['youtube'])
+        value['title'] = 'All platforms fixture'
         value['platforms']['youtube']['category_id'] = '1'
         atomic_json(out, value)
         p = load_plan(out)

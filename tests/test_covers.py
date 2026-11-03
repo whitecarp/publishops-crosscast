@@ -24,6 +24,7 @@ class CoverTests(unittest.TestCase):
         self.portrait=self.root/'portrait.png'
         Image.new('RGB',(300,400),'green').save(self.portrait)
         self.value = cli.template(video, 'zh-Hans')
+        self.value['title'] = '封面测试'
         self.value['platforms']['youtube']['category_id'] = '1'
         self.value['platforms']['x'] = {'method':'native','visibility':'account','ai_generated':True}
         atomic_json(self.manifest, self.value)

@@ -258,9 +258,9 @@ def setup(external_stop=None, install_browser=False):
 def template(video, content_language="und", ai_generated=True):
     base = {"account": "default", "method": "native", "visibility": "public", "ai_generated": ai_generated}
     return {"schema_version": 1, "video": str(Path(video).resolve()), "content_language": content_language,
-            "title": Path(video).stem, "description": "", "tags": ["AI"] if ai_generated else [],
+            "title": "", "description": "", "tags": ["AI"] if ai_generated else [],
             "platforms": {"bilibili": {**base}, "youtube": {**base, "visibility": "private", "made_for_kids": False},
-                          "douyin": {**base, "title": "我的原创视频"}}}
+                          "douyin": {**base}}}
 
 
 # The order a newcomer needs them in. A new command goes here too, and a test holds that to it.

@@ -26,7 +26,7 @@ class MalformedInputTests(unittest.TestCase):
         (self.root / "clip.mp4").write_bytes(b"synthetic")
         (self.root / "cover.jpg").write_bytes(b"synthetic")
         self.base = cli.template(self.root / "clip.mp4", "en")
-        self.base.update(cover="cover.jpg", tags=["tag"], covers={"douyin": {"portrait": "cover.jpg"}})
+        self.base.update(title="Malformed input fixture", cover="cover.jpg", tags=["tag"], covers={"douyin": {"portrait": "cover.jpg"}})
         self.base["platforms"]["youtube"]["category_id"] = "22"
         for platform in ("x", "instagram"):
             self.base["platforms"][platform] = {"account": "default", "method": "browser", "visibility": "account", "ai_generated": True}
