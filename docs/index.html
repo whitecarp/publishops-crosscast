@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PublishOps CrossCast｜一句话，发往你选的所有平台</title>
-  <meta name="description" content="PublishOps CrossCast（vpub）让你正在用的 AI 助手，为 B站、YouTube、抖音、Instagram 和 X 写好标题、简介并适配封面，首次登录后在后台逐个平台提交、记录回执。0.16.0 alpha。">
+  <meta name="description" content="PublishOps CrossCast（vpub）让你正在用的 AI 助手，为 B站、YouTube、抖音、Instagram 和 X 写好标题、简介并适配封面，首次登录后在后台逐个平台提交、记录回执；发完还能接着改稿、回评论、看数据。0.16.0 alpha。">
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#f4f6f9" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0f1524" media="(prefers-color-scheme: dark)">
@@ -57,8 +57,9 @@
     </a>
     <nav class="site-nav" aria-label="页面导航" data-i18n-aria="navLabel">
       <a href="#how" data-i18n="navHow">怎么用</a>
-      <a href="#states" data-i18n="navStates">状态</a>
+      <a href="#can" data-i18n="navCan">能做什么</a>
       <a href="#platforms" data-i18n="navPlatforms">平台</a>
+      <a href="#plans" data-i18n="navPlans">免费与付费</a>
       <a href="#start" data-i18n="navStart">上手</a>
       <a href="#faq" data-i18n="navFaq">常见问题</a>
     </nav>
@@ -81,7 +82,7 @@
     <div class="wrap hero-grid">
       <div class="hero-copy">
         <h1 id="heroTitle"><span data-i18n="h1a">一句话，</span><span data-i18n="h1b">发往你选的所有平台。</span></h1>
-        <p class="lead" data-i18n="lead">你正在用的 AI 助手（如 Codex、Claude）为 B站、YouTube、抖音、Instagram 和 X 各写一版标题、简介和标签，vpub 生成并检查发布方案、按平台适配封面，首次登录之后在后台逐个平台提交，每一步都记录回执。不内置模型，也不需要另配模型 API Key。</p>
+        <p class="lead" data-i18n="lead">把视频交给你正在用的 AI 助手（如 Codex、Claude）：它为 B站、YouTube、抖音、Instagram 和 X 各写一版标题和简介，vpub 适配封面，首次登录之后在后台逐个平台提交，读回到作品才算发布。发完之后，改稿、回评论、看数据也能接着交给它。</p>
         <div class="prompt-box">
           <div class="prompt-head">
             <span data-i18n="promptLabel">对你的 AI 助手说</span>
@@ -94,7 +95,7 @@
           <a class="btn btn-primary" href="#start" data-i18n="ctaStart">三步上手</a>
           <a class="btn btn-quiet" href="https://github.com/whitecarp/publishops-crosscast#readme" rel="noopener" data-doc data-i18n="ctaDocs">阅读文档</a>
         </div>
-        <p class="alpha-note" data-i18n="alphaNote">0.16.0 alpha：五个平台都有过真实发布或上传记录（部分来自更早的版本），但登录会过期，平台也可能临时要求验证，长时间无人值守还没验收。</p>
+        <p class="alpha-note" data-i18n="alphaNote">0.16.0 alpha：这一版已在 YouTube、抖音、Instagram 和 X 的真实账号上公开发布过，B站目前只有直接用旧版 bili-cli 的上传。登录会过期，平台也可能临时要求验证，长时间无人值守还没验收。</p>
       </div>
 
       <figure class="manifest" aria-labelledby="mfTitle">
@@ -153,7 +154,7 @@
     <div class="wrap">
       <div class="section-head">
         <h2 id="howTitle" data-i18n="howTitle">你说一句，AI 助手去办</h2>
-        <p class="section-sub" data-i18n="howSub">文字由你正在用的 AI 助手来写；vpub 负责方案、封面适配、预演和回执。</p>
+        <p class="section-sub" data-i18n="howSub">文字由你正在用的 AI 助手来写，不内置模型，也不用另配模型 API Key；vpub 负责方案、封面适配、预演和回执。</p>
       </div>
       <div class="phrasebook">
         <div class="pb-head" aria-hidden="true">
@@ -198,8 +199,68 @@
         <li class="state state-ok"><span class="stamp stamp-ok" data-i18n="stOk">已核验</span><p data-i18n="stOkD">已从平台页面或 API 读回到这条作品。审核和公开状态以平台显示为准。</p></li>
       </ol>
       <ul class="rules">
-        <li><strong data-i18n="rule1a">遇到扫码、验证码或风控</strong><span data-i18n="rule1b">：停在原处，等你在官方页面处理。</span></li>
+        <li><strong data-i18n="rule1a">遇到验证、风控或限流</strong><span data-i18n-html="rule1b">：所有平台都停下。你在官方页面处理好、查明原因后，用 <code>vpub stop --clear</code> 解除。</span></li>
         <li><strong data-i18n="rule2a">结果不明</strong><span data-i18n="rule2b">：只核对原来的任务，不重复上传。</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section" id="can" aria-labelledby="canTitle">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="canTitle" data-i18n="canTitle">能做什么，试到哪一步，都写在这里</h2>
+        <p class="section-sub" data-i18n="canSub">这张表只算免费版。有些真实记录来自更早的版本，也都是作者自己的账号，不代表在你的账号、地区和平台状态下一定成功。</p>
+      </div>
+      <ul class="mx-legend">
+        <li><i class="ev ev-ok" aria-hidden="true"></i><span data-i18n="evOk">在真实账号上跑通过</span></li>
+        <li><i class="ev ev-built" aria-hidden="true"></i><span data-i18n="evBuilt">做好了，还没在真实账号上确认</span></li>
+        <li><i class="ev ev-none" aria-hidden="true"></i><span data-i18n="evNone">平台没有，或免费版不提供</span></li>
+      </ul>
+      <div class="matrix-wrap">
+        <table class="matrix" role="table" aria-labelledby="canTitle">
+          <thead role="rowgroup">
+            <tr role="row">
+              <th role="columnheader" scope="col" data-i18n="mxCap">能力</th>
+              <th role="columnheader" scope="col">Bilibili</th>
+              <th role="columnheader" scope="col">YouTube</th>
+              <th role="columnheader" scope="col" data-i18n="pDy">抖音</th>
+              <th role="columnheader" scope="col">Instagram</th>
+              <th role="columnheader" scope="col">X</th>
+            </tr>
+          </thead>
+          <tbody role="rowgroup">
+            <tr role="row" class="mx-group"><th role="columnheader" colspan="6" scope="colgroup" data-i18n="mxGroupPub">发布时</th></tr>
+            <tr role="row"><th role="rowheader" scope="row"><span data-i18n="mxR1">公开发布并读回</span><small data-i18n="mxR1d">标记以 CrossCast 原生读回核验为准</small></th><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evIndependent">已独立读回；CrossCast 原生回执未核验</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td></tr>
+            <tr role="row"><th role="rowheader" scope="row"><span data-i18n="mxR2">定时发布</span><small data-i18n="mxR2d">还没有一条真正走到发布时间</small></th><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-none" aria-hidden="true"></i><span class="sr" data-i18n="evNone">平台没有，或免费版不提供</span></td><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td></tr>
+            <tr role="row"><th role="rowheader" scope="row"><span data-i18n="mxR3">存草稿或停在预览</span><small data-i18n="mxR3d">只上传，不发布</small></th><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td></tr>
+            <tr role="row"><th role="rowheader" scope="row"><span data-i18n="mxR4">上传时加入合集或播放列表</span></th><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-none" aria-hidden="true"></i><span class="sr" data-i18n="evNone">平台没有，或免费版不提供</span></td><td role="cell"><i class="ev ev-none" aria-hidden="true"></i><span class="sr" data-i18n="evNone">平台没有，或免费版不提供</span></td></tr>
+            <tr role="row"><th role="rowheader" scope="row"><span data-i18n="mxR5">上传时带章节</span></th><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-none" aria-hidden="true"></i><span class="sr" data-i18n="evNone">平台没有，或免费版不提供</span></td><td role="cell"><i class="ev ev-none" aria-hidden="true"></i><span class="sr" data-i18n="evNone">平台没有，或免费版不提供</span></td></tr>
+          </tbody>
+          <tbody role="rowgroup">
+            <tr role="row" class="mx-group"><th role="columnheader" colspan="6" scope="colgroup" data-i18n="mxGroupAfter">发布之后</th></tr>
+            <tr role="row"><th role="rowheader" scope="row"><span data-i18n="mxR6">修改已发布的作品</span><small data-i18n="mxR6d">标题、简介、封面或章节，按平台不同</small></th><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td></tr>
+            <tr role="row"><th role="rowheader" scope="row"><span data-i18n="mxR7">认领以前发的作品</span><small data-i18n="mxR7d">不是 CrossCast 发的，也能接着管</small></th><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td></tr>
+            <tr role="row"><th role="rowheader" scope="row"><span data-i18n="mxR8">作品列表和数据</span><small data-i18n="mxR8d">也能巡检多个平台的新评论和数据变化</small></th><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td></tr>
+            <tr role="row"><th role="rowheader" scope="row"><span data-i18n="mxR9">读评论并回复</span><small data-i18n="mxR9d">用评论者的语言，一次一条</small></th><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td></tr>
+            <tr role="row"><th role="rowheader" scope="row"><span data-i18n="mxR10">管理单条评论</span><small data-i18n="mxR10d">置顶、隐藏、删除或移除，按平台不同</small></th><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td></tr>
+            <tr role="row"><th role="rowheader" scope="row"><span data-i18n="mxR11">@ 提醒</span></th><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-none" aria-hidden="true"></i><span class="sr" data-i18n="evNone">平台没有，或免费版不提供</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td></tr>
+            <tr role="row"><th role="rowheader" scope="row"><span data-i18n="mxR12">单条私信</span><small data-i18n="mxR12d">一次一条，不群发</small></th><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-none" aria-hidden="true"></i><span class="sr" data-i18n="evNone">平台没有，或免费版不提供</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td></tr>
+            <tr role="row"><th role="rowheader" scope="row"><span data-i18n="mxR13">点赞和收藏</span><small data-i18n="mxR13d">可以撤销</small></th><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td></tr>
+            <tr role="row"><th role="rowheader" scope="row"><span data-i18n="mxR14">管理合集和播放列表</span><small data-i18n="mxR14d">调整顺序属于付费附加组件</small></th><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td><td role="cell"><i class="ev ev-ok" aria-hidden="true"></i><span class="sr" data-i18n="evOk">在真实账号上跑通过</span></td></tr>
+            <tr role="row"><th role="rowheader" scope="row"><span data-i18n="mxR15">互动组件</span><small data-i18n="mxR15d">关联视频、关注、投票和评分</small></th><td role="cell"><i class="ev ev-built" aria-hidden="true"></i><span class="sr" data-i18n="evBuilt">做好了，还没在真实账号上确认</span></td><td role="cell"><i class="ev ev-none" aria-hidden="true"></i><span class="sr" data-i18n="evNone">平台没有，或免费版不提供</span></td><td role="cell"><i class="ev ev-none" aria-hidden="true"></i><span class="sr" data-i18n="evNone">平台没有，或免费版不提供</span></td><td role="cell"><i class="ev ev-none" aria-hidden="true"></i><span class="sr" data-i18n="evNone">平台没有，或免费版不提供</span></td><td role="cell"><i class="ev ev-none" aria-hidden="true"></i><span class="sr" data-i18n="evNone">平台没有，或免费版不提供</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <ul class="notes mx-notes">
+        <li data-i18n="canNote1">实心表示这一行的主要动作至少跑通过一次，不是每个细项都试过。比如 YouTube 的单条评论管理，确认过的是置顶和取消置顶；私信确认的是发送方看得到，不代表对方已收到。</li>
+        <li data-i18n-html="canNote2">半实心的功能已经写好，也用假平台测过，但真实页面上可能还有没发现的问题。每一格的依据见<a href="https://github.com/whitecarp/publishops-crosscast/blob/main/docs/VALIDATION.md" rel="noopener">验证记录</a>，更细的范围见<a href="https://github.com/whitecarp/publishops-crosscast/blob/main/docs/FEATURES.md" rel="noopener">功能范围</a>。</li>
+      </ul>
+      <h3 class="rules-head" data-i18n="canSafeTitle">默认开着的安全限制</h3>
+      <ul class="rules">
+        <li><strong data-i18n="safe1a">回复、私信和点赞有上限</strong><span data-i18n="safe1b">：每日上限，不对同一个人重复相同的话，标注 AI。</span></li>
+        <li><strong data-i18n="safe2a">回复和私信不发密钥和未经同意的链接</strong><span data-i18n="safe2b">：标题和简介也会检查，像密码或密钥的内容会被拒绝，链接只会提醒你看一眼。</span></li>
+        <li><strong data-i18n="safe3a">可疑的消息留给你</strong><span data-i18n="safe3b">：试图诱导助手的消息，或需要真人处理的消息，要有人批准才能回复。被骗的助手仍可能自己批准，关键词检查也不是绝对保证。</span></li>
+        <li><strong data-i18n="safe4a">随时能查还有什么没做完</strong><span data-i18n-html="safe4b">：<code>vpub status</code> 只读本地记录，列出没做完的事和下一步的确切命令。</span></li>
       </ul>
     </div>
   </section>
@@ -208,7 +269,7 @@
     <div class="wrap">
       <div class="section-head">
         <h2 id="platTitle" data-i18n="platTitle">五个平台，各走各的路</h2>
-        <p class="section-sub" data-i18n-html="platSub">实测记录是过去的真实发布，不代表在你的账号、地区和平台状态下一定成功。本机实际能走哪条路径，以 <code>vpub capabilities</code> 的结果为准；B站是作者直接用 bili-cli 上传的，在那里仍标为未实测。</p>
+        <p class="section-sub" data-i18n-html="platSub">实测记录是过去的真实发布，不代表在你的账号、地区和平台状态下一定成功。本机实际能走哪条路径，以 <code>vpub capabilities</code> 的结果为准。这里写的是免费路径；YouTube、X 和 Instagram 的官方 API 路径属于付费附加组件。</p>
       </div>
       <div class="scope-wrap">
         <table class="scope" role="table" aria-labelledby="platTitle">
@@ -224,31 +285,31 @@
             <tr role="row">
               <th role="rowheader" scope="row"><i class="dot dot-bili" aria-hidden="true"></i>Bilibili</th>
               <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thLogin">登录</span><span data-i18n="pBiliLogin">B站 App 扫码（bili-cli）</span></td>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thRoute">发布方式</span><span data-i18n="pBiliRoute">bili-cli，可定时发布</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thRoute">发布方式</span><span data-i18n="pBiliRoute">内置的 bili-cli</span></td>
               <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thTested">实测记录</span><span class="badge badge-ok">bili-cli</span></td>
             </tr>
             <tr role="row">
               <th role="rowheader" scope="row"><i class="dot dot-yt" aria-hidden="true"></i>YouTube</th>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thLogin">登录</span><span data-i18n="pYtLogin">免费：在专用 Chrome 里登录一次。付费附加组件：Google OAuth</span></td>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thRoute">发布方式</span><span data-i18n="pYtRoute">免费：后台 Chrome 操作 YouTube Studio，可加入播放列表、定时发布。付费附加组件：官方 API</span></td>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thTested">实测记录</span><span class="badge badge-ok" data-i18n="testedYt">API 和免费路径</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thLogin">登录</span><span data-i18n="pYtLogin">在专用 Chrome 里登录一次</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thRoute">发布方式</span><span data-i18n="pYtRoute">后台 Chrome 操作 YouTube Studio</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thTested">实测记录</span><span class="badge badge-ok" data-i18n="testedYt">免费路径</span></td>
             </tr>
             <tr role="row">
               <th role="rowheader" scope="row"><i class="dot dot-dy" aria-hidden="true"></i><span data-i18n="pDy">抖音</span></th>
               <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thLogin">登录</span><span data-i18n="pChrome">专用官方 Chrome</span></td>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thRoute">发布方式</span><span data-i18n="pBgBrowser">CLI 后台浏览器，可定时发布、加入合集</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thRoute">发布方式</span><span data-i18n="pBgBrowser">CLI 后台浏览器</span></td>
               <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thTested">实测记录</span><span class="badge badge-ok" data-i18n="testedPub">已发布</span></td>
             </tr>
             <tr role="row">
               <th role="rowheader" scope="row"><i class="dot dot-ig" aria-hidden="true"></i>Instagram</th>
               <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thLogin">登录</span><span data-i18n="pChrome">专用官方 Chrome</span></td>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thRoute">发布方式</span><span data-i18n="pIgRoute">CLI 后台浏览器，封面在手机上改，不支持定时发布</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thRoute">发布方式</span><span data-i18n="pIgRoute">CLI 后台浏览器，封面在手机上改</span></td>
               <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thTested">实测记录</span><span class="badge badge-ok" data-i18n="testedPub">已发布</span></td>
             </tr>
             <tr role="row">
               <th role="rowheader" scope="row"><i class="dot dot-x" aria-hidden="true"></i>X</th>
               <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thLogin">登录</span><span data-i18n="pChrome">专用官方 Chrome</span></td>
-              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thRoute">发布方式</span><span data-i18n="pXRoute">只能用 Media Studio（需订阅），可定时发布</span></td>
+              <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thRoute">发布方式</span><span data-i18n="pXRoute">后台操作 Media Studio（需订阅）</span></td>
               <td role="cell"><span class="cell-label" aria-hidden="true" data-i18n="thTested">实测记录</span><span class="badge badge-ok" data-i18n="testedPub">已发布</span></td>
             </tr>
             <tr role="row" class="is-paused">
@@ -260,11 +321,50 @@
         </table>
       </div>
       <ul class="notes">
-        <li data-i18n="platNote1">YouTube：免费路径由后台 Chrome 操作 YouTube Studio；官方 API 路径需要付费附加组件。按 Google 的规定，2020 年 7 月 28 日之后创建、又没通过审核的 API 项目，上传的视频会被锁成私享。免费路径目前只用一条私享短片实测过；公开上传、上传时加入播放列表和定时发布还没在真实频道上确认过（两次尝试都停在播放列表选择器，之后又改过一次，还没重新试）。</li>
-        <li data-i18n="platNote2">X：账号必须已订阅并能进入 Media Studio；未订阅账号的视频上限是 140 秒、512 MB，本工具不支持。X 目前有两个版本的网站，CrossCast 两种都支持；新版还没有在已登录账号上试过。</li>
-        <li data-i18n="platNote3">抖音：长时间保持登录的稳定性还在验收；网页上传中断后不能续传，要先检查已有草稿。</li>
+        <li data-i18n-html="platNoteBili">B站：目前只有作者直接用旧版 bili-cli 的上传，通过 CrossCast 发布和定时都还没试过，<code>vpub capabilities</code> 里仍标为未实测。合集和草稿已在真实账号上确认过。</li>
+        <li data-i18n="platNote1">YouTube：2026 年 11 月 2 日已公开发布两条视频并读回。两条第一次都只留下草稿，重新打开再按一次发布才发出，现在自动处理这一步的代码还没在真实频道跑过。上传时加入播放列表和定时只在草稿上传里确认过。</li>
+        <li data-i18n="platNote3">抖音：长时间保持登录还在验收。上传中断后不能续传，但 vpub resume 会接着留下的草稿完成。封面窗口曾卡住；只有用户明确选择省略封面时，才可不带封面发布并在手机上补设，程序不会自动省略。Windows 上现在改用隐藏桌面上的真实 Chrome 窗口，这还没试过。标题和简介保存已尝试，但仍未核验成功。</li>
+        <li data-i18n="platNoteIg">Instagram：视频公开发出过，但 CrossCast 自己的读回记录还没核验。封面只能在手机上改，也不能定时发布。</li>
+        <li data-i18n="platNote2">X：账号必须已订阅并能进入 Media Studio；未订阅账号的视频上限是 140 秒、512 MB，本工具不支持。X 目前有两个版本的网站，CrossCast 两种都支持；真实记录都在旧版上，新版还没有在已登录账号上试过。</li>
         <li data-i18n="platNote4">暂不支持：TikTok、YouTube 卡片和可点击片尾、自动或批量的私信和点赞、完整历史导出。</li>
       </ul>
+    </div>
+  </section>
+
+  <section class="section" id="plans" aria-labelledby="plansTitle">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="plansTitle" data-i18n="plansTitle">发布和日常运营都免费，付费附加组件还没开售</h2>
+        <p class="section-sub" data-i18n="plansSub">免费版以 MIT 开源。附加组件只多出下面列出的几项，现在还买不到，其他功能也都不需要它。</p>
+      </div>
+      <div class="plans">
+        <article class="plan">
+          <div class="plan-head"><h3 data-i18n="planFree">免费版</h3><span class="stamp stamp-ok" data-i18n="planFreeTag">现在就能用</span></div>
+          <p class="plan-sub" data-i18n="planFreeSub">不需要模型 API Key，也不需要平台的官方 API。</p>
+          <ul>
+            <li data-i18n-html="pf1"><strong>发布</strong>：五个平台，读回核验，定时、草稿、章节，上传时加入合集或播放列表，AI 声明</li>
+            <li data-i18n-html="pf2"><strong>文案和封面</strong>：AI 助手为每个平台写文案，vpub 检查并适配封面</li>
+            <li data-i18n-html="pf3"><strong>发布之后</strong>：修改作品，认领旧作品，作品列表和数据，巡检和简短摘要</li>
+            <li data-i18n-html="pf4"><strong>互动</strong>：评论和回复，单条评论管理，@ 提醒，单条私信，点赞和收藏</li>
+            <li data-i18n-html="pf5"><strong>合集和播放列表</strong>：创建、修改、增删作品（调整顺序除外）</li>
+            <li data-i18n-html="pf6"><strong>B站互动组件</strong>：关联视频、关注、投票和评分</li>
+            <li data-i18n-html="pf7"><strong>安全和恢复</strong>：上面这些安全限制，<code>vpub status</code> 和 <code>vpub resume</code></li>
+          </ul>
+        </article>
+        <article class="plan plan-later">
+          <div class="plan-head"><h3 data-i18n="planPaid">付费附加组件</h3><span class="stamp stamp-queue" data-i18n="planPaidTag">还没开售</span></div>
+          <p class="plan-sub" data-i18n="planPaidSub">单独安装，给需要官方接口和完整读取的人。</p>
+          <ul>
+            <li data-i18n="pp1">YouTube、X 和 Instagram 的官方 API 路径</li>
+            <li data-i18n="pp2">运营报告（vpub report）</li>
+            <li data-i18n="pp3">完整读取（vpub read-all）</li>
+            <li data-i18n="pp4">邮件提醒（只支持 Gmail，默认关闭）</li>
+            <li data-i18n="pp5">播放列表调整顺序</li>
+            <li data-i18n="pp6">YouTube 待审核评论队列</li>
+          </ul>
+        </article>
+      </div>
+      <p class="plans-note" data-i18n="plansNote">另外，你的 AI 助手订阅和 X 的订阅（发布要用 Media Studio）由各自的公司收费，本项目不承诺免费或无限使用。</p>
     </div>
   </section>
 
@@ -320,9 +420,9 @@ vpub verify RECEIPT_KEY</code></pre>
         <details><summary data-i18n="q4">进了队列或有了回执，就算发出去了吗？</summary><p data-i18n="a4">不算。排队只说明任务已记录；本地回执记录每一步的证据，但它本身不代替平台证据。是否发布成功，以平台页面读回或平台 API 为准。</p></details>
         <details><summary data-i18n="q5">会改动我的原视频和封面吗？</summary><p data-i18n="a5">不会。适配后的封面另存为新文件，原图保持不变；发 Instagram 时直接使用原视频，不转码。</p></details>
         <details><summary data-i18n="q6">会不会发到我没选的平台？</summary><p data-i18n="a6">不会因为某个平台已登录就把它加进来。平台、账号和公开范围由你选定；内容、账号、平台、受众或任务范围有变化时，会重新请你确认。</p></details>
-        <details><summary data-i18n="q7">要花钱吗？</summary><p data-i18n="a7">CrossCast 核心开源免费（MIT）。付费附加组件包括 X、Instagram 和 YouTube 的官方 API 路径、运营报告、完整读取、邮件提醒、播放列表排序和 YouTube 待审核评论队列，目前还没有开售，其他功能都不需要它。你的 AI 助手订阅、X 的订阅（发布要用 Media Studio），以及 YouTube API 的配额可能另有费用或限制，本项目不承诺免费或无限使用。</p></details>
-        <details><summary data-i18n="q8">支持评论、私信和数据吗？TikTok 呢？</summary><p data-i18n="a8">支持读评论并回复、点赞和收藏，在抖音、Instagram、X 上读发私信，查看作品数据，运营报告属于付费附加组件；各平台能做的不一样，每次只处理你授权的那一条，不会批量发送。TikTok 目前暂停支持。</p></details>
-        <details><summary data-i18n="q9">现在能放心用于正式发布吗？</summary><p data-i18n-html="a9">当前是 0.16.0 alpha。五个平台都有过真实发布或上传记录（部分来自更早的版本），但登录会过期，平台也可能临时要求验证，长时间无人值守还没验收。第一次用时，可以先用预演（<code>--dry-run</code>）看一遍方案，再正式发布。</p></details>
+        <details><summary data-i18n="q7">要花钱吗？</summary><p data-i18n-html="a7">CrossCast 核心开源免费（MIT），发布和日常运营都在里面。付费附加组件目前还没有开售，清单见上面的<a href="#plans">免费与付费</a>，清单以外的功能都不需要它。你的 AI 助手订阅和 X 的订阅（发布要用 Media Studio）可能另有费用或限制，本项目不承诺免费或无限使用。</p></details>
+        <details><summary data-i18n="q8">支持评论、私信和数据吗？TikTok 呢？</summary><p data-i18n-html="a8">支持读评论并回复、点赞和收藏、查看 @ 提醒，在抖音、Instagram、X 上读发私信（B站还没实测），查看作品数据和巡检摘要；完整运营报告属于付费附加组件。各平台能做的不一样，见上面的<a href="#can">能力表</a>。每次只处理你授权的那一条，不会批量发送。TikTok 目前暂停支持。</p></details>
+        <details><summary data-i18n="q9">现在能放心用于正式发布吗？</summary><p data-i18n-html="a9">当前是 0.16.0 alpha。这一版已在 YouTube、抖音、Instagram 和 X 的真实账号上公开发布过，B站目前只有直接用旧版 bili-cli 的上传。登录会过期，平台也可能临时要求验证，长时间无人值守还没验收。第一次用时，可以先用预演（<code>--dry-run</code>）看一遍方案，再正式发布。</p></details>
       </div>
     </div>
   </section>
@@ -350,6 +450,7 @@ vpub verify RECEIPT_KEY</code></pre>
     <nav class="footer-nav" aria-label="页脚链接" data-i18n-aria="footNav">
       <a href="https://github.com/whitecarp/publishops-crosscast" rel="noopener">GitHub</a>
       <a href="https://github.com/whitecarp/publishops-crosscast#readme" rel="noopener" data-doc data-i18n="footDocs">文档</a>
+      <a href="https://github.com/whitecarp/publishops-crosscast/releases" rel="noopener" data-i18n="footReleases">版本记录</a>
       <a href="#top" data-i18n="footTop">回到顶部</a>
     </nav>
   </div>
