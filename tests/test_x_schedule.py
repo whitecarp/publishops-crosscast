@@ -884,7 +884,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual("invalid_manifest", caught.exception.code)
 
     def test_the_browser_route_takes_a_future_time(self):
-        when = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+        when = (datetime.now(timezone.utc) + timedelta(days=2)).replace(second=0, microsecond=0).isoformat()
         self.value["platforms"]["x"]["schedule"] = when
         self.assertEqual(when, self.plan()["platforms"]["x"]["schedule"])
 

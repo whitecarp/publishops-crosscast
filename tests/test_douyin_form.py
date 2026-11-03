@@ -721,7 +721,7 @@ class PlanTests(unittest.TestCase):
         return load_plan(self.path)["platforms"]["douyin"]
 
     def future(self):
-        return (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+        return (datetime.now(timezone.utc) + timedelta(days=2)).replace(second=0, microsecond=0).isoformat()
 
     def refused(self, code, **options):
         with self.assertRaises(VpubError) as caught:

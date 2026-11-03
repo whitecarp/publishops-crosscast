@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from .browser_backends import choose_file, normalize, studio_visibility, work_url
 from .browser_runtime import acknowledged, look_until, risk_check, unique_visible, visible, write_answers
-from .core import NOT_ON_SALE, VpubError, atomic_json, file_sha, home, now, read_json, reply_pressing, stop_check
+from .core import NOT_ON_SALE, VpubError, atomic_json, digest, file_sha, home, now, read_json, receipt_turn, reply_pressing, stop_check
 from .operations_api import metric
 from .progress import stage
 
@@ -449,16 +449,24 @@ def playlist_videos(rows):
     return items
 
 
-async def studio_table(page, rows, script, parse):
-    """Every page of a Studio list. It is complete only when its own Next button says there is no more."""
+async def studio_table(page, rows, script, parse, *, require_last_page=False):
+    """Walk a Studio list. Strict playlist reads need a last-page control and complete ID/title extraction."""
     items = {}
+    extracted = True
     for _ in range(TABLE_PAGES):
-        items.update(parse(await rows.evaluate_all(script)))
+        raw = await rows.evaluate_all(script)
+        found = parse(raw)
+        if require_last_page:
+            # A dropped row, blank title or repeated ID can hide the requested playlist.
+            # Once that happens, even a later intact last page cannot prove its absence.
+            extracted = (extracted and len(found) == len(raw) and not (items.keys() & found.keys())
+                         and all(item.get("title") for item in found.values()))
+        items.update(found)
         after = await visible(page.locator("#navigate-after"))
         if after is None:
-            return list(items.values()), bool(items)
+            return list(items.values()), bool(items) and not require_last_page
         if await after.get_attribute("aria-disabled") == "true":
-            return list(items.values()), True
+            return list(items.values()), extracted
         first = await rows.first.inner_text()
         await after.click(timeout=15000)
         for _ in range(20):
@@ -479,7 +487,8 @@ async def open_playlist_list(page, identity):
 
 
 async def read_playlists(page, identity):
-    return await studio_table(page, await open_playlist_list(page, identity), PLAYLIST_ROWS, playlist_items)
+    # Missing rows or a missing Next control do not prove a title is absent before automatic creation.
+    return await studio_table(page, await open_playlist_list(page, identity), PLAYLIST_ROWS, playlist_items, require_last_page=True)
 
 
 async def playlist_title(page, identity, playlist):
@@ -575,13 +584,32 @@ async def ensure_playlists(page, identity, titles):
         rows, complete = await read_playlists(page, identity)
     have = {normalize(row["title"]) for row in rows}
     missing = [title for title in titles if normalize(title) not in have]
-    if missing and rows and not complete:
+    if missing and not complete:
         raise VpubError("read_incomplete", "Studio's playlist list could not be read to its end, so a missing playlist is not proven; nothing was uploaded.")
     made = []
     for title in missing:
-        result = await create_playlist(page, identity, {"title": title, "privacy": "private"}, lambda *_: (stop_check("youtube"), stage("pressing")), known=[row["id"] for row in rows])
+        attempt = home() / "youtube-auto-playlists" / (digest([identity, normalize(title)]) + ".json")
+
+        def not_attempted():
+            if attempt.exists():
+                raise VpubError("playlist_unverified", "This playlist's automatic creation was already attempted, but Studio does not list it. Nothing was created again or uploaded.",
+                                "Inspect the original playlist in Studio and use an existing playlist; do not repeat an uncertain creation.")
+
+        def before_create(*_):
+            stop_check("youtube")
+            with receipt_turn(attempt):
+                not_attempted()
+                # Even a killed upload must not make another list after an unclear Create.
+                atomic_json(attempt, {"identity": identity, "title": title, "state": "SUBMITTING", "created_at": now()})
+            stop_check("youtube")  # The receipt turn and durable save can wait.
+            stage("pressing")
+
+        not_attempted()
+        result = await create_playlist(page, identity, {"title": title, "privacy": "private"}, before_create, known=[row["id"] for row in rows])
         if not result.get("collection_id"):
             raise VpubError("playlist_unverified", f'Studio did not show the new playlist "{title}"; nothing was uploaded.')
+        with receipt_turn(attempt):
+            atomic_json(attempt, {**read_json(attempt), "state": "CREATED", "collection_id": result["collection_id"], "updated_at": now()})
         made.append({"id": result["collection_id"], "title": title})
     return made
 

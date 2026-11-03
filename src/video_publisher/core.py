@@ -468,6 +468,10 @@ def load_plan(path, selected=None):
                 delta = (when - datetime.now(timezone.utc)).total_seconds()
             except (ValueError, TypeError, AttributeError):
                 raise VpubError("invalid_schedule", "Use a future ISO timestamp with an explicit timezone.")
+            if (platform in {"youtube", "douyin", "x"} and v.get("method", "browser") == "browser"
+                    and (when.second or when.microsecond or when.utcoffset().total_seconds() % 60)):
+                raise VpubError("invalid_schedule", "This browser scheduler accepts whole minutes only, including the timestamp's timezone offset; seconds and fractional seconds must be zero.",
+                                "Choose an exact minute and approve the new plan. Nothing was uploaded.")
             if delta < 60 or (platform == "bilibili" and not 7200 <= delta <= 15 * 86400):
                 raise VpubError("invalid_schedule", "Schedule is too near/past or outside Bilibili's 2h–15d range.")
             if visibility != "private" and platform == "youtube":
