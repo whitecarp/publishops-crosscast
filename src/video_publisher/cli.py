@@ -380,7 +380,7 @@ def doctor():
         issues.append({"code": "stopped", "message": stop["message"], "fix": stop["hint"]})
     return {"version": __version__, "python": sys.version.split()[0], "dependencies": modules,
             "bili_cli_version": included_bili_version(), "google_chrome": chrome, "paid_api_addon": addon, "ready": not issues, "issues": issues,
-            "next": issues[0]["fix"] if issues else "Use the saved preferences below; ask only for unknown choices. Sign in only to selected platforms: vpub onboard --platforms PLATFORMS. Then prepare: vpub prepare VIDEO --platforms PLATFORMS --language LANGUAGE --visibility public|private --ai-generated yes|no. Replace placeholders with the user's choices; omit --platforms only when platforms are saved.",
+            "next": issues[0]["fix"] if issues else "Use the saved preferences below; ask only for unknown choices. Sign in only to selected platforms: vpub onboard --platforms PLATFORMS. Then prepare: vpub prepare VIDEO --platforms PLATFORMS --language LANGUAGE --visibility VISIBILITY --ai-generated AI_STATUS. Replace placeholders with the user's choices: VISIBILITY is public or private; AI_STATUS is yes or no. Omit --platforms only when platforms are saved.",
             "preferences": preferences(),
             "skill": skill_file(),
             "local_stop": (home() / "STOP.json").exists(), "runtime_directory": str(home()),

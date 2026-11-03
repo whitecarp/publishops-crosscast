@@ -194,7 +194,9 @@ class FirstRunMessageTests(LocalTests):
             answer = cli.doctor()
         self.assertEqual(run('preferences'), answer['preferences'])
         self.assertIn('--platforms PLATFORMS', answer['next'])
-        self.assertIn('--visibility public|private --ai-generated yes|no', answer['next'])
+        self.assertIn('--visibility VISIBILITY --ai-generated AI_STATUS', answer['next'])
+        self.assertIn('VISIBILITY is public or private; AI_STATUS is yes or no.', answer['next'])
+        self.assertNotIn('|', answer['next'])
         self.assertNotIn('--platforms bilibili', answer['next'])
 
     def test_prepare_explains_copy_shape_account_audience_cover_and_kids(self):
