@@ -592,7 +592,11 @@ class PublishWorkersTests(unittest.TestCase):
             operator_thread.start()
             try:
                 with self.assertRaises(KeyboardInterrupt):
-                    self.run_plan(self.plan(("x", "instagram", "douyin")))
+                    # A completed slot now refills immediately. This case tests
+                    # retention of a completed receipt, not cancellation before
+                    # an unrelated third platform could legitimately start.
+                    platforms = ("x", "instagram") if already_final else ("x", "instagram", "douyin")
+                    self.run_plan(self.plan(platforms))
             finally:
                 release.set()
                 operator_thread.join(4)

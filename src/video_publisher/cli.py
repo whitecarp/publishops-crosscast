@@ -182,8 +182,8 @@ def _stop_interrupted_publish():
 
 
 def _publish_browser_batch(plan, platforms, snapshot_lock):
-    """At most two distinct profiles, with no executor backlog or retry."""
-    from concurrent.futures import ThreadPoolExecutor, wait
+    """Refill two slots within one browser-only segment, with no backlog or retry."""
+    from concurrent.futures import FIRST_COMPLETED, CancelledError, ThreadPoolExecutor, wait
     import signal
     from threading import current_thread, main_thread
 
@@ -201,16 +201,38 @@ def _publish_browser_batch(plan, platforms, snapshot_lock):
     pool = None
     futures = {}
     try:
-        pool = ThreadPoolExecutor(max_workers=len(platforms), thread_name_prefix="vpub-publish")
-        for platform in platforms:
+        pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="vpub-publish")
+        remaining, pending = iter(platforms), set()
+        exhausted = False
+        while True:
             if interrupted is not None:
                 break
-            try:
-                stop_check(platform)
-            except VpubError:
+            while not exhausted and len(pending) < 2:
+                platform = next(remaining, None)
+                if platform is None:
+                    exhausted = True
+                    break
+                try:
+                    stop_check(platform)
+                except VpubError:
+                    exhausted = True
+                    break
+                if interrupted is not None:
+                    break
+                future = pool.submit(_publish_platform, plan, platform, snapshot_lock)
+                futures[platform] = future
+                pending.add(future)
+            if not pending or interrupted is not None:
                 break
-            futures[platform] = pool.submit(_publish_platform, plan, platform, snapshot_lock)
-    except KeyboardInterrupt as exc:
+            done, pending = wait(pending, timeout=0.05, return_when=FIRST_COMPLETED)
+            # Inspect every completion before refilling: cancellation or a
+            # worker's BaseException aborts the segment; ordinary failures keep
+            # their claim and are reported independently below.
+            for future in done:
+                failure = future.exception()
+                if failure is not None and (isinstance(failure, CancelledError) or not isinstance(failure, Exception)):
+                    raise failure
+    except BaseException as exc:
         interrupted = exc
     finally:
         # Do not let Ctrl-C release publication_lock while an upload still owns
@@ -237,6 +259,8 @@ def _publish_browser_batch(plan, platforms, snapshot_lock):
                     # A worker can also report an interruption. Observe it while
                     # peers are active, never through an unbounded result().
                     for future in done:
+                        if future.cancelled():
+                            continue
                         failure = future.exception()
                         if isinstance(failure, KeyboardInterrupt):
                             interrupted = failure
@@ -289,16 +313,11 @@ def publish_plan(plan, confirm, workers=1):
             browser = platform in {"douyin", "instagram", "x", "youtube"} and opts.get("method") == "browser"
             if workers == 2 and browser:
                 batch.append(platform)
-                if len(batch) < workers:
-                    continue
-            else:
-                if batch:
-                    results.update(_publish_browser_batch(plan, batch, snapshot_lock))
-                    batch = []
-                results[platform] = _publish_platform(plan, platform, snapshot_lock)
                 continue
-            results.update(_publish_browser_batch(plan, batch, snapshot_lock))
-            batch = []
+            if batch:
+                results.update(_publish_browser_batch(plan, batch, snapshot_lock))
+                batch = []
+            results[platform] = _publish_platform(plan, platform, snapshot_lock)
         if batch:
             results.update(_publish_browser_batch(plan, batch, snapshot_lock))
     results = {p: results.get(p, {"state": "NOT_STARTED", "code": "stopped"}) for p in plan["platforms"]}
