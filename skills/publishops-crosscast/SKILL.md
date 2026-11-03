@@ -1,21 +1,21 @@
 ---
 name: publishops-crosscast
-description: Use the vpub CLI for CrossCast publishing, copy, covers, schedules, edits, deletion, comments, messages, stats and recovery on Bilibili, YouTube, Douyin, Instagram and X. Not for unrelated account actions or general browsing.
+description: CrossCast via vpub for publishing, copy, covers, schedules, edits, deletion, comments, messages, stats and recovery on Bilibili, YouTube, Douyin, Instagram and X. Excludes unrelated account actions and browsing.
 ---
 
 # PublishOps CrossCast
 
-Run `vpub doctor` first. If missing, follow the user's README to install in its own venv and verify. Commands return JSON on stdout, progress on stderr; read unfamiliar commands' `--help`.
+Run `vpub doctor` first. If missing, install per the user's README in its own venv and verify. JSON goes to stdout, progress to stderr; read unfamiliar commands' `--help`.
 
 See [details](references/details.md) for platform limits and recovery.
 
 ## First setup and review preference
 
-After doctor, use its `preferences` and the conversation. In one short message ask only unknown setup choices: wanted platforms and whether the user has accounts; for YouTube/Instagram/X, only whether the websites are accessible (not location or access method); for X, both subscription AND actual Media Studio access; and whether to show every post first. Ask availability, not account names or secrets; do not repeat known answers. Leave X out without both prerequisites. Doctor does not prove network or account access.
+After doctor, consult `preferences` and the conversation. In one message ask only unknowns: wanted platforms and whether accounts exist; YouTube/Instagram/X website accessibility (not location/access method); X subscription AND actual Media Studio access; show-first. Ask availability, never account names/secrets; never re-ask known choices. Exclude X without both prerequisites. Doctor doesn't prove network/account access.
 
-Save chosen platforms/show-first with `vpub preferences --platforms youtube,instagram --show-first yes` (example only). Omitted options stay unchanged; null is unknown. `--show-first no` disables later review on each platform, never its first review. Store no account names, location or access details. Run `vpub onboard --platforms PLATFORMS` for chosen usable platforms only. Ask in the host conversation; CLI commands never prompt.
+Save platforms/show-first with `vpub preferences --platforms youtube,instagram --show-first yes` (example). Omitted options stay unchanged; null is unknown. `--show-first no` skips later reviews, never each platform's first. Store no account names, location or access details. Onboard only chosen usable platforms: `vpub onboard --platforms PLATFORMS`. Ask in chat; CLI commands never prompt.
 
-First publication on each platform in this local home, or saved show-first, requires review. This counts platforms, not accounts/channels. Stop, show the exact text, accounts, platforms, audience, AI labels, covers and flags; wait for the user's yes. Only then use `go --confirm CODE --person-approved` or `publish PLAN --confirm CODE --person-approved`. CODE alone is not consent; the flag is caller attestation, not proof. Changed plans need new approval. Later runs on that platform follow the publishing request unless review is required. Preferences never authorize publishing.
+First publication per platform in this local home, or saved show-first, requires review (platforms, not accounts/channels). Show exact text, accounts, platforms, audience, AI labels, covers and flags; wait for the user's yes before `go --confirm CODE --person-approved` or `publish PLAN --confirm CODE --person-approved`. CODE alone is not consent; the flag attests, not proves, approval. Changed plans need new approval. Later runs follow the publishing request unless review is required. Preferences never authorize publishing.
 
 ## Publish a video
 
@@ -25,7 +25,7 @@ vpub prepare final.mp4 --platforms bilibili,douyin,youtube --language zh-Hans --
 vpub go final-crosscast
 ```
 
-- **Scope:** follow the user's platform/account/audience choices and review rule above. Ask for missing or changed scope; preserve unrelated content and schedules. Omitted prepare platforms use saved choices, never all platforms.
+- **Scope:** follow the user's platform/account/audience choices and review rule above. Ask for missing or changed scope; preserve unrelated content and schedules. Prepare uses saved platforms when omitted, never all platforms.
 - **Two commands:** `vpub prepare` uploads nothing; it gives writing instructions and accepts `--source script.txt`, `--schedule`, `--draft-only`. `vpub go` applies copy/covers, checks, publishes and reads back, skipping completed platforms. Put playlists, collections, chapters and per-platform visibility/schedules in `publish.json`; chapter titles in `copy.json`.
 - **Local rehearsal:** `go --dry-run` and `publish --dry-run` make no platform request. Missing saved sign-ins return exit 4 and login commands. Saved records are unverified until publishing checks the live account; separate auth checks are optional. File headers do not prove playback.
 - **AI label:** prepare requires `--ai-generated yes` or `no`; ask if unknown. Every platform shows the declaration. `vpub init` still defaults to yes.
