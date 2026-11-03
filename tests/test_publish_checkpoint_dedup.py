@@ -68,7 +68,7 @@ class PublishCheckpointDedupTests(unittest.TestCase):
         original = deepcopy(self.plan)
         context = patch.object(adapters, "publish", adapter) if adapter else nullcontext()
         with context:
-            result = cli.publish_plan(deepcopy(self.plan), self.plan["confirmation"])
+            result = cli.publish_plan(deepcopy(self.plan), self.plan["confirmation"], reviewed=True)
         self.assertEqual(len(self.closed), 1, "The CLI finally must close its ledger")
         self.assert_json_equal(self.plan, original)
         ledger = core.Ledger()

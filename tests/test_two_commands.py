@@ -9,7 +9,7 @@ from unittest.mock import patch
 from PIL import Image
 
 from video_publisher import adapters, cli
-from video_publisher.core import VpubError
+from video_publisher.core import Ledger, VpubError
 
 
 def run(*words):
@@ -26,6 +26,18 @@ class TwoCommandTests(unittest.TestCase):
         patcher = patch.dict("os.environ", {"VPUB_HOME": str(self.folder.parent / "home"), "BILI_CLI_HOME": str(self.folder.parent / "bili")})
         patcher.start()
         self.addCleanup(patcher.stop)
+        # These workflows belong to a returning customer; first-run review has
+        # separate coverage. This prior publication is unrelated to final.mp4.
+        ledger = Ledger()
+        try:
+            prior = {
+                "options": {"submission_mode": "publish", "visibility": "public"},
+                "receipt": {"state": "SUBMISSION_VERIFIED", "platform": "youtube", "id": "abcdefghijk"},
+            }
+            key = ledger.claim("youtube", "returning-fixture", "f" * 64, prior)
+            ledger.save(key, "SUBMISSION_VERIFIED", prior)
+        finally:
+            ledger.close()
         self.video = self.folder / "final.mp4"
         self.video.write_bytes(b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + bytes(1024))
         self.work = self.folder / "final-crosscast"

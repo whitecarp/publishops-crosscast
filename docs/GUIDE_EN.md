@@ -343,6 +343,8 @@ vpub publish ready.json --confirm <confirmation-code>
 vpub verify RECEIPT_KEY
 ```
 
+For the first actual publication in this local home, or a saved show-first choice, both publishing routes stop before account access. Show the returned plan to the user. Only after approval, pass its current code to `go --confirm CODE`, or use `publish PLAN --confirm CODE --reviewed`. These flags attest approval; the CLI cannot verify who supplied them. After a verified publication, ordinary later runs need no extra flag unless show-first is saved.
+
 `--dry-run` checks local files without contacting a platform. Missing sign-in records produce a login command and exit code 4. Saved records do not prove a live sign-in; publishing checks the account, so separate status calls are optional. The media check recognises a container header, not playback or platform acceptance.
 
 `--dry-run` does not upload. Your AI assistant writes `response.json` following the template inside `request.json`. After an interruption, continue with `vpub resume RECEIPT_KEY`; `vpub receipts` lists every receipt.

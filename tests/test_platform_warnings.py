@@ -248,7 +248,7 @@ class PublishingTests(Home):
     def test_a_check_at_sign_in_stops_the_rest_and_says_so(self):
         plan = self.plan()
         with patch.object(adapters, "preflight", side_effect=VpubError("human_verification_required", "Check.")), patch.object(adapters, "publish") as upload:
-            result = cli.publish_plan(plan, "hash")
+            result = cli.publish_plan(plan, "hash", reviewed=True)
         upload.assert_not_called()
         self.assertEqual("x", read_json(self.stop_file())["platform"])
         self.assertEqual("human_verification_required", result["results"]["x"]["code"])
@@ -264,7 +264,7 @@ class PublishingTests(Home):
             return {"state": "WAITING_FOR_USER", "user_action_required": True}
         with patch.object(adapters, "preflight", return_value={"identity": "me"}), patch.object(adapters, "publish", side_effect=upload) as sent, \
                 patch.object(cli, "snapshot_plan", side_effect=lambda plan, platform: plan), patch.object(adapters, "email_reminder"):
-            result = cli.publish_plan(plan, "hash")
+            result = cli.publish_plan(plan, "hash", reviewed=True)
         self.assertEqual(1, sent.call_count)
         self.assertEqual("WAITING_FOR_USER", result["results"]["x"]["state"])
         self.assertEqual("stopped", result["results"]["douyin"]["code"])

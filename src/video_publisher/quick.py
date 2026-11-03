@@ -56,6 +56,9 @@ def fill(work, args, video, folder, show_first=None):
     words = ["init", "--video", video, "--out", manifest, f"--language={args.language}", f"--platforms={args.platforms}", f"--ai-generated={args.ai_generated}"]
     step(*words, *([f"--visibility={args.visibility}"] if args.visibility else []), *(["--draft-only"] if args.draft_only else []))
     value = read_json(manifest)
+    if show_first is True:
+        value['review_before_publish'] = True
+        atomic_json(manifest, value)
     if args.schedule:
         if "instagram" in value["platforms"]:
             raise VpubError("unsupported_schedule", "Instagram publishes straight away, so it can't take a schedule.", "Prepare it separately without --schedule.")
@@ -85,10 +88,12 @@ def fill(work, args, video, folder, show_first=None):
             publishing[name]['cover_note'] = 'Set the cover in Instagram on your phone after posting; CrossCast does not apply it automatically.'
         if name == 'youtube':
             publishing[name]['audience_note'] = 'made_for_kids defaults to false. If the video is made for kids, set platforms.youtube.made_for_kids to true in publish.json before go.'
+    from .publication_review import requirements
+    review = requirements(value)
     return {"state": "NEEDS_COPY", "folder": str(folder), "copy_file": str(folder / "copy.json"), "copy_template": template,
             "targets": job["targets"], "instructions": instructions, "platform_writes": 0,
-            "publishing": publishing, 'review_required': show_first is True,
-            'review_note': 'Show-first is remembered for this folder. When required, go waits for this plan to be reviewed and its exact --confirm code; preferences never authorize publishing.',
+            "publishing": publishing, **review,
+            'review_note': 'First publication and saved show-first require review. go returns this exact plan and waits for its --confirm code after approval; preferences never authorize publishing.',
             "next": f'Write the words into copy.json, then run: vpub go "{folder}"'}
 
 
@@ -137,15 +142,9 @@ def build(folder, words):
 
 def review_required(folder):
     from .preferences import read as preferences
-    path = folder / 'review.json'
-    saved = read_json(path) if path.exists() else {'schema_version': 1, 'show_first': None}
-    if (not isinstance(saved, dict) or saved.get('schema_version') != 1
-            or set(saved) != {'schema_version', 'show_first'}
-            or saved['show_first'] is not None and type(saved['show_first']) is not bool):
-        raise VpubError('invalid_review', 'The prepared review settings are invalid; nothing was uploaded.',
-                        'Keep review.json from prepare; show_first must be true, false or null.')
+    from .publication_review import folder_choice
     # Turning a preference off later cannot waive a review already requested for this folder.
-    return saved['show_first'] is True or preferences()['show_first'] is True
+    return folder_choice(folder) or preferences()['show_first'] is True
 
 
 def go(folder, confirm=None, dry_run=False, workers=1):
@@ -162,8 +161,9 @@ def go(folder, confirm=None, dry_run=False, workers=1):
     if dry_run:
         from . import cli
         answer = step("publish", ready, "--dry-run")
+        show_first = show_first or answer.get('review_required', False)
         answer['review_required'] = show_first
-        answer['confirmation_note'] = ('This is the current plan code, not publishing authorization. Use --confirm only after the user reviews a show-first plan or flagged text; ordinary go supplies its own code. Changed plans need a new code.')
+        answer['confirmation_note'] = ('This is the current plan code, not publishing authorization. Use --confirm only after the user reviews a first publication, show-first plan or flagged text; returning customers without those requirements use ordinary go. Changed plans need a new code.')
         if "next" not in answer and cli.finished(answer):
             drafts = sorted(name for name, options in answer.get("platforms", {}).items() if options.get("submission_mode") == "draft_only")
             what = ("save it unpublished, as a draft or preview" if len(drafts) == len(answer.get("platforms", {}))
@@ -174,9 +174,14 @@ def go(folder, confirm=None, dry_run=False, workers=1):
                 answer["next"] = f'Nothing was uploaded. To {what}, run: vpub go "{folder}"'
         return answer
     plan = step("plan", ready)
+    show_first = show_first or plan.get('review_required', False)
     if (show_first or plan.get("text_flags")) and not confirm:
         return {"ready": False, "state": "NEEDS_A_PERSON", "text_flags": plan.get("text_flags", {}), "text_flags_note": plan.get("text_flags_note"),
-                'review_required': show_first, 'review': plan,
+                'review_required': show_first, 'review_reasons': plan.get('review_reasons', []), 'review': plan,
                 "confirmation": plan["confirmation"], "platform_writes": 0,
                 "next": f'Show the user this plan, including its text, audience, AI labels, covers and any flagged text. If they approve it for the configured audience: vpub go "{folder}" --confirm {plan["confirmation"]}. Otherwise change copy.json or publish.json and run vpub go again.'}
-    return step("publish", ready, "--confirm", confirm or plan["confirmation"], "--workers", workers)
+    answer = step("publish", ready, "--confirm", confirm or plan["confirmation"], "--workers", workers,
+                  *(['--reviewed'] if confirm else []))
+    if answer.get('state') == 'NEEDS_A_PERSON':
+        answer['next'] = f'Show this exact plan to the user. After approval, run: vpub go "{folder}" --confirm {answer["confirmation"]}'
+    return answer

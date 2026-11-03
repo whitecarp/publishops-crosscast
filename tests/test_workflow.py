@@ -44,7 +44,7 @@ class WorkflowTests(unittest.TestCase):
 
     def native_job(self, platform="youtube"):
         plan = self.plan([platform])
-        result = cli.publish_plan(plan, plan["confirmation"])["results"][platform]
+        result = cli.publish_plan(plan, plan["confirmation"], reviewed=True)["results"][platform]
         self.assertEqual("WAITING_FOR_BROWSER", result["state"])
         return result["key"]
 
@@ -134,7 +134,7 @@ class WorkflowTests(unittest.TestCase):
                 saved = native_browser.record(key, path)
                 self.assertEqual("DRAFT_SAVED", saved["state"])
                 self.assertFalse(saved["published"])
-                self.assertEqual("SKIPPED_EXISTING", cli.publish_plan(plan, plan["confirmation"])["results"][platform]["state"])
+                self.assertEqual("SKIPPED_EXISTING", cli.publish_plan(plan, plan["confirmation"], reviewed=True)["results"][platform]["state"])
                 self.code("wrong_account", native_browser.authorize_publish, key, "wrong")
                 snapshot = native_browser.request(key)["plan"]["video"]
                 authorization = native_browser.authorize_publish(key, identity)
@@ -268,8 +268,8 @@ class WorkflowTests(unittest.TestCase):
         self.save()
         plan = self.plan(["bilibili"])
         with patch.object(adapters, "preflight", return_value={"identity": "test"}), patch.object(adapters, "publish", side_effect=TimeoutError) as upload:
-            first = cli.publish_plan(plan, plan["confirmation"])
-            second = cli.publish_plan(plan, plan["confirmation"])
+            first = cli.publish_plan(plan, plan["confirmation"], reviewed=True)
+            second = cli.publish_plan(plan, plan["confirmation"], reviewed=True)
             self.assertEqual("UNKNOWN", first["results"]["bilibili"]["state"])
             self.assertEqual("SKIPPED_EXISTING", second["results"]["bilibili"]["state"])
             self.assertEqual(1, upload.call_count)
@@ -280,7 +280,7 @@ class WorkflowTests(unittest.TestCase):
             checkpoint({"state": "SUBMITTED", "id": "BV1234567890"})
             raise TimeoutError
         with patch.object(adapters, "preflight", return_value={}), patch.object(adapters, "publish", side_effect=fail):
-            r = cli.publish_plan(plan, plan["confirmation"])["results"]["bilibili"]
+            r = cli.publish_plan(plan, plan["confirmation"], reviewed=True)["results"]["bilibili"]
             self.assertEqual("BV1234567890", r["id"])
             self.assertEqual("SUBMITTED_UNVERIFIED", r["state"])
 
@@ -289,7 +289,7 @@ class WorkflowTests(unittest.TestCase):
         atomic_json(home() / "browser-receipts" / (plan["confirmation"] + "-youtube.json"),
                     {"state": "SUBMITTED", "id": "abcdefghijk", "method": "browser"})
         with patch.object(adapters, "publish", side_effect=TimeoutError):
-            r = cli.publish_plan(plan, plan["confirmation"])["results"]["youtube"]
+            r = cli.publish_plan(plan, plan["confirmation"], reviewed=True)["results"]["youtube"]
         self.assertEqual("abcdefghijk", r["id"])
         self.assertEqual("SUBMITTED_UNVERIFIED", r["state"])
 
@@ -300,7 +300,7 @@ class WorkflowTests(unittest.TestCase):
                 raise TimeoutError
             return {"state": "SUBMISSION_VERIFIED", "id": platform}
         with patch.object(adapters, "preflight", return_value={}), patch.object(adapters, "publish", side_effect=publish):
-            r = cli.publish_plan(plan, plan["confirmation"])
+            r = cli.publish_plan(plan, plan["confirmation"], reviewed=True)
         self.assertFalse(r["all_submissions_verified"])
         self.assertEqual("SUBMISSION_VERIFIED", r["results"]["bilibili"]["state"])
         self.assertEqual("SUBMISSION_VERIFIED", r["results"]["douyin"]["state"])
@@ -308,7 +308,7 @@ class WorkflowTests(unittest.TestCase):
     def test_risk_stops_remaining_platforms(self):
         plan = self.plan()
         with patch.object(adapters, "preflight", side_effect=VpubError("captcha_required", "test")), patch.object(adapters, "publish") as upload:
-            r = cli.publish_plan(plan, plan["confirmation"])
+            r = cli.publish_plan(plan, plan["confirmation"], reviewed=True)
             upload.assert_not_called()
         self.assertTrue((home() / "STOP.json").exists())
         self.assertEqual("stopped", r["results"]["youtube"]["code"])
@@ -517,14 +517,14 @@ class WorkflowTests(unittest.TestCase):
         r = native_browser.record(key, path)
         self.assertEqual("AGENT_REPORTED_VERIFIED", r["state"])
         p = self.plan()
-        self.assertEqual("SKIPPED_EXISTING", cli.publish_plan(p, p["confirmation"])["results"]["x"]["state"])
+        self.assertEqual("SKIPPED_EXISTING", cli.publish_plan(p, p["confirmation"], reviewed=True)["results"]["x"]["state"])
 
     def test_interrupted_snapshot_copy_does_not_block_the_next_publish(self):
         plan = self.plan(["youtube"])
         partial = home() / "jobs" / plan["confirmation"] / "video.mp4"
         partial.parent.mkdir(parents=True)
         partial.write_bytes(b"synthetic")  # What a copy cut off by Ctrl-C or a full disk leaves behind.
-        result = cli.publish_plan(plan, plan["confirmation"])["results"]["youtube"]
+        result = cli.publish_plan(plan, plan["confirmation"], reviewed=True)["results"]["youtube"]
         self.assertEqual("WAITING_FOR_BROWSER", result["state"])
         self.assertEqual(self.video.read_bytes(), partial.read_bytes())
 
@@ -538,7 +538,7 @@ class WorkflowTests(unittest.TestCase):
 
         with patch.object(adapters, "preflight", return_value={"identity": "owner"}), \
                 patch.object(adapters, "publish", side_effect=publish):
-            results = cli.publish_plan(plan, plan["confirmation"])["results"]
+            results = cli.publish_plan(plan, plan["confirmation"], reviewed=True)["results"]
         self.assertEqual("SUBMISSION_VERIFIED", results["bilibili"]["state"])
         self.assertEqual("NOT_STARTED", results["youtube"]["state"])
         self.assertEqual("source_changed", results["youtube"]["code"])
@@ -554,7 +554,7 @@ class WorkflowTests(unittest.TestCase):
         plan = self.plan(["douyin"])
         cover.write_bytes(b"changed after approval")
         with patch.object(adapters, "publish") as upload:
-            first = cli.publish_plan(plan, plan["confirmation"])["results"]["douyin"]
+            first = cli.publish_plan(plan, plan["confirmation"], reviewed=True)["results"]["douyin"]
             upload.assert_not_called()
         self.assertEqual("NOT_STARTED", first["state"])
         self.assertEqual("source_changed", first["code"])
@@ -568,12 +568,12 @@ class WorkflowTests(unittest.TestCase):
         plan = self.plan(["douyin"])
         with patch.object(adapters, "preflight", return_value={"identity": "owner"}), \
                 patch.object(adapters, "publish", side_effect=VpubError("browser_busy", "Busy", "Wait.")):
-            first = cli.publish_plan(plan, plan["confirmation"])["results"]["douyin"]
+            first = cli.publish_plan(plan, plan["confirmation"], reviewed=True)["results"]["douyin"]
         self.assertEqual("NOT_STARTED", first["state"])
         self.assertEqual("browser_busy", first["code"])
         with patch.object(adapters, "preflight", return_value={"identity": "owner"}), \
                 patch.object(adapters, "publish", return_value={"state": "SUBMISSION_VERIFIED", "id": "123456789"}) as upload:
-            second = cli.publish_plan(plan, plan["confirmation"])["results"]["douyin"]
+            second = cli.publish_plan(plan, plan["confirmation"], reviewed=True)["results"]["douyin"]
         self.assertEqual("SUBMISSION_VERIFIED", second["state"])
         upload.assert_called_once()
 
@@ -602,14 +602,14 @@ class WorkflowTests(unittest.TestCase):
         hint = "Check network/site availability; no upload or edit was attempted."
         with patch.object(adapters, "preflight", return_value={"identity": "owner"}), \
                 patch.object(adapters, "publish", side_effect=VpubError("page_not_ready", "Empty page.", hint)):
-            first = cli.publish_plan(plan, plan["confirmation"])["results"]["douyin"]
+            first = cli.publish_plan(plan, plan["confirmation"], reviewed=True)["results"]["douyin"]
         self.assertEqual(("NOT_STARTED", "page_not_ready", hint), (first["state"], first["code"], first["hint"]))
         ledger = Ledger()
         self.assertEqual([], ledger.rows())
         ledger.close()
         with patch.object(adapters, "preflight", return_value={"identity": "owner"}), \
                 patch.object(adapters, "publish", return_value={"state": "SUBMISSION_VERIFIED", "id": "123456789"}) as upload:
-            second = cli.publish_plan(plan, plan["confirmation"])["results"]["douyin"]
+            second = cli.publish_plan(plan, plan["confirmation"], reviewed=True)["results"]["douyin"]
         self.assertEqual("SUBMISSION_VERIFIED", second["state"])
         upload.assert_called_once()
 
@@ -622,10 +622,10 @@ class WorkflowTests(unittest.TestCase):
             checkpoint({"state": "SUBMITTED", "id": "1234567890"})
             raise VpubError("page_not_ready", "Empty page.", "Check.")
         with patch.object(adapters, "preflight", return_value={"identity": "owner"}), patch.object(adapters, "publish", side_effect=part_way):
-            first = cli.publish_plan(plan, plan["confirmation"])["results"]["douyin"]
+            first = cli.publish_plan(plan, plan["confirmation"], reviewed=True)["results"]["douyin"]
         self.assertEqual(("SUBMITTED_UNVERIFIED", "1234567890"), (first["state"], first["id"]))
         with patch.object(adapters, "preflight", return_value={"identity": "owner"}), patch.object(adapters, "publish") as upload:
-            again = cli.publish_plan(plan, plan["confirmation"])["results"]["douyin"]
+            again = cli.publish_plan(plan, plan["confirmation"], reviewed=True)["results"]["douyin"]
         self.assertEqual("SKIPPED_EXISTING", again["state"])
         upload.assert_not_called()
 

@@ -168,7 +168,7 @@ class DeclarationTests(unittest.TestCase):
     def test_browser_evidence_must_match_ordinary_declaration(self):
         self.write(False)
         plan = load_plan(self.manifest, ["bilibili"])
-        key = cli.publish_plan(plan, plan["confirmation"])["results"]["bilibili"]["key"]
+        key = cli.publish_plan(plan, plan["confirmation"], reviewed=True)["results"]["bilibili"]["key"]
         native_browser.begin(key, "12345")
         opts = plan["platforms"]["bilibili"]
         evidence = {k: opts[k] for k in ("title", "description", "tags", "visibility")}

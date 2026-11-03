@@ -343,6 +343,8 @@ vpub publish ready.json --confirm <确认码>
 vpub verify RECEIPT_KEY
 ```
 
+当前本地数据目录里的首次正式发布，以及保存了“每次先给我看”的方案，两条发布路径都会在访问账号前停下。先向用户展示返回的方案，得到同意后才用当前确认码执行 `go --confirm CODE`，或 `publish PLAN --confirm CODE --reviewed`。这些参数表示调用者确认用户已同意，程序不能验证是谁填写了参数。已有一次确认成功的发布后，未要求每次预览的后续任务无需额外参数。
+
 `--dry-run` 只做本地检查，不联系平台。缺少登录记录会给出登录命令并以退出码 4 结束；有记录也不等于登录仍有效，真正发布时会核对账号，无需先逐个平台运行状态查询。文件检查只识别容器头，不证明能播放或平台会接受。
 
 `--dry-run` 不会上传。`response.json` 由 AI 助手按 `request.json` 中的模板撰写。中断后用 `vpub resume RECEIPT_KEY` 接着做，用 `vpub receipts` 查看所有回执。

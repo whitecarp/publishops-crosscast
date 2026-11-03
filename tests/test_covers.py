@@ -176,7 +176,7 @@ class CoverTests(unittest.TestCase):
     def test_dual_cover_snapshot_and_evidence_required(self):
         result=self.prepare()
         plan=load_plan(result['manifest'],['douyin'])
-        key=cli.publish_plan(plan,plan['confirmation'])['results']['douyin']['key']
+        key=cli.publish_plan(plan,plan['confirmation'], reviewed=True)['results']['douyin']['key']
         native_browser.begin(key,'test_account')
         job=native_browser.request(key)
         variants=job['plan']['covers']['douyin']

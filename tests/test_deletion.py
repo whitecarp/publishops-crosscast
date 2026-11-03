@@ -22,7 +22,7 @@ class DeletionTests(unittest.TestCase):
                                                 'ai_generated':True, 'expected_identity':'fixture_account'}}
         atomic_json(self.manifest, self.value)
         self.plan = load_plan(self.manifest)
-        self.key = cli.publish_plan(self.plan,self.plan['confirmation'])['results']['instagram']['key']
+        self.key = cli.publish_plan(self.plan,self.plan['confirmation'], reviewed=True)['results']['instagram']['key']
         native_browser.begin(self.key, 'fixture_account')
         opts = native_browser.request(self.key)['options']
         proof = {k:opts[k] for k in ('title','description','tags','visibility','ai_generated','post_text')}
@@ -63,7 +63,7 @@ class DeletionTests(unittest.TestCase):
 
     def test_repost_preserves_history_and_blocks_duplicate_restart(self):
         self.assertEqual('AGENT_REPORTED_DELETED', self.deleted()['state'])
-        self.assertEqual('SKIPPED_EXISTING',cli.publish_plan(self.plan,self.plan['confirmation'])['results']['instagram']['state'])
+        self.assertEqual('SKIPPED_EXISTING',cli.publish_plan(self.plan,self.plan['confirmation'], reviewed=True)['results']['instagram']['state'])
         cover=self.root/'portrait.jpg'
         cover.write_bytes(b'synthetic cover fixture')
         self.value['cover']=str(cover)

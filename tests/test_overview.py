@@ -33,7 +33,7 @@ class OverviewFixture(unittest.TestCase):
     def publish(self, platforms=("bilibili",)):
         """A real publish on the hand-off route, which leaves a snapshot and a ledger row."""
         plan = load_plan(self.manifest, list(platforms))
-        return plan, cli.publish_plan(plan, plan["confirmation"])["results"]
+        return plan, cli.publish_plan(plan, plan["confirmation"], reviewed=True)["results"]
 
     def finish(self, key, state="AGENT_REPORTED_VERIFIED"):
         ledger = Ledger()
@@ -390,7 +390,7 @@ class CleanupTests(OverviewFixture):
         plan, results = self.publish()
         self.finish(results["bilibili"]["key"])
         overview.cleanup(apply=True)
-        again = cli.publish_plan(plan, plan["confirmation"])["results"]["bilibili"]
+        again = cli.publish_plan(plan, plan["confirmation"], reviewed=True)["results"]["bilibili"]
         self.assertEqual("SKIPPED_EXISTING", again["state"])
 
     def test_another_platform_later_makes_a_new_copy_from_the_original(self):

@@ -165,7 +165,7 @@ class PlanTests(unittest.TestCase):
         atomic_json(self.path, self.value)
         loaded = load_plan(self.path)
         with patch.object(adapters, "preflight", return_value={"identity": "owner"}), patch.object(adapters, "publish", side_effect=lambda platform, *_: {"state": state if platform == "bilibili" else "SUBMISSION_VERIFIED"}):
-            return cli.publish_plan(loaded, loaded["confirmation"])
+            return cli.publish_plan(loaded, loaded["confirmation"], reviewed=True)
 
     def test_a_saved_draft_finishes_the_plan_without_claiming_anything_was_published(self):
         result = self.run_plan("DRAFT_SAVED")
@@ -180,7 +180,7 @@ class PlanTests(unittest.TestCase):
         self.plan(submission_mode="draft_only")
         loaded = load_plan(self.path)
         with patch.object(adapters, "preflight", return_value={"identity": "owner"}), patch.object(adapters, "publish", return_value={"state": "PREVIEW_READY", "draft_offer_seen": True}):
-            self.assertEqual([], cli.publish_plan(loaded, loaded["confirmation"])["drafts_read_back"])
+            self.assertEqual([], cli.publish_plan(loaded, loaded["confirmation"], reviewed=True)["drafts_read_back"])
 
     def test_a_draft_that_did_not_stop_cleanly_has_not_finished(self):
         self.assertIs(False, self.run_plan("SUBMITTED_UNVERIFIED")["all_drafts_ready"])
@@ -196,7 +196,7 @@ class PlanTests(unittest.TestCase):
         self.plan()
         loaded = load_plan(self.path)
         with patch.object(adapters, "preflight", return_value={"identity": "owner"}), patch.object(adapters, "publish", return_value={"state": "SUBMISSION_VERIFIED"}) as sent:
-            return cli.publish_plan(loaded, loaded["confirmation"]), sent
+            return cli.publish_plan(loaded, loaded["confirmation"], reviewed=True), sent
 
     def test_publishing_the_same_video_after_its_draft_goes_ahead(self):
         """From a field run: a dry run otherwise stopped the real post of the same file."""
@@ -213,11 +213,11 @@ class PlanTests(unittest.TestCase):
         self.plan(submission_mode="draft_only")
         loaded = load_plan(self.path)
         with patch.object(adapters, "preflight", return_value={"identity": "owner"}), patch.object(adapters, "publish", return_value={"state": "PREVIEW_READY", "final_submit_attempted": True}):
-            cli.publish_plan(loaded, loaded["confirmation"])
+            cli.publish_plan(loaded, loaded["confirmation"], reviewed=True)
         self.plan()
         loaded = load_plan(self.path)
         with patch.object(adapters, "preflight", return_value={"identity": "owner"}), patch.object(adapters, "publish", return_value={"state": "SUBMISSION_VERIFIED"}) as sent:
-            result = cli.publish_plan(loaded, loaded["confirmation"])
+            result = cli.publish_plan(loaded, loaded["confirmation"], reviewed=True)
         self.assertEqual("SKIPPED_EXISTING", result["results"]["bilibili"]["state"])
         sent.assert_not_called()
 
@@ -230,8 +230,8 @@ class PlanTests(unittest.TestCase):
         self.plan()
         loaded = load_plan(self.path)
         with patch.object(adapters, "preflight", return_value={"identity": "owner"}), patch.object(adapters, "publish", return_value={"state": "SUBMISSION_VERIFIED"}) as sent:
-            cli.publish_plan(loaded, loaded["confirmation"])
-            self.assertEqual("SKIPPED_EXISTING", cli.publish_plan(loaded, loaded["confirmation"])["results"]["bilibili"]["state"])
+            cli.publish_plan(loaded, loaded["confirmation"], reviewed=True)
+            self.assertEqual("SKIPPED_EXISTING", cli.publish_plan(loaded, loaded["confirmation"], reviewed=True)["results"]["bilibili"]["state"])
         sent.assert_called_once()
 
     def test_a_plan_with_a_draft_and_a_publication_answers_for_each(self):
@@ -242,7 +242,7 @@ class PlanTests(unittest.TestCase):
         self.plan()
         loaded = load_plan(self.path)
         with patch.object(adapters, "preflight", return_value={"identity": "owner"}), patch.object(adapters, "publish", return_value={"state": "SUBMISSION_VERIFIED"}):
-            result = cli.publish_plan(loaded, loaded["confirmation"])
+            result = cli.publish_plan(loaded, loaded["confirmation"], reviewed=True)
         self.assertIs(True, result["all_submissions_verified"])
         self.assertNotIn("all_drafts_ready", result)
 

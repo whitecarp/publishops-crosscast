@@ -790,7 +790,7 @@ class StopBeforeAnythingTests(unittest.TestCase):
 
     def publish(self, side_effect=None, answer=None):
         with patch.object(adapters, "preflight", return_value={"identity": "me"}), patch.object(adapters, "publish", side_effect=side_effect, return_value=answer) as sent, patch.object(cli, "snapshot_plan", side_effect=lambda plan, platform: plan):
-            return cli.publish_plan(self.plan, "hash")["results"]["x"], sent
+            return cli.publish_plan(self.plan, "hash", reviewed=True)["results"]["x"], sent
 
     def test_it_is_reported_as_not_started_and_can_run_again(self):
         first, _ = self.publish(VpubError("stopped", "Publication stop file exists."))

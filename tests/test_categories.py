@@ -30,7 +30,7 @@ class CategoryTests(unittest.TestCase):
     def test_native_category_revision_requires_fresh_matching_evidence(self):
         from video_publisher import cli
         plan = load_plan(self.path, ['youtube'])
-        key = cli.publish_plan(plan, plan['confirmation'])['results']['youtube']['key']
+        key = cli.publish_plan(plan, plan['confirmation'], reviewed=True)['results']['youtube']['key']
         identity = 'UC' + 'a' * 22
         native_browser.begin(key, identity)
         opts = plan['platforms']['youtube']
