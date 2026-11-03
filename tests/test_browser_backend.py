@@ -186,6 +186,7 @@ class BrowserSafetyTests(unittest.TestCase):
         tx=Transaction('x','tester',self.plan)
         post=str((int(time.time()*1000)-1288834974657)<<22)  # An X post's ID carries the moment it was made.
         with patch('video_publisher.browser_forms.works',new=AsyncMock(return_value={post:{'id':post,'url':f'https://x.com/tester/status/{post}','text':'Fixture'}})), \
+             patch('video_publisher.browser_forms.x_new_posts',new=AsyncMock(return_value=[{'id':post,'url':f'https://x.com/tester/status/{post}'}])), \
              patch('video_publisher.browser_forms.verify',new=AsyncMock(return_value={'state':'SUBMISSION_VERIFIED','phase':'complete','id':post})):
             result=asyncio.run(finish(AsyncMock(),tx,[]))
         self.assertEqual('SUBMISSION_VERIFIED',result['state'])

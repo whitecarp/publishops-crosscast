@@ -27,7 +27,7 @@ GONE_PAGE = re.compile(r"doesn.t exist|does not exist|was deleted|不存在|已�
 EDIT_POST = re.compile(r"^(Edit( post)?|编辑(帖子)?|修改(帖子)?|編輯(貼文)?)$")
 UPDATE_POST = re.compile(r"^(Update|更新)$")
 # A video's picture is stored under the number Media Studio's address gives that video.
-VIDEO_NUMBER = re.compile(r"/(?:amplify_video_thumb|ext_tw_video_thumb)/(\d+)/")
+VIDEO_NUMBER = re.compile(r"https://pbs\.twimg\.com/(?:amplify_video_thumb|ext_tw_video_thumb)/(\d+)/")
 AD_LINES = {"Promoted", "Ad", "广告", "廣告", "推广", "推廣"}
 VIEWS = re.compile(r"(\d[\d,]*)\s*(?:views?\b|次观看|次觀看|观看|觀看|次浏览|次瀏覽|浏览|瀏覽|次查看)", re.I)
 # What one post on a page says about itself. The action row names the post exactly, and a quoted post has no action row.
@@ -85,7 +85,7 @@ async def post_fields(article):
     found = re.fullmatch(r"/([A-Za-z0-9_]+)/status/(\d+)", data["href"] or "")
     if not found:
         return None
-    media = VIDEO_NUMBER.search(data.get("poster") or "")
+    media = VIDEO_NUMBER.match(data.get("poster") or "")
     return {"author": found[1], "id": found[2], "href": data["href"], "text": data["text"], "published_at": data["time"] or post_time(found[2]),
             "has_video": bool(data.get("video")), "media_id": media[1] if media else None, "is_ad": bool(AD_LINES & set(data["lines"]))}
 

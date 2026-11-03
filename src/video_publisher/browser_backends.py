@@ -450,6 +450,33 @@ def x_new_works(platform, receipt, works):
     return [work for work in works if datetime.fromisoformat(post_time(work['id'])) >= began]
 
 
+async def x_new_posts(page, identity, receipt):
+    """Discover one new own post by its posted words, not the separate Studio title.
+    The before-list covers only the first page, so the ID's time must also be fresh.
+    Exact words and a video alone cannot identify the uploaded file: require the
+    own video's poster number to match the saved Studio asset. Custom covers can
+    hide that number; missing evidence or multiple exact posts stays uncertain.
+    """
+    words = normalize(receipt.get('expected_text'))
+    media = re.fullmatch(r'https://studio\.x\.com/library/\d+_(\d+)/edit', receipt.get('media_url') or '')
+    before = receipt.get('before_ids')
+    if not words or not media or not receipt.get('final_submit_attempted') or type(before) is not list:
+        return []
+    try:
+        began = datetime.fromisoformat(receipt['started_at']) - X_CLOCK_GRACE
+        until = datetime.now(timezone.utc) + X_CLOCK_GRACE
+        if began.tzinfo is None or began > until:
+            return []
+    except (KeyError, TypeError, ValueError):
+        return []
+    matches = [post for post in await own_posts(page, identity)
+               if post['id'] not in before and post['has_video'] and normalize(post['text']) == words
+               and began <= datetime.fromisoformat(post_time(post['id'])) <= until]
+    if len(matches) != 1 or matches[0]['media_id'] != media[1]:
+        return []
+    return [{**matches[0], 'url': work_url('x', identity, matches[0]['id'])}]
+
+
 async def instagram_caption_says(page, identity, words):
     """Whether the post's own caption is exactly these words. Reviews found they passed from anywhere on the page, from the owner's own comment, and from inside a longer caption. A field read of a real post found a row holding the owner's link and a time, then the whole caption, with no list, article or lasting class around it. So the row comes from the first time on the page rather than from the words, and all of its words have to match.
     That the caption's row comes before any comment is how Instagram lays out a post, not something that read showed: it was of a photo page with no comments on it, so a Reel's page is still to be seen. A review found the limit of that: an owner's comment with these words would pass on a post with no caption, or with another caption that has no time beside it, or with the comment above the caption. Until a real page with comments has been read, a pass here is not proof of the caption."""
@@ -458,7 +485,8 @@ async def instagram_caption_says(page, identity, words):
 
 async def x_post_reads_as_this_upload(page, receipt):
     """Whether a post we sent reads back from its own row: exactly its words, and its own video. Reviews found a reply's words, or a quoted post's video, passed on the rest of the page.
-    A field read found a real post's video in its own row. A custom cover leaves no number to read, so a number can only rule a post out."""
+    A field read found a real post's video in its own row. A custom cover leaves no number to read, so a number can only rule a post out.
+    This checks an already identified post. Discovery without an ID requires stronger media evidence in x_new_posts."""
     from patchright.async_api import Error as BrowserError
     media = re.search(r"/library/\d+_(\d+)", receipt.get("media_url") or "")
     row = post_row(page, receipt["id"]).first
@@ -745,8 +773,11 @@ async def verify(page, platform, identity, receipt):
         return await verify_scheduled_x(page, identity, receipt)
     if not receipt.get('id') and receipt.get('final_submit_attempted') and 'before_ids' in receipt:
         found = await works(page, platform, identity)
-        matches = x_new_works(platform, receipt, douyin_new_works(platform, receipt, [v for k,v in found.items() if k not in receipt['before_ids'] and
-                                                                                      receipt.get('title') and normalize(receipt['title']) in normalize(v['text'])]))
+        if platform == 'x':
+            matches = await x_new_posts(page, identity, receipt)
+        else:
+            matches = douyin_new_works(platform, receipt, [v for k,v in found.items() if k not in receipt['before_ids'] and
+                                                         receipt.get('title') and normalize(receipt['title']) in normalize(v['text'])])
         if len(matches) == 1:
             receipt = {**receipt, 'id':matches[0]['id'], 'url':matches[0]['url']}
     if not receipt.get("id"):
@@ -775,7 +806,7 @@ async def verify(page, platform, identity, receipt):
         await page.goto(f"https://www.instagram.com/p/{receipt['id']}/" if platform == 'instagram' else url, wait_until="domcontentloaded", timeout=60000)
         if platform == 'x':
             try:
-                await page.locator('article').filter(has_text=receipt.get('title','')).first.wait_for(timeout=20000)
+                await post_row(page, receipt['id']).first.wait_for(timeout=20000)
             except Exception:
                 pass
         expected = receipt.get("expected_text")

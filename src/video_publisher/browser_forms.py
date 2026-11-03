@@ -13,7 +13,7 @@ from .core import VpubError, douyin_caption, stop_check
 from .browser_runtime import look_until, risk_check, unique_visible, visible
 from .progress import stage
 from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, X_CHOSEN_TIME, YT_EDIT_DRAFT, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style,
-                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, x_chosen_time_says, x_new_works, x_schedule_baseline, x_schedule_moment, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
+                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, x_chosen_time_says, x_new_works, x_new_posts, x_schedule_baseline, x_schedule_moment, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
 
 X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
 YT_DIALOG = 'ytcp-uploads-dialog'
@@ -63,9 +63,12 @@ async def finish(page, tx, before):
                                error=None, review_url=page.url, note='Matching submitted work is under review; verify later, never reupload.')
             if await douyin_scheduled_card(page, tx.receipt):
                 return tx.save(**DOUYIN_SCHEDULED)
-        fresh = [v for k, v in found.items() if k not in before]
-        matches = [v for v in fresh if tx.options['title'] in v.get('text', '')]
-        candidates = x_new_works(tx.platform, tx.receipt, douyin_new_works(tx.platform, tx.receipt, matches))
+        if tx.platform == 'x':
+            candidates = await x_new_posts(page, tx.identity, tx.receipt)
+        else:
+            fresh = [v for k, v in found.items() if k not in before]
+            matches = [v for v in fresh if tx.options['title'] in v.get('text', '')]
+            candidates = douyin_new_works(tx.platform, tx.receipt, matches)
         if len(candidates) == 1:
             item = candidates[0]
             receipt = tx.save(state='SUBMITTED_UNVERIFIED', phase='readback', id=item['id'], url=item['url'])
