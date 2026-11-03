@@ -96,6 +96,8 @@ def _publish_platform(plan, platform, snapshot_lock):
                     "previous_state": old["state"], "receipt": old["data"].get("receipt"),
                     "hint": "Use verify; existing/uncertain attempts are never automatically resubmitted."}
         try:
+            from .rehearsal import require_local_prerequisites
+            require_local_prerequisites({**plan, "platforms": {platform: opts}})
             from .language_policy import route
             language = opts.get('content_language', 'und')
             if language.lower().split('-')[0] not in {'und', 'mul', 'zxx'}:

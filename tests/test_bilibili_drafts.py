@@ -129,6 +129,9 @@ class Saving(unittest.TestCase):
 
 class PlanTests(unittest.TestCase):
     def setUp(self):
+        tool = patch("video_publisher.rehearsal.shutil.which", return_value="ffmpeg.exe")
+        tool.start()
+        self.addCleanup(tool.stop)
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)

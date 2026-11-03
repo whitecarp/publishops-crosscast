@@ -87,7 +87,7 @@ def next_step(row, busy):
     if method == "native":
         return native_step(key, state, receipt)
     if method == "cli" and not receipt.get("id"):
-        return None, "bili-cli has no resumable session. Check Bilibili's creator center; if the video is there, record it with vpub adopt. Never upload it again."
+        return "vpub works bilibili --limit 20", "Read the existing works, then check Bilibili's creator center (including review and draft views). If you identify this exact upload, record its ID with vpub adopt. An incomplete or empty list cannot prove it was never uploaded: keep UNKNOWN if unsure. Do not re-encode, reset the record or upload again to evade the duplicate guard."
     if state == "WAITING_FOR_USER":
         return f"vpub auth login {platform}", f"Complete the official sign-in or verification, then run vpub resume {key}."
     if state in {"IN_PROGRESS", "PREPARATION_INCOMPLETE"} or state.startswith("UPLOAD") or (method == "api" and not receipt.get("id")):
