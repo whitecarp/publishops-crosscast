@@ -194,6 +194,9 @@ class XFormTests(Form):
 
     def prepare(self):
         super().prepare()
+        isolated = patch.dict(os.environ, VPUB_HOME=str(self.root / 'runtime'), BILI_CLI_HOME=str(self.root / 'bili'))
+        isolated.start()
+        self.addCleanup(isolated.stop)
         held = patch("video_publisher.browser_forms.X_FIRST_CLICK_SECONDS", 0)
         held.start()
         self.addCleanup(held.stop)
@@ -205,7 +208,7 @@ class XFormTests(Form):
         self.never_shows = False
         self.schedule_reads = []
         self.post = post_made()
-        self.post_video = "<video></video>"
+        self.post_video = '<video poster="https://pbs.twimg.com/amplify_video_thumb/2/img/a.jpg"></video>'
         self.own_words = None
         self.reply_row = ""
         self.older_post = None
@@ -255,6 +258,7 @@ class XFormTests(Form):
     async def test_a_clip_already_in_media_studio_is_posted_with_no_upload(self):
         """From a field run: its dry run left the clip there, and uploading the file again would make two tiles of one name."""
         self.plan["options"]["existing_media_url"] = "https://studio.x.com/library/13_77/edit"
+        self.post_video = '<video poster="https://pbs.twimg.com/amplify_video_thumb/77/img/a.jpg"></video>'
         result = await self.publish()
         self.assertEqual(("SUBMISSION_VERIFIED", True), (result["state"], result["final_submit_attempted"]))
         self.assertEqual(([], 1), (self.uploads, len(self.final)))
@@ -363,7 +367,7 @@ class XFormTests(Form):
         self.assertEqual("SUBMITTED_UNVERIFIED", (await self.publish())["state"])
 
     async def test_this_posts_own_video_in_a_link_to_itself_is_this_posts(self):
-        self.post_video = f'<a href="/{OWNER}/status/{self.post}/video/1"><video></video></a>'
+        self.post_video = f'<a href="/{OWNER}/status/{self.post}/video/1"><video poster="https://pbs.twimg.com/amplify_video_thumb/2/img/a.jpg"></video></a>'
         self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
 
     async def test_words_in_a_reply_are_not_this_posts(self):
@@ -380,6 +384,22 @@ class XFormTests(Form):
     async def test_a_post_showing_its_own_number_passes(self):
         self.post_video = '<video poster="https://pbs.twimg.com/amplify_video_thumb/2/img/a.jpg"></video>'
         self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
+
+    async def test_shortened_post_text_need_not_contain_the_media_title(self):
+        self.plan['options']['post_text'] = '第七集 / One more try!'
+        result = await self.publish()
+        self.assertEqual('SUBMISSION_VERIFIED', result['state'])
+        self.assertEqual(self.post, result['id'])
+        self.assertEqual(1, len(self.final))
+
+    async def test_custom_cover_without_media_number_uses_bound_native_attempt_context(self):
+        self.plan['options']['post_text'] = '第七集 / One more try!'
+        self.post_video = '<video poster="https://pbs.twimg.com/media/custom-cover.jpg"></video>'
+        result = await self.publish()
+        self.assertEqual('SUBMISSION_VERIFIED', result['state'])
+        self.assertEqual(self.post, result['id'])
+        self.assertIn('correlation, not independent verification', result['note'])
+        self.assertEqual(1, len(self.final))
 
     async def test_a_video_elsewhere_on_the_page_is_not_this_posts(self):
         self.post_video = "</article><video></video><article>"
