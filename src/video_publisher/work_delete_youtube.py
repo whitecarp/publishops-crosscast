@@ -1,4 +1,5 @@
 """One-shot free Studio deletion. DOM contracts are built, not live-certified."""
+import json
 import re
 from urllib.parse import parse_qs, urlsplit
 
@@ -69,10 +70,27 @@ def evidence(target, **fields):
             'platform_writes': 0, 'note': 'Deletion is unconfirmed; only a fresh complete read can confirm it.', **fields}
 
 
+def unfiltered_query(query):
+    """Studio adds this default query after navigation; filters remain forbidden."""
+    if not query:
+        return True
+    try:
+        fields = parse_qs(query, keep_blank_values=True, strict_parsing=True, max_num_fields=2)
+        if set(fields) != {'filter', 'sort'} or any(len(v) != 1 for v in fields.values()):
+            return False
+        sort = json.loads(fields['sort'][0], object_pairs_hook=lambda pairs: pairs)
+        return (json.loads(fields['filter'][0]) == []
+                and isinstance(sort, list) and len(sort) == 2
+                and ('columnType', 'date') in sort and ('sortOrder', 'DESCENDING') in sort)
+    except (TypeError, ValueError):
+        return False
+
+
 async def owner(page, target, tab):
     address = urlsplit(page.url)
     if (address.scheme != 'https' or address.netloc != 'studio.youtube.com'
-            or address.path != f"/channel/{target['identity']}/videos/{tab}" or address.query or address.fragment
+            or address.path != f"/channel/{target['identity']}/videos/{tab}"
+            or not unfiltered_query(address.query) or address.fragment
             or await rt.identity(page, 'youtube') != target['identity']):
         raise VpubError('wrong_account', 'Studio did not retain the exact publishing channel list.')
 
