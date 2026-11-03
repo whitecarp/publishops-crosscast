@@ -295,6 +295,32 @@ class XEditLengthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(original, self.receipt_path.read_bytes())
         self.assert_no_edit()
 
+    async def test_verified_edit_cannot_be_reverified_after_external_metadata_loss(self):
+        proposed = self.adopted_patch(12)
+        self.current_text = 'Old\n\n#Original\n\nAI-generated'
+        submitted = await self.execute(proposed)
+        self.assertEqual('EDIT_VERIFIED', submitted['state'])
+        attempted = submitted['expected_text']
+        self.update.click.assert_awaited_once()
+        # Losing either preserved component must not redefine the expected text,
+        # even after edits.send has recorded a previous verification mismatch.
+        for state in ('EDIT_VERIFIED', 'EDIT_MISMATCH'):
+            for after in (proposed['post_text'], proposed['post_text'] + '\n\nAI-generated',
+                          proposed['post_text'] + '\n\n#Original'):
+                with self.subTest(state=state, after=after):
+                    atomic_json(self.receipt_path, {**submitted, 'state': state})
+                    original = self.receipt_path.read_bytes()
+                    self.current_text = after
+                    result = await self.execute(proposed, verify_only=True)
+                    self.assertEqual('EDIT_SUBMITTED_UNVERIFIED', result['state'])
+                    self.assertEqual(attempted, result['expected_text'])
+                    self.assertEqual(original, self.receipt_path.read_bytes())
+                    self.update.click.assert_awaited_once()
+        self.current_text = attempted
+        result = await self.execute(proposed, verify_only=True)
+        self.assertEqual(('EDIT_VERIFIED', 0), (result['state'], result['platform_writes']))
+        self.update.click.assert_awaited_once()
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -96,6 +96,7 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
                 raise VpubError('inspect_existing_edit','A save on this work is still unverified; inspect its existing receipt before another edit.',
                                 f'Inspect {prior_path}. Only if a person confirms the change is absent, add --person-approved to try once more.')
     tried=False
+    saved={}
     if path.exists():
         saved=read_json(path)
         # A prior success is history, not current platform state. The backend
@@ -122,7 +123,7 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
     if verify_only and not tried and result.get('state')=='EDIT_SUBMITTED_UNVERIFIED': result={**result,'state':'EDIT_MISMATCH'}
     # A check can confirm an unclear save, and nothing less clears it: a page can show the old words for a while, and a cover cannot be compared at all.
     if verify_only and tried and result.get('state')!='EDIT_VERIFIED': result={**result,'state':'EDIT_SUBMITTED_UNVERIFIED'}
-    if platform=='x' and verify_only and tried:
+    if platform=='x' and verify_only and saved:
         result={**saved,**result}  # Keep frozen attempted text when a read cannot find the owned version.
     result={**result,**approved,**flagged}
     checkpoint(result)

@@ -132,9 +132,10 @@ async def execute(page, platform, identity, payload):
         else:
             wanted=words_to_save(patch,fields['text'])
         # A verification must compare the frozen attempted text, not recompute
-        # omitted hashtags/declarations from a post whose text may have changed.
+        # omitted hashtags/declarations from a post whose text may have changed,
+        # including after a prior success or a subsequent mismatch.
         prior=read_json(output) if output.exists() else {}
-        if (payload.get('verify_only') and prior.get('state') in {'EDIT_SUBMITTING','EDIT_SUBMITTED_UNVERIFIED'}
+        if (payload.get('verify_only')
                 and prior.get('platform')=='x' and prior.get('identity')==identity
                 and str(prior.get('id'))==str(work_id) and isinstance(prior.get('expected_text'),str)):
             wanted=prior['expected_text']

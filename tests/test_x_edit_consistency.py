@@ -88,6 +88,23 @@ class XReceiptTests(unittest.TestCase):
                 edits.send('x', 'default', 'owner', {'id': '123'}, 'key', proposed, False, False)
         call.assert_called_once()
 
+    def test_verified_expected_text_survives_repeated_unavailable_mismatches(self):
+        proposed = edits.validate_patch('x', COPY)
+        path = home() / 'edits' / (digest(['key', proposed]) + '.json')
+        attempted = 'Frozen words\n\n#Original\n\nAI-generated'
+        atomic_json(path, {'id': '123', 'identity': 'owner', 'platform': 'x', 'state': 'EDIT_VERIFIED',
+                           'expected_text': attempted})
+        # No post fields are available, so the backend cannot return expected_text.
+        with patch.object(adapters, 'browser_call', return_value={'id': '123', 'identity': 'owner', 'platform': 'x',
+                'state': 'EDIT_SUBMITTED_UNVERIFIED', 'platform_writes': 0, 'reason': 'version_chain_unavailable'}) as call:
+            for _ in range(2):
+                result = edits.send('x', 'default', 'owner', {'id': '123'}, 'key', proposed, False, True)
+                self.assertEqual('EDIT_MISMATCH', result['state'])
+                self.assertEqual(attempted, read_json(path).get('expected_text'))
+                self.assertEqual(attempted, result.get('expected_text'))
+                self.assertTrue(call.call_args.kwargs['verify_only'])
+        self.assertEqual(2, call.call_count)
+
     def test_verified_preserved_text_reaches_ledger_and_resume_without_losing_upload_proof(self):
         ledger = Ledger()
         key = ledger.claim('x', 'default', 'a' * 64, {})
