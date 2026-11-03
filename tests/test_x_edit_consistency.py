@@ -65,32 +65,69 @@ class XReceiptTests(unittest.TestCase):
 
     def test_old_patch_digest_cannot_bypass_an_ambiguous_press(self):
         old_path = home() / 'edits' / 'old-digest.json'
-        old = {'id': '123', 'identity': 'owner', 'platform': 'x', 'state': 'EDIT_SUBMITTING', 'expected_text': 'Old intended text'}
-        atomic_json(old_path, old)
         proposed = edits.validate_patch('x', {**COPY, 'tags': ['New']})
-        with patch.object(adapters, 'browser_call') as call, self.assertRaises(VpubError) as caught:
-            edits.send('x', 'default', 'owner', {'id': '123'}, 'key', proposed, False, False)
-        self.assertEqual('inspect_existing_edit', caught.exception.code)
-        self.assertEqual(old, read_json(old_path))
-        call.assert_not_called()
+        for state in ('EDIT_SUBMITTING', 'EDIT_SUBMITTED_UNVERIFIED'):
+            for approved in (False, True):
+                # Legacy records bind by publication key; adoption or a new key
+                # still binds by exact platform, owner and post ID.
+                for binding in ({'key': 'key'}, {'key': 'another-key', 'id': '123', 'identity': 'owner', 'platform': 'x'}):
+                    with self.subTest(state=state, approved=approved, binding=binding):
+                        atomic_json(old_path, {**binding, 'state': state, 'expected_text': 'Old intended text'})
+                        before = {p.name: p.read_bytes() for p in old_path.parent.glob('*.json')}
+                        with patch.object(adapters, 'browser_call', return_value={'state': 'EDIT_VERIFIED', 'platform_writes': 1}) as call:
+                            with self.assertRaises(VpubError) as caught:
+                                edits.send('x', 'default', 'owner', {'id': '123'}, 'key', proposed, False, False, person_approved=approved)
+                            call.assert_not_called()
+                        self.assertEqual('inspect_existing_edit', caught.exception.code)
+                        self.assertEqual(before, {p.name: p.read_bytes() for p in old_path.parent.glob('*.json')})
 
     def test_uncertain_edit_errors_require_inspection_without_suggesting_an_override(self):
         proposed = edits.validate_patch('x', COPY)
         path = home() / 'edits' / (digest(['key', proposed]) + '.json')
         for state in ('EDIT_SUBMITTING', 'EDIT_SUBMITTED_UNVERIFIED'):
-            for bound in (False, True):
-                with self.subTest(state=state, bound=bound):
+            for bound, approved in ((False, False), (False, True), (True, False), (True, True)):
+                with self.subTest(state=state, bound=bound, approved=approved):
                     old = {'state': state, **({'platform': 'x', 'identity': 'owner', 'id': '123'} if bound else {})}
                     atomic_json(path, old)
-                    with patch.object(adapters, 'browser_call') as call, self.assertRaises(VpubError) as caught:
-                        edits.send('x', 'default', 'owner', {'id': '123'}, 'key', proposed, False, False)
+                    before = path.read_bytes()
+                    with patch.object(adapters, 'browser_call', return_value={'state': 'EDIT_VERIFIED', 'platform_writes': 1}) as call, self.assertRaises(VpubError) as caught:
+                        edits.send('x', 'default', 'owner', {'id': '123'}, 'key', proposed, False, False, person_approved=approved)
                     self.assertEqual('inspect_existing_edit', caught.exception.code)
                     self.assertIn('may have succeeded', caught.exception.message)
                     self.assertIn('Do not retry', caught.exception.hint)
                     self.assertIn('Open the post on X', caught.exception.hint)
                     self.assertNotIn('--person-approved', caught.exception.hint)
-                    self.assertEqual(old, read_json(path))
+                    self.assertEqual(before, path.read_bytes())
                     call.assert_not_called()
+
+    def test_changed_patch_verification_cannot_clear_another_uncertain_record(self):
+        old_path = home() / 'edits' / 'old-digest.json'
+        atomic_json(old_path, {'key': 'old-key', 'platform': 'x', 'identity': 'owner', 'id': '123',
+                               'state': 'EDIT_SUBMITTED_UNVERIFIED', 'expected_text': 'Original attempted text'})
+        before = old_path.read_bytes()
+        proposed = edits.validate_patch('x', {**COPY, 'description': 'Different caption'})
+        response = {'platform': 'x', 'identity': 'owner', 'id': '123', 'state': 'EDIT_VERIFIED', 'platform_writes': 0}
+        with patch.object(adapters, 'browser_call', return_value=response) as call:
+            checked = edits.send('x', 'default', 'owner', {'id': '123'}, 'new-key', proposed, False, True, person_approved=True)
+            self.assertEqual(('EDIT_VERIFIED', 0), (checked['state'], checked['platform_writes']))
+            self.assertNotIn('person_approved', checked)
+            self.assertTrue(call.call_args.kwargs['verify_only'])
+            with self.assertRaises(VpubError) as caught:
+                edits.send('x', 'default', 'owner', {'id': '123'}, 'new-key', proposed, False, False, person_approved=True)
+            call.assert_called_once()
+        self.assertEqual('inspect_existing_edit', caught.exception.code)
+        self.assertEqual(before, old_path.read_bytes())
+
+    def test_unrelated_uncertain_records_do_not_block_a_different_post(self):
+        for index, changed in enumerate(({'platform': 'instagram'}, {'identity': 'other'}, {'id': '456'})):
+            atomic_json(home() / 'edits' / f'unrelated-{index}.json',
+                        {'key': f'other-{index}', 'platform': 'x', 'identity': 'owner', 'id': '123',
+                         **changed, 'state': 'EDIT_SUBMITTING'})
+        proposed = edits.validate_patch('x', COPY)
+        with patch.object(adapters, 'browser_call', return_value={'state': 'EDIT_VERIFIED', 'platform_writes': 1}) as call:
+            result = edits.send('x', 'default', 'owner', {'id': '123'}, 'key', proposed, False, False)
+        call.assert_called_once()
+        self.assertEqual('EDIT_VERIFIED', result['state'])
 
     def test_browser_error_after_a_press_keeps_its_cause_and_inspection_guidance(self):
         proposed = edits.validate_patch('x', COPY)
@@ -135,9 +172,10 @@ class XReceiptTests(unittest.TestCase):
                    {'state': 'EDIT_VERIFIED', 'platform_writes': 0}]
         with patch.object(adapters, 'browser_call', side_effect=answers) as call:
             for answer in answers:
-                result = edits.send('x', 'default', 'owner', {'id': '123'}, 'key', proposed, False, True)
+                result = edits.send('x', 'default', 'owner', {'id': '123'}, 'key', proposed, False, True, person_approved=True)
                 self.assertEqual(attempted, result['expected_text'])
                 self.assertEqual(0, result['platform_writes'])
+                self.assertNotIn('person_approved', result)
                 self.assertIs(True, result['final_submit_attempted'])
                 if answer['state'] != 'EDIT_VERIFIED':
                     self.assertEqual('EDIT_SUBMITTED_UNVERIFIED', result['state'])

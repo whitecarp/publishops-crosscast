@@ -101,7 +101,7 @@ def validate_patch(platform, value, verifying=False, ai_generated=True):
 
 
 def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, person_approved=False):
-    """One correction, once. An uncertain save keeps its receipt, which blocks a repeat until the work is inspected."""
+    """One correction, once. An uncertain X save cannot be retried, even with person approval; verification stays read-only."""
     work_id=receipt['id']
     if actual!=patch['expected_identity']: raise VpubError('wrong_account','Correction identity differs from the publication receipt.')
     stop_check(platform)
@@ -109,9 +109,10 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
     flags=public_text_flags(patch.get('title'),patch.get('description'),patch.get('tags'),patch.get('chapters'))
     flagged={'text_flags':flags} if flags and not verify_only else {}
     if dry_run: return {'key':key,'id':work_id,'patch':patch,'platform_writes':0,'edit_id':edit_id,**flagged}
-    if platform=='x' and not verify_only and not person_approved:
+    if platform=='x' and not verify_only:
         # A builder update (or a different patch) changes edit_id. It must not
-        # bypass an unclear earlier press on this same work.
+        # bypass an unclear earlier press on this same work. Person approval
+        # cannot prove that old text at the original X address means failure.
         for prior_path in (home()/'edits').glob('*.json'):
             prior=read_json(prior_path)
             same_work=prior.get('key')==key or (prior.get('platform')==platform and
@@ -126,7 +127,7 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
         # A prior success is history, not current platform state. The backend
         # reads the existing work and skips saving only when it still matches.
         tried=saved.get('state') in {'EDIT_SUBMITTING','EDIT_SUBMITTED_UNVERIFIED'}
-        if tried and not verify_only and not person_approved:
+        if tried and not verify_only and (platform=='x' or not person_approved):
             if platform=='x':
                 raise VpubError('inspect_existing_edit',X_EDIT_UNVERIFIED_MESSAGE,
                                 f'{X_EDIT_INSPECTION_HINT} Receipt: {path}')

@@ -24,7 +24,7 @@ class Temporary(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
-        env = patch.dict(os.environ, {"VPUB_HOME": str(self.root / "runtime")})
+        env = patch.dict(os.environ, {"VPUB_HOME": str(self.root / "runtime"), "BILI_CLI_HOME": str(self.root / "bili")})
         env.start()
         self.addCleanup(env.stop)
 
@@ -470,15 +470,26 @@ class CheckingTests(Temporary):
                 self.assertIn("may have succeeded", caught.exception.message)
                 self.assertIn("Open the post on X", caught.exception.hint)
 
-    def test_once_a_person_has_looked_it_can_be_tried_once_more(self):
-        self.tried()
-        patch_value = edits.validate_patch("x", TEXT)
-        with patch.object(adapters, "browser_call", return_value={"state": "EDIT_VERIFIED", "platform_writes": 1}) as call:
-            result = edits.send("x", "default", OWNER, {"id": "1234567890"}, "key", patch_value, False, False, person_approved=True)
-        self.assertEqual("EDIT_VERIFIED", result["state"])
-        call.assert_called_once()
-        self.assertIs(True, result["person_approved"])
-        self.assertIs(True, read_json(home() / "edits" / (digest(["key", patch_value]) + ".json"))["person_approved"])
+    def test_other_platforms_keep_their_person_approved_retry_policy(self):
+        for platform in ("instagram", "youtube", "douyin", "bilibili"):
+            with self.subTest(platform=platform):
+                patch_value = {"expected_identity": OWNER, "description": "New text"}
+                key = platform + "-key"
+                path = home() / "edits" / (digest([key, patch_value]) + ".json")
+                atomic_json(path, {"state": "EDIT_SUBMITTED_UNVERIFIED"})
+                result_value = {"state": "EDIT_VERIFIED", "platform_writes": 1}
+                with patch.object(adapters, "addon_installed", return_value=False), \
+                        patch.object(adapters, "browser_call", return_value=result_value) as browser, \
+                        patch("video_publisher.edits_bilibili.run", return_value=result_value) as bili:
+                    with self.assertRaises(VpubError) as caught:
+                        edits.send(platform, "default", OWNER, {"id": "1234567890"}, key, patch_value, False, False)
+                    self.assertEqual("inspect_existing_edit", caught.exception.code)
+                    browser.assert_not_called(); bili.assert_not_called()
+                    result = edits.send(platform, "default", OWNER, {"id": "1234567890"}, key, patch_value, False, False, person_approved=True)
+                    (bili if platform == "bilibili" else browser).assert_called_once()
+                self.assertEqual("EDIT_VERIFIED", result["state"])
+                self.assertIs(True, result["person_approved"])
+                self.assertIs(True, read_json(path)["person_approved"])
 
     def test_the_record_says_nothing_of_a_person_unless_the_flag_was_given(self):
         result, _ = self.run_send({"state": "EDIT_VERIFIED", "platform_writes": 1}, False)
