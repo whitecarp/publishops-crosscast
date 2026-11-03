@@ -319,6 +319,8 @@ vpub auth status all
 
 Signing in to YouTube (free route), Douyin, Instagram or X opens CrossCast's own Chrome window. A platform may treat it as a new device and ask for a check or account recovery: finish it yourself on the platform's own page, and don't restart the sign-in again and again.
 
+The login command returns promptly while its window starts. Leave it open and check with `vpub auth status PLATFORM --method browser --wait 5` (use the same `--account` if selected). If your AI app stops a waiting command, the sign-in worker may still finish; check its status instead of starting another. `login_interrupted` means the worker stopped before completion was recorded: close any leftover CrossCast login window, then run login once with the saved profile. If the app repeatedly stops it, run these commands in your own terminal. No host controls need bypassing, and this does not clear a platform stop.
+
 Keep the YouTube OAuth client JSON and sign-in tokens on your machine; never commit them to GitHub.
 
 </details>
