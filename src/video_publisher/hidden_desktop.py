@@ -154,9 +154,11 @@ def call_worker(payload, timeout):
     name = uuid.uuid4().hex
     request, answer = folder / (name + ".json"), folder / (name + ".result.json")
     atomic_json(request, {**payload, "result_path": str(answer)})
+    finished = False
     try:
         try:
             run([sys.executable, "-m", "video_publisher.browser_worker", "--job", str(request)], timeout)
+            finished = True
         except subprocess.TimeoutExpired:
             # A finished command's answer stands, whatever became of what it left behind.
             if not answer.exists():
@@ -168,5 +170,5 @@ def call_worker(payload, timeout):
             raise VpubError("browser_error", "Browser command returned no valid JSON receipt.")
         return read_json(answer)
     finally:
-        request.unlink(missing_ok=True)
-        answer.unlink(missing_ok=True)
+        from .runtime_files import defer
+        defer(request, answer, ready=finished)

@@ -14,7 +14,7 @@ class ProcessLockTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        p = patch.dict(os.environ, VPUB_HOME=self.tmp.name)
+        p = patch.dict(os.environ, VPUB_HOME=self.tmp.name, BILI_CLI_HOME=self.tmp.name + '/bili')
         p.start(); self.addCleanup(p.stop)
 
     def child(self, code):
@@ -26,7 +26,7 @@ class ProcessLockTests(unittest.TestCase):
         self.assertTrue((home() / 'publisher.lock').exists())
         with publication_lock():
             self.assertEqual(json.loads((home() / 'publisher.lock').read_text())['pid'], os.getpid())
-        self.assertFalse((home() / 'publisher.lock').exists())
+        self.assertTrue(process_lock.released(json.loads((home() / 'publisher.lock').read_text())))
 
     def test_real_child_cannot_enter_active_lock(self):
         with publication_lock():

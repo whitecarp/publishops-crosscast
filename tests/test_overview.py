@@ -247,7 +247,7 @@ class StatusTests(OverviewFixture):
         with publication_lock():
             overview.status()
             self.assertTrue((home() / "publisher.lock").exists())
-        self.assertFalse((home() / "publisher.lock").exists())
+        self.assertFalse(overview.workspace_busy())
 
     def test_upload_progress_comes_from_the_durable_receipts(self):
         browser = self.row("IN_PROGRESS", sha="browser")
@@ -280,6 +280,7 @@ class StatusTests(OverviewFixture):
         folder = home() / "browser-brokers"
         atomic_json(folder / "x-default.json", {"address": "pipe", "key": "secret-session-key", "pid": os.getpid()})
         atomic_json(folder / "douyin-default.json", {"address": "pipe", "key": "another", "pid": 999999})
+        atomic_json(folder / "youtube-default.json", {"state": "closed", "pid": os.getpid()})
         result = overview.status()
         self.assertEqual([{"session": "x-default", "pid": os.getpid()}], result["background_browsers"])
         self.assertNotIn("secret-session-key", json.dumps(result))
@@ -408,6 +409,99 @@ class CleanupTests(OverviewFixture):
         (folder / "video.mp4").write_bytes(b"12345")
         os.link(folder / "video.mp4", folder / "crosscast-name.mp4")
         self.assertEqual(5, overview.folder_bytes(folder))
+
+    def test_registered_temporary_file_keeps_snapshot_until_separate_cleanup_finishes(self):
+        from video_publisher import runtime_files
+        plan, results = self.publish()
+        self.finish(results['bilibili']['key'])
+        folder = home() / 'jobs' / plan['confirmation']
+        temporary = folder / '.vpub-abcdefgh'
+        temporary.write_bytes(b'failed copy')
+        runtime_files.defer(temporary)
+        with patch.object(runtime_files, 'alive', return_value=False):
+            preview = overview.cleanup()
+            self.assertEqual([], preview['removable'])
+            self.assertEqual(temporary.stat().st_size, preview['reclaimable_bytes'])
+            applied = overview.cleanup(apply=True)
+            self.assertEqual([], applied['removed'])
+            self.assertTrue(folder.exists())
+            if os.name == 'nt':
+                self.assertEqual(len(b'failed copy'), applied['freed_bytes'])
+                self.assertFalse(temporary.exists())
+                self.assertEqual([str(folder)], [item['folder'] for item in overview.cleanup(apply=True)['removed']])
+            else:
+                self.assertEqual(0, applied['freed_bytes'])
+                self.assertTrue(temporary.exists())
+
+    def test_snapshot_cleanup_cannot_bypass_changed_runtime_or_unavailable_primitive(self):
+        from video_publisher import runtime_files, runtime_delete
+        plan, results = self.publish()
+        self.finish(results['bilibili']['key'])
+        folder = home() / 'jobs' / plan['confirmation']
+        temporary = folder / '.vpub-abcdefgh'
+        temporary.write_bytes(b'failed copy')
+        runtime_files.defer(temporary)
+        for changed in (False, True):
+            with self.subTest(changed=changed):
+                if changed:
+                    replacement = self.root / 'replacement'
+                    replacement.write_bytes(b'unknown replacement')
+                    os.replace(replacement, temporary)
+                expected = temporary.read_bytes()
+                with patch.object(runtime_files, 'alive', return_value=False), \
+                        patch.object(runtime_delete, 'remove', side_effect=OSError('safe primitive unavailable')), \
+                        patch.object(overview.shutil, 'rmtree', side_effect=AssertionError('runtime bypass')) as bulk:
+                    preview = overview.cleanup()
+                    result = overview.cleanup(apply=True)
+                bulk.assert_not_called()
+                self.assertEqual([], preview['removable'])
+                self.assertEqual([], result['removed'])
+                self.assertTrue(result['runtime_files']['kept'])
+                self.assertIn('runtime', result['kept'][0]['kept_because'])
+                self.assertEqual(expected, temporary.read_bytes())
+                self.assertTrue((folder / 'video.mp4').exists())
+
+    def test_registered_scratch_and_unreadable_registry_keep_finished_snapshot(self):
+        from video_publisher import runtime_files, runtime_scratch
+        plan, results = self.publish()
+        self.finish(results['bilibili']['key'])
+        folder = home() / 'jobs' / plan['confirmation']
+        with runtime_scratch.scratch(folder) as scratch:
+            (scratch / 'owned.json').write_bytes(b'owned')
+        (scratch / 'unknown.json').write_bytes(b'unknown')
+        for unreadable in (False, True):
+            with self.subTest(unreadable=unreadable):
+                if unreadable:
+                    next((home() / 'runtime-cleanup').glob('*.json')).write_text('{broken')
+                with patch.object(runtime_files, 'alive', return_value=False), \
+                        patch.object(overview.shutil, 'rmtree', side_effect=AssertionError('runtime bypass')):
+                    result = overview.cleanup(apply=True)
+                self.assertEqual([], result['removed'])
+                self.assertTrue(result['runtime_files']['kept'])
+                self.assertEqual(b'unknown', (scratch / 'unknown.json').read_bytes())
+
+    def test_unreadable_registry_directory_cannot_hide_registered_runtime_entries(self):
+        from video_publisher import runtime_files
+        plan, results = self.publish()
+        self.finish(results['bilibili']['key'])
+        folder = home() / 'jobs' / plan['confirmation']
+        temporary = folder / '.vpub-abcdefgh'
+        temporary.write_bytes(b'owned runtime data')
+        runtime_files.defer(temporary)
+        registry, scandir = home() / 'runtime-cleanup', os.scandir
+        def denied(path):
+            if not isinstance(path, int) and Path(path) == registry:
+                raise PermissionError('registry inaccessible')
+            return scandir(path)
+        with patch.object(os, 'scandir', side_effect=denied), \
+                patch.object(overview.shutil, 'rmtree', side_effect=AssertionError('runtime bypass')) as bulk:
+            self.assertTrue(runtime_files.registered_in(folder))
+            self.assertEqual([], overview.cleanup()['removable'])
+            result = overview.cleanup(apply=True)
+        bulk.assert_not_called()
+        self.assertEqual([], result['removed'])
+        self.assertEqual(b'owned runtime data', temporary.read_bytes())
+        self.assertTrue((folder / 'video.mp4').exists())
 
     def test_cli_cleanup_only_deletes_with_apply(self):
         plan, results = self.publish()

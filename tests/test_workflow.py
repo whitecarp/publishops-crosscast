@@ -258,7 +258,8 @@ class WorkflowTests(unittest.TestCase):
     def test_concurrent_lock_refused(self):
         with publication_lock():
             self.code("busy", lambda: publication_lock().__enter__())
-        self.assertFalse((home() / "publisher.lock").exists())
+        from video_publisher.process_lock import released
+        self.assertTrue(released(read_json(home() / "publisher.lock")))
 
     def test_atomic_claim_same_video(self):
         a, b = Ledger(), Ledger()

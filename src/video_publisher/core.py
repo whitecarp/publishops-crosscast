@@ -12,6 +12,7 @@ import sqlite3
 import tempfile
 import time
 import unicodedata
+import uuid
 from datetime import datetime, timezone
 
 PLATFORMS = ("bilibili", "youtube", "douyin", "instagram", "x")
@@ -118,7 +119,8 @@ def atomic_json(path, value):
         when_the_file_is_free(lambda: os.replace(name, path))
     finally:
         if os.path.exists(name):
-            os.unlink(name)
+            from .runtime_files import defer
+            defer(Path(name))
 
 
 def digest(value):
@@ -160,23 +162,26 @@ def snapshot_file(source, target, sha, link=False):
     if target.exists() and file_sha(target) == sha:
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
-    fd, name = tempfile.mkstemp(prefix=".vpub-", dir=target.parent)
-    os.close(fd)
+    name = None
     try:
         if link:
-            os.unlink(name)
+            candidate = target.parent / ('.vpub-' + uuid.uuid4().hex)
             try:
-                os.link(source, name)
+                os.link(source, candidate)
+                name = candidate
             except OSError:
-                shutil.copyfile(source, name)
-        else:
+                pass  # An existing candidate is not ours; never overwrite it.
+        if name is None:
+            fd, name = tempfile.mkstemp(prefix=".vpub-", dir=target.parent)
+            os.close(fd)
             shutil.copyfile(source, name)
         if file_sha(name) != sha:
             raise wrong_file(name, sha, "A file differs from the approved plan; create a fresh plan.")
         os.replace(name, target)
     finally:
-        if os.path.exists(name):
-            os.unlink(name)
+        if name is not None and os.path.exists(name):
+            from .runtime_files import defer
+            defer(Path(name))
     return target
 
 

@@ -249,13 +249,13 @@ class RelayTests(Temporary):
         self.assertNotIn(PRIVATE, stderr)
         self.assertNotIn(OWNER, stderr)
 
-    def test_its_file_is_gone_afterwards_even_when_the_step_fails(self):
+    def test_its_file_is_retained_for_cleanup_even_when_the_step_fails(self):
         payload = {}
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(ValueError), progress.relay("x", payload):
             self.assertTrue(Path(payload["stages_path"]).exists())
             raise ValueError
-        self.assertFalse(Path(payload["stages_path"]).exists())
-        self.assertEqual([], [path for path in (home() / "browser-jobs").iterdir()])
+        self.assertTrue(Path(payload["stages_path"]).exists())
+        self.assertEqual(1, len(list((home() / "runtime-cleanup").iterdir())))
 
     def test_a_stage_that_lasts_is_said_again_so_it_does_not_look_hung(self):
         def during(path):
@@ -605,7 +605,7 @@ class RealProcessTests(Temporary):
         self.assert_nothing_private(done.stderr)
         self.assertEqual(["starting the browser", "checking the account", "opening the page", "reading the page", "opening the page", "reading the page", "opening the page", "reading the page", "closing the browser"], stages_of(done.stderr))
         self.assertEqual(["CrossCastBackground"], read_json(self.state)["desktops"])
-        self.assertEqual([], [path for path in (home() / "browser-jobs").iterdir()])
+        self.assertTrue(list((home() / "browser-jobs").iterdir()))
 
     @unittest.skipUnless(os.name == "nt", "Windows desktops")
     def test_the_steps_of_a_youtube_command_share_one_chrome_on_the_hidden_desktop(self):

@@ -220,6 +220,31 @@ class TwoCommandTests(unittest.TestCase):
         self.assertEqual({"landscape"}, set(seen["bilibili"]))
         self.assertEqual({"landscape", "portrait"}, set(seen["douyin"]))
 
+    def test_go_keeps_scratch_for_explicit_cleanup_without_inline_deletions(self):
+        import os
+        from video_publisher import overview, runtime_files
+        from video_publisher.core import home, file_sha
+        self.prepare('--cover', self.picture('wide.png', (1600, 900)))
+        self.write_copy()
+        original = file_sha(self.video)
+        with patch('os.unlink', side_effect=AssertionError('inline file deletion')) as unlink, \
+                patch('os.rmdir', side_effect=AssertionError('inline directory deletion')) as rmdir, \
+                patch('shutil.rmtree', side_effect=AssertionError('inline tree deletion')) as rmtree:
+            self.assertTrue(self.go()['all_submissions_verified'])
+            self.assertEqual({'SKIPPED_EXISTING'}, {part['state'] for part in self.go()['results'].values()})
+            unlink.assert_not_called(); rmdir.assert_not_called(); rmtree.assert_not_called()
+        self.assertTrue(list((home() / 'runtime-cleanup').glob('*.json')))
+        with patch.object(runtime_files, 'alive', return_value=False):
+            result = overview.cleanup(apply=True)
+        if os.name == 'nt':
+            self.assertTrue(result['runtime_files']['removed'])
+            self.assertFalse(result['runtime_files']['kept'])
+        else:
+            self.assertFalse(result['runtime_files']['removed'])
+            self.assertTrue(result['runtime_files']['kept'])
+        self.assertEqual(original, file_sha(self.video))
+        self.assertTrue((self.work / 'copy.json').exists())
+
     def test_running_go_again_never_posts_twice(self):
         self.prepare("--cover", self.picture("wide.png", (1600, 900)))
         self.write_copy()

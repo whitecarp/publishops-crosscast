@@ -9,6 +9,7 @@ import shutil
 import tempfile
 
 from .core import VpubError, atomic_json, digest, file_sha, read_json, when_the_file_is_free
+from .runtime_scratch import scratch as runtime_scratch
 
 
 def step(*words):
@@ -117,7 +118,7 @@ def build(folder, words):
     place = folder / "build" / digest({"manifest": read_json(manifest), "copy": words["platforms"], "source": source.read_text(encoding="utf-8") if source.is_file() else "",
                                        "covers": {name: file_sha(path) for name, path in covers.items()}})[:12]
     place.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".words-", dir=place, ignore_cleanup_errors=True) as scratch:
+    with runtime_scratch(place) as scratch:
         scratch = Path(scratch)
         step("metadata", "request", manifest, *(["--source", source] if source.is_file() else []), "--out", scratch / "request.json")
         atomic_json(scratch / "copy.json", {"request_id": read_json(scratch / "request.json")["request_id"], "platforms": words["platforms"]})

@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from video_publisher import adapters, browser_broker as broker, browser_runtime as rt
 from video_publisher.browser_runtime import profile_lock
-from video_publisher.core import VpubError, atomic_json, home
+from video_publisher.core import VpubError, atomic_json, home, read_json
 
 
 class Server:
@@ -139,7 +139,23 @@ class BrokerTests(unittest.TestCase):
         with patch.object(broker, "start") as start, patch.object(broker, "START_SECONDS", 0.2):
             self.assertIsNone(broker.call(self.payload(), 5))
         start.assert_called_once()
-        self.assertFalse(path.exists())
+        self.assertTrue(path.exists())  # A new owned session reuses the marker.
+
+    def test_stale_failure_cannot_become_the_new_startup_error(self):
+        path = broker.failure_path('x', 'default')
+        atomic_json(path, {'code': 'auth_expired', 'message': 'Old failure.'})
+        before = path.read_bytes()
+        with patch.object(broker, 'start', return_value=type('Done', (), {'poll': lambda self: 1})()), \
+                patch('os.unlink', side_effect=AssertionError('inline deletion')) as unlink:
+            self.assertIsNone(broker.call(self.payload(), 5))
+            unlink.assert_not_called()
+        self.assertEqual(before, path.read_bytes())
+
+    def test_closed_marker_does_not_connect_to_an_old_session(self):
+        atomic_json(broker.state_path('x', 'default'), {'state': 'closed', 'pid': os.getpid()})
+        with patch.object(broker, 'Client') as client:
+            self.assertIsNone(broker.connect('x', 'default'))
+        client.assert_not_called()
 
     def test_one_shot_runs_when_no_session_can_start(self):
         done = type("Done", (), {"stdout": '{"ok": true, "data": {"route": "one-shot"}}'})
@@ -378,7 +394,7 @@ class HangingBrowserTests(unittest.TestCase):
         self.dispatch.assert_awaited_once()
         context.close.assert_awaited_once()
         self.assertTrue(self.lock_is_free())
-        self.assertFalse(broker.state_path("x", "default").exists())
+        self.assertEqual('closed', read_json(broker.state_path("x", "default"))['state'])
 
     def test_a_client_that_gives_up_leaves_a_session_that_still_ends_by_itself_without_repeating_the_command(self):
         seen = []

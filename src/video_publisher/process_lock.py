@@ -4,6 +4,7 @@ import ctypes
 import json
 import os
 from pathlib import Path
+import re
 import uuid
 
 
@@ -35,9 +36,16 @@ def alive(pid):
         kernel.CloseHandle(handle)
 
 
+def released(owner):
+    return (isinstance(owner, dict) and owner.get('lock_state') == 'released'
+            and type(owner.get('pid')) is int and owner['pid'] > 0
+            and isinstance(owner.get('token'), str) and bool(re.fullmatch(r'[a-f0-9]{32}', owner['token']))
+            and isinstance(owner.get('released_at'), str))
+
+
 @contextmanager
 def hold(path, error_code, message):
-    from .core import VpubError, now
+    from .core import VpubError, atomic_json, now
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     # Never unlink the guard: replacing its inode can create two lock owners.
@@ -57,28 +65,25 @@ def hold(path, error_code, message):
         except OSError:
             raise VpubError(error_code, message, 'Wait for the active command; do not clear its lock.') from None
         if path.exists():
+            owner = None
             try:
                 owner = json.loads(path.read_text(encoding='utf-8'))
                 pid = owner.get('pid') if isinstance(owner, dict) else owner
             except (OSError, ValueError):
                 pid = None
-            if alive(pid):
+            if not released(owner) and alive(pid):
                 raise VpubError(error_code, message, 'The prior owner is active or unknown. Inspect it; do not delete an active lock.')
-            path.unlink()  # Dead owner only; receipt and browser profile are untouched.
-        try:
-            with path.open('x', encoding='utf-8') as marker:
-                json.dump({'pid': os.getpid(), 'token': token, 'created_at': now()}, marker)
-                marker.flush()
-                os.fsync(marker.fileno())
-        except FileExistsError:
-            raise VpubError(error_code, message) from None
+        owner = {'pid': os.getpid(), 'token': token, 'created_at': now(), 'lock_state': 'held'}
+        # The stable kernel guard still excludes every cooperating owner. Reuse
+        # a released/dead marker without a deletion on the publication path.
+        atomic_json(path, owner)
         try:
             yield
         finally:
             try:
                 current = json.loads(path.read_text(encoding='utf-8'))
-                if isinstance(current, dict) and current.get('token') == token:
-                    path.unlink()
+                if current == owner:
+                    atomic_json(path, {**owner, 'lock_state': 'released', 'released_at': now()})
             except (OSError, ValueError):
                 pass  # Never remove a replacement or unreadable marker.
     finally:
