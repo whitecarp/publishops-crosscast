@@ -1,41 +1,28 @@
-<p align="center">
-  <a href="README.md">简体中文</a> · <b>繁體中文</b> · <a href="README_EN.md">English</a>
-</p>
+<div align="center">
 
-<p align="center">
-  <img src="assets/hero-zh-tw.svg" alt="一句話，發往你選的所有平台：你對 AI 助手說一句，它寫好各平台文案、調整封面，再逐一到各平台提交；示意發布單顯示 Bilibili 和 YouTube 已核驗，抖音已提交待核驗，Instagram 發布中，X 排隊中" width="860">
-</p>
+<img src="assets/hero-zh-tw.svg" alt="發布流程概念示意：一句請求，經 AI 助手寫文案、調整封面後發往五個平台，附範例進度；不是實際發布記錄" width="100%">
 
-<h1 align="center">PublishOps CrossCast</h1>
+<br>
 
-<p align="center">
-  <b>一句話，發往你選的所有平台。</b><br>
-  你的 AI 助手為每個平台寫好標題和簡介、調整好封面；首次登入之後，CLI 在背景逐一到各平台提交，每一步都留下回執。
-</p>
+<a href="https://github.com/whitecarp/publishops-crosscast/releases"><img src="https://img.shields.io/badge/version-0.16.0%20alpha-f59e0b" alt="版本 0.16.0 alpha"></a> <img src="https://img.shields.io/badge/python-3.10%E2%80%933.12-3776ab" alt="Python 3.10–3.12"> <img src="https://img.shields.io/badge/Windows-%E5%B7%B2%E5%AF%A6%E6%B8%AC-555" alt="Windows 已實測"> <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-17213a" alt="MIT 授權"></a>
 
-<p align="center">
-  <img src="https://img.shields.io/badge/version-0.16.0%20alpha-f59e0b" alt="版本 0.16.0 alpha">
-  <img src="https://img.shields.io/badge/python-3.10%E2%80%933.12-3776ab" alt="Python 3.10–3.12">
-  <img src="https://img.shields.io/badge/Windows-%E5%B7%B2%E5%AF%A6%E6%B8%AC-555" alt="Windows 已實測">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-17213a" alt="MIT 授權"></a>
-</p>
+[简体中文](README.md) | **繁體中文** | [English](README_EN.md)
 
-<p align="center">
-  <a href="#-一句話開始">一句話開始</a> ·
-  <a href="#-它能幫你做什麼">能做什麼</a> ·
-  <a href="#-平台支援">平台支援</a> ·
-  <a href="#-安全護欄">安全護欄</a> ·
-  <a href="#-安裝">安裝</a> ·
-  <a href="#-常見問題">常見問題</a> ·
-  <a href="https://whitecarp.github.io/publishops-crosscast/?lang=zh-TW">線上介紹</a>
-</p>
+</div>
 
-> [!IMPORTANT]
-> **0.16.0 alpha。** YouTube、抖音、Instagram、X 都已真實發布並讀回過，B站也用 bili-cli 上傳並核驗過（部分來自更早的版本），詳見[驗證記錄](docs/VALIDATION.md)。它仍是 alpha：登入會過期，平台也可能臨時要求驗證，長時間無人值守還沒驗收。
+## 💡 這是什麼
+
+做完一支影片，還要給每個平台寫標題、改封面、一個個上傳。**CrossCast 讓你的 AI 助手替你做完這些**：你說一句，它寫好文案、調整好封面，發到 B站、YouTube、抖音、Instagram 和 X。發完之後，改稿、回留言、看數據也能交給它。
+
+<p align="center"><img src="assets/one-message.png" alt="概念插圖：一句請求經 AI 助手發往五個平台，不是實際發布記錄" width="88%"></p>
+
+> 🎬 五個平台 · 🤖 Codex、Claude Code 都能用 · 🔑 不用另外設定 API Key · 🛡️ 預設帶護欄 · 🆓 免費開源
+
+> **五個平台都有實發記錄。** 目前仍是 0.16.0 alpha，有些功能還沒在真實帳號上試過。各版本與功能的驗證範圍見[使用說明](docs/GUIDE_ZH_TW.md#-能做什麼試到哪一步)。
 
 ## 🚀 一句話開始
 
-把下面這段話交給你的 AI 助手（Codex、Claude Code 這類能執行指令的助手都可以），並把 `final.mp4` 換成你的影片：
+**把下面這段話交給你的 AI 助手**，把 `final.mp4` 換成你的影片，它會自己裝好，再帶你登入：
 
 ```text
 請安裝 https://github.com/whitecarp/publishops-crosscast
@@ -43,25 +30,18 @@
 把 final.mp4 公開發布到 B站、YouTube、抖音、Instagram 和 X，標題和簡介依平台來寫。
 ```
 
-**開始前準備好這幾樣：**
-
-- **B站**：用 B站 App 掃碼登入一次（透過 bili-cli）。
-- **YouTube**：免費發布透過專用 Chrome 在背景操作 YouTube Studio，只有登入或 Google 要求驗證時才會看到瀏覽器。用 CLI 走官方 API 需要付費的 API 附加元件，以及你自己的 Google 桌面 OAuth 用戶端。
-- **抖音、Instagram、X**：第一次會開啟 CrossCast 專用的官方 Chrome 視窗，由你自己掃碼或輸入密碼、驗證碼；之後 CLI 在背景沿用這個登入。
-- **X**：免費路徑只能用 Media Studio 發布，帳號必須已訂閱並能進入 Media Studio。
-- **可能會有「新裝置」驗證**：CrossCast 透過自己的專用瀏覽器登入，YouTube、抖音、Instagram 或 X 可能把它當成新裝置，要求你驗證身分或找回帳號。請你自己在平台的官方頁面完成；AI 助手不會替你回答驗證。反覆重新登入沒有用，已儲存的登入之後也可能再次被要求驗證。
-- **電腦上要有 Google Chrome**：沒有的話，執行 `vpub setup --install-browser` 安裝。
+每個平台第一次都要你自己掃碼或輸入驗證碼登入一次，之後就在背景發布。
 
 <details>
-<summary>想自己在終端機裡安裝？</summary>
+<summary>或者自己在終端機裡裝</summary>
 
-```sh
+```bash
 pip install "git+https://github.com/whitecarp/publishops-crosscast.git"
-vpub doctor        # 檢查本機相依套件
-vpub capabilities  # 查看這次安裝提供的發布方式；vpub doctor 會檢查缺少什麼
+vpub doctor              # 檢查本機缺什麼
+vpub auth login douyin   # 每個平台登入一次
 ```
 
-需要 Python 3.10–3.12。這兩個指令都不會登入或發布。登入和手動流程見[安裝](#-安裝)。
+需要 Python 3.10–3.12 和 Google Chrome。Windows 已實測，macOS 和 Linux 尚未驗收。完整步驟見[使用說明](docs/GUIDE_ZH_TW.md#-安裝)。
 
 </details>
 
@@ -69,228 +49,97 @@ vpub capabilities  # 查看這次安裝提供的發布方式；vpub doctor 會�
 
 > **你**：把 final.mp4 公開發到這五個平台，標題口語一點。
 
-| 步驟 | AI 助手和 vpub 在做什麼 |
-| --- | --- |
-| ✍️ 自動寫文案 | B站、抖音寫簡體中文，YouTube、Instagram、X 寫英文；影片是別的語言時，先保留原文，再附譯文<br>YouTube 依影片內容選好類別；長度、標籤都檢查過，不夾帶外部連結 |
-| 🖼️ 自動調封面 | 橫式：B站 16:10，YouTube、X 16:9<br>直式：AI 助手自動產生一張直式圖，抖音和 Instagram 共用；影片保持原樣 |
-| 🧾 自動出方案 | 列清平台、帳號、公開範圍和 AI 聲明，產生確認碼 |
-| 🔁 先預演 | `--dry-run` 跑一遍，不碰平台 |
-| 📮 背景提交 | 登入後自動在背景提交影片 |
+```text
+✍️  寫文案    B站、抖音用簡體中文，YouTube、Instagram、X 用英文；需翻譯時原文在前
+🖼️  調封面    依每個平台的尺寸調好，原圖不動
+🧾  出方案    發到哪、用哪個帳號、誰能看，都列清楚
+🔁  先預演    跑一遍流程，不會真的發布
+📮  發出去    背景一個個平台發布，在平台上看到作品才算成功
+```
 
-> **AI 助手**：五個平台都提交好了。已經讀回到作品的標成「已核驗」，還在審核的，通過後我再更新。Instagram 的封面請在手機上換成那張直式圖。
+> **AI 助手**：五個平台都提交好了。已經在平台上看到作品的標成「已核驗」，還在審核的，通過後我再更新。Instagram 的封面請在手機上換成那張直式圖。
 
 <sub>流程示意，不是實際發布記錄。</sub>
 
 ## ✨ 它能幫你做什麼
 
-### ✍️ 自動寫好每個平台的文案
+### ✍️ 寫好每個平台的文案
+標題、簡介和標籤由你的 AI 助手寫，CrossCast 檢查。B站、抖音用簡體中文，YouTube、Instagram、X 用英文；影片語言不同時，先保留原文，再附譯文。中文內容在 B站、抖音只用簡體。
 
-B站、抖音用簡體中文，YouTube、Instagram、X 用英文。影片本身是別的語言時，先保留原文，再附上平台語言的譯文；中文內容在 B站、抖音只寫簡體。文案由你正在用的 AI 助手來寫，vpub 提供寫作要求並檢查長度和格式，不內建模型，也不需要另外設定模型 API Key。YouTube 的類別依影片內容來選。
-
-### 🖼️ 封面自動調整成各平台畫布
-
-依各平台畫布另存封面，完整保留畫面，不裁切、不拉伸、不覆蓋原圖：B站 16:10，YouTube 16:9，X 透過 Media Studio 設定橫式封面。抖音和 Instagram 的直式封面，由 AI 助手（例如 Codex）自動產生一張專用直式圖，兩邊共用，不會拿橫式圖加黑邊湊數。沒有 AI 繪圖時，`vpub covers portrait` 不用 AI，也能把封面中選定的部分重新排成這張直式圖。影片本身不轉成直式，保留原比例。Instagram 的封面要在手機上換。
-
-### 🧾 先出方案，再動手
-
-每次發布先產生一份方案：平台、帳號、公開範圍和 AI 聲明都寫得清清楚楚，並產生一個確認碼。影片、封面或文案一改，確認碼就變，舊的確認自動作廢，保證發出去的就是你確認過的那一版。`--dry-run` 預演不會碰平台。
+### 🖼️ 調好封面
+依每個平台的尺寸另存一份，不裁切、不拉伸，也不碰原圖。抖音和 Instagram 要直式封面，可以讓 AI 助手畫一張，也可以從原圖重新排版。
 
 ### 📮 登入一次，之後背景發布
+依平台支援排程發布（Instagram 除外）、存草稿或停在預覽、帶章節，上傳時加入合集或播放清單。中斷後可以恢復，但尚未提交的嘗試可能需要重新上傳。
 
-首次登入之後，CLI 自己完成上傳：B站走 bili-cli，YouTube、抖音、Instagram、X 由 CLI 在背景操作專用的 Chrome。YouTube、X 和 Instagram 的官方 API 路徑需要付費附加元件，附加元件目前還沒有開賣；這裡的其他功能都不需要它。上傳時可以附上章節（B站、YouTube、抖音），並加入播放清單（YouTube）或合集（B站、抖音）。B站、YouTube、抖音和 X 都支援排程發布；Instagram 不支援，要求排程的方案會被拒絕。`vpub init --draft-only` 只上傳、不發布：B站和 YouTube 會留下未發布的草稿，抖音會按它自己的「暫存離開」，之後上傳頁可能會在「繼續編輯」下提供這份草稿（CrossCast 只看不按，因為這個入口說不出是誰的草稿，而且打開它可能會把草稿用掉），Instagram 和 X 則停在預覽，預覽不一定能保留，所以不會被說成已儲存。
+### ✏️ 發完還能改
+改標題、簡介、封面和章節，各平台不一樣。不是 CrossCast 發的舊作品，認領後也能改。
 
-### 🔁 中斷了也能接著做
+### 💬 回留言和私訊
+讀留言、只用留言者的語言回覆，看 @ 提及，發單則私訊，按讚和收藏，還能置頂、隱藏或刪除留言。每次只做你說的那一則，不群發。
 
-上傳途中斷線，`vpub resume` 接著原本的任務繼續：X 接著已經存好的 Studio 素材，YouTube 用付費附加元件時從同一個上傳工作階段續傳。YouTube 免費路徑和抖音會回到上傳留下的草稿，從那裡接著完成。只有沒有它的草稿、且 YouTube 沒給過 ID 時，才會重新上傳。Instagram 在按下分享前不會留下任何內容，所以停在那之前的嘗試會從頭開始。如果一直卡在封面，`vpub resume KEY --no-cover` 可以不帶封面完成；`--cover 檔案` 可以為方案裡沒有封面的嘗試加上封面。結果不明的提交不會自動再按一次。如果 YouTube 讀回顯示作品仍是草稿，代表什麼都沒有公開，`vpub resume` 會在同一份草稿上按發布。`vpub status` 只讀本機記錄，列出沒做完的事和下一步的確切指令；`vpub cleanup` 可釋放已發布影片副本佔用的磁碟空間。
+### 📊 看數據
+看作品列表、播放和互動，也能一次看多個平台的新留言和數據變化。還能告訴你哪些事沒做完、下一步做什麼。
 
-### 🔍 每一步都有回執
+### 🎛️ B站互動組件
+給自己的 B站影片加關聯影片、關注按鈕、投票和評分。
 
-每個平台的進度都叫它本來的名字：排隊中 → 發布中 → 已提交，待核驗 → 已核驗。只有從平台頁面或 API 讀回到作品，才算「已核驗」；排隊、登入連結和本機回執都不等於發布成功。
+## 📺 支援的平台
 
-### ✏️ 發出去還能改
+- **B站**：用 B站 App 掃碼登入
+- **YouTube、抖音**：在 CrossCast 開啟的 Chrome 視窗裡登入一次
+- **Instagram**：同樣登入一次；封面要在手機上改，不能排程發布
+- **X**：同樣登入一次；帳號需要已訂閱，並能進入 Media Studio
 
-`vpub edit` 直接修改已發布的作品：B站的標題、簡介、標籤、封面和章節，YouTube 的標題、簡介、縮圖和章節，抖音的標題、簡介、直式封面和章節，Instagram 的貼文說明，X 在出現編輯入口時也能改。不換影片，不改公開範圍。不是 CrossCast 發布的舊作品，先用 `vpub ops adopt` 認領，再用 `vpub edit-work` 修改。
+TikTok 暫停支援。注意事項見[使用說明](docs/GUIDE_ZH_TW.md#-平台支援)。
 
-`vpub widgets` 可以在你自己的 B站影片上加入互動組件：關聯影片、關注或三連按鈕、投票和評分。可以寫在方案裡，也可以加到已經發布的影片上。影片公開之前 B站不會列出這些組件，所以方案裡的組件要等到公開後，由 `vpub verify` 送出。`vpub verify` 和 B站修改也會回報影片上現有的組件。預約組件不包含在內，因為刪除它會通知所有已預約的人。這條路徑還沒有透過 `vpub` 在真實帳號上跑過。
+## 🆓 免費與付費
 
-### 💬 留言、按讚和私訊
+上面這些都免費，MIT 開源。付費附加元件還沒開賣，你現在用不到它；它只多出官方 API 發布、營運報告和郵件提醒這類進階功能，[完整清單](docs/GUIDE_ZH_TW.md#-免費與付費)在使用說明裡。
 
-讀取留言、用留言者的語言回覆，按讚、收藏，在抖音、Instagram、X 上讀寫私訊，查看 @ 提及。還能在平台允許的地方對單則留言置頂、隱藏、刪除或移除，也能管理你的合集和播放清單（調整順序屬於付費附加元件）。每次只做你授權的那一則，不會自動群發。各平台能做的不一樣，詳見[功能範圍](docs/FEATURES.md)。
+## 🛡️ 安全護欄
 
-### 📊 數據和營運報告
+用的是你自己的帳號，所以預設都開著：
 
-查看單支作品的播放和互動，巡檢多個平台的新留言和數據變化。完整的營運報告屬於付費附加元件。
-
-### 📧 需要你時寄信提醒（可選）
-
-*屬於付費附加元件，目前還沒有開賣。*
-
-平台要你掃碼或驗證時，可以寄一封提醒信給你。只支援 Gmail，預設關閉，你主動要求時才開啟。
-
-## 🧭 平台支援
-
-| 平台 | 登入 | 發布方式 | 實測記錄 |
-| --- | --- | --- | --- |
-| **Bilibili** | B站 App 掃碼（bili-cli） | bili-cli，可排程發布 | ✅ bili-cli |
-| **YouTube** | 免費：在專用 Chrome 裡登入一次。付費附加元件：Google 桌面 OAuth 用戶端 | 免費：背景 Chrome 操作 YouTube Studio，可加入播放清單、排程發布。付費附加元件：官方 API | ✅ API 和免費路徑 |
-| **抖音** | 專用官方 Chrome | CLI 背景瀏覽器，可排程發布、加入合集 | ✅ 已發布 |
-| **Instagram** | 專用官方 Chrome | CLI 背景瀏覽器，封面在手機上改，不支援排程發布 | ✅ 已發布 |
-| **X** | 專用官方 Chrome | 免費：僅 Media Studio（需訂閱及實際權限），可排程發布；官方 API：付費附加元件，尚未開賣 | ✅ 已發布 |
-| **TikTok** | — | — | ⏸️ 暫停 |
-
-實測記錄見[驗證記錄](docs/VALIDATION.md)。B站是作者直接用 bili-cli 上傳的，`vpub capabilities` 裡 B站仍標為未實測。這些是過去的真實發布，不代表在你的帳號、地區和平台狀態下一定成功。
-
-**發布前需要知道**
-
-- **YouTube**：免費路徑還能在背景讀取作品、數據、留言和播放清單，回覆留言，替影片和留言按讚，編輯或刪除自己的留言，修改標題、說明和縮圖，並建立、修改和刪除播放清單。目前在真實帳號上試過的有：各項讀取；建立、修改（名稱、說明、公開範圍）、刪除一個私人播放清單並在其中新增和移除影片；替影片按讚和收藏、替留言按讚（都已復原）；回覆留言；以及修改自己的留言再改回去。修改一部私人影片的標題和說明再改回去，以及置頂留言和取消置頂，也都確認過。CrossCast 在影片自己的頁面上讀取置頂狀態，因為 Studio 的列和選單在置頂之後仍然只提供「置頂」。刪除自己的一則回覆試過一次：回覆從頁面上消失了，但 CrossCast 無法證明 YouTube 已經接受，所以回報為未確認；要等再有一次真實刪除顯示成功的回覆長什麼樣，才會改變。上述實測之外的寫入不能據此視為已驗收；上傳另有私享測試和 2026-11-02 公開發布記錄，見驗證記錄。新縮圖會回報為未確認（`EDIT_SUBMITTED_UNVERIFIED`），因為 Studio 沒有可以比對的東西，請自己到 Studio 裡看一下。調整播放清單順序和待審核留言佇列需要付費的 API 附加元件，官方 API 路徑也是。免費的背景路徑可以依標題把影片加進播放清單，也能排程發布（依 Studio 顯示的時區，沒有顯示時依這台電腦的時區），兩者都在最後儲存前讀回確認。真實帳號上的存草稿選中了新播放清單，也保留了排程的日期和時間（整刻鐘和非整刻鐘都試過），並讀回確認。這些執行都停在最後儲存之前，所以最後儲存時把影片加進播放清單和真正儲存排程，都還沒在那裡確認過。只有付費的 API 路徑才涉及這兩點：Google 專案還在測試模式時，要先把登入用的帳號加進「測試使用者」；依 Google 的規定，2020 年 7 月 28 日之後建立、又沒通過審查的 API 專案，上傳的影片會被鎖定為私人。免費路徑都不需要。
-- **X**：免費路徑只能用 Media Studio。帳號必須已訂閱並能進入 Media Studio；未訂閱帳號的影片上限是 140 秒、512 MB，此免費瀏覽器路徑不支援。X 目前有兩個版本的網站：已登入的測試帳號仍然使用舊版，未登入的訪客看到的是重建後的新版。CrossCast 的 X 路徑兩種都支援；如果頁面兩種都對不上，指令會回報錯誤並停止，這次嘗試的回執會說明有沒有東西已經送出。新版路徑來自 X 公開的網頁程式碼，還沒有在已登入帳號上試過。在舊版上，把貼文移出書籤夾要透過書籤夾頁面自己的分享選單。在真實帳號（舊版）上，建立、重新命名、刪除書籤夾，把貼文加入書籤夾再移出，以及替貼文按讚、收藏都確認過。回覆（由後續的 `vpub comments verify-reply` 確認）和刪除這則回覆也確認過。透過 Media Studio 上傳有三次在發文前停下，什麼都沒有送出，因為上傳好的檔案打不開它的頁面；第四次停下是因為 X 要求驗證。這一步改過之後，一次草稿走到了 X 的發文框，正確檔案的資訊也填好了，之後未發布就刪除了。接下來一次排程用的上傳，在同一個頁面等了十分鐘後停下，什麼都沒有排上，原因還沒有確認。這一步又改過之後，一次排程測試走到了 X 的日曆，並顯示日曆的 Save 只是確認日期，真正的最後一步是寫著 Done 的按鈕。這一點改過之後，下一次測試按了一次 Done，貼文就出現在 X 的排程頁面上，文字、日期、時間都對，也帶著影片；到點之前已從那個頁面取消，影片也刪除了。另一次全新上傳的草稿也走到了發文框，影片和檔案對得上，之後未發布就刪除了。還沒有排程貼文真正走到發布時間，普通貼文已經在真實帳號上發出過，詳見驗證記錄。
-- **Instagram**：影片保留原比例；封面必須在手機上改：開啟作品的「編輯封面 → 從相機膠卷新增」，選和抖音共用的那張直式圖，再看一下個人檔案格狀版面的裁切。Instagram 不能排程發布，要求排程的方案會被拒絕。刪除自己的留言在真實帳號上試過一次：事後重新讀取已看不到那則留言，但 CrossCast 無法證明 Instagram 已經接受刪除，所以回報為未確認（`COMMENT_UNVERIFIED`）；要等再有一次真實刪除顯示成功的回覆長什麼樣，才會改變。
-- **抖音**：長時間維持登入的穩定性還在驗收；網頁上傳中斷後不能續傳，要先檢查既有的草稿：如果抖音的上傳頁已經在提供一份留下的草稿，新的上傳會在選任何影片之前以 `existing_draft_requires_attention` 停下，請自己在頁面上繼續或放棄那份草稿，然後再執行一次。真實帳號上留下過一次草稿：`vpub resume` 接著完成了先前中斷的一次嘗試，抖音隨後在「繼續編輯」下提供了這份草稿，標題和測試時用的完全一致。後來的一次存草稿以 `PREVIEW_READY` 結束，CrossCast 自己也看到了這樣的入口，它只作記錄，不算讀回了草稿。上傳前頁面已經提供草稿時的停止，還沒在那裡跑過。建立和刪除合集在真實帳號上通過了（第一次嘗試曾停在上傳封面後的一次等待，這個等待現在加長了），上傳表單裡的合集選擇器也列出了真實的合集。私人排程發布已經從卡片上確認過，文字、時間和私人標記都對，並在到點前手動刪除，所以還沒有一次真正走到發布時間。 **早期版本可能在含換行的說明裡留下多餘的 `*`：有一部真實影片的公開說明曾顯示這些符號。** 這部影片後來已刪除，所以已經沒有線上的例子。現在說明改為一行一行輸入，測試卡片上已經沒有這些符號，但還沒有檢查過新影片的公開頁面。如果你以前往抖音發過含換行的說明，請看一下，並在抖音上或用 `vpub edit` 改正；`vpub edit` 在抖音上的說明儲存已在私人測試影片上嘗試，但尚未驗證成功；審核中的作品會阻止修改。一部真實影片的直式封面已經在 CrossCast 的背景瀏覽器裡改好了，用的是和 `vpub edit` 相同步驟的腳本；重新查看時顯示新封面，文字和可見範圍都沒有變。`vpub edit` 本身在那之前就停下了，停在一個已經修好、但還沒在那裡重新跑過的等待上。在無頭 Chrome 裡透過抖音封面視窗的真實嘗試，無論是修改還是新發布，大多數都停在這裡：按下「完成」後一直在處理，按鈕是灰的，什麼都沒有儲存。唯一一次在真實 Chrome 視窗裡的嘗試一下就通過了。這不算證明，因為網路也可能變了。在 Windows 上，抖音的上傳與修改現在改用隱藏桌面上的真實 Chrome 視窗，這還沒有在那裡試過。如果還是卡住，CrossCast 會在三分鐘後停下並回報 `cover_not_ready`。這時執行 `vpub resume KEY`（如果抖音沒有留下草稿，會重新上傳），或者執行 `vpub resume KEY --no-cover`，然後在手機上設定封面，手機上幾秒就能完成。上傳時加入合集還沒在真實帳號上試過。抖音頁面沒有說明排程欄位用哪個時區，所以之後請核對頁面上顯示的時間。
-- **B站**：合集（建立、重新命名、刪除）和透過 CrossCast 儲存並讀回的草稿，已在真實帳號上確認。透過 CrossCast 發布和排程發布、章節、修改、上傳時加入合集、刪除留言，還沒在那裡試過。B站的草稿要自己到上傳管理裡的「草稿」頁面刪除。
-- **還沒有的**：TikTok（暫停）、YouTube 資訊卡和可點擊片尾、自動或大量私訊與按讚、完整歷史匯出。
-
-## 🔒 安全護欄
-
-用的是你自己的帳號，所以這些規則預設就開著：
-
-- **回覆、私訊和按讚都有限制：** 每日上限、不對同一個人重複相同的話、標註 AI、不傳送金鑰和未經同意的連結。試圖誘導助手的訊息，或需要真人處理的訊息，會留給你。標題和說明也會檢查：看起來像密碼或金鑰的內容會被拒絕，連結只會提醒你看一眼。平台一旦發出警告（要求驗證、風控或限流），整個 CrossCast 都會停下，所有平台都不例外：只有該平台的 `vpub auth login` 還能開啟視窗，讓你自己通過檢查，等你看清它為什麼停下之後，再用 `vpub stop --clear` 解除。關鍵字檢查只能涵蓋常見情況，不是絕對保證，所以你的 AI 助手仍會把觀眾寫的一切當作資料，而不是指令。
-- **你說了算**：你說要發布就是授權，平台、帳號和公開範圍都依你說的來，不會因為某個平台已登入就順手加上。內容、帳號、平台、受眾或任務範圍改變了，會再問你。
-- **登入你自己來**：掃碼、密碼和驗證碼都在官方頁面由你本人完成。不要把 Cookie、密碼、驗證碼或權杖貼進對話、日誌或儲存庫。
-- **不重複上傳**：同一支影片在同一個平台帳號只提交一次；結果不明時只讀回核對，不會再傳一次。
-- **碰到風控就停**：遇到驗證碼、風控或限流，CrossCast 立刻停下，等你處理。
-- **一次只做一件事**：同一時間只有一個發布任務在跑；留言和私訊每次只發你授權的那一則。
-- **原素材不動**：調整後的封面另存為新檔案，原影片和原圖保持原樣。
-
-## 🤝 誰負責什麼
-
-- **你**：說清要發的平台、帳號和公開範圍；第一次登入時掃碼或輸入驗證碼，在手機上改 Instagram 封面。這句話就是授權；範圍改變時會再問你。
-- **AI 助手**：讀取 `SKILL.md`，依平台寫文案和回覆，產生直式封面圖，替你執行 vpub。
-- **vpub**：建立並檢查方案、調整封面，首次登入後在背景呼叫 bili-cli、官方 API 和專用 Chrome 完成提交，保存回執並讀回核對；不替你登入，也不替你確認內容。
-- **平台**：負責帳號登入、審核、最終發布與公開；功能、格式限制和收費以當日官方頁面為準。
-
-## 📦 安裝
-
-需要 Python 3.10–3.12 和 Google Chrome。Windows 安裝腳本已經實測；macOS、Linux 尚未驗收。
-
-**Windows 安裝腳本**
-
-```powershell
-git clone https://github.com/whitecarp/publishops-crosscast.git
-cd publishops-crosscast
-powershell -ExecutionPolicy Bypass -File .\install.ps1
-```
-
-腳本會印出 `vpub.exe` 的完整路徑，但不會把它加入 PATH。可以直接使用該路徑，或在腳本建立的虛擬環境中執行指令。如果找不到 Python 3.10–3.12，加上 `-Python` 和合適的 `python.exe` 的完整路徑再執行一次。
-
-**透過 pip 從 Git 安裝**（需要 Git 和相容的 Python）
-
-```sh
-pip install "git+https://github.com/whitecarp/publishops-crosscast.git"
-vpub doctor
-vpub onboard --platforms bilibili,douyin,youtube
-```
-
-pip 安裝不會留下程式碼目錄，所以 `SKILL.md` 在該 Python 環境的資料夾裡：`share/publishops-crosscast/skills/publishops-crosscast/SKILL.md`。`vpub doctor` 發現需要處理的問題時，會以結束代碼 4 和 `ok: false` 結束，`issues` 裡的每一項都說明怎麼處理。
-
-**登入各平台**
-
-```sh
-vpub auth login youtube --method browser
-vpub auth login youtube --method api --client-json /path/to/client.json  # 付費 API 附加元件，用它代替上一行
-vpub auth login douyin
-vpub auth login instagram
-vpub auth login x
-vpub auth status all
-```
-
-登入 YouTube（免費路徑）、抖音、Instagram 或 X 時，會開啟 CrossCast 自己的 Chrome 視窗。平台可能把它當成新裝置，要求驗證或找回帳號：請你自己在平台的官方頁面完成，不要反覆重新登入。
-
-YouTube 的 OAuth 用戶端 JSON 和登入權杖只留在本機，不要提交到 GitHub。
-
-<details>
-<summary><b>想自己動手？看一眼手動流程</b></summary>
-
-```sh
-vpub init --video final.mp4 --language zh-Hant --out publish.json --platforms bilibili,douyin,youtube
-vpub metadata request publish.json --source script.txt --out request.json
-vpub metadata apply publish.json --request request.json --response response.json --out localized.json
-vpub covers prepare localized.json --source cover.jpg --portrait portrait.jpg --out-dir covers --out ready.json
-vpub plan ready.json
-vpub publish ready.json --dry-run
-vpub publish ready.json --confirm <確認碼>
-vpub verify RECEIPT_KEY
-```
-
-`--dry-run` 不會上傳。`response.json` 由 AI 助手依 `request.json` 中的範本撰寫。中斷後用 `vpub resume RECEIPT_KEY` 接著做，用 `vpub receipts` 查看所有回執。
-
-</details>
-
-## 💰 費用與隱私
-
-- **模型**：CrossCast 本身不需要另外購買模型 API，文案由你正在用的 AI 助手完成。
-- **可能的費用**：AI 助手的訂閱、X 的訂閱（免費瀏覽器發布路徑要用 Media Studio），以及 YouTube API 的配額（由 Google 決定）。本專案不承諾免費或無限使用。
-- **本機資料**：登入工作階段、任務、設定和回執都保存在本機應用程式資料目錄，請不要提交到 GitHub。分享清單、截圖或日誌前，先移除帳號識別資訊、作品 ID、私人路徑和憑證。
-- **敏感資訊**：不要在對話、日誌或儲存庫中提供 Cookie、驗證碼、密碼、權杖或 OAuth 檔案。
+- ⏱️ **有上限**：回覆、私訊和按讚都有每日上限，不對同一個人重複相同的話，並標註 AI
+- 🛑 **碰到風控就停**：平台要求驗證、風控或限流時，所有平台都停下，等你處理
+- 🔁 **不盲目重發**：提交結果不明時去平台上核對，不自動重新提交
+- 🔑 **登入你自己來**：不要把 Cookie、密碼或驗證碼貼進對話
+- 🖼️ **原素材不動**：封面另存為新檔案，原影片和原圖保持原樣
 
 ## ❓ 常見問題
 
 <details>
-<summary><b>發布前還要我再確認嗎？</b></summary>
+<summary>發布前還要我再確認嗎？</summary>
 
-不用。你說要發布，就是授權：它依你說的平台、帳號和公開範圍提交。只有內容、帳號、平台、受眾或任務範圍變了，才會再問你。想先看一眼，就說「先別發」，或者用 `--dry-run` 預演。
-
-</details>
-
-<details>
-<summary><b>YouTube 一定要設定 OAuth 用戶端嗎？</b></summary>
-
-只有付費的 API 路徑需要：API 金鑰本身不能授權上傳，必須用「桌面應用程式」OAuth 用戶端在 Google 頁面授權一次。免費路徑由背景 Chrome 在 YouTube Studio 上發布，不需要 OAuth 用戶端。授權在你自己的電腦上完成，權杖只留在本機。
+不用。你說要發布，就是授權：它依你說的平台、帳號和公開範圍提交。只有內容、帳號、平台、受眾或任務範圍變了，才會再問你。想先看一眼，就說「先別發」。
 
 </details>
 
 <details>
-<summary><b>X 沒訂閱能發嗎？</b></summary>
+<summary>會不會被封號？</summary>
 
-免費瀏覽器路徑不能：它只透過 Media Studio 發布 X，帳號必須已訂閱並能進入 Media Studio。付了費或登入了，不代表 Media Studio 已經開通，上傳前會先核對。官方 API 路徑屬於獨立的付費附加元件，目前尚未開賣；這不代表一般免費帳號或 Basic 帳號已受支援。
-
-</details>
-
-<details>
-<summary><b>Instagram 的封面為什麼要在手機上改？</b></summary>
-
-實測下來，要在手機 App 裡「編輯封面 → 從相機膠卷新增」才能換上和抖音共用的直式圖。AI 助手會準備好這張圖，手機上的操作由你完成。
+自動化總有風險。CrossCast 預設限制用量，碰到驗證、風控或限流就停下，等你處理。平台也可能把它的專用瀏覽器當成新裝置，要求你驗證身分，這要你自己在官方頁面完成。
 
 </details>
 
 <details>
-<summary><b>能發布不是 AI 生成的影片嗎？</b></summary>
+<summary>現在能放心用於正式發布嗎？</summary>
 
-能。告訴 AI 助手影片是不是 AI 生成的：是的話，各平台都會勾選 AI 生成內容聲明（X 上是貼文文字裡的一行）；不是的話，就以一般影片發布，不加 AI 標示。
-
-</details>
-
-<details>
-<summary><b>只在終端機裡執行 vpub，能直接發出去嗎？</b></summary>
-
-能。首次登入之後，CLI 自己在背景完成上傳，不需要 AI 助手一步步操作瀏覽器。登入過期或平台要求驗證時，需要你回到官方頁面處理。
+還在測試階段。登入會過期，平台也可能臨時要求驗證，長時間無人值守還沒驗收。第一次用時，可以讓 AI 助手先預演一遍，看過方案再正式發布。
 
 </details>
 
-<details>
-<summary><b>提交結果不確定怎麼辦？</b></summary>
+更多問題見[使用說明](docs/GUIDE_ZH_TW.md#-常見問題)。
 
-用 `vpub verify` 讀回核對，或用 `vpub resume` 接著原本的任務，不要盲目重新上傳。本機回執可以用 `vpub receipts` 查看，但它本身不代替平台證據。
+## 📚 文件
 
-</details>
+這個儲存庫專注於打磨軟體本身。專案的來歷、研究和製作記錄見 [agentic-work-lab](https://github.com/whitecarp/agentic-work-lab)。
 
-## 📚 文件與鳴謝
-
-| | |
-| --- | --- |
-| 🧭 [功能範圍](docs/FEATURES.md) | 各平台能做什麼、用什麼方式做 |
-| ✅ [驗證記錄](docs/VALIDATION.md) | 每個版本的真實發布與測試結果 |
-| 🐦 [X Media Studio 流程](docs/X_GUIDE.md) | X 的上傳、封面與發布步驟 |
-| 🌐 [線上介紹](https://whitecarp.github.io/publishops-crosscast/?lang=zh-TW) | 專案概覽頁 |
-| 🐞 [回報問題](https://github.com/whitecarp/publishops-crosscast/issues) | 問題回饋（請先移除帳號與私密資訊） |
+- [使用說明](docs/GUIDE_ZH_TW.md)：每個功能試到哪一步、平台注意事項、安裝步驟
+- [功能範圍](docs/FEATURES.md)：各平台能做什麼
+- [驗證記錄](docs/VALIDATION.md)：每個版本的真實測試結果
+- [線上介紹](https://whitecarp.github.io/publishops-crosscast/?lang=zh-TW)
+- [回報問題](https://github.com/whitecarp/publishops-crosscast/issues)：請先移除帳號與私密資訊
 
 來源鳴謝：[agentic-work-lab](https://github.com/whitecarp/agentic-work-lab)（開發來源）· [bili-cli](https://github.com/kukemc/bili-cli)（Bilibili 功能，其程式碼已包含在內）。第三方授權詳見 [NOTICE](NOTICE.md)。CrossCast 以 [MIT 授權](LICENSE) 發布，是獨立整合工具，並非任何影音平台的官方產品。

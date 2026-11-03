@@ -15,11 +15,11 @@
     <text x="56" y="180" font-size="50" font-weight="800" fill="#ffffff">一句话，</text>
     <text x="56" y="239" font-size="50" font-weight="800" fill="#ffffff">发往你选的所有平台。</text>
     <text x="56" y="306" font-size="20" fill="#b9c3d6">AI 助手写好各平台文案、适配封面，</text>
-    <text x="56" y="336" font-size="20" fill="#b9c3d6">再逐个平台直接提交，每一步都有回执。</text>
+    <text x="56" y="336" font-size="20" fill="#b9c3d6">再帮你逐个平台发布，每一步都有记录。</text>
     <rect x="56" y="372" width="504" height="84" rx="16" fill="#ffffff" fill-opacity="0.06" stroke="#ffffff" stroke-opacity="0.16"/>
     <text x="76" y="402" font-size="14" font-weight="600" fill="#8e9ab3">你对 AI 助手说</text>
     <text x="76" y="434" font-size="20" font-weight="700" fill="#eef2f8">“把 final.mp4 公开发到这五个平台。”</text>
-    <text x="56" y="504" font-size="15" fill="#8e9ab3">0.16.0 alpha：首次登录后，CLI 在后台逐个平台提交</text>
+    <text x="56" y="504" font-size="15" fill="#8e9ab3">0.16.0 alpha：登录一次，之后在后台发布</text>
     <g clip-path="url(#card)">
       <rect x="620" y="56" width="524" height="448" fill="#ffffff"/>
       <rect x="620" y="444" width="524" height="60" fill="#eef1f6"/>
@@ -86,6 +86,6 @@
     <rect x="1048.0" y="405.5" width="72.0" height="25" rx="6" fill="#eef1f6" stroke="#8e99ae" stroke-width="1.5" stroke-dasharray="4 3"/>
       <circle cx="1060.5" cy="418" r="4.5" fill="none" stroke="#3f4a5f" stroke-width="1.5" stroke-dasharray="1.6 1.6"/>
       <text x="1072.0" y="422.7" font-size="13" font-weight="700" fill="#3f4a5f">排队中</text>
-    <text x="644" y="480" font-size="15" font-weight="700" fill="#17213a">逐个平台直接提交；读回到作品，才标为“已核验”。</text>
+    <text x="644" y="480" font-size="15" font-weight="700" fill="#17213a">逐个平台发布；在平台上看到作品，才标为“已核验”。</text>
   </g>
 </svg>

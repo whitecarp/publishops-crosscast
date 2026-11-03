@@ -81,7 +81,7 @@ body {
 h1, h2, h3, p { margin: 0; }
 h1, h2, h3 { color: var(--ink); }
 h2, h3 { text-wrap: balance; }
-p, li { text-wrap: pretty; }
+p, li, td, th, summary { text-wrap: pretty; }
 a { color: var(--link); text-underline-offset: 3px; }
 a:hover { color: var(--ink); }
 code {

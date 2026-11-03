@@ -16,11 +16,11 @@
     <text x="56" y="220" font-size="46" font-weight="800" fill="#ffffff">Every platform</text>
     <text x="56" y="274" font-size="46" font-weight="800" fill="#ffffff">you choose.</text>
     <text x="56" y="336" font-size="20" fill="#b9c3d6">Your AI assistant writes each platform's copy,</text>
-    <text x="56" y="366" font-size="20" fill="#b9c3d6">then submits platform by platform, with receipts.</text>
+    <text x="56" y="366" font-size="20" fill="#b9c3d6">then posts to each platform and keeps a record.</text>
     <rect x="56" y="402" width="504" height="84" rx="16" fill="#ffffff" fill-opacity="0.06" stroke="#ffffff" stroke-opacity="0.16"/>
     <text x="76" y="432" font-size="14" font-weight="600" fill="#8e9ab3">You tell your AI assistant</text>
     <text x="76" y="464" font-size="20" font-weight="700" fill="#eef2f8">“Publish final.mp4 publicly to all five.”</text>
-    <text x="56" y="514" font-size="15" fill="#8e9ab3">0.16.0 alpha: after the first sign-in, the CLI submits in the background</text>
+    <text x="56" y="514" font-size="15" fill="#8e9ab3">0.16.0 alpha: sign in once, then it posts in the background</text>
     <g clip-path="url(#card)">
       <rect x="620" y="56" width="524" height="448" fill="#ffffff"/>
       <rect x="620" y="444" width="524" height="60" fill="#eef1f6"/>
@@ -87,6 +87,6 @@
     <rect x="1043.8" y="406.0" width="76.2" height="24" rx="6" fill="#eef1f6" stroke="#8e99ae" stroke-width="1.5" stroke-dasharray="4 3"/>
       <circle cx="1056.3" cy="418" r="4.5" fill="none" stroke="#3f4a5f" stroke-width="1.5" stroke-dasharray="1.6 1.6"/>
       <text x="1067.8" y="422.3" font-size="12" font-weight="700" fill="#3f4a5f">Queued</text>
-    <text x="644" y="480" font-size="15" font-weight="700" fill="#17213a">Submitted platform by platform. Verified only after a readback.</text>
+    <text x="644" y="480" font-size="15" font-weight="700" fill="#17213a">Posted one platform at a time. Verified once it's on the platform.</text>
   </g>
 </svg>
