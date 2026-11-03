@@ -12,6 +12,8 @@ GONE = re.compile(r"^(?:This (?:Post|post|Tweet|tweet) (?:was deleted|doesn[’'
 FINAL = '[data-testid="confirmationSheetConfirm"]'
 SAME = '(node, retained) => node === retained && node.isConnected'
 CONTAINS = '(node, child) => node.isConnected && child.isConnected && node.contains(child)'
+EXACT_WAIT_MILLISECONDS = 30000
+POLL_MILLISECONDS = 500
 
 
 async def guard(page):
@@ -86,24 +88,34 @@ async def exact(page, target):
     url = f"https://x.com/{target['identity']}/status/{target['id']}"
     await page.goto(url, wait_until='domcontentloaded', timeout=60000)
     await page.wait_for_timeout(2000)
-    await guard(page)
-    await exact_account(page, target['identity'], target)
-    rows = x_pages.post_row(page, target['id'])
-    visible = [row for row in await rows.all() if await row.is_visible()]
-    if len(visible) > 1:
-        raise VpubError('wrong_work', 'X showed more than one target post.')
-    if visible:
-        fields = await x_pages.post_fields(visible[0])
-        if not fields or fields['id'] != target['id'] or fields['author'].casefold() != target['identity'].casefold() or fields['is_ad']:
-            raise VpubError('owner_unverified', 'The exact post author could not be verified.')
+    # DOMContentLoaded can precede X's post fetch. A live read had no article
+    # after two seconds and the exact owned article three seconds later.
+    # Wait only for that article or an explicit platform absence control;
+    # time spent loading never establishes that a post was deleted.
+    for elapsed in range(2000, EXACT_WAIT_MILLISECONDS + 1, POLL_MILLISECONDS):
+        await guard(page)
         await exact_account(page, target['identity'], target)
-        return visible[0], False
-    # Only platform error controls; never search post/reply words for "deleted".
-    labels = page.locator('main [data-testid="emptyState"]')
-    gone = await visible_label_matches(labels, GONE)
-    await guard(page)
-    await exact_account(page, target['identity'], target)
-    return None, gone
+        rows = x_pages.post_row(page, target['id'])
+        visible = [row for row in await rows.all() if await row.is_visible()]
+        if len(visible) > 1:
+            raise VpubError('wrong_work', 'X showed more than one target post.')
+        if visible:
+            fields = await x_pages.post_fields(visible[0])
+            if not fields or fields['id'] != target['id'] or fields['author'].casefold() != target['identity'].casefold() or fields['is_ad']:
+                raise VpubError('owner_unverified', 'The exact post author could not be verified.')
+            await guard(page)
+            await exact_account(page, target['identity'], target)
+            return visible[0], False
+        # Only platform error controls; never search post/reply words for "deleted".
+        labels = page.locator('main [data-testid="emptyState"]')
+        gone = await visible_label_matches(labels, GONE)
+        await guard(page)
+        await exact_account(page, target['identity'], target)
+        if gone:
+            return None, True
+        if elapsed < EXACT_WAIT_MILLISECONDS:
+            await page.wait_for_timeout(POLL_MILLISECONDS)
+    return None, False
 
 
 async def absence(page, actual, target, gone, writes):
