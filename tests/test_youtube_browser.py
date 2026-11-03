@@ -179,6 +179,8 @@ class FakeStudio:
         self.date_text, self.time_text, self.scheduler_text, self.refuse_schedule = "2026年10月31日", "18:00", "", False
         self.warnings, self.warning_open, self.published, self.form_stays = 0, False, False, False
         self.press_does_nothing, self.is_draft, self.checks_label = False, False, "检查完毕"
+        self.publish_after_ticks, self.stop_after_ticks = None, None
+        self.readback_address, self.readback_failure = None, None
         self.keyboard = MagicMock(press=AsyncMock())
         self.url = "https://studio.youtube.com/channel/" + CHANNEL
         self.link = f"https://youtu.be/{VIDEO}"
@@ -196,7 +198,9 @@ class FakeStudio:
 
     async def goto(self, url, **options):
         self.log.append(("goto", url))
-        self.url = url
+        if "/video/" in url and self.readback_failure:
+            raise self.readback_failure
+        self.url = self.readback_address if "/video/" in url and self.readback_address else url
         if self.saved:
             self.left_at.append(self.ticks)
 
@@ -210,6 +214,10 @@ class FakeStudio:
         # Each pause after the final Save is one tick, and Studio's own requests go out on the ticks a test names.
         if self.saved:
             self.ticks += 1
+            if self.ticks == self.publish_after_ticks:
+                self.published, self.is_draft = True, False
+            if self.ticks == self.stop_after_ticks:
+                atomic_json(home() / "STOP.json", {"reason": "Stop during post-click observation"})
             for event in self.studio_sends.get(self.ticks, ()):
                 for listener in list(self.listeners.get(event, ())):
                     listener(MagicMock(url="https://studio.youtube.com/youtubei/v1/video_manager/metadata_update"))
@@ -229,11 +237,23 @@ class FakeStudio:
 
 
 class Temporary(unittest.TestCase):
+    def observe_submits(self):
+        permissions, original = [], Transaction.submit
+
+        async def submit(tx, page, button, **options):
+            permissions.append(options.get("again", False))
+            return await original(tx, page, button, **options)
+
+        observing = patch.object(Transaction, "submit", submit)
+        observing.start()
+        self.addCleanup(observing.stop)
+        return permissions
+
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
-        env = patch.dict(os.environ, {"VPUB_HOME": str(self.root / "runtime")})
+        env = patch.dict(os.environ, {"VPUB_HOME": str(self.root / "runtime"), "BILI_CLI_HOME": str(self.root / "bili")})
         env.start()
         self.addCleanup(env.stop)
         sleep = patch("asyncio.sleep", new=AsyncMock())
@@ -263,6 +283,7 @@ class FormCase(Temporary):
 
 class FormTests(FormCase):
     def test_one_upload_one_final_save_then_a_read_back(self):
+        permissions = self.observe_submits()
         page = FakeStudio()
         tx, result = self.run_form(page)
         self.assertEqual("SUBMISSION_VERIFIED", result["state"])
@@ -273,6 +294,7 @@ class FormTests(FormCase):
         self.assertEqual(3, page.steps)
         self.assertEqual(("goto", f"https://studio.youtube.com/video/{VIDEO}/edit"), [e for e in page.log if e[0] == "goto"][-1])
         self.assertEqual(result, read_json(tx.path))
+        self.assertEqual([False], permissions)
 
     def test_the_page_is_not_left_until_studios_own_request_has_ended(self):
         """From a field run on Studio's other saves: Save greyed out at once, the change went out about six seconds later, and leaving before it ended cancelled it."""
@@ -281,38 +303,58 @@ class FormTests(FormCase):
         self.assertGreater(page.left_at[0], 40)
         self.assertEqual(1, len(page.clicks("#done-button")))
 
-    def test_studios_warning_is_answered_by_going_back_and_pressing_once_more_after_its_checks(self):
-        """Public uploaders show Studio asking this when Publish goes in while its checks run. A field run's film stayed a draft, and the page wasn't captured."""
-        page = FakeStudio(warnings=1)
+    def test_warning_transition_to_published_reads_back_without_rearming_save(self):
+        """Episode 7: the final click succeeded; waiting for Save again falsely timed out."""
+        permissions = self.observe_submits()
+        page = FakeStudio(warnings=1, publish_after_ticks=youtube_studio.PIN_TICKS)
+        ready = browser_forms.yt_button_ready
+
+        async def before_press_only(button):
+            self.assertFalse(page.saved, "No post-click wait for Save to become enabled")
+            return await ready(button)
+
+        with patch.object(browser_forms, "yt_button_ready", side_effect=before_press_only):
+            tx, result = self.run_form(page, self.plan(visibility="public"))
+        self.assertEqual("SUBMISSION_VERIFIED", result["state"])
+        self.assertEqual(1, len(page.clicks("#done-button")))
+        self.assertEqual([], page.clicks(browser_forms.YT_CHECKS_WARNING))
+        self.assertEqual(1, len(page.selected_files()))
+        self.assertEqual(1, result["final_presses"])
+        self.assertIn("checks_warning", result)
+        self.assertEqual(youtube_studio.PIN_TICKS, page.left_at[0])
+        self.assertEqual(result, read_json(tx.path))
+        self.assertEqual([False], permissions)
+
+    def test_a_dialog_that_disappears_after_a_transition_is_read_back(self):
+        page = FakeStudio(press_does_nothing=True, publish_after_ticks=youtube_studio.PIN_TICKS + 2)
         tx, result = self.run_form(page)
         self.assertEqual("SUBMISSION_VERIFIED", result["state"])
-        self.assertEqual(2, len(page.clicks("#done-button")))
-        self.assertEqual(1, len(page.clicks(browser_forms.YT_CHECKS_WARNING)))
+        self.assertEqual(1, result["final_presses"])
         self.assertEqual(1, len(page.selected_files()))
-        self.assertEqual(2, result["final_presses"])
-        self.assertIn("checks_warning", result)
+        self.assertEqual(youtube_studio.PIN_TICKS + 2, page.left_at[0])
 
-    def test_a_warning_that_comes_back_is_left_as_a_draft_with_two_presses(self):
+    def test_a_warning_that_leaves_a_draft_gets_no_second_press(self):
         page = FakeStudio(warnings=5, visibility_text="", is_draft=True)
         tx, result = self.run_form(page)
         self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
         self.assertTrue(result["still_a_draft"])
         self.assertIn("vpub resume", result["note"])
-        self.assertEqual(2, len(page.clicks("#done-button")))
+        self.assertEqual(1, len(page.clicks("#done-button")))
 
     def test_checks_that_never_finish_get_no_second_press(self):
         page = FakeStudio(warnings=5, checks_label="Checking", visibility_text="", is_draft=True)
-        with patch.object(browser_forms, "YT_CHECKS_SECONDS", 0):
-            tx, result = self.run_form(page)
+        tx, result = self.run_form(page)
+        self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
         self.assertTrue(result["still_a_draft"])
         self.assertEqual(1, len(page.clicks("#done-button")))
 
-    def test_a_stop_during_the_wait_for_checks_holds_the_second_press(self):
+    def test_a_stop_after_the_press_prevents_readback(self):
         page = FakeStudio(warnings=1, visibility_text="", is_draft=True)
         with patch.object(browser_forms, "stop_check", side_effect=VpubError("stopped", "Stop.")), self.assertRaises(VpubError) as caught:
             self.run_form(page)
         self.assertEqual("stopped", caught.exception.code)
         self.assertEqual(1, len(page.clicks("#done-button")))
+        self.assertFalse(any("/video/" in entry[1] for entry in page.log if entry[0] == "goto"))
 
     def test_a_press_that_neither_closes_nor_warns_records_what_is_open(self):
         """A field run had nothing to show for this moment."""
@@ -327,6 +369,44 @@ class FormTests(FormCase):
         page = FakeStudio()
         self.run_form(page)
         self.assertEqual(youtube_studio.PIN_TICKS, page.left_at[0])
+
+    def test_a_stale_final_button_does_not_need_to_become_enabled_again(self):
+        page = FakeStudio(form_stays=True)
+        with patch.object(browser_forms, "YT_PRESS_ANSWER_SECONDS", 1):
+            tx, result = self.run_form(page)
+        self.assertEqual("SUBMISSION_VERIFIED", result["state"])
+        self.assertEqual(1, result["final_presses"])
+        self.assertIn("after_press", result)
+
+    def test_a_missing_final_button_alone_never_proves_publication(self):
+        page = FakeStudio(visibility_text="")
+        tx, result = self.run_form(page)
+        self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
+        self.assertIn("visibility", result["readback_differs"])
+        self.assertEqual(1, result["final_presses"])
+
+    def test_readback_error_or_timeout_keeps_the_existing_attempt_unknown(self):
+        for failure in (TimeoutError("Readback timed out"), RuntimeError("Readback failed")):
+            with self.subTest(failure=type(failure).__name__):
+                plan = self.plan()
+                plan["confirmation"] = type(failure).__name__
+                page = FakeStudio(readback_failure=failure)
+                result = asyncio.run(execute(page, "youtube", CHANNEL, {"action": "publish", "plan": plan}))
+                self.assertEqual("UNKNOWN", result["state"])
+                self.assertEqual(VIDEO, result["id"])
+                self.assertEqual(1, result["final_presses"])
+                self.assertTrue(result["final_submit_attempted"])
+                self.assertEqual(1, len(page.selected_files()))
+                self.assertEqual(1, len(page.clicks("#done-button")))
+                self.assertEqual(result, read_json(home() / "browser-receipts" / (plan["confirmation"] + "-youtube.json")))
+
+    def test_stop_during_post_click_transition_keeps_the_press_and_does_not_navigate(self):
+        page = FakeStudio(form_stays=True, stop_after_ticks=youtube_studio.PIN_TICKS + 1)
+        result = asyncio.run(execute(page, "youtube", CHANNEL, {"action": "publish", "plan": self.plan()}))
+        self.assertEqual(("UNKNOWN", "stopped", 1), (result["state"], result["error"]["code"], result["final_presses"]))
+        self.assertTrue((home() / "STOP.json").exists())
+        self.assertEqual(1, len(page.selected_files()))
+        self.assertFalse(any("/video/" in entry[1] for entry in page.log if entry[0] == "goto"))
 
     def test_tags_that_show_a_moment_after_typing_do_not_stop_it(self):
         page = FakeStudio(chips_late=2)
@@ -557,6 +637,7 @@ class ResumeTests(Temporary):
         return page
 
     def test_resume_presses_publish_on_a_draft_the_read_back_shows_and_uploads_nothing(self):
+        permissions = self.observe_submits()
         self.pressed_and_left_a_draft()
         page = self.draft_page()
         result = asyncio.run(execute(page, "youtube", CHANNEL, {"action": "resume", "plan": self.plan()}))
@@ -564,6 +645,7 @@ class ResumeTests(Temporary):
         self.assertFalse(result["still_a_draft"])
         self.assertEqual(([], 1, 2), (page.selected_files(), len(page.clicks("#done-button")), result["final_presses"]))
         self.assertEqual([], [entry for entry in page.log if entry[0] == "fill"])
+        self.assertEqual([True], permissions)
 
     def test_verify_only_says_so_and_presses_nothing(self):
         self.pressed_and_left_a_draft()
@@ -575,6 +657,7 @@ class ResumeTests(Temporary):
         self.assertEqual(([], []), (page.clicks("edit-draft"), page.clicks("#done-button")))
 
     def test_resume_presses_nothing_when_the_work_is_no_draft(self):
+        permissions = self.observe_submits()
         self.pressed_and_left_a_draft()
         page = FakeStudio(visibility_text="Unlisted")
         page.text["#title-textarea #textbox"] = "My title"
@@ -583,6 +666,7 @@ class ResumeTests(Temporary):
         self.assertFalse(result["still_a_draft"])
         self.assertEqual(["visibility"], result["readback_differs"])
         self.assertEqual([], page.clicks("#done-button"))
+        self.assertEqual([], permissions)
 
     def test_a_draft_with_other_words_or_another_id_is_not_pressed(self):
         for change, code in (({"#title-textarea #textbox": "Another title"}, "metadata_mismatch"), ({}, "wrong_work")):
@@ -683,6 +767,18 @@ class ResumeTests(Temporary):
         self.assertEqual("already_submitted", caught.exception.code)
         self.assertTrue(read_json(tx.path)["final_submit_attempted"])
 
+    def test_an_unknown_press_does_not_get_again_permission_from_resume_alone(self):
+        tx = Transaction("youtube", CHANNEL, self.plan())
+        tx.save(final_submit_attempted=True, final_presses=1, media_selected=True, id=VIDEO, state="UNKNOWN")
+        tx = Transaction("youtube", CHANNEL, self.plan(), resume=True)
+        permissions = self.observe_submits()
+        page = FakeStudio()
+        with self.assertRaises(VpubError) as caught:
+            asyncio.run(browser_forms.yt_press_publish(page, tx, page.locator(DIALOG + "#done-button")))
+        self.assertEqual("already_submitted", caught.exception.code)
+        self.assertEqual([False], permissions)
+        self.assertEqual(([], []), (page.selected_files(), page.clicks("#done-button")))
+
 
 class ReadBackTests(Temporary):
     receipt = {"id": VIDEO, "method": "browser", "identity": CHANNEL, "title": "My title", "expected_text": "Line one\nLine two", "visibility": "private", "state": "UNKNOWN"}
@@ -749,6 +845,57 @@ class ReadBackTests(Temporary):
         result = self.verify(FakeStudio(missing={"#title-textarea"}))
         self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
         self.assertEqual("readback_pending", result["phase"])
+
+    def test_warning_then_back_with_private_or_draft_readback_is_not_publication(self):
+        receipt = {**self.receipt, "visibility": "public", "final_submit_attempted": True, "final_presses": 1}
+        for visibility, draft in (("Private", False), ("", True)):
+            with self.subTest(visibility=visibility):
+                page = self.studio(warning_open=True, is_draft=draft)
+                page.visibility_text = visibility
+                asyncio.run(browser_forms.yt_back_from_warning(page))
+                result = self.verify(page, receipt)
+                self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
+                self.assertIn("visibility", result["readback_differs"])
+                self.assertEqual(draft, result["still_a_draft"])
+                self.assertEqual(1, result["final_presses"])
+                self.assertEqual([], page.clicks("#done-button"))
+
+    def test_matching_words_on_another_video_or_host_never_verify_this_upload(self):
+        for address in ("https://studio.youtube.com/video/aaaaaaaaaaa/edit",
+                        f"https://example.invalid/video/{VIDEO}/edit",
+                        f"https://studio.youtube.com/channel/{CHANNEL}/videos"):
+            with self.subTest(address=address):
+                result = self.verify(self.studio(readback_address=address, is_draft=True))
+                self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
+                self.assertIn("video_id", result["readback_differs"])
+                self.assertFalse(result["still_a_draft"])
+
+    def test_a_redirect_after_reading_fields_also_invalidates_the_binding(self):
+        read = Element.inner_text
+
+        async def read_then_move(element, **options):
+            value = await read(element, **options)
+            if "ytcp-video-metadata-visibility" in element.key:
+                element.page.url = "https://studio.youtube.com/video/aaaaaaaaaaa/edit"
+            return value
+
+        with patch.object(Element, "inner_text", read_then_move):
+            result = self.verify(self.studio())
+        self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
+        self.assertIn("video_id", result["readback_differs"])
+
+    def test_a_stop_during_readback_cannot_be_reported_as_verified(self):
+        read = Element.inner_text
+
+        async def read_then_stop(element, **options):
+            value = await read(element, **options)
+            if "ytcp-video-metadata-visibility" in element.key:
+                atomic_json(home() / "STOP.json", {"reason": "Stop during readback"})
+            return value
+
+        with patch.object(Element, "inner_text", read_then_stop), self.assertRaises(VpubError) as caught:
+            self.verify(self.studio())
+        self.assertEqual("stopped", caught.exception.code)
 
     def test_another_channels_receipt_is_refused(self):
         with self.assertRaises(VpubError) as caught:
