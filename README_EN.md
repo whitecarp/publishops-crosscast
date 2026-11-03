@@ -28,7 +28,7 @@ You finish a video, and then you still have to write titles for every platform, 
 Please install https://github.com/whitecarp/publishops-crosscast
 Run vpub doctor, and read the skill file it names.
 Publish final.mp4 publicly to Bilibili, YouTube, Douyin, Instagram, and X, with cover.jpg as the cover and titles and descriptions written for each platform.
-The video is about: (one sentence)
+The video is in English, (was / wasn't) made with AI, and is about: (one sentence)
 ```
 
 The first time on each platform, you scan the QR code or enter the code yourself. After that it publishes in the background.

@@ -100,7 +100,26 @@ def portrait(source, boxes, output):
     return {"state": "PREPARED", "mode": "layout_without_ai", "path": str(output), "sha256": file_sha(output), "bytes": output.stat().st_size,
             "size": list(CANVAS), "safe_area": {"left": SAFE[0], "top": SAFE[1], "width": SAFE[2], "height": SAFE[3]}, "parts": parts,
             "soft_parts": [number for number, part in enumerate(parts, 1) if part["scale"] > SOFT_ABOVE], "source_sha256": before, "platform_writes": 0,
-            "next": "Look at the result before using it: text must read clearly and nothing important may be cut. Then pass it to covers prepare with --portrait."}
+            "next": "Look at the result before using it: text must read clearly and nothing important may be cut. Then use it as the --portrait cover, in vpub prepare or covers prepare."}
+
+
+def check_supplied(cover, portrait, platforms):
+    """The covers someone named, before anyone writes words around them. prepare still checks them when it fits them."""
+    if not cover:
+        raise VpubError("cover_required", "--portrait goes with --cover, because each platform also needs its landscape cover.")
+    for path in filter(None, (cover, portrait)):
+        if not Path(path).is_file() or Path(path).suffix.lower() not in {".jpg", ".jpeg", ".png"}:
+            raise VpubError("invalid_cover", f"Not a JPG or PNG file: {path}")
+    if {"douyin", "instagram"} & set(platforms) and not portrait:
+        raise VpubError('portrait_required', 'Supply a dedicated shared Douyin/Instagram portrait; a letterboxed landscape thumbnail is not a portrait composition.', 'Prepare one portrait with text and faces inside the common grid safe area, then pass --portrait PATH. Without an image generator, build it with vpub covers portrait.')
+    if portrait:
+        try:
+            with Image.open(portrait) as opened:
+                tall = opened.height > opened.width
+        except OSError:
+            raise VpubError("invalid_cover", f"Not a JPG or PNG file: {portrait}")
+        if not tall:
+            raise VpubError('portrait_required', 'The shared portrait must have a portrait aspect ratio.')
 
 
 def prepare(manifest, source, out_dir, output, portrait=None):

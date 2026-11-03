@@ -427,8 +427,11 @@ Requires Python 3.10–3.12 and Git for Git-URL installation. The [Windows insta
 pip install "git+https://github.com/whitecarp/publishops-crosscast.git"
 vpub doctor
 vpub onboard --platforms bilibili,douyin,youtube
-vpub init --video final.mp4 --language zh-Hans --out publish.json --platforms bilibili,douyin,youtube
+vpub prepare final.mp4 --platforms bilibili,douyin,youtube --language zh-Hans --visibility public --ai-generated yes
+vpub go final-crosscast
 ```
+
+`vpub prepare` uploads nothing and says what to write. `vpub go` then puts the words in, fits the covers, checks the plan and publishes. The sections below are the same steps one at a time, for when you need to stop between them.
 
 Choose platforms and automatic publication versus editorial review once. Gmail-only email stays off unless explicitly requested. Reuse authorization without repeated editorial approvals. `--confirm` is a plan-integrity hash. The CLI persists email settings; the host remembers editorial preferences.
 

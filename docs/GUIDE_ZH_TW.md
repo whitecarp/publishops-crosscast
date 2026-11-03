@@ -286,6 +286,16 @@ YouTube 的 OAuth 用戶端 JSON 和登入權杖只留在本機，不要提交�
 <summary><b>想自己動手？看一眼手動流程</b></summary>
 
 ```sh
+vpub prepare final.mp4 --platforms bilibili,douyin,youtube --language zh-Hant --visibility public --ai-generated yes --about "這支影片在講什麼" --cover cover.jpg --portrait portrait.jpg
+vpub go final-crosscast --dry-run
+vpub go final-crosscast
+```
+
+`vpub prepare` 不會上傳，只告訴你要寫什麼。AI 助手把文案寫進新資料夾裡的 `copy.json`。`--dry-run` 不會上傳。`vpub go` 可以放心重跑，已經發出去的會跳過。
+
+想在步驟之間停下來，可以手動一步步來：
+
+```sh
 vpub init --video final.mp4 --language zh-Hant --out publish.json --platforms bilibili,douyin,youtube
 vpub metadata request publish.json --source script.txt --out request.json
 vpub metadata apply publish.json --request request.json --response response.json --out localized.json

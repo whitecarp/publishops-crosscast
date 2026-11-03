@@ -286,6 +286,16 @@ YouTube 的 OAuth 客户端 JSON 和登录令牌只留在本机，不要提交�
 <summary><b>想自己动手？看一眼手动流程</b></summary>
 
 ```sh
+vpub prepare final.mp4 --platforms bilibili,douyin,youtube --language zh-Hans --visibility public --ai-generated yes --about "这条视频讲的是什么" --cover cover.jpg --portrait portrait.jpg
+vpub go final-crosscast --dry-run
+vpub go final-crosscast
+```
+
+`vpub prepare` 不会上传，只告诉你要写什么。AI 助手把文案写进新文件夹里的 `copy.json`。`--dry-run` 不会上传。`vpub go` 可以放心重跑，已经发出去的会跳过。
+
+想在步骤之间停下来，可以手动一步步来：
+
+```sh
 vpub init --video final.mp4 --language zh-Hans --out publish.json --platforms bilibili,douyin,youtube
 vpub metadata request publish.json --source script.txt --out request.json
 vpub metadata apply publish.json --request request.json --response response.json --out localized.json
