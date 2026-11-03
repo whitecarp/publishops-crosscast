@@ -202,7 +202,7 @@ class Site(ChromeCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
-        env = patch.dict(os.environ, {"VPUB_HOME": str(self.root / "runtime")})
+        env = patch.dict(os.environ, {"VPUB_HOME": str(self.root / "runtime"), "BILI_CLI_HOME": str(self.root / "bili")})
         env.start()
         self.addCleanup(env.stop)
         self.pw = await async_playwright().start()
@@ -457,11 +457,32 @@ class ChangeTests(Site):
     async def test_an_adopted_post_it_cant_read_is_left_alone(self):
         adopted = self.edit_payload()
         adopted["patch"]["keep_ai_line"] = True
-        for unread in (None, {"text": None}):
-            with self.subTest(unread=unread), patch.object(browser_edits.x_pages, "post_fields", new=AsyncMock(return_value=unread)), self.assertRaises(VpubError) as caught:
-                await browser_edits.execute(self.page, "x", OWNER, adopted)
-            self.assertEqual("state_unavailable", caught.exception.code)
-        self.assertEqual([], self.x.writes)
+        path = Path(adopted["edit_receipt_path"])
+        for verify_only in (False, True):
+            for unread in (None, {}, {"text": None}):
+                with self.subTest(verify_only=verify_only, unread=unread):
+                    adopted["verify_only"] = verify_only
+                    if verify_only:
+                        atomic_json(path, {"state": "EDIT_SUBMITTING", "platform": "x", "id": POST,
+                                           "identity": OWNER, "expected_text": "Frozen words #Original"})
+                        previous = path.read_bytes()
+                    with patch.object(browser_edits.x_pages, "post_fields", new=AsyncMock(return_value=unread)), \
+                            patch.object(browser_edits.x_pages, "open_menu", new_callable=AsyncMock) as menu, \
+                            patch.object(ops, "fill_x_text", new_callable=AsyncMock) as fill, \
+                            patch("patchright.async_api.Locator.click", new_callable=AsyncMock) as click:
+                        result = await browser_edits.execute(self.page, "x", OWNER, adopted)
+                    # Unreadable identity/text is a refused edit, not evidence of
+                    # a save. The result must neither verify nor perform any UI write.
+                    self.assertEqual(("EDIT_SUBMITTED_UNVERIFIED", 0, "post_identity_unverified"),
+                                     (result["state"], result["platform_writes"], result["reason"]))
+                    menu.assert_not_awaited()
+                    fill.assert_not_awaited()
+                    click.assert_not_awaited()
+                    self.assertEqual([], self.x.writes)
+                    if verify_only:
+                        self.assertEqual(previous, path.read_bytes())
+                    else:
+                        self.assertEqual(result, read_json(path))
 
     async def test_checking_an_edit_changes_nothing(self):
         payload = {**self.edit_payload(self.x.post_text), "verify_only": True}

@@ -3,13 +3,13 @@ from pathlib import Path
 import re
 from urllib.parse import urlsplit
 from . import x_pages
-from .core import VpubError, X_POST_LIMIT, atomic_json, file_sha, now, stop_check, x_weighted_length
+from .core import VpubError, X_AI_LINE, X_POST_LIMIT, atomic_json, file_sha, now, read_json, stop_check, x_post_text, x_weighted_length
 from .browser_runtime import failure_record, look_until, risk_check, unique_visible, visible
 from .browser_backends import choose_file, douyin_card_words, douyin_editor_address, douyin_editor_boxes, douyin_type_caption, normalize, work_url
 from .progress import stage
 
 # A post's AI line at the very end of its words, in the wordings this tool writes. A page can show the line break as a space, so any space will do: losing a declaration is worse than keeping one a sentence happened to end on.
-AI_LINE = re.compile(r'(?:\A|\s)((?:AI 生成[内內]容\s*/\s*)?AI[- ]generated)\s*\Z', re.I)
+AI_LINE = X_AI_LINE
 READ_BACKS = 4
 READ_BACK_WAIT = 10000
 
@@ -39,17 +39,46 @@ def words_to_save(patch,caption):
     return patch['post_text']+'\n\n'+found[1] if found and not AI_LINE.search(patch['post_text']) else patch['post_text']
 
 
-async def x_post_says(post,words):
-    """This post's own words, so the same words elsewhere on the page prove nothing."""
-    fields=await x_pages.post_fields(post.first)
-    return bool(fields) and normalize(fields['text'])==normalize(words)
+async def x_edit_post(page,identity,work_id,editor_url=None):
+    """Read one exact owned version. Neither matching text nor a redirect proves
+    an edit chain. Our observed page parser has no version-chain evidence yet;
+    a changed ID must remain unverified until that evidence is available.
+    """
+    initial_url=page.url
+    address=urlsplit(initial_url)
+    match=re.fullmatch(r'/([A-Za-z0-9_]+)/status/(\d+)/?',address.path)
+    if address.scheme!='https' or address.netloc not in {'x.com','www.x.com'}:
+        return None,None,'wrong_work_address'
+    # An opened editor may use a modal route. Its URL must stay as it was after
+    # opening the exact owned post's Edit action; its underlying row is rechecked.
+    if editor_url is not None:
+        if initial_url!=editor_url: return None,None,'wrong_work_address'
+    elif not match or match[1].casefold()!=identity.casefold():
+        return None,None,'wrong_work_address'
+    elif match[2]!=str(work_id):
+        return None,None,'version_chain_unavailable'
+    post=x_pages.post_row(page,work_id)
+    try:
+        await post.first.wait_for(state='visible',timeout=45000)
+        if await post.count()!=1: return None,None,'ambiguous_post'
+        fields=await x_pages.post_fields(post.first)
+    except Exception:
+        return None,None,'post_readback_unavailable'
+    if page.url!=initial_url:
+        return None,None,'version_chain_unavailable'
+    if (not fields or fields.get('id')!=str(work_id)
+            or str(fields.get('author','')).casefold()!=identity.casefold()
+            or fields.get('is_ad') is not False or not isinstance(fields.get('text'),str)):
+        return None,None,'post_identity_unverified'
+    return post,fields,None
 
 
 async def execute(page, platform, identity, payload):
     patch=payload['patch'];receipt=payload['receipt'];work_id=receipt['id']
     output=Path(payload['edit_receipt_path'])
+    x_evidence={}
     def save(**fields):
-        result={'id':work_id,'platform':platform,'identity':identity,'at':now(),**fields}
+        result={'id':work_id,'platform':platform,'identity':identity,'at':now(),**x_evidence,**fields}
         # A check only reads. What it means for a save already tried is for edits.send to record, so a check cut off here leaves that save on record.
         if not payload.get('verify_only'): atomic_json(output,result)
         return result
@@ -57,6 +86,7 @@ async def execute(page, platform, identity, payload):
         await risk_check(page)
         stop_check(platform)
         if still_holds: await still_holds()  # What was read before that wait may not be true after it.
+        stop_check(platform)
         save(state='EDIT_SUBMITTING')
         stage('pressing')
         await button.click(timeout=20000)
@@ -90,14 +120,27 @@ async def execute(page, platform, identity, payload):
     if platform=='x':
         url=work_url('x',identity,work_id)
         await page.goto(url,wait_until='domcontentloaded',timeout=60000)
-        post=x_pages.post_row(page,work_id)
-        await post.first.wait_for(state='visible',timeout=60000)
-        wanted=patch['post_text']
-        if patch.get('keep_ai_line'):
-            fields=await x_pages.post_fields(post.first)
-            if not fields or not isinstance(fields['text'],str): raise VpubError('state_unavailable',"This post's words could not be read, so nothing was changed.",'Look at the post on X before trying again.')
+        await risk_check(page)
+        post,fields,reason=await x_edit_post(page,identity,work_id)
+        await risk_check(page)
+        if reason:
+            return save(state='EDIT_SUBMITTED_UNVERIFIED',url=url,platform_writes=0,reason=reason)
+        if 'description' in patch:
+            wanted=x_post_text(patch['title'],patch['description'],patch.get('tags'),
+                               bool(AI_LINE.search(patch['post_text'])),patch['metadata_language'],
+                               existing_text=fields['text'])
+        else:
             wanted=words_to_save(patch,fields['text'])
-        if await x_post_says(post,wanted):
+        # A verification must compare the frozen attempted text, not recompute
+        # omitted hashtags/declarations from a post whose text may have changed,
+        # including after a prior success or a subsequent mismatch.
+        prior=read_json(output) if output.exists() else {}
+        if (payload.get('verify_only')
+                and prior.get('platform')=='x' and prior.get('identity')==identity
+                and str(prior.get('id'))==str(work_id) and isinstance(prior.get('expected_text'),str)):
+            wanted=prior['expected_text']
+        x_evidence={'expected_text':wanted,'verification_source':'exact_owned_post_version'}
+        if normalize(fields['text'])==normalize(wanted):
             return save(state='EDIT_VERIFIED',unchanged=True,url=url,platform_writes=0)
         if payload.get('verify_only'):
             return save(state='EDIT_SUBMITTED_UNVERIFIED',url=url,platform_writes=0)
@@ -114,19 +157,28 @@ async def execute(page, platform, identity, payload):
         await windows.first.wait_for(state='visible',timeout=15000)
         window=await unique_visible(windows,'post edit window')
         editor=await unique_visible(window.locator(x_pages.TEXT_BOX),'post text')
+        editor_url=page.url
         await fill_x_text(page,editor,wanted)
         update=await unique_visible(window.get_by_role('button',name=x_pages.UPDATE_POST),'post Update')
         if not await update.is_enabled(): raise VpubError('edit_not_ready','X cannot save this text; inspect its account/length constraints.')
-        await submit(update)
+        async def still_same_post():
+            _,current,reason=await x_edit_post(page,identity,work_id,editor_url=editor_url)
+            await risk_check(page)
+            if reason or normalize(current['text'])!=normalize(fields['text']):
+                raise VpubError('wrong_work','The original owned post changed while editing; nothing was saved.')
+        await submit(update,still_same_post)
         await editor.wait_for(state='hidden',timeout=30000)
         # A page can show the old words for a while after a save, so the read-back looks a few times. It never saves again.
         for attempt in range(READ_BACKS):
             if attempt: await page.wait_for_timeout(READ_BACK_WAIT)
             await page.reload(wait_until='domcontentloaded')
-            await post.first.wait_for(state='visible',timeout=45000)
-            ok=await x_post_says(post,wanted)
+            await risk_check(page)
+            _,current,reason=await x_edit_post(page,identity,work_id)
+            await risk_check(page)
+            ok=not reason and normalize(current['text'])==normalize(wanted)
             if ok: break
-        return save(state='EDIT_VERIFIED' if ok else 'EDIT_SUBMITTED_UNVERIFIED',url=url,platform_writes=1)
+        return save(state='EDIT_VERIFIED' if ok else 'EDIT_SUBMITTED_UNVERIFIED',url=url,platform_writes=1,
+                    **({'reason':reason or 'post_text_mismatch'} if not ok else {}))
     if platform=='douyin':
         if not str(work_id).isdigit(): raise VpubError('invalid_id','Invalid Douyin ID.')
         if 'portrait' in patch:

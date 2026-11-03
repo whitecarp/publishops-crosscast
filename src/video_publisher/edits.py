@@ -2,7 +2,7 @@
 from copy import deepcopy
 from pathlib import Path
 import re
-from .core import Ledger, VpubError, X_POST_LIMIT, atomic_json, digest, douyin_caption, file_sha, home, now, publication_lock, read_json, receipt_turn, stop_check, title_limit, x_weighted_length
+from .core import Ledger, VpubError, X_POST_LIMIT, atomic_json, digest, douyin_caption, file_sha, home, now, publication_lock, read_json, receipt_turn, stop_check, title_limit, x_post_text, x_weighted_length
 from .language_policy import route
 from .safety import check_public_text, public_text_flags
 
@@ -16,8 +16,8 @@ def validate_patch(platform, value, verifying=False, ai_generated=True):
     if groups != 1:
         raise VpubError('invalid_edit','Correct one field group per request: caption, portrait, cover or chapters. Each has its own save/read-back receipt.')
     metadata='description' in p or 'title' in p
-    if 'tags' in p and (not metadata or platform not in {'bilibili','douyin'}):
-        raise VpubError('unsupported_edit','Tags can be edited with the title and description on Bilibili and Douyin.')
+    if 'tags' in p and (not metadata or platform not in {'bilibili','douyin','x'}):
+        raise VpubError('unsupported_edit','Tags can be edited with the title and description on Bilibili, Douyin and X.')
     if metadata:
         if not isinstance(p.get('title'),str) or not 1<=len(p['title'])<=100 or any(c in p['title'] for c in '\r\n\x00'):
             raise VpubError('invalid_title','An edit requires a one-line title of at most 100 characters.')
@@ -33,17 +33,20 @@ def validate_patch(platform, value, verifying=False, ai_generated=True):
             raise VpubError('links_disabled','Correction copy excludes external URLs.')
         if platform=='youtube' and len(p['description'].encode())>5000:
             raise VpubError('description_too_long','YouTube description exceeds the local 5000-byte budget.')
+        if 'tags' in p and (not isinstance(p['tags'],list) or not all(isinstance(t,str) and t.strip() and not any(c in t for c in ',\r\n\x00') for t in p['tags'])
+                            or (platform=='bilibili' and not 1<=len(p['tags'])<=10)):
+            raise VpubError('invalid_tags','Tags are a list of nonempty words without commas or new lines; Bilibili takes 1 to 10.')
+        if platform=='x' and any(not re.fullmatch(r'#?\w+',t) for t in p.get('tags',[])):
+            raise VpubError('invalid_tags','Caption hashtags must contain only letters, digits or underscores, without spaces.')
         if platform in {'instagram','x'}:
-            p['post_text']=p['title']+'\n\n'+p['description']+('\n\nAI-generated' if ai_generated else '')
+            p['post_text']=(x_post_text(p['title'],p['description'],p.get('tags',[]),ai_generated,p['metadata_language'])
+                            if platform=='x' else p['title']+'\n\n'+p['description']+('\n\nAI-generated' if ai_generated else ''))
             # None is an adopted post. No upload here declared anything, so the worker keeps whatever its caption says now.
             if ai_generated is None: p['keep_ai_line']=True
             if platform=='instagram' and len(p['post_text'])>2200:
                 raise VpubError('description_too_long','Instagram caption exceeds 2200 characters; preserve both languages when shortening.')
             if platform=='x' and not verifying and (count := x_weighted_length(p['post_text']))>X_POST_LIMIT:
                 raise VpubError('x_text_too_long',f"CrossCast's preflight estimate comes to {count}, over X's {X_POST_LIMIT}. Unrecognized emoji or domain names can be overestimated. Shorten it; nothing was saved.")
-        if 'tags' in p and (not isinstance(p['tags'],list) or not all(isinstance(t,str) and t.strip() and not any(c in t for c in ',\r\n\x00') for t in p['tags'])
-                            or (platform=='bilibili' and not 1<=len(p['tags'])<=10)):
-            raise VpubError('invalid_tags','Tags are a list of nonempty words without commas or new lines; Bilibili takes 1 to 10.')
         if platform=='bilibili' and len(p['description'])>2000:
             raise VpubError('description_too_long','Bilibili descriptions allow at most 2000 characters.')
         if platform=='douyin':
@@ -82,6 +85,16 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
     flags=public_text_flags(patch.get('title'),patch.get('description'),patch.get('tags'),patch.get('chapters'))
     flagged={'text_flags':flags} if flags and not verify_only else {}
     if dry_run: return {'key':key,'id':work_id,'patch':patch,'platform_writes':0,'edit_id':edit_id,**flagged}
+    if platform=='x' and not verify_only and not person_approved:
+        # A builder update (or a different patch) changes edit_id. It must not
+        # bypass an unclear earlier press on this same work.
+        for prior_path in (home()/'edits').glob('*.json'):
+            prior=read_json(prior_path)
+            same_work=prior.get('key')==key or (prior.get('platform')==platform and
+                prior.get('identity')==actual and str(prior.get('id'))==str(work_id))
+            if same_work and prior.get('state') in {'EDIT_SUBMITTING','EDIT_SUBMITTED_UNVERIFIED'}:
+                raise VpubError('inspect_existing_edit','A save on this work is still unverified; inspect its existing receipt before another edit.',
+                                f'Inspect {prior_path}. Only if a person confirms the change is absent, add --person-approved to try once more.')
     tried=False
     saved={}
     if path.exists():
@@ -112,6 +125,8 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
     if verify_only and not tried and result.get('state')=='EDIT_SUBMITTED_UNVERIFIED': result={**result,'state':'EDIT_MISMATCH'}
     # A check can confirm an unclear save, and nothing less clears it: a page can show the old words for a while, and a cover cannot be compared at all.
     if verify_only and tried and result.get('state')!='EDIT_VERIFIED': result={**result,'state':'EDIT_SUBMITTED_UNVERIFIED'}
+    if platform=='x' and verify_only and saved:
+        result={**saved,**result}  # Keep frozen attempted text when a read cannot find the owned version.
     result={**result,**approved,**flagged}
     checkpoint(result)
     return result
@@ -134,10 +149,10 @@ def run_adopted(platform, work, patch_path, dry_run=False, verify_only=False, pe
         return {'platform':platform,'work_id':work,**result}
 
 
-def found_after_edit(platform, patch):
+def found_after_edit(platform, patch, result=None):
     """What the next check of this work should find, now an edit is confirmed. A review found YouTube's next check still looked for the old description. What it said before stays in the edit's history."""
     return {'title':patch['title'],
-            **({'expected_text':patch['post_text']} if 'post_text' in patch else {}),
+            **({'expected_text':(result or {}).get('expected_text',patch['post_text'])} if 'post_text' in patch else {}),
             **({'expected_text':patch['description']} if platform=='youtube' else {}),
             **({'expected_text':patch['title'],'expected_caption':patch['caption']} if platform=='douyin' else {})}
 
@@ -168,9 +183,10 @@ def run(key, patch_path, dry_run=False, verify_only=False, person_approved=False
             edit_id=digest([key,patch])
             record.setdefault('edits',[]).append({'edit_id':edit_id,'patch':patch,'result':result,'at':now(),'previous_receipt':deepcopy(receipt)})
             confirmed=result.get('state')=='EDIT_VERIFIED' and 'description' in patch
-            changes=found_after_edit(row['platform'],patch) if confirmed else {}
+            changes=found_after_edit(row['platform'],patch,result) if confirmed else {}
             if confirmed:
                 record['options'].update({k:v for k,v in patch.items() if k!='expected_identity'})
+                if row['platform']=='x': record['options']['post_text']=changes['expected_text']
                 record['receipt'].update(changes)
             ledger.save(key,row['state'],record)
             if confirmed: keep_resume_in_step(record,row['platform'],work_id,actual,changes)
