@@ -428,8 +428,11 @@ vpub dm unlock x
 pip install "git+https://github.com/whitecarp/publishops-crosscast.git"
 vpub doctor
 vpub onboard --platforms bilibili,douyin,youtube
-vpub init --video final.mp4 --language zh-Hans --out publish.json --platforms bilibili,douyin,youtube
+vpub prepare final.mp4 --platforms bilibili,douyin,youtube --language zh-Hans --visibility public --ai-generated yes
+vpub go final-crosscast
 ```
+
+`vpub prepare` 不會上傳，只告訴你要寫什麼。接著 `vpub go` 會放入文案、調整封面、檢查方案並發布。以下各節是同樣的步驟逐一操作，適合需要在中途停下來的時候。
 
 首次選擇平台及自動發布或先看文案；郵件僅支援 Gmail，預設關閉，使用者主動要求時才開啟。沿用已取得的授權，不逐片強迫文案審核。`--confirm` 是方案完整性雜湊；CLI 保存郵件設定，宿主保存文案審核偏好。
 

@@ -79,7 +79,8 @@ def apply(manifest, request_path, response_path, output):
         if expected_chapters:
             required.add("chapters")
         if set(text) != required:
-            raise VpubError("invalid_metadata", "Model output may change text only, never accounts, visibility, media or declarations.")
+            raise VpubError("invalid_metadata", "Model output may change text only, never accounts, visibility, media or declarations.",
+                            f"{platform} needs exactly these fields: {', '.join(sorted(required))}.")
         if selection:
             from .categories import validate_youtube
             validate_youtube(text["category_id"])

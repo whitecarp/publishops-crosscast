@@ -4,6 +4,20 @@ The full rules, and what each platform has shown on real accounts. [SKILL.md](..
 
 Use the installed `vpub` CLI. Read `vpub --help`, `vpub capabilities`, and the relevant subcommand's `--help` before constructing unfamiliar commands. If the command is missing, use the installation instructions in the user's CrossCast checkout; do not invent installer URLs or claim a successful installation without running the CLI.
 
+## One video, step by step
+
+`vpub prepare` and `vpub go` run these in order. Run them by hand only when you need to stop between steps.
+
+```sh
+vpub init --video final.mp4 --language zh-Hans --visibility public --out publish.json --platforms bilibili,douyin,youtube
+vpub metadata request publish.json --source script.txt --out request.json
+# Write response.json from response_template in request.json.
+vpub metadata apply publish.json --request request.json --response response.json --out localized.json
+vpub covers prepare localized.json --source cover.jpg --portrait portrait.jpg --out-dir covers --out ready.json
+vpub plan ready.json
+vpub publish ready.json --confirm <confirmation-code>
+```
+
 ## Login and execution
 
 - Reuse CrossCast's own saved account sessions. Bilibili uses the included bili-cli, whose `bili` command is also available directly; YouTube, Douyin, Instagram and X use dedicated browser profiles controlled by the CLI in the background, so only sign-in and platform checks need the user. YouTube uses OAuth and the official API instead with the paid add-on, and `method: native` remains an explicit fallback.

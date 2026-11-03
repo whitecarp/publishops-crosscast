@@ -286,6 +286,16 @@ Keep the YouTube OAuth client JSON and sign-in tokens on your machine; never com
 <summary><b>Prefer to drive it yourself? A look at the manual flow</b></summary>
 
 ```sh
+vpub prepare final.mp4 --platforms bilibili,douyin,youtube --language en --visibility public --ai-generated yes --about "What the video is about" --cover cover.jpg --portrait portrait.jpg
+vpub go final-crosscast --dry-run
+vpub go final-crosscast
+```
+
+`vpub prepare` uploads nothing and says what to write. Your AI assistant fills in `copy.json` in the new folder. `--dry-run` does not upload. `vpub go` is safe to run again, because what already went out is skipped.
+
+To stop between steps, here's the same thing by hand:
+
+```sh
 vpub init --video final.mp4 --language en --out publish.json --platforms bilibili,douyin,youtube
 vpub metadata request publish.json --source script.txt --out request.json
 vpub metadata apply publish.json --request request.json --response response.json --out localized.json

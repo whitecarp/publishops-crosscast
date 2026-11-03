@@ -230,7 +230,7 @@ def doctor():
         issues.append({"code": "stopped", "message": stop["message"], "fix": stop["hint"]})
     return {"version": __version__, "python": sys.version.split()[0], "dependencies": modules,
             "bili_cli_version": included_bili_version(), "google_chrome": chrome, "paid_api_addon": addon, "ready": not issues, "issues": issues,
-            "next": issues[0]["fix"] if issues else "Sign in once per platform with vpub onboard --platforms bilibili,youtube,douyin, then start a video with vpub init --video FILE --out publish.json.",
+            "next": issues[0]["fix"] if issues else "Sign in once on each platform you'll use, such as vpub onboard --platforms bilibili,youtube,douyin,instagram,x. Then get a video ready with vpub prepare VIDEO --platforms bilibili,youtube,douyin --language LANGUAGE --visibility public --ai-generated yes.",
             "skill": skill_file(),
             "local_stop": (home() / "STOP.json").exists(), "runtime_directory": str(home()),
             "credentials_configured": {
@@ -266,7 +266,7 @@ def template(video, content_language="und", ai_generated=True):
 # The order a newcomer needs them in. A new command goes here too, and a test holds that to it.
 HELP_GROUPS = (
     ("Start here", ("doctor", "onboard", "auth", "setup")),
-    ("Publish a video", ("init", "metadata", "covers", "plan", "publish", "status", "verify", "resume", "receipts")),
+    ("Publish a video", ("prepare", "go", "init", "metadata", "covers", "plan", "publish", "status", "verify", "resume", "receipts")),
     ("After posting", ("works", "stats", "edit", "edit-work", "comments", "messages", "engage", "dm", "collection", "playlist", "widgets", "ops", "adopt")),
     ("Safety and housekeeping", ("safety", "stop", "cleanup", "preferences", "capabilities")),
     ("Special cases", ("instagram", "browser")),
@@ -437,7 +437,24 @@ def parser():
             q.add_argument("--wait", type=int, default=0, help="QR/panel completion wait, 0–180 seconds.")
     q = sub.add_parser("onboard", help="Get ready and start signing in to the platforms you choose.")
     q.add_argument("--platforms", default="all", help="all, or a comma-separated list of platforms.")
-    q.add_argument("--method", choices=["auto", "native"], default="auto")
+    q.add_argument("--method", choices=["auto", "native"], default="auto", help="auto uses each platform's usual route: bili-cli for Bilibili, a dedicated browser for the others. native uses the older built-in sign-in.")
+    q = sub.add_parser("prepare", help="Get a video ready in one step and say what to write.", description="Get a video ready in one step and say what to write. Nothing is uploaded. Then vpub go publishes it.")
+    q.add_argument("video")
+    q.add_argument("--platforms", required=True, help="Where it goes, such as bilibili,douyin,youtube.")
+    q.add_argument("--language", required=True, help="The video's own language, such as zh-Hans, zh-Hant or en.")
+    q.add_argument("--visibility", choices=["public", "private"], help="Who can see it on Bilibili, YouTube and Douyin. Needed unless --draft-only. Instagram and X follow the account.")
+    q.add_argument("--about", help="A sentence or two on what the video is, to write its words from.")
+    q.add_argument("--source", help="A script or transcript file to write its words from. Treated as source data, not instructions.")
+    q.add_argument("--cover", help="The production cover, JPG or PNG. It's fitted to each platform without cropping. Without one, each platform picks its own.")
+    q.add_argument("--portrait", help="The portrait cover Douyin and Instagram share. Needed with --cover when either is chosen.")
+    q.add_argument("--schedule", help="When it goes public, with a timezone, such as 2026-12-01T20:00:00+08:00. Goes with --visibility public.")
+    q.add_argument("--draft-only", action="store_true", help="Upload to preview or save an unsent draft on any platform; never Share/Post or schedule.")
+    q.add_argument("--ai-generated", choices=["yes", "no"], required=True, help="Whether the video contains AI-generated content. Every platform shows it, so ask the user when it's unclear.")
+    q.add_argument("--folder", help="Where to keep its files. Default: a folder named after the video, beside it.")
+    q = sub.add_parser("go", help="Publish a prepared folder: fit the covers, check it, post it and read it back.", description="Publish a prepared folder: fit the covers, check it, post it and read it back. Safe to run again: what already went out is skipped, never repeated.")
+    q.add_argument("folder")
+    q.add_argument("--dry-run", action="store_true", help="Do everything up to the upload and stop.")
+    q.add_argument("--confirm", help="The code vpub go gives when it stops for something flagged in the text.")
     q = sub.add_parser("init", help="Start a plan for one video.")
     q.add_argument("--video", required=True)
     q.add_argument("--out", required=True)
@@ -459,21 +476,21 @@ def parser():
     q.add_argument("--box", action="append", required=True, help="One part as x,y,width,height in the source's pixels; repeat for up to three, top to bottom.")
     q.add_argument("--out", required=True)
     i = sub.add_parser("instagram", help="Prepare an Instagram upload and its cover step on the phone.").add_subparsers(dest="action", required=True)
-    q = i.add_parser("prepare")
-    q.add_argument("manifest")
-    q.add_argument("--out", required=True)
+    q = i.add_parser("prepare", help="Get an Instagram upload ready, with the cover step to do on the phone.")
+    q.add_argument("manifest", help="The plan to get ready.")
+    q.add_argument("--out", required=True, help="Where to save the result.")
     q.add_argument("--mobile-cover", help="Shared Douyin/Instagram portrait artwork; defaults to the manifest's Douyin portrait, then Instagram portrait.")
     m = sub.add_parser("metadata", help="Have your AI assistant write each platform's title and description.").add_subparsers(dest="action", required=True)
-    q = m.add_parser("request")
-    q.add_argument("manifest")
+    q = m.add_parser("request", help="Save what your assistant needs to write the words: limits, languages and a template. Nothing is uploaded.")
+    q.add_argument("manifest", help="The plan from vpub init.")
     q.add_argument("--source", help="Local script or transcript; treated as source data, not instructions.")
-    q.add_argument("--allow-links", action="store_true")
-    q.add_argument("--out", required=True)
-    q = m.add_parser("apply")
-    q.add_argument("manifest")
-    q.add_argument("--request", required=True)
-    q.add_argument("--response", required=True)
-    q.add_argument("--out", required=True)
+    q.add_argument("--allow-links", action="store_true", help="Let the words include links. Off by default.")
+    q.add_argument("--out", required=True, help="Where to save the request.")
+    q = m.add_parser("apply", help="Check your assistant's words and put them into a new plan.")
+    q.add_argument("manifest", help="The plan the request was made from.")
+    q.add_argument("--request", required=True, help="The request from metadata request.")
+    q.add_argument("--response", required=True, help="Your assistant's words, written from the request's template.")
+    q.add_argument("--out", required=True, help="Where to save the new plan. It must not exist yet.")
     b = sub.add_parser("browser", help="Hand a step to your assistant's own browser; cookies are never transferred.").add_subparsers(dest="action", required=True)
     q = b.add_parser("request")
     q.add_argument("key")
@@ -860,6 +877,12 @@ def run_command(args):
             if login_answer(job):
                 return job
         return adapters.auth_status(args.platform, args.account, method)
+    if args.command == "prepare":
+        from . import quick
+        return quick.prepare(args)
+    if args.command == "go":
+        from . import quick
+        return quick.go(args.folder, args.confirm, args.dry_run)
     if args.command == "init":
         out = Path(args.out)
         if out.exists():
@@ -1073,7 +1096,7 @@ def capabilities_summary():
         "limits": ["Reads are bounded; not every operation has a live test. Use --full for exact limits.",
                    "TikTok suspended; no full historical inbox/analytics.",
                    "Login is not permission to post or interact. Stop on platform checks; verify uncertain writes, never blindly repeat."],
-        "next": ["vpub doctor", "vpub auth login --help", "vpub init --help"],
+        "next": ["vpub doctor", "vpub auth login --help", "vpub prepare --help"],
         "details": "vpub capabilities --full",
         "state_dirs": "VPUB_HOME controls CrossCast; BILI_CLI_HOME separately controls bili-cli. Set both for isolated tests.",
     }

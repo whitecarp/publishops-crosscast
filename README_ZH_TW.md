@@ -28,7 +28,7 @@
 請安裝 https://github.com/whitecarp/publishops-crosscast
 執行 vpub doctor，讀取它給出的 skill 檔案。
 把 final.mp4 公開發布到 B站、YouTube、抖音、Instagram 和 X，封面用 cover.jpg，標題和簡介依平台來寫。
-這支影片講的是：（用一句話說說）
+這支影片是中文的，（有/沒有）用 AI 製作，講的是：（用一句話說說）
 ```
 
 每個平台第一次都要你自己掃碼或輸入驗證碼登入一次，之後就在背景發布。
