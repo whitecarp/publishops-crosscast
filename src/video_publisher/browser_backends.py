@@ -33,6 +33,7 @@ X_SCHEDULE_TABLE = """headings => {
 }"""
 X_SCHEDULE_SECONDS = 15
 X_CLOCK_GRACE = timedelta(minutes=5)
+X_DISCOVERY_SOURCE = 'native_prepress_and_unique_own_post'
 INSTAGRAM_CAPTION = r"""({words, owner}) => {
   const said = text => (text || '').replace(/\s+/g, ' ').trim();
   const bare = text => (text || '').replace(/\s+/g, '');
@@ -452,29 +453,49 @@ def x_new_works(platform, receipt, works):
 
 async def x_new_posts(page, identity, receipt):
     """Discover one new own post by its posted words, not the separate Studio title.
-    The before-list covers only the first page, so the ID's time must also be fresh.
-    Exact words and a video alone cannot identify the uploaded file: require the
-    own video's poster number to match the saved Studio asset. Custom covers can
-    hide that number; missing evidence or multiple exact posts stays uncertain.
+    The native path binds the source-named file, Studio URL, composer video and
+    text before recording its final attempt. With that context, correlate one
+    fresh exact own video post, as the custom-cover field recovery did. A readable
+    conflicting media ID rejects it; a hidden ID is not a contradiction.
+    This is not independent verification of posted bytes. The counter records
+    intent before clicking, and an identical external concurrent post cannot be
+    excluded. Missing native context or multiple exact posts stays uncertain.
     """
-    words = normalize(receipt.get('expected_text'))
-    media = re.fullmatch(r'https://studio\.x\.com/library/\d+_(\d+)/edit', receipt.get('media_url') or '')
+    text_fields = ('identity', 'video_sha256', 'upload_filename', 'media_url', 'expected_text', 'started_at')
+    if any(type(receipt.get(key)) is not str for key in text_fields):
+        return []
+    if (type(identity) is not str or not re.fullmatch(r'[A-Za-z0-9_]+', identity)
+            or receipt['identity'].casefold() != identity.casefold()
+            or receipt.get('method') != 'browser' or receipt.get('platform') != 'x' or receipt.get('schedule')):
+        return []
+    if (any(receipt.get(key) is not True for key in ('media_selected', 'file_video_seen', 'metadata_readback', 'final_submit_attempted'))
+            or type(receipt.get('final_presses')) is not int or receipt['final_presses'] != 1):
+        return []
+    source = receipt['video_sha256']
+    if (not re.fullmatch(r'[0-9a-f]{64}', source)
+            or not re.fullmatch(r'crosscast-' + source[:16] + r'\.[A-Za-z0-9]+', receipt['upload_filename'])):
+        return []
+    words = normalize(receipt['expected_text'])
+    media = re.fullmatch(r'https://studio\.x\.com/library/\d+_(\d+)/edit', receipt['media_url'])
     before = receipt.get('before_ids')
-    if not words or not media or not receipt.get('final_submit_attempted') or type(before) is not list:
+    if (not words or not media or type(before) is not list
+            or any(type(known) is not str or not re.fullmatch(r'[0-9]+', known) for known in before)):
         return []
     try:
-        began = datetime.fromisoformat(receipt['started_at']) - X_CLOCK_GRACE
+        started = datetime.fromisoformat(receipt['started_at'].replace('Z', '+00:00'))
         until = datetime.now(timezone.utc) + X_CLOCK_GRACE
-        if began.tzinfo is None or began > until:
+        if started.tzinfo is None or started > until:
             return []
-    except (KeyError, TypeError, ValueError):
+        began = started - X_CLOCK_GRACE
+    except (ValueError, OverflowError):
         return []
     matches = [post for post in await own_posts(page, identity)
                if post['id'] not in before and post['has_video'] and normalize(post['text']) == words
                and began <= datetime.fromisoformat(post_time(post['id'])) <= until]
-    if len(matches) != 1 or matches[0]['media_id'] != media[1]:
+    # Count before checking media: a conflicting or hidden ID must not collapse two posts into one.
+    if len(matches) != 1 or (matches[0]['media_id'] is not None and matches[0]['media_id'] != media[1]):
         return []
-    return [{**matches[0], 'url': work_url('x', identity, matches[0]['id'])}]
+    return [{**matches[0], 'url': work_url('x', identity, matches[0]['id']), 'discovery_source': X_DISCOVERY_SOURCE}]
 
 
 async def instagram_caption_says(page, identity, words):
@@ -486,7 +507,7 @@ async def instagram_caption_says(page, identity, words):
 async def x_post_reads_as_this_upload(page, receipt):
     """Whether a post we sent reads back from its own row: exactly its words, and its own video. Reviews found a reply's words, or a quoted post's video, passed on the rest of the page.
     A field read found a real post's video in its own row. A custom cover leaves no number to read, so a number can only rule a post out.
-    This checks an already identified post. Discovery without an ID requires stronger media evidence in x_new_posts."""
+    This checks an already identified post. Discovery without an ID requires the native attempt context in x_new_posts."""
     from patchright.async_api import Error as BrowserError
     media = re.search(r"/library/\d+_(\d+)", receipt.get("media_url") or "")
     row = post_row(page, receipt["id"]).first
@@ -780,6 +801,8 @@ async def verify(page, platform, identity, receipt):
                                                          receipt.get('title') and normalize(receipt['title']) in normalize(v['text'])])
         if len(matches) == 1:
             receipt = {**receipt, 'id':matches[0]['id'], 'url':matches[0]['url']}
+            if platform == 'x':
+                receipt['discovery_source'] = matches[0]['discovery_source']
     if not receipt.get("id"):
         if platform == 'douyin' and await douyin_scheduled_card(page, receipt):
             return {**receipt, **DOUYIN_SCHEDULED, 'verified_at': now()}
@@ -837,10 +860,14 @@ async def verify(page, platform, identity, receipt):
     if platform == 'douyin' and present and receipt.get('schedule') and datetime.now(timezone.utc) < datetime.fromisoformat(receipt['schedule']['at']):
         # Before its time, only the work showing that time proves the schedule took, rather than it having gone out already.
         present = receipt['schedule']['stamp'] in found.get(str(receipt['id']), {}).get('text', '')
+    note = "Work and expected text verified on the signed-in page; cover pixels and anonymous playback are separate."
+    if platform == 'x' and receipt.get('discovery_source') == X_DISCOVERY_SOURCE:
+        note = ("One fresh own video post matches the bound native attempt and exact text. This is correlation, not independent verification of posted video bytes; "
+                "an identical external concurrent post cannot be excluded. Cover pixels and anonymous playback are separate.")
     return {**receipt, "url": url, "state": "SUBMISSION_VERIFIED" if present else "SUBMITTED_UNVERIFIED",
             'phase':'complete' if present else 'readback_pending', 'error':None if present else receipt.get('error'),
             "verification_source": "independent_browser_dom", "verified_at": now(),
-            "note": "Work and expected text verified on the signed-in page; cover pixels and anonymous playback are separate." if present else "Expected work/text not yet verified; do not upload again."}
+            "note": note if present else "Expected work/text not yet verified; do not upload again."}
 
 
 async def execute(page, platform, identity, payload):

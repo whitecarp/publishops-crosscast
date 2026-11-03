@@ -71,7 +71,10 @@ async def finish(page, tx, before):
             candidates = douyin_new_works(tx.platform, tx.receipt, matches)
         if len(candidates) == 1:
             item = candidates[0]
-            receipt = tx.save(state='SUBMITTED_UNVERIFIED', phase='readback', id=item['id'], url=item['url'])
+            identified = {'id': item['id'], 'url': item['url']}
+            if tx.platform == 'x':
+                identified['discovery_source'] = item['discovery_source']
+            receipt = tx.save(state='SUBMITTED_UNVERIFIED', phase='readback', **identified)
             result = await verify(page, tx.platform, tx.identity, receipt)
             if result['state'] == 'SUBMISSION_VERIFIED':
                 return tx.save(**{**result, 'phase':'complete', 'error':None})

@@ -2,6 +2,9 @@
 
 The row fixtures start at POST_FIELDS' output boundary; they do not prove the
 JavaScript selectors against a live site. Existing form tests cover DOM nesting.
+The custom-cover fixture uses the Episode 7 receipt's field shape with synthetic
+values. Discovery correlates native prepress context with an own post; it cannot
+independently verify posted bytes or exclude an identical external concurrent post.
 """
 from datetime import datetime, timedelta, timezone
 import os
@@ -94,7 +97,8 @@ class XDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         self.plan = {'confirmation': 'a' * 64, 'video': str(video), 'video_sha256': file_sha(video),
                      'options': {'title': 'The full original media title', 'post_text': WORDS, 'submission_mode': 'publish', 'visibility': 'account'}}
         self.tx = backends.Transaction('x', OWNER, self.plan)
-        self.tx.save(before_ids=[], expected_text=WORDS, media_url=MEDIA_URL, media_selected=True, file_video_seen=True)
+        self.tx.save(before_ids=[], expected_text=WORDS, media_url=MEDIA_URL, media_selected=True,
+                     upload_filename=self.tx.media_name(), file_video_seen=True, metadata_readback=True)
         self.page = Page([row()])
         self.button = AsyncMock()
 
@@ -143,9 +147,11 @@ class XDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         await self.submit()
         await self.assert_uncertain()
 
-    async def test_missing_poster_number_cannot_be_replaced_by_preclick_binding(self):
+    async def test_legacy_receipt_without_preclick_video_context_stays_uncertain(self):
         self.page.rows = [row(media=None)]
         await self.submit()
+        self.tx.receipt.pop('file_video_seen')
+        self.tx.save()
         await self.assert_uncertain()
 
     async def test_title_or_expected_text_substrings_never_discover_a_post(self):
@@ -168,9 +174,11 @@ class XDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         await self.assert_uncertain()
 
     async def test_an_unbound_second_exact_post_also_keeps_discovery_uncertain(self):
-        self.page.rows = [row(post=post_id(sequence=1)), row(post=post_id(sequence=2), media=None)]
         await self.submit()
-        await self.assert_uncertain()
+        for first, second in ((MEDIA, None), (MEDIA, '88'), (None, '88'), (None, None)):
+            with self.subTest(media=(first, second)):
+                self.page.rows = [row(post=post_id(sequence=1), media=first), row(post=post_id(sequence=2), media=second)]
+                await self.assert_uncertain()
 
     async def test_before_ids_and_id_time_both_exclude_old_posts(self):
         await self.submit()
@@ -199,13 +207,75 @@ class XDiscoveryTests(unittest.IsolatedAsyncioTestCase):
                 self.page.rows = [item]
                 await self.assert_uncertain()
 
+    async def test_foreign_repost_ad_and_quote_only_rows_do_not_steal_the_unique_match(self):
+        own = row(media=None)
+        self.page.rows = [own, row(post=post_id(sequence=1), author='reposted_author'),
+                          row(post=post_id(sequence=2), lines=['Promoted', WORDS]),
+                          row(post=post_id(sequence=3), video=False)]
+        await self.submit()
+        result = await self.resume()
+        self.assertEqual('SUBMISSION_VERIFIED', result['state'])
+        self.assertEqual(own['href'].split('/')[-1], result['id'])
+
     async def test_missing_receipt_evidence_does_not_fall_back_to_title_or_video(self):
         await self.submit()
         saved = dict(self.tx.receipt)
-        for key in ('expected_text', 'media_url', 'before_ids', 'started_at', 'final_submit_attempted'):
+        required = ('method', 'platform', 'identity', 'video_sha256', 'upload_filename', 'media_url', 'media_selected',
+                    'file_video_seen', 'metadata_readback', 'expected_text', 'before_ids', 'started_at',
+                    'final_submit_attempted', 'final_presses')
+        for key in required:
             with self.subTest(key=key):
                 receipt = {k: v for k, v in saved.items() if k != key}
-                self.assertEqual([], await backends.x_new_posts(self.page, OWNER, receipt))
+                for media in (MEDIA, None):
+                    self.page.rows = [row(media=media)]
+                    result = await backends.verify(self.page, 'x', OWNER, receipt)
+                    self.assertEqual('SUBMITTED_UNVERIFIED', result['state'])
+                    self.assertNotIn('id', result)
+        self.button.click.assert_awaited_once()
+
+    async def test_invalid_context_or_truthy_marker_substitutes_are_not_binding(self):
+        await self.submit()
+        self.page.rows = [row(media=None)]
+        cases = (('method', 'native'), ('platform', 'instagram'), ('identity', 'someone_else'), ('identity', ''),
+                 ('video_sha256', 'f' * 64), ('video_sha256', 'short'), ('upload_filename', 'unbound.mp4'),
+                 ('media_url', 'https://example.invalid/library/13_77/edit'), ('expected_text', ' '),
+                 ('media_selected', 1), ('file_video_seen', False), ('metadata_readback', False),
+                 ('final_submit_attempted', 1), ('final_presses', 0), ('final_presses', 2), ('final_presses', True),
+                 ('before_ids', None), ('before_ids', [123]), ('before_ids', ['not-an-id']),
+                 ('schedule', {'at': datetime.now(timezone.utc).isoformat()}))
+        for key, value in cases:
+            with self.subTest(field=key, value=value):
+                self.assertEqual([], await backends.x_new_posts(self.page, OWNER, {**self.tx.receipt, key: value}))
+        self.button.click.assert_awaited_once()
+
+    async def test_wrong_receipt_account_is_rejected_by_native_verify(self):
+        await self.submit()
+        with self.assertRaises(VpubError) as caught:
+            await backends.verify(self.page, 'x', OWNER, {**self.tx.receipt, 'identity': 'someone_else'})
+        self.assertEqual('wrong_account', caught.exception.code)
+        self.button.click.assert_awaited_once()
+
+    async def test_start_time_must_be_aware_valid_and_not_future(self):
+        await self.submit()
+        invalid = (None, '', 'not-a-time', datetime.now().isoformat(),
+                   (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(), '0001-01-01T00:00:00+00:00')
+        for stamp in invalid:
+            with self.subTest(stamp=stamp):
+                result = await backends.verify(self.page, 'x', OWNER, {**self.tx.receipt, 'started_at': stamp})
+                self.assertEqual('SUBMITTED_UNVERIFIED', result['state'])
+                self.assertNotIn('id', result)
+        # Do not accidentally apply clock grace twice to the receipt's start.
+        self.page.rows = [row(post=post_id(seconds_ago=-240), media=None)]
+        future = (datetime.now(timezone.utc) + timedelta(minutes=8)).isoformat()
+        self.assertEqual([], await backends.x_new_posts(self.page, OWNER, {**self.tx.receipt, 'started_at': future}))
+
+    async def test_utc_z_or_offset_timestamp_preserves_the_same_instant(self):
+        await self.submit()
+        started = datetime.fromisoformat(self.tx.receipt['started_at'])
+        for stamp in (started.isoformat().replace('+00:00', 'Z'), started.astimezone(timezone(timedelta(hours=5))).isoformat()):
+            with self.subTest(stamp=stamp):
+                result = await backends.verify(self.page, 'x', OWNER, {**self.tx.receipt, 'started_at': stamp})
+                self.assertEqual('SUBMISSION_VERIFIED', result['state'])
 
     async def test_known_id_still_rejects_wrong_text_or_a_contradictory_media_id(self):
         await self.submit()
@@ -219,16 +289,44 @@ class XDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('SUBMISSION_VERIFIED', (await self.resume())['state'])
         self.button.click.assert_awaited_once()
 
-    async def test_short_copy_custom_cover_needs_an_identified_post_when_media_id_is_hidden(self):
-        # The field run used short copy and a custom cover. Prepress binding alone
-        # cannot distinguish another new post with the same words and another video.
+    async def test_short_copy_custom_cover_discovers_from_episode7_receipt_shape(self):
+        # Same receipt fields as the observed run; no private values or account calls.
         self.page.rows = [row(poster='https://pbs.twimg.com/media/synthetic-custom-cover.jpg')]
+        self.tx.save(cover={'source': 'production_artwork', 'state': 'UI_ACCEPTED', 'remote_pixels_verified': False})
         await self.submit()
-        await self.assert_uncertain()
-        # Preserve the existing readback contract once an independent check has
-        # identified the post; discovery itself must not manufacture that ID.
+        self.assertNotIn('id', self.tx.receipt)
+        original = {key: self.tx.receipt[key] for key in ('video_sha256', 'identity', 'media_url', 'upload_filename', 'before_ids', 'expected_text')}
+        result = await forms.finish(self.page, self.tx, [])
+        self.assertEqual('SUBMISSION_VERIFIED', result['state'])
+        self.assertEqual(self.page.rows[0]['href'].split('/')[-1], result['id'])
+        self.assertEqual(original, {key: result[key] for key in original})
+        self.assertIn('correlation, not independent verification of posted video bytes', result['note'])
+        self.assertIn('external concurrent post cannot be excluded', result['note'])
+        again = await self.resume()
+        self.assertEqual(result['discovery_source'], read_json(self.tx.path)['discovery_source'])
+        self.assertEqual(result['note'], again['note'])
+        self.button.click.assert_awaited_once()
+
+    async def test_existing_explicit_id_custom_cover_verification_is_unchanged(self):
+        self.page.rows = [row(media=None)]
+        await self.submit()
         self.tx.save(id=self.page.rows[0]['href'].split('/')[-1])
         self.assertEqual('SUBMISSION_VERIFIED', (await self.resume())['state'])
+        self.button.click.assert_awaited_once()
+
+    async def test_permalink_with_a_newly_exposed_conflicting_id_stays_unverified(self):
+        self.page.rows = [row(media=None)]
+        await self.submit()
+        goto = self.page.goto
+
+        async def reveal_conflict(url, **kwargs):
+            await goto(url, **kwargs)
+            if '/status/' in url:
+                self.page.rows[0]['poster'] = 'https://pbs.twimg.com/amplify_video_thumb/88/img/a.jpg'
+
+        self.page.goto = reveal_conflict
+        result = await self.resume()
+        self.assertEqual('SUBMITTED_UNVERIFIED', result['state'])
         self.button.click.assert_awaited_once()
 
     async def test_existing_x_new_works_callers_keep_their_time_filter_contract(self):
@@ -239,16 +337,36 @@ class XDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([old, fresh], backends.x_new_works('x', {}, [old, fresh]))
 
     async def test_late_bound_readback_can_settle_without_a_second_click(self):
-        self.page.rows = [row(media=None)]
+        self.page.rows = []
         await self.submit()
         await self.assert_uncertain()
-        self.page.rows[0]['poster'] = f'https://pbs.twimg.com/ext_tw_video_thumb/{MEDIA}/pu/img/a.jpg'
+        self.page.rows = [row(media=None)]
         self.assertEqual('SUBMISSION_VERIFIED', (await self.resume())['state'])
         resumed = backends.Transaction('x', OWNER, self.plan, resume=True)
         with self.assertRaises(VpubError) as error:
             await resumed.submit(self.page, self.button)
         self.assertEqual('already_submitted', error.exception.code)
         self.button.click.assert_awaited_once()
+
+    async def test_timed_out_native_final_attempt_can_read_custom_cover_without_resending(self):
+        self.page.rows = [row(media=None)]
+        self.button.click.side_effect = TimeoutError('synthetic click timeout')
+        with self.assertRaises(TimeoutError):
+            await self.tx.submit(self.page, self.button, still_holds=AsyncMock())
+        self.assertEqual('UNKNOWN', read_json(self.tx.path)['state'])
+        result = await self.resume()
+        self.assertEqual('SUBMISSION_VERIFIED', result['state'])
+        self.assertEqual(1, result['final_presses'])  # An attempt marker, not a click-completion counter.
+        self.button.click.assert_awaited_once()
+
+    async def test_failed_prepress_binding_never_records_or_clicks_a_final_attempt(self):
+        self.page.rows = [row(media=None)]
+        holds = AsyncMock(side_effect=VpubError('wrong_work', 'Synthetic composer binding mismatch'))
+        with self.assertRaises(VpubError):
+            await self.tx.submit(self.page, self.button, still_holds=holds)
+        self.assertIs(False, read_json(self.tx.path)['final_submit_attempted'])
+        self.assertEqual([], await backends.x_new_posts(self.page, OWNER, self.tx.receipt))
+        self.button.click.assert_not_awaited()
 
     async def test_only_trusted_video_poster_paths_supply_a_media_id(self):
         for poster in (f'https://example.invalid/amplify_video_thumb/{MEDIA}/img/a.jpg',

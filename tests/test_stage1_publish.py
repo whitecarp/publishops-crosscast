@@ -392,12 +392,13 @@ class XFormTests(Form):
         self.assertEqual(self.post, result['id'])
         self.assertEqual(1, len(self.final))
 
-    async def test_custom_cover_without_media_number_leaves_discovery_uncertain(self):
+    async def test_custom_cover_without_media_number_uses_bound_native_attempt_context(self):
         self.plan['options']['post_text'] = '第七集 / One more try!'
         self.post_video = '<video poster="https://pbs.twimg.com/media/custom-cover.jpg"></video>'
         result = await self.publish()
-        self.assertEqual('SUBMITTED_UNVERIFIED', result['state'])
-        self.assertNotIn('id', result)
+        self.assertEqual('SUBMISSION_VERIFIED', result['state'])
+        self.assertEqual(self.post, result['id'])
+        self.assertIn('correlation, not independent verification', result['note'])
         self.assertEqual(1, len(self.final))
 
     async def test_a_video_elsewhere_on_the_page_is_not_this_posts(self):
