@@ -20,6 +20,12 @@ You finish a video, and then you still have to write titles for every platform, 
 
 > **All five platforms have real publishing records.** This is still 0.16.0 alpha, and some features haven't been tried on a real account. The [guide](docs/GUIDE_EN.md#-what-it-does-and-how-far-each-part-has-been-tried) records the tested scope for each version and feature.
 
+## Before you start
+
+- Use an AI assistant that can run commands on your computer, such as Codex or Claude Code. A chat-only window is not enough.
+- In mainland China, first arrange reliable access to YouTube, Instagram or X, with a working VPN if needed.
+- X needs both a subscription and actual Media Studio access. Paying alone does not establish access.
+
 ## 🚀 Start with one message
 
 **Send this to your AI assistant**, with your own file names and description. It installs itself and walks you through signing in:
@@ -27,11 +33,13 @@ You finish a video, and then you still have to write titles for every platform, 
 ```text
 Please install https://github.com/whitecarp/publishops-crosscast
 Run vpub doctor, and read the skill file it names.
-Publish final.mp4 publicly to Bilibili, YouTube, Douyin, Instagram, and X, with cover.jpg as the cover and titles and descriptions written for each platform.
+Publish final.mp4 publicly to [my chosen platforms], with cover.jpg as the cover and titles and descriptions written for each platform.
 The video is in English, (was / wasn't) made with AI, and is about: (one sentence)
 ```
 
 The first time on each platform, you scan the QR code or enter the code yourself. After that it publishes in the background.
+
+[New to computers? Use this longer message](docs/GUIDE_EN.md#a-longer-prompt-for-beginners), including a first-release preview and safe feedback steps.
 
 <details>
 <summary>Or install it yourself in a terminal</summary>
@@ -113,7 +121,7 @@ It's your own account, so these are on by default:
 <details>
 <summary>Do I have to approve each release?</summary>
 
-No. Asking it to publish is the authorization: it submits with the platforms, accounts and visibility you named, and only asks again if the content, account, platform, audience or scope changes. To look first, say "don't post yet".
+For your first publication, the assistant shows a local dry run and waits for you to say publish. After that it follows your publishing requests; saved show-first means reviewing each current plan. Changes to content, accounts, platforms, audience or scope still need confirmation. You can always ask to preview. Preferences are not standing authorization to publish.
 
 </details>
 

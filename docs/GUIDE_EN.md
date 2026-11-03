@@ -6,6 +6,39 @@
 
 The full detail: how far each feature has been tried, what to know about each platform, installing, and the manual flow.
 
+## A longer prompt for beginners
+
+Replace the brackets with your details and give the whole message to an assistant that can run local commands. Leave unknowns blank so it can ask only what is missing. Never fill in passwords.
+
+> I'm new to computers. Please guide me through my first publication in plain language.
+>
+> Install CrossCast from https://github.com/whitecarp/publishops-crosscast in its own Python virtual environment, without changing other Python programs' environments.
+>
+> Run vpub doctor, read the skill it names, and explain any issues. Use saved preferences and this conversation; ask only the unknown setup choices together: which platforms I want and have accounts on; for YouTube/Instagram/X, whether I'm in mainland China and have reliable access or a working VPN; for X, whether I have both a subscription and actual Media Studio access; and whether I want to review every post before it goes out.
+>
+> Remember only my chosen platforms and show-first preference, not account names, location or VPN details. Run onboard only for those usable platforms. Leave X out if I lack either its subscription or actual Media Studio access.
+>
+> I will sign in myself on the official pages. Never ask me to send passwords, cookies, tokens or verification codes. Stop for platform checks and wait for me; do not keep retrying sign-in.
+>
+> Video: [full path]; cover: [path, or none]; platforms: [my choices]; video language: [language]; AI-generated: [yes/no]; content: [what actually happens]; audience: [public/private/account setting]. Ask for necessary missing details rather than defaulting to every platform or public visibility.
+>
+> Use prepare to write the copy and fit the covers, preserving my originals. Instagram and X follow the account's visibility; Instagram's cover is changed on my phone. Run go --dry-run locally and show the copy, accounts, visibility, AI declaration and cover plan. For this first publication, wait until I have reviewed it and say publish.
+>
+> After that, follow my publishing requests. Review every plan only if I save show-first or ask to preview; material changes still need checking. Preferences are not standing publishing authorization. CLI commands must not ask interactive questions halfway through execution.
+>
+> Give me links to verified works and clearly separate uncertain results. After a timeout, inspect the original receipt and use its recovery path; never blindly repost.
+>
+> Finally create a feedback folder outside the data directory containing only redacted doctor/status/relevant receipts excerpts, reproduction steps and necessary redacted chat excerpts. Outputs may contain account IDs, private copy and file paths; do not copy them directly. Never export the whole data folder, browser profiles, full chat or raw receipts. Let me review the files and decide whether to share them.
+
+The assistant can save your actual choices with `vpub preferences --platforms youtube,instagram --show-first yes`; those platforms are examples, not defaults. `vpub preferences --show-first no` turns off review on later publications; the assistant still shows the first one. Supply only the options you want to change. With show-first enabled, confirmation is for the current plan only; a changed plan needs a new confirmation. Commands do not pause for interactive questions.
+
+### Redact feedback before sharing
+
+1. Inspect `vpub doctor`, `vpub status` and `vpub receipts` locally. Do not publish or sign in again to collect feedback. **These outputs are not automatically redacted and may contain account/work IDs, private text and file paths.**
+2. Create a feedback folder outside CrossCast's data directory (`VPUB_HOME`). Include versions, OS, commands, reproduction steps, expected/actual results, error codes and only the relevant redacted excerpts. Replace account names, IDs, work links, email addresses, private text and local paths with consistent placeholders; remove passwords, cookies, tokens and verification codes.
+3. Include only necessary, individually redacted chat excerpts. **Never submit the entire data directory, browser profiles, a full chat export, raw logs or unredacted receipts.**
+4. Open and inspect every feedback file yourself before deciding to share it on [GitHub Issues](https://github.com/whitecarp/publishops-crosscast/issues). The assistant should not upload feedback automatically.
+
 ## 🎬 What publishing one video looks like
 
 > **You**: Publish final.mp4 publicly to all five platforms, and keep the titles casual.
@@ -28,7 +61,7 @@ This table covers the free version only. Some real-account records come from ear
 
 **When posting**
 
-- **Public post, read back**: ✅ YouTube, Douyin, X · 🟡 Bilibili, Instagram
+- **Public post, read back**: ✅ YouTube, Douyin, Instagram, X · 🟡 Bilibili
 - **Scheduled post**: 🟡 Bilibili, YouTube, Douyin, X
 - **Draft or preview**: ✅ Bilibili, YouTube, Douyin, X · 🟡 Instagram
 - **Add to a collection or playlist at upload**: 🟡 Bilibili, YouTube, Douyin
@@ -49,7 +82,7 @@ This table covers the free version only. Some real-account records come from ear
 
 <sub>A ✅ means the row's main action has run at least once, not that every detail has been tried. On YouTube, for example, managing a comment has been confirmed for pinning and unpinning. A direct message is confirmed as visible to the sender, not as delivered.</sub>
 
-<sub>🟡 features are built and tested against fake platforms, but real pages may still hold problems nobody has found. Instagram's public post was read back independently, but CrossCast's own receipt is unverified, so it's marked 🟡 too. The evidence for each mark is in the [validation record](VALIDATION_EN.md), and the full scope is in [Features](FEATURES_EN.md).</sub>
+<sub>🟡 features are built and tested against fake platforms, but real pages may still hold problems nobody has found. The evidence for each mark is in the [validation record](VALIDATION_EN.md), and the full scope is in [Features](FEATURES_EN.md).</sub>
 
 <sub>A platform missing from a row doesn't have that feature, or the free version doesn't offer it. No scheduled post has reached its publish time yet.</sub>
 
@@ -169,7 +202,7 @@ Test records are past real publications; they do not mean publishing will succee
 - **Bilibili** (Bilibili app QR code, the included bili-cli): the only published uploads so far were made by the author directly with an older bili-cli. Publishing and scheduling through CrossCast haven't been tried, and `vpub capabilities` still marks it untested. Collections and drafts have been confirmed on a real account.
 - **YouTube** (sign in once in the dedicated Chrome, YouTube Studio in the background): two videos went public and were read back on November 2, 2026. Both first left only a draft and went out after it was reopened and Publish was pressed again, and the code that now handles this hasn't run on a real channel. Adding to a playlist at upload and scheduling have only been confirmed in draft uploads.
 - **Douyin** (dedicated official Chrome, CLI background browser): long-term sign-in is still being validated. An upload can't pick up where it broke off, but `vpub resume` can finish from the draft it left. The cover window has stalled in testing. Posting without a cover and setting it on your phone requires your explicit choice; the tool does not omit the cover automatically. On Windows, uploads now use a real Chrome window on a hidden desktop, which hasn't been tried yet. Title and description saves have been tried, but success remains unverified.
-- **Instagram** (dedicated official Chrome, CLI background browser): a video has gone public, but CrossCast's own read-back record is still unverified. Covers can only be changed on a phone, and it can't schedule.
+- **Instagram** (dedicated official Chrome, CLI background browser): videos have gone public and CrossCast read them back itself. Covers can only be changed on a phone, and it can't schedule.
 - **X** (dedicated official Chrome, Media Studio in the background): the account must be subscribed and able to open Media Studio. Accounts without it are limited to 140-second, 512 MB videos, which this tool does not support. X currently serves two versions of its website, and CrossCast handles both. All real-account records are on the earlier one; the rebuilt one hasn't been tried on a signed-in account.
 - **TikTok**: paused. The CLI refuses TikTok sign-in and posting requests.
 - **Not available yet**: TikTok (suspended), YouTube cards and clickable end screens, automatic or bulk messages and likes, and full history export.
@@ -236,7 +269,7 @@ Requires Python 3.10–3.14. Neither command signs in or publishes. See [Install
 
 </details>
 
-Requires Python 3.10–3.14 and Google Chrome. The Windows installer has been tested; macOS and Linux have not been validated.
+Requires Python 3.10–3.14 and Google Chrome. The Windows installer has been tested; macOS and Linux have not been validated. It's best installed in its own Python virtual environment, which the Windows installer creates for you, so it doesn't change packages other Python programs use.
 
 The install command above uses the current main branch. The existing v0.16.0 release downloads still require Python 3.10–3.12.
 
@@ -328,7 +361,7 @@ Optional: `vpub go final-crosscast --workers 2` (or `vpub publish ready.json --c
 <details>
 <summary><b>Do I have to approve each release?</b></summary>
 
-No. Asking it to publish is the authorization: it submits with the platforms, accounts and visibility you named, and only asks again if the content, account, platform, audience or scope changes. To look first, say "don't post yet", or run a `--dry-run`.
+For your first publication, the assistant shows a local dry run and waits for you to say publish. After that it follows your publishing requests; saved show-first means reviewing each current plan. Changes to content, accounts, platforms, audience or scope still need confirmation. You can always ask to preview. Preferences are not standing authorization to publish.
 
 </details>
 

@@ -195,6 +195,13 @@ h1 span { display: block; text-wrap: balance; }
 .lead { margin-top: 22px; max-width: 32em; font-size: 19px; line-height: 1.75; color: var(--ink-2); }
 :root:lang(en) .lead { max-width: 36em; font-size: 18px; line-height: 1.6; }
 
+.before-start { margin-top: 24px; padding: 16px 18px; border-left: 3px solid var(--link); background: var(--tint); border-radius: 0 var(--r-ctl) var(--r-ctl) 0; }
+.before-start h2 { font-size: 17px; line-height: 1.5; }
+.before-start ul { margin: 8px 0; padding-left: 1.25em; }
+.before-start li, .before-start p { font-size: 14px; line-height: 1.75; overflow-wrap: break-word; line-break: strict; }
+.before-start li + li { margin-top: 6px; }
+.before-start p { color: var(--ink-2); }
+
 .prompt-box {
   margin-top: 28px; padding: 14px 16px 16px;
   background: var(--sheet);
