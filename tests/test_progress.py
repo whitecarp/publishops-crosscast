@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from video_publisher import adapters, browser_broker as broker, browser_runtime as runtime, comment_actions, direct_messages, engagement, progress
 from video_publisher.browser_backends import Transaction
 from video_publisher.core import atomic_json, home, read_json
+from video_publisher.process_lock import alive
 
 PRIVATE = "SECRET-VIEWER-WORDS"
 OWNER = "SecretOwner"
@@ -132,7 +133,7 @@ class Context:
         return {"cookies": []}
 
     async def close(self):
-        return None
+        remember(closed_pid=os.getpid())
 
 
 class Chromium:
@@ -175,7 +176,7 @@ class Temporary(unittest.TestCase):
         temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
-        env = patch.dict(os.environ, {"VPUB_HOME": str(self.root / "runtime")})
+        env = patch.dict(os.environ, {"VPUB_HOME": str(self.root / "runtime"), "BILI_CLI_HOME": str(self.root / "bili")})
         env.start()
         self.addCleanup(env.stop)
         progress._pressed.clear()
@@ -624,10 +625,27 @@ class RealProcessTests(Temporary):
     def test_a_youtube_session_nobody_asks_again_closes_itself_soon(self):
         self.assert_one_answer(self.vpub("works", "youtube", idle=1))
         path = broker.state_path("youtube", "default")
+        pid = read_json(path)["pid"]
+        self.assertIs(type(pid), int)
+        self.assertGreater(pid, 0)
+        self.assertNotEqual(os.getpid(), pid)
+        closed = {"state": "closed", "pid": pid}
         deadline = time.monotonic() + 30
-        while path.exists():
-            self.assertLess(time.monotonic(), deadline)
+        while True:
+            # The broker retains its closed marker. That alone is not proof
+            # that the context closed or that its owning child actually exited.
+            marker = read_json(path)
+            try:
+                context_closed = read_json(self.state).get("closed_pid") == pid
+            except (OSError, ValueError):
+                context_closed = False  # The fake context may be writing its acknowledgement.
+            exited = not alive(pid)
+            if marker == closed and context_closed and exited:
+                break
+            self.assertLess(time.monotonic(), deadline,
+                            f"Idle close incomplete: marker={marker.get('state')}, context_closed={context_closed}, child_exited={exited}")
             time.sleep(0.2)
+        self.assertEqual(closed, read_json(path))
         self.assertTrue(broker.wait_for_lock("youtube", "default", 15))
 
     def test_a_command_with_no_browser_says_nothing(self):
