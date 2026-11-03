@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import tempfile
 import time
+import unicodedata
 from datetime import datetime, timezone
 
 PLATFORMS = ("bilibili", "youtube", "douyin", "instagram", "x")
@@ -210,6 +211,43 @@ def x_post_text(title, description, tags, ai_generated, content_language="und"):
     if ai_generated:
         parts.append({"zh-hans": "AI 生成内容 / AI-generated", "zh-hant": "AI 生成內容 / AI-generated"}.get(content_language.lower(), "AI-generated"))
     return "\n\n".join(p for p in parts if p)
+
+
+X_POST_LIMIT = 280
+# X counts most Latin-script text, punctuation and spaces as 1 and everything else as 2, Chinese,
+# Japanese, Korean and emoji included, and a link as 23 whatever its length.
+X_LINK = re.compile(r"(?:https?://)?(?:[\w-]+\.)+([^\W\d_]{2,})(?::\d+)?(?:/\S*[^\s.,!?;:)\]}'\"])?")
+
+
+def x_weighted_length(text):
+    """Offline preflight estimate using the twitter-text port, not a home-grown URL/emoji parser.
+
+    Its bundled tables can lag the site. Unrecognized short domain candidates
+    reserve at least 23, while unrecognized emoji retain their code-point weights.
+    This can overestimate; X's visible composer remains authoritative.
+    """
+    import warnings
+    try:
+        # Lazy: other platforms and CLI startup do not load the parser's tables.
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="pkg_resources is deprecated as an API.*", category=UserWarning)
+            from twitter_text import parse_tweet, extract_urls_with_indices
+            from twitter_text.has_invalid_characters import has_invalid_characters
+    except ImportError as exc:
+        raise VpubError("missing_dependency", "X text preflight needs the installed text parser.", "Reinstall CrossCast with its dependencies; nothing was uploaded.") from exc
+    text = unicodedata.normalize("NFC", text).replace("\r\n", "\n").replace("\r", "\n")
+    if has_invalid_characters(text):
+        raise VpubError("invalid_description", "X text contains an unsupported Unicode character; nothing was uploaded.")
+    try:
+        total = parse_tweet(text).weightedLength
+    except UnicodeError as exc:
+        raise VpubError("invalid_description", "X text contains an invalid Unicode sequence; nothing was uploaded.") from exc
+    urls = [entry['indices'] for entry in extract_urls_with_indices(text)]
+    for link in X_LINK.finditer(text):
+        # This fallback may only add an allowance, never shorten text into a URL.
+        if not any(start < link.end() and end > link.start() for start, end in urls):
+            total += max(0, 23 - parse_tweet(link.group(0)).weightedLength)
+    return total
 
 
 def title_limit(platform, method=None):
@@ -442,8 +480,12 @@ def load_plan(path, selected=None):
             plans[platform]["post_text"] = x_post_text(title, desc, tags, v["ai_generated"], plans[platform].get("metadata_language", plans[platform]["content_language"]))
             if platform == "instagram" and len(plans[platform]["post_text"]) > 2200:
                 raise VpubError("invalid_description", "Instagram captions are limited to 2200 characters.")
-            # The actual website counter (URL/emoji/CJK weights, account plan)
-            # is authoritative. Never silently truncate or assume Premium.
+            # Caught here, before any upload: a field run uploaded a film whose post X then wouldn't let out.
+            if platform == "x" and (count := x_weighted_length(plans[platform]["post_text"])) > X_POST_LIMIT:
+                raise VpubError("x_text_too_long", f"CrossCast's preflight estimate comes to {count}, over X's {X_POST_LIMIT}. The title, description, tags and AI line all count. "
+                                "Chinese, Japanese and Korean characters and recognized emoji count 2; recognized URLs count 23. Unrecognized emoji or domain names can be overestimated; X's composer remains authoritative.",
+                                "Shorten X's title or description and run it again. Keep required credits: if they don't fit, ask the user. Nothing was uploaded.")
+            # X's own counter still has the last word: the route stops before Post if it disagrees. Never silently truncate or assume Premium.
         if platform == "bilibili":
             plans[platform]["method"] = v.get("method", "cli")
         if "widgets" in v:

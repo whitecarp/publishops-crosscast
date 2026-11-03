@@ -2,7 +2,7 @@
 from copy import deepcopy
 from pathlib import Path
 import re
-from .core import Ledger, VpubError, atomic_json, digest, douyin_caption, file_sha, home, now, publication_lock, read_json, receipt_turn, stop_check, title_limit
+from .core import Ledger, VpubError, X_POST_LIMIT, atomic_json, digest, douyin_caption, file_sha, home, now, publication_lock, read_json, receipt_turn, stop_check, title_limit, x_weighted_length
 from .language_policy import route
 from .safety import check_public_text, public_text_flags
 
@@ -39,6 +39,8 @@ def validate_patch(platform, value, verifying=False, ai_generated=True):
             if ai_generated is None: p['keep_ai_line']=True
             if platform=='instagram' and len(p['post_text'])>2200:
                 raise VpubError('description_too_long','Instagram caption exceeds 2200 characters; preserve both languages when shortening.')
+            if platform=='x' and not verifying and (count := x_weighted_length(p['post_text']))>X_POST_LIMIT:
+                raise VpubError('x_text_too_long',f"CrossCast's preflight estimate comes to {count}, over X's {X_POST_LIMIT}. Unrecognized emoji or domain names can be overestimated. Shorten it; nothing was saved.")
         if 'tags' in p and (not isinstance(p['tags'],list) or not all(isinstance(t,str) and t.strip() and not any(c in t for c in ',\r\n\x00') for t in p['tags'])
                             or (platform=='bilibili' and not 1<=len(p['tags'])<=10)):
             raise VpubError('invalid_tags','Tags are a list of nonempty words without commas or new lines; Bilibili takes 1 to 10.')

@@ -3,7 +3,7 @@ from pathlib import Path
 import re
 from urllib.parse import urlsplit
 from . import x_pages
-from .core import VpubError, atomic_json, file_sha, now, stop_check
+from .core import VpubError, X_POST_LIMIT, atomic_json, file_sha, now, stop_check, x_weighted_length
 from .browser_runtime import failure_record, look_until, risk_check, unique_visible, visible
 from .browser_backends import choose_file, douyin_card_words, douyin_editor_address, douyin_editor_boxes, douyin_type_caption, normalize, work_url
 from .progress import stage
@@ -101,6 +101,8 @@ async def execute(page, platform, identity, payload):
             return save(state='EDIT_VERIFIED',unchanged=True,url=url,platform_writes=0)
         if payload.get('verify_only'):
             return save(state='EDIT_SUBMITTED_UNVERIFIED',url=url,platform_writes=0)
+        if (count := x_weighted_length(wanted)) > X_POST_LIMIT:
+            raise VpubError('x_text_too_long',f"CrossCast's preflight estimate comes to {count}, over X's {X_POST_LIMIT}, including any preserved AI line. Shorten it; nothing was saved.")
         await x_pages.open_menu(page,await unique_visible(post.locator('button[aria-label="More"], '+x_pages.MORE),'post More'))
         edit=await visible(page.get_by_role('menuitem',name=x_pages.EDIT_POST))
         if edit is None:

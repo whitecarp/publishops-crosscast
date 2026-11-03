@@ -7,7 +7,7 @@ from copy import deepcopy
 from pathlib import Path
 import re
 
-from .core import PLATFORMS, VpubError, atomic_json, digest, load_plan, read_json, title_limit
+from .core import PLATFORMS, VpubError, X_POST_LIMIT, atomic_json, digest, load_plan, read_json, title_limit
 
 from .categories import STUDIO_CATEGORIES
 from .language_policy import route
@@ -35,7 +35,8 @@ def request(manifest, source=None, allow_links=False):
                    **({"chapters": platforms[p]["chapters"]} if platforms[p].get("chapters") else {})} for p in platforms}},
                "targets": {p: {**routes[p],
                                "title_limit": title_limit(p, platforms[p].get("method")),
-                               "description_limit": 1000 if p == "douyin" else 5000 if p == "youtube" else 2000,
+                               "description_limit": 1000 if p == "douyin" else 5000 if p == "youtube" else X_POST_LIMIT if p == "x" else 2000,
+                               **({"post_limit": X_POST_LIMIT, "post_counting": "The title, description, tags and AI line are one post. Chinese, Japanese and Korean characters and recognized emoji count 2; URLs count 23; most Latin characters and spaces count 1. CrossCast checks the complete post with an offline parser; unrecognized emoji and domain names may be overestimated."} if p == "x" else {}),
                                "chapters": platforms[p].get("chapters", []),
                                **({"category_selection": {"required": True, "current_id": platforms[p].get("category_id"), "choices": {number: name.title() for number, name in STUDIO_CATEGORIES.items()}}} if p == "youtube" else {})}
                            for p in platforms}, "allow_links": allow_links,
@@ -45,6 +46,7 @@ def request(manifest, source=None, allow_links=False):
                    "Bilibili/Douyin: Chinese content (Simplified or Traditional) gets Simplified Chinese only; any other content language gets the original language followed by Simplified Chinese. YouTube/Instagram/X: English content gets English only; any other language gets the original language followed by English. This is automatic, not an opt-in flag.",
                    "For bilingual output include description_parts as two nonempty strings in source/target order. description must equal those parts joined by two newlines. Keep both languages within the platform limit; shorten both together rather than dropping the source language. Titles should fit platform limits and preserve episode identity. Matching-language copy is not duplicated.",
                    "No links by default. Remove platform-specific BV numbers and timestamps used solely as cross-platform source references, retaining the relevant context in plain words. Do not alter subtitle timing/chapter markers without distinguishing them.",
+                   "X takes one post: the title, description, tags and the AI line CrossCast adds must fit post_limit as post_counting describes, which bilingual text reaches fast. Never drop required credits to fit; if they don't fit, ask the user.",
                    "No new video/audio/subtitles are rendered. content_language remains the video's original language; metadata_language records the written text's target.",
                    "For YouTube also return category_id as a string. Preserve an explicit current_id; otherwise choose from category_selection.choices by the actual script/content, not merely the use of AI. Animated narrative, tutorials, and technical demonstrations need different judgments. Do not silently use People & Blogs. If content is insufficient, obtain context before applying.",
                    "Return request_id plus platforms with title, description, tags, metadata_language and metadata_mode; YouTube also requires category_id. If a target contains chapters, additionally return chapters with translated titles but identical start_seconds. Never invent chapter timing. A human review is needed only if the user chose it or host policy requires it; reuse standing publication authorization."]}
