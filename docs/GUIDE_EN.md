@@ -310,6 +310,8 @@ vpub verify RECEIPT_KEY
 
 `--dry-run` does not upload. Your AI assistant writes `response.json` following the template inside `request.json`. After an interruption, continue with `vpub resume RECEIPT_KEY`; `vpub receipts` lists every receipt.
 
+Optional: `vpub publish ready.json --confirm <confirmation-code> --workers 2` lets two selected browser platforms run at once. The default is `--workers 1`; Bilibili, API and host-browser routes remain serial. Platform warnings stop all routes. Ctrl+C records a stop and waits for active workers to finish stopping; receipts for anything already submitted are retained. Concurrency and cancellation have offline tests; real upload speed, memory use and hidden-window behavior with two platforms still need a live check.
+
 </details>
 
 ## 💰 Costs and privacy
