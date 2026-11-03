@@ -4,6 +4,12 @@ The full rules, and what each platform has shown on real accounts. [SKILL.md](..
 
 Use the installed `vpub` CLI. Read `vpub --help`, `vpub capabilities`, and the relevant subcommand's `--help` before constructing unfamiliar commands. If the command is missing, use the installation instructions in the user's CrossCast checkout; do not invent installer URLs or claim a successful installation without running the CLI.
 
+## Host-limited sign-in
+
+Browser `vpub auth login PLATFORM --method browser` starts a tracked worker and returns promptly. Leave its official Chrome window open for the person. Check with `vpub auth status PLATFORM --method browser --wait 5`; use the same `--account` on both commands if selected. `STARTING`, `LOGIN_PENDING` and `VERIFICATION_REQUIRED` do not authorize another login. The person handles any check on the official page.
+
+If the host stops the waiting command but the worker survives, check the same job. If the worker also stops, `login_interrupted` means completion is unverified, not that a saved sign-in expired. Close any leftover CrossCast sign-in window, then run login once to reuse the retained profile. If the host repeatedly terminates it, have the person run these commands in their own terminal. Do not change host controls, copy credentials, clear STOP, or repeatedly restart. This recovery was tested with offline synthetic processes; it is not a live WorkBuddy compatibility claim.
+
 ## One video, step by step
 
 `vpub prepare` and `vpub go` run these in order. Run them by hand only when you need to stop between steps.

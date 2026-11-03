@@ -5,13 +5,13 @@ description: Use the vpub CLI for CrossCast publishing, copy, covers, schedules,
 
 # PublishOps CrossCast
 
-Run `vpub doctor` first. If missing, install per the user's README in its own Python virtual environment and verify. CLI output is JSON on stdout, progress on stderr; read `--help` for unfamiliar commands.
+Run `vpub doctor` first. If missing, follow the user's README to install in its own venv and verify. Commands return JSON on stdout, progress on stderr; read unfamiliar commands' `--help`.
 
 See [details](references/details.md) for platform limits and recovery.
 
 ## First setup and review preference
 
-For publishing setup after doctor, use its `preferences` and the conversation. In one short message ask only unknown setup choices: wanted platforms and whether the user has accounts; for YouTube/Instagram/X, only whether the websites are accessible (not location or access method); for X, both subscription AND actual Media Studio access; and whether to show every post first. Ask availability, not account names or secrets; do not repeat known answers. Leave X out without both prerequisites. Doctor does not prove network or account access.
+After doctor, use its `preferences` and the conversation. In one short message ask only unknown setup choices: wanted platforms and whether the user has accounts; for YouTube/Instagram/X, only whether the websites are accessible (not location or access method); for X, both subscription AND actual Media Studio access; and whether to show every post first. Ask availability, not account names or secrets; do not repeat known answers. Leave X out without both prerequisites. Doctor does not prove network or account access.
 
 Save chosen platforms/show-first with `vpub preferences --platforms youtube,instagram --show-first yes` (example only). Omitted options stay unchanged; null is unknown. `--show-first no` disables later review on each platform, never its first review. Store no account names, location or access details. Run `vpub onboard --platforms PLATFORMS` for chosen usable platforms only. Ask in the host conversation; CLI commands never prompt.
 
@@ -37,7 +37,7 @@ vpub go final-crosscast
 
 ## Signing in
 
-The user signs in on official pages. Bilibili uses QR through the included bili-cli; other supported platforms use dedicated Chrome profiles, then run in the background. Never request passwords, PINs, cookies or codes, or import host-browser credentials. A new-device check or recovery stops that platform until the user completes it; never answer for them or repeatedly restart login.
+The person signs in on official pages: Bilibili QR, dedicated Chrome otherwise. Never collect credentials/PINs/codes, import profiles, or answer checks. Browser login returns promptly; check `vpub auth status PLATFORM --method browser --wait 5`. Pending means wait. On `login_interrupted`, close its leftover window, then login once with the saved profile. If repeatedly stopped, use the person's terminal, never bypass host controls. [Details](references/details.md#host-limited-sign-in).
 
 Packaged Windows AI apps can have separate copies of `%LOCALAPPDATA%`. A sign-in in another app may therefore be unavailable here, not expired. Explain; the user can sign in here or set `VPUB_HOME` to a normal shared folder. Never copy browser profiles. TikTok is unsupported.
 
