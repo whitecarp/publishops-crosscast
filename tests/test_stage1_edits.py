@@ -508,6 +508,8 @@ class LostCheckTests(Temporary):
 
     def send(self, platform, value, verify_only, cut_off):
         editor, post, page = MagicMock(), MagicMock(), MagicMock()
+        page.url = 'https://x.com/owner/status/1234567890'
+        post.count = AsyncMock(return_value=1)
         editor.inner_text = AsyncMock(return_value="Old words")
         post.first.wait_for = page.goto = AsyncMock()
 
@@ -516,7 +518,8 @@ class LostCheckTests(Temporary):
                 self.pressed += 1
                 return {"state": "EDIT_VERIFIED", "platform_writes": 1}
             with patch.object(youtube_studio, "edit_fields", new=AsyncMock(return_value=(MagicMock(), MagicMock()))), patch.object(browser_edits, "instagram_caption_editor", new=AsyncMock(return_value=editor)), \
-                    patch.object(browser_edits.x_pages, "post_row", return_value=post), patch.object(browser_edits.x_pages, "post_fields", new=AsyncMock(return_value={"text": "Old words"})):
+                    patch.object(browser_edits.x_pages, "post_row", return_value=post), patch.object(browser_edits.x_pages, "post_fields", new=AsyncMock(return_value={"text": "Old words", "id": "1234567890", "author": OWNER, "is_ad": False})), \
+                    patch.object(browser_edits, "risk_check", new_callable=AsyncMock):
                 answer = asyncio.run(browser_edits.execute(page, platform, OWNER, options))
             if cut_off:
                 raise cut_off("The answer never got back.")

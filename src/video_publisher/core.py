@@ -205,10 +205,28 @@ def language_tag(value):
     return value
 
 
-def x_post_text(title, description, tags, ai_generated, content_language="und"):
+X_AI_LINE = re.compile(r'(?:\A|\s)((?:AI 生成[内內]容\s*/\s*)?AI[- ]generated)\s*\Z', re.I)
+
+
+def x_post_text(title, description, tags, ai_generated, content_language="und", *, existing_text=None):
     # X has one post body, not separate title/description/tag fields.
+    previous_ai = X_AI_LINE.search(existing_text or '')
+    proposed_ai = X_AI_LINE.search(description) if existing_text is not None else None
+    if proposed_ai:
+        description = description[:proposed_ai.start()].rstrip()
+    if tags is None:
+        # Omitted tags in an edit keep the separate trailing hashtag block this
+        # builder writes. Title/description are complete replacements, including
+        # any inline hashtags. An explicit [] removes the separate block.
+        before = (existing_text[:previous_ai.start()] if previous_ai else existing_text) or ''
+        block = re.search(r'(?:\A|\n)[ \t]*(#\w+(?:\s+#\w+)*)\s*\Z', before.rstrip())
+        tags = block[1].split() if block else []
     parts = [title, description, " ".join("#" + t.lstrip("#") for t in tags)]
-    if ai_generated:
+    if previous_ai:
+        parts.append(previous_ai[1])
+    elif proposed_ai:
+        parts.append(proposed_ai[1])
+    elif ai_generated:
         parts.append({"zh-hans": "AI 生成内容 / AI-generated", "zh-hant": "AI 生成內容 / AI-generated"}.get(content_language.lower(), "AI-generated"))
     return "\n\n".join(p for p in parts if p)
 
