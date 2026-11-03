@@ -15,9 +15,10 @@ MENU = 'ytcp-menu-service-item-renderer,tp-yt-paper-item,[role=menuitem]'
 SAME = '(node, retained) => node === retained && node.isConnected'
 CONTAINS = '(node, child) => node.isConnected && child.isConnected && node.contains(child)'
 GONE = re.compile(r'^(?:This video has been removed by the uploader|This video has been deleted'
-                  r'|此视频已被上传者删除|此影片已由上傳者移除)[.!。]?$')
+                  r'|此视频已被上传者(?:删除|移除)|此影片已由上傳者移除)[.!。]?$')
 # Only the player's own error, never descriptions, comments or generic unavailable text.
-GONE_PANEL = 'ytd-player-error-message-renderer #reason'
+GONE_PANEL = ('ytd-player-error-message-renderer #reason,'
+              'ytd-watch-flexy #single-column-container ytd-background-promo-renderer .promo-body-text')
 EMPTY = re.compile(r'^(?:No content available|没有可显示的内容|沒有可顯示的內容)$')
 LIST_CLEAN = """nodes => {
   const shown = e => !!e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden'
@@ -152,14 +153,25 @@ async def own_list(page, target):
 async def exact_gone(page, target):
     await guard(page)
     await page.goto(target['url'], wait_until='domcontentloaded', timeout=60000)
-    await guard(page)
-    address = urlsplit(page.url)
-    if (address.scheme != 'https' or address.netloc != 'www.youtube.com' or address.path != '/watch'
-            or parse_qs(address.query, keep_blank_values=True) != {'v': [target['id']]} or address.fragment):
-        return False
-    panels = page.locator(GONE_PANEL)
-    visible = [node for node in await panels.all() if await node.is_visible()]
-    return len(visible) == 1 and bool(GONE.fullmatch((await visible[0].inner_text()).strip()))
+
+    def same_address():
+        address = urlsplit(page.url)
+        return (address.scheme == 'https' and address.netloc == 'www.youtube.com' and address.path == '/watch'
+                and parse_qs(address.query, keep_blank_values=True) == {'v': [target['id']]} and not address.fragment)
+
+    for elapsed in range(0, 10001, 500):
+        await guard(page)
+        if not same_address():
+            return False
+        panels = page.locator(GONE_PANEL)
+        visible = [node for node in await panels.all() if await node.is_visible()]
+        if visible:
+            gone = len(visible) == 1 and bool(GONE.fullmatch((await visible[0].inner_text()).strip()))
+            await guard(page)
+            return gone and same_address()
+        if elapsed < 10000:
+            await page.wait_for_timeout(500)
+    return False
 
 
 async def readback(page, target, writes=0):
