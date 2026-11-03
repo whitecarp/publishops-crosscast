@@ -90,6 +90,7 @@ class RehearsalTests(unittest.TestCase):
         self.assertTrue(result["saved_record_present"])
         self.assertIsNone(result["logged_in"])
         self.assertIn("auth status x", result["next_command"])
+        self.assertFalse(result["next_command_required"])
 
     def test_native_and_unrecognised_addon_formats_stay_unknown(self):
         for platform, method in [("x", "api"), ("youtube", "native")]:
@@ -142,6 +143,27 @@ class RehearsalTests(unittest.TestCase):
         mkv = self.video.with_suffix(".mkv")
         mkv.write_bytes(b"\x1aE\xdf\xa3" + b"x" * 20)
         self.assertFalse(rehearsal.inspect_video(mkv)["playback_verified"])
+
+    def test_headers_do_not_depend_on_the_filename(self):
+        for suffix in (".mp4", ".mov", ".webm", ".mkv"):
+            for data, expected in ((MP4_HEADER, "MP4/MOV"), (b"\x1aE\xdf\xa3" + bytes(20), "WebM/Matroska")):
+                path = self.video.with_suffix(suffix)
+                path.write_bytes(data)
+                with self.subTest(suffix=suffix, expected=expected):
+                    self.assertEqual(expected, rehearsal.inspect_video(path)["container"])
+
+    def test_other_container_headers_and_initial_iso_boxes(self):
+        examples = [(b"RIFF" + bytes(4) + b"AVI " + bytes(16), "AVI"),
+                    (b"FLV\x01\x05\x00\x00\x00\x09" + bytes(4), "FLV"),
+                    ((b"G" + bytes(187)) * 4, "MPEG-TS")]
+        examples += [(b"\x00\x00\x00\x10" + tag + bytes(8), "MP4/MOV")
+                     for tag in (b"uuid", b"pnot", b"udta", b"junk", b"pict", b"ediw", b"prfl", b"sidx", b"styp")]
+        for content, expected in examples:
+            self.video.write_bytes(content)
+            with self.subTest(expected=expected, signature=content[:12]):
+                result = rehearsal.inspect_video(self.video)
+                self.assertEqual(expected, result["container"])
+                self.assertFalse(result["playback_verified"])
 
 
 if __name__ == "__main__":

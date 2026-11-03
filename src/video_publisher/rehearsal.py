@@ -19,20 +19,27 @@ def inspect_video(path):
         raise VpubError("invalid_video", "Video file was not found.", "Choose the exported video file.")
     size = path.stat().st_size
     with path.open("rb") as stream:
-        head = stream.read(32)
-    suffix = path.suffix.lower()
+        head = stream.read(832)
     container = None
-    if suffix in {".mp4", ".mov"} and len(head) >= 16:
+    if len(head) >= 16:
         length = int.from_bytes(head[:4], "big")
         minimum = 8
         if length == 1:
             length, minimum = int.from_bytes(head[8:16], "big"), 16
         if length == 0:
             length = size
-        if minimum <= length <= size and head[4:8] in {b"ftyp", b"moov", b"mdat", b"free", b"wide", b"skip"}:
+        if minimum <= length <= size and head[4:8] in {b"ftyp", b"moov", b"mdat", b"free", b"wide", b"skip",
+                                                     b"uuid", b"pnot", b"udta", b"junk", b"pict", b"ediw", b"prfl", b"sidx", b"styp"}:
             container = "MP4/MOV"
-    elif suffix in {".webm", ".mkv"} and len(head) >= 16 and head[:4] == b"\x1aE\xdf\xa3":
+    if len(head) >= 16 and head[:4] == b"\x1aE\xdf\xa3":
         container = "WebM/Matroska"
+    elif len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"AVI ":
+        container = "AVI"
+    elif len(head) >= 13 and head[:4] == b"FLV\x01" and 9 <= int.from_bytes(head[5:9], "big") <= size:
+        container = "FLV"
+    elif any(len(head) >= offset + step * 3 + 4 and all(head[offset + i * step] == 0x47 for i in range(4))
+             for step, offset in ((188, 0), (192, 4), (204, 0))):
+        container = "MPEG-TS"
     if not container:
         raise VpubError("invalid_video", "This file does not have a supported video-container header; renaming a text or image file is not enough.",
                         "Export a real MP4, MOV, WebM or MKV video and select that file.")
@@ -83,7 +90,9 @@ def sign_in(platform, options):
         command = f"vpub auth login {platform} --account {account} --method {method}"
     return {"method": method, "saved_record_present": saved,
             "state": "NO_SAVED_SIGN_IN" if saved is False else "SAVED_SIGN_IN_UNVERIFIED" if saved else "LIVE_CHECK_REQUIRED",
-            "logged_in": None, "next_command": command}
+            "logged_in": None, "next_command": command,
+            "next_command_required": saved is False,
+            "note": "Sign in when missing. Otherwise a separate auth status is optional: publishing already checks the live account."}
 
 
 def dry_run(plan, media=None):
@@ -103,4 +112,4 @@ def dry_run(plan, media=None):
             "state": "LOCAL_BLOCKERS" if blockers else "LIVE_CHECK_REQUIRED",
             "sign_ins": accounts, "blockers": blockers, "media_check": media,
             "platform_requests": 0, "platform_writes": 0,
-            "note": "No login, account identity, permissions or playback were verified. Saved sign-in files may be stale; live checks still run before a real upload."}
+            "note": "No login, account identity, permissions or playback were verified. Saved sign-in files may be stale. Publishing checks the live account; separate auth status calls are optional."}

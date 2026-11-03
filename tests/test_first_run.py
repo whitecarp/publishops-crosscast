@@ -19,7 +19,7 @@ class FirstRunTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.video = self.folder / "final.mp4"
-        self.video.write_bytes(b"x")
+        self.video.write_bytes(b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + bytes(1024))
 
     def init(self, *more):
         out = self.folder / "publish.json"
