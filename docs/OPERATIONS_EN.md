@@ -421,7 +421,7 @@ The CLI saves account, recipient, preflight state and receipt before one submiss
 
 ## Install and start
 
-Requires Python 3.10–3.12 and Git for Git-URL installation. The [Windows installer](../install.ps1) finds compatible Python, creates an isolated environment and installs dependencies; missing Python must be prepared by the agent. The background browser routes require Google Chrome. Run `vpub setup --install-browser` if it is missing. YouTube API mode requires a Desktop OAuth client JSON; the other three routes do not need platform developer keys. A standalone model API key is not required.
+Requires Python 3.10–3.14 and Git for Git-URL installation. The [Windows installer](../install.ps1) finds compatible Python, creates an isolated environment and installs dependencies; missing Python must be prepared by the agent. The background browser routes require Google Chrome. Run `vpub setup --install-browser` if it is missing. YouTube API mode requires a Desktop OAuth client JSON; the other three routes do not need platform developer keys. A standalone model API key is not required.
 
 ```sh
 pip install "git+https://github.com/whitecarp/publishops-crosscast.git"

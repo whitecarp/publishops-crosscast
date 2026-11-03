@@ -8,7 +8,7 @@ $venvPython = Join-Path $venvPath 'Scripts/python.exe'
 
 function Test-CompatiblePython([string]$Executable, [string[]]$PrefixArgs = @()) {
     if (-not (Test-Path -LiteralPath $Executable)) { return $false }
-    $probeArgs = @($PrefixArgs) + @('-c', 'import sys; sys.exit(0 if (3,10) <= sys.version_info[:2] < (3,13) else 1)')
+    $probeArgs = @($PrefixArgs) + @('-c', 'import sys; sys.exit(0 if (3,10) <= sys.version_info[:2] < (3,15) else 1)')
     & $Executable @probeArgs 2>$null
     return $LASTEXITCODE -eq 0
 }
@@ -27,7 +27,7 @@ if (Test-Path -LiteralPath $venvPath) {
         $venvPython = Join-Path $venvPath 'Scripts/python.exe'
         if (Test-Path -LiteralPath $venvPath) {
             if (-not (Test-Path -LiteralPath $venvPython) -or -not (Test-CompatiblePython $venvPython)) {
-                throw 'The existing fallback environment is incomplete or not Python 3.10-3.12. No runtime data was changed.'
+                throw 'The existing fallback environment is incomplete or not Python 3.10-3.14. No runtime data was changed.'
             }
         }
     }
@@ -42,14 +42,14 @@ if (-not (Test-Path -LiteralPath $venvPython)) {
     if ($foundPython) { $interpreters += @{ Executable = $foundPython.Source; PrefixArgs = @() } }
     $foundPyLauncher = Get-Command py -ErrorAction SilentlyContinue
     if ($foundPyLauncher) {
-        foreach ($minor in 12..10) { $interpreters += @{ Executable = $foundPyLauncher.Source; PrefixArgs = @("-3.$minor") } }
+        foreach ($minor in 14..10) { $interpreters += @{ Executable = $foundPyLauncher.Source; PrefixArgs = @("-3.$minor") } }
     }
 
     $selected = $null
     foreach ($candidate in $interpreters) {
         if (Test-CompatiblePython $candidate.Executable $candidate.PrefixArgs) { $selected = $candidate; break }
     }
-    if (-not $selected) { throw 'Python 3.10-3.12 is required. Install one, then pass -Python FULL_PATH.' }
+    if (-not $selected) { throw 'Python 3.10-3.14 is required. Install one, then pass -Python FULL_PATH.' }
     New-VirtualEnvironment $venvPath $selected.Executable $selected.PrefixArgs
 }
 

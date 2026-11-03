@@ -4,7 +4,7 @@
 
 <br>
 
-<a href="https://github.com/whitecarp/publishops-crosscast/releases"><img src="https://img.shields.io/badge/version-0.16.0%20alpha-f59e0b" alt="Version 0.16.0 alpha"></a> <img src="https://img.shields.io/badge/python-3.10%E2%80%933.12-3776ab" alt="Python 3.10–3.12"> <img src="https://img.shields.io/badge/Windows-tested-555" alt="Windows tested"> <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-17213a" alt="MIT License"></a>
+<a href="https://github.com/whitecarp/publishops-crosscast/releases"><img src="https://img.shields.io/badge/version-0.16.0%20alpha-f59e0b" alt="Version 0.16.0 alpha"></a> <img src="https://img.shields.io/badge/python-3.10%E2%80%933.14-3776ab" alt="Python 3.10–3.14"> <img src="https://img.shields.io/badge/Windows-tested-555" alt="Windows tested"> <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-17213a" alt="MIT License"></a>
 
 [简体中文](README.md) | [繁體中文](README_ZH_TW.md) | **English**
 
@@ -42,7 +42,7 @@ vpub doctor              # see what this machine is missing
 vpub auth login douyin   # sign in once per platform
 ```
 
-Requires Python 3.10–3.12 and Google Chrome. Windows is tested; macOS and Linux have not been verified yet. Full steps are in the [guide](docs/GUIDE_EN.md#-install).
+Requires Python 3.10–3.14 and Google Chrome. Windows is tested; macOS and Linux have not been verified yet. Full steps are in the [guide](docs/GUIDE_EN.md#-install).
 
 </details>
 

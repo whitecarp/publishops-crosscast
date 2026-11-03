@@ -232,11 +232,11 @@ vpub doctor        # 檢查本機相依套件
 vpub capabilities  # 查看這次安裝提供的發布方式；vpub doctor 會檢查缺少什麼
 ```
 
-需要 Python 3.10–3.12。這兩個指令都不會登入或發布。登入和手動流程見[安裝](#-安裝)。
+需要 Python 3.10–3.14。這兩個指令都不會登入或發布。登入和手動流程見[安裝](#-安裝)。
 
 </details>
 
-需要 Python 3.10–3.12 和 Google Chrome。Windows 安裝腳本已經實測；macOS、Linux 尚未驗收。
+需要 Python 3.10–3.14 和 Google Chrome。Windows 安裝腳本已經實測；macOS、Linux 尚未驗收。
 
 <details>
 <summary><b>Windows 安裝腳本</b></summary>
@@ -247,7 +247,7 @@ cd publishops-crosscast
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-腳本會印出 `vpub.exe` 的完整路徑，但不會把它加入 PATH。可以直接使用該路徑，或在腳本建立的虛擬環境中執行指令。如果找不到 Python 3.10–3.12，加上 `-Python` 和合適的 `python.exe` 的完整路徑再執行一次。
+腳本會印出 `vpub.exe` 的完整路徑，但不會把它加入 PATH。可以直接使用該路徑，或在腳本建立的虛擬環境中執行指令。如果找不到 Python 3.10–3.14，加上 `-Python` 和合適的 `python.exe` 的完整路徑再執行一次。
 
 </details>
 
