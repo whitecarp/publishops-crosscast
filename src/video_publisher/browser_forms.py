@@ -1024,28 +1024,34 @@ async def yt_back_from_warning(page):
 
 
 async def yt_press_publish(page, tx, done):
-    """Publish, and see that Studio took it. A field run's first public upload stayed a draft: Publish went in while Studio's checks ran, the form stayed open, and the read-back left. Public uploaders show Studio asking at that point, so this waits for the checks and presses once more, and leaves the draft for vpub resume if that isn't enough."""
+    """Press once, let Studio settle, then read this video's own page.
+
+    A field run published successfully but timed out waiting for the old Save
+    after a checks warning. Neither that button nor a warning proves a retry
+    is safe. Only the independent read-back decides what the press achieved.
+    """
+    from patchright.async_api import Error as BrowserError
     from .youtube_studio import PIN_TICKS, act_and_settle
-    again = tx.receipt['final_submit_attempted']
-    for press in range(2):
-        await act_and_settle(page, lambda: tx.submit(page, done, again=again), PIN_TICKS)
-        answer = await look_until(page, lambda: yt_press_answer(page, done), YT_PRESS_ANSWER_SECONDS * 1000)
-        if answer != 'warned':
-            if not answer:
-                tx.save(after_press=await page.evaluate(YT_OPEN_DIALOGS))
-            return
-        tx.save(checks_warning=await yt_back_from_warning(page))
-        if press:
-            return
-        try:
-            await wait_until(page, lambda: yt_checks_finished(page), seconds=YT_CHECKS_SECONDS, label='YouTube checks')
-        except VpubError as failure:
-            if failure.code != 'processing_timeout':
-                raise
-            return
+    # An explicit resume may already have independently proved this is a draft.
+    again = bool(tx.resuming and tx.receipt.get('still_a_draft') and tx.receipt['final_submit_attempted'])
+    await act_and_settle(page, lambda: tx.submit(page, done, again=again), PIN_TICKS)
+    answer = None
+    for tick in range(YT_PRESS_ANSWER_SECONDS * 2 + 1):
         stop_check('youtube')
-        await wait_until(page, lambda: yt_button_ready(done), seconds=120, label='YouTube final Save enabled')
-        again = True
+        await risk_check(page)
+        try:
+            answer = await yt_press_answer(page, done)
+        except BrowserError:
+            answer = None  # A transitioning control is not publication evidence.
+        if answer:
+            break
+        if tick < YT_PRESS_ANSWER_SECONDS * 2:
+            await page.wait_for_timeout(500)
+    stop_check('youtube')
+    if answer == 'warned':
+        tx.save(checks_warning='Studio showed a checks warning after Save. No second final press was made; read back the recorded video.')
+    elif not answer:
+        tx.save(after_press=await page.evaluate(YT_OPEN_DIALOGS))
 
 
 async def yt_finish_draft(page, tx):
@@ -1164,6 +1170,7 @@ async def yt_final_steps(page, tx, video_id, reopened):
     await yt_press_publish(page, tx, done)
     result = {}
     for attempt in range(8):
+        stop_check('youtube')
         result = await verify(page, 'youtube', tx.identity, tx.receipt)
         if result['state'] == 'SUBMISSION_VERIFIED':
             break

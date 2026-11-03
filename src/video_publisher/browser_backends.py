@@ -581,12 +581,20 @@ def youtube_schedule_passed(schedule):
 async def verify_youtube(page, receipt):
     # Studio opens this page only for the signed-in channel's own videos, so reading it also proves ownership.
     url = work_url("youtube", None, receipt["id"])
+    def on_this_video():
+        address = urlsplit(page.url)
+        return (address.scheme == "https" and address.netloc == "studio.youtube.com"
+                and address.path == f"/video/{receipt['id']}/edit")
+
+    stop_check('youtube')
     await page.goto(f"https://studio.youtube.com/video/{receipt['id']}/edit", wait_until="domcontentloaded", timeout=60000)
     title = page.locator("#title-textarea #textbox").first
     seen = {}
     schedule = receipt.get("schedule")
     passed = youtube_schedule_passed(schedule) if schedule else None
     try:
+        if not on_this_video():
+            raise VpubError('wrong_work', "Studio did not open this attempt's video.")
         await title.wait_for(state="visible", timeout=30000)
         for _ in range(20):
             seen["title"] = normalize(await title.inner_text())
@@ -607,14 +615,18 @@ async def verify_youtube(page, receipt):
     except Exception:
         pass
     await risk_check(page)
+    stop_check('youtube')
+    bound = on_this_video()
     # A field run's Publish left a draft: its page has a button to edit it, and no visibility setting at all.
-    still_a_draft = not seen.get("visibility") and await visible(page.get_by_text(YT_EDIT_DRAFT)) is not None
+    still_a_draft = bound and not seen.get("visibility") and await visible(page.get_by_text(YT_EDIT_DRAFT)) is not None
     expected = {"title": normalize(receipt["title"]) if receipt.get("title") else None,
                 "description": normalize(receipt["expected_text"]) if "expected_text" in receipt else None,
                 # A scheduled video shows its date and time until then, and afterwards it is public like any other.
                 "visibility": ("public" if passed else "scheduled") if schedule else receipt.get("visibility"),
                 "playlists": True if receipt.get("playlists") else None}
     differs = sorted(name for name, value in expected.items() if value is not None and seen.get(name) != value)
+    if not bound:
+        differs.append("video_id")
     if schedule and passed is None:
         differs.append("schedule_time")
     present = bool(seen.get("title")) and not differs
