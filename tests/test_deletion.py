@@ -61,6 +61,37 @@ class DeletionTests(unittest.TestCase):
         self.assertFalse(native_browser.request(self.key)['can_begin'])
         self.assertFalse(native_browser.request(self.key)['final_submission_allowed'])
 
+    def test_new_uncertain_deletion_blocks_legacy_handoffs_and_keeps_verify_available(self):
+        from video_publisher import work_delete as wd, work_delete_state as state
+        def backend(target, operation, path):
+            if operation == 'inspect':
+                return {'id': target['id'], 'identity': target['identity'], 'owned': True, 'present': True}
+            state.begin_press(path, target)
+            raise TimeoutError('synthetic uncertain deletion')
+        code = wd.run(self.key, dry_run=True)['confirmation']
+        with patch.object(wd, 'backend', side_effect=backend):
+            self.assertEqual('DELETE_PENDING', wd.run(self.key, confirm=code, person_approved=True)['state'])
+        ledger = Ledger(); before = ledger.get(self.key); ledger.close()
+        atomic_json(self.evidence, self.proof)
+        cover = self.root / 'cover.jpg'
+        cover.write_bytes(b'synthetic cover')
+        for operation in (
+            lambda: deletion.request(self.key, 'fixture_account', 'fixture_old'),
+            lambda: deletion.record(self.key, self.evidence),
+            lambda: deletion.repost(self.key, self.manifest, self.plan['confirmation'], 'fixture_account', 'fixture_old'),
+            lambda: native_browser.request(self.key),
+            lambda: native_browser.revise(self.key, self.manifest, self.plan['confirmation'], 'fixture_account'),
+            lambda: native_browser.revise_cover(self.key, cover, 'fixture_account'),
+        ):
+            with self.assertRaises(VpubError) as caught:
+                operation()
+            self.assertEqual('deletion_record_exists', caught.exception.code)
+        with patch.object(wd, 'backend', return_value={'id': 'fixture_old', 'identity': 'fixture_account',
+                'page_gone': True, 'list_absent': True, 'list_complete': True, 'fresh': True}) as read:
+            self.assertTrue(wd.run(self.key, verify_only=True)['deleted'])
+            self.assertEqual('verify', read.call_args.args[1])
+        ledger = Ledger(); self.assertEqual(before, ledger.get(self.key)); ledger.close()
+
     def test_repost_preserves_history_and_blocks_duplicate_restart(self):
         self.assertEqual('AGENT_REPORTED_DELETED', self.deleted()['state'])
         self.assertEqual('SKIPPED_EXISTING',cli.publish_plan(self.plan,self.plan['confirmation'], reviewed=True)['results']['instagram']['state'])

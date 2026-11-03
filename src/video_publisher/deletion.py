@@ -8,6 +8,8 @@ from . import native_browser
 
 
 def _work(ledger, key, identity, work_id):
+    from .work_delete_state import refuse_other_action
+    refuse_other_action(key)
     old = ledger.get(key)
     if (not old or old['platform'] != 'instagram'
             or old['data'].get('options', {}).get('method') != 'native'):

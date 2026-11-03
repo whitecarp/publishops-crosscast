@@ -337,6 +337,10 @@ def status(limit=20):
     stop = stop_state()
     last_sync = quietly(lambda: sync_runs(1)["items"], [])
     actions = quietly(lambda: unconfirmed_actions(rows), [])
+    from .work_delete import status_rows as deletion_rows
+    deletions = list(deletion_rows())
+    actions.extend({**row, 'kind': 'work_deletion', 'work_id': row['id']}
+                   for row in deletions if not row['deleted'])
     return {"summary": summary(stop, len(attention), reclaimable, len(actions)), "stop": stop, "workspace_busy": busy,
             "paid_api_addon": adapters.addon_installed(),
             "platforms": {p: {"default_method": adapters.default_method(p), "sign_in": sign_in(p)} for p in PLATFORMS},
@@ -345,6 +349,7 @@ def status(limit=20):
                              "needs_attention": [attempt(row, busy) for row in attention[:limit]],
                              "drafts": [attempt(row, busy) for row in drafts[:limit]]},
             "actions": {"unconfirmed_total": len(actions), "unconfirmed": actions[:limit]},
+            "deletions": {"total": len(deletions), "items": deletions[:limit]},
             "background_browsers": background_browsers(),
             "messages_pending": quietly(lambda: messages(limit=1)["matching_total"]),
             "last_sync": last_sync[0] if last_sync else None,

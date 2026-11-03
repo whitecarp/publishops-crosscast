@@ -39,6 +39,28 @@ For the explicit native-browser handoff, `vpub browser authorize-publish KEY --i
 - Use the production cover for the correct episode. Douyin and Instagram share the approved portrait cover; respect safe areas. With no image generator, look at the cover yourself, choose the parts that matter, and build it with `vpub covers portrait SOURCE --box x,y,width,height --out FILE`; look at the result before using it. Preserve Instagram's original video aspect ratio; do not insert a cover frame or force a portrait canvas. Explain any remaining mobile cover adjustment.
 - Gmail notifications (paid add-on) are optional, off by default, and require an explicit user request and a connected Gmail send tool. Claim with that tool's exact name, call it once with the returned `message` (or `arguments` when given), then record its response. Do not substitute Outlook, SMTP or SMS.
 
+## Delete one published post
+
+Use a verified CrossCast publication receipt key, not a platform ID, URL, adopted work, draft or uncertain publication. Preview the target first; get one separate explicit yes for each post. Permission to publish is not permission to delete.
+
+```sh
+vpub delete RECEIPT_KEY --dry-run
+# Show the exact target and wait for the person's explicit yes for this post.
+vpub delete RECEIPT_KEY --confirm CODE --person-approved
+```
+
+The preview contacts no platform. Its code binds the exact target; the flag attests the person's approval and is not independent proof. Never add it automatically or reuse another post's approval.
+
+The original publication history stays intact; `vpub status` lists deletion records under `deletions`. If the outcome is uncertain, use only `vpub delete RECEIPT_KEY --verify-only` to read back; never repeat the deletion.
+
+```sh
+vpub delete RECEIPT_KEY --verify-only
+```
+
+Verified deletion requires explicit evidence that this exact post is gone and a fresh, complete own-works list without it. Generic unavailability, permission errors and network failures do not count.
+
+The four browser deletion routes for YouTube, Douyin, Instagram and X are built but untried on real accounts. Bilibili is unsupported: there is no verified own-video deletion API or explicit gone-response contract. Private Douyin works without a verifiable exact ID are refused. Nonempty X and Instagram profiles cannot yet prove a complete list, so deletion stays pending even if the post page appears gone. Future live tests need separate user approval.
+
 ## Recovery and complete reads
 
 With the paid add-on, use `resume KEY` for new YouTube API upload sessions; never recreate an uncertain upload. `report`, `read-all` and `notify` need the add-on, which isn't on sale yet; without it they return `paid_feature_required`, so say so plainly, don't offer it as something to buy, and offer `ops sync` for a summary of what was just read. Use `read-all start/resume/status` for supported API lists and official collection pagination. Preserve partial checkpoints, distinguish explicit end proof from a stalled page, and retain bounded-history limits on other browser feeds. Most browser commands share one background session per account, and a second one waits for the first; YouTube's is a real Chrome window, so on Windows it runs on the hidden desktop and closes about 20 seconds after its last command, and elsewhere each step starts and closes its own. A command that stops with `busy` or `browser_busy` means another CrossCast command is still running: wait for it and run yours again. Never start a second process on the same profile or delete a lock file.

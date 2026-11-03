@@ -12,12 +12,15 @@ from . import browser_runtime as runtime, progress
 
 
 def action_timeout(action):
-    return 1800 if action in {"publish", "resume", "read_all"} else 570 if action in {'edit','verify','operations_batch','chat_unlock','message_sources','discover_works','adopt_work'} else 110
+    return 1800 if action in {"publish", "resume", "read_all"} else 570 if action in {'edit','verify','delete_work','operations_batch','chat_unlock','message_sources','discover_works','adopt_work'} else 110
 
 
 async def dispatch(page, platform, actual, payload):
     from .browser_backends import execute
     try:
+        if payload['action'] == 'delete_work':
+            from .work_delete_browser import execute as delete_work
+            return await delete_work(page, platform, actual, payload)
         if payload['action'] == 'read_all':
             from .adapters import paid_feature
             return await paid_feature('full_read_browser', 'Complete reads').execute(page, platform, actual, payload)
