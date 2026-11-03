@@ -90,12 +90,79 @@ class ScheduleZoneTests(yt.FormCase):
                 self.assertEqual("SUBMISSION_VERIFIED", result["state"])
                 self.assertEqual([], result["readback_differs"])
 
-    def test_postsave_named_dst_zone_requires_its_target_offset(self):
+    def test_postsave_named_dst_zone_refuses_offset_neither_current_nor_target(self):
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime.fromisoformat("2030-01-15T12:00:00+00:00").astimezone(tz)
+
         schedule = {"at": "2030-11-04T15:00:00+00:00", "local": "2030-11-04T10:00:00-05:00", "timezone": "America/New_York"}
         for text, expected in (("America/New_York GMT-05:00", True), ("America/New_York GMT-04:00", False),
                                ("America/Lima GMT-05:00", False), ("GMT-05:00", True)):
-            with self.subTest(text=text):
+            with self.subTest(text=text), patch.object(browser_backends, "datetime", Clock):
                 self.assertIs(expected, browser_backends.youtube_schedule_zone_agrees(text, schedule))
+
+    def test_current_offset_label_survives_dst_in_native_readback(self):
+        for index, (current, when, display_offset, target_offset, hour) in enumerate((
+                ("2030-11-15T12:00:00+00:00", "2031-04-15T15:00:00+00:00", "+00:00", "+01:00", 16),
+                ("2030-07-15T12:00:00+00:00", "2030-11-15T15:00:00+00:00", "+01:00", "+00:00", 15))):
+            class Clock(datetime):
+                @classmethod
+                def now(cls, tz=None):
+                    return datetime.fromisoformat(current).astimezone(tz)
+
+            target = datetime.fromisoformat(when)
+            for number, suffix in enumerate((f"Europe/London GMT{display_offset}", f"GMT{display_offset}",
+                                             f"UTC{display_offset}", f"Europe/London GMT{target_offset}")):
+                with self.subTest(when=when, suffix=suffix), patch.object(browser_forms, "datetime", Clock), \
+                        patch.object(browser_backends, "datetime", Clock):
+                    shown = f"Scheduled\n{target.year}年{target.month}月{target.day}日 {hour}:00 {suffix}"
+                    page = yt.FakeStudio(scheduler_text=f"Time zone GMT{display_offset} Europe/London", visibility_text=shown)
+                    plan = self.plan(schedule=when)
+                    plan["confirmation"] = f"{index * 10 + number:064x}"
+                    tx, result = self.run_form(page, plan)
+                    self.assertEqual("SUBMISSION_VERIFIED", result["state"])
+                    self.assertEqual([], result["readback_differs"])
+                    self.assertEqual(target, datetime.fromisoformat(result["schedule"]["local"]))
+                    self.assertEqual([hour, 0], result["schedule"]["time"])
+                    self.assertEqual(1, len(page.clicks("#done-button")))
+                    self.assertEqual(result, read_json(tx.path))
+
+    def test_current_offset_label_does_not_excuse_wrong_wall_time(self):
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime.fromisoformat("2030-11-15T12:00:00+00:00").astimezone(tz)
+
+        page = yt.FakeStudio(scheduler_text="Time zone Europe/London GMT+00:00",
+                             visibility_text="Scheduled\n2031年4月15日 15:00 Europe/London GMT+00:00")
+        with patch.object(browser_forms, "datetime", Clock), patch.object(browser_backends, "datetime", Clock):
+            _, result = self.run_form(page, self.plan(schedule="2031-04-15T15:00:00+00:00"))
+        self.assertEqual([16, 0], result["schedule"]["time"])
+        self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
+        self.assertIn("visibility", result["readback_differs"])
+        self.assertEqual(1, len(page.clicks("#done-button")))
+
+    def test_current_offset_acceptance_requires_consistent_instant_and_named_zone(self):
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime.fromisoformat("2030-11-15T12:00:00+00:00").astimezone(tz)
+
+        schedule = {"at": "2031-04-15T15:00:00+00:00", "local": "2031-04-15T16:00:00+01:00", "timezone": "Europe/London"}
+        cases = (("Europe/London GMT+02:00", schedule),
+                 ("Europe/London GMT+00:00 GMT+01:00", schedule),
+                 ("Europe/Paris GMT+01:00", schedule),
+                 ("UTC GMT+00:00", schedule),
+                 ("GMT+00:00", {**schedule, "timezone": None}),
+                 ("GMT+00:00", {**schedule, "local": "2031-04-15T16:00:00+00:00"}),
+                 ("GMT+00:00", {**schedule, "local": "2031-04-15T15:00:00+00:00"}),
+                 ("GMT+00:00", {**schedule, "at": "2031-04-15T15:00:00"}),
+                 ("Europe/London", {**schedule, "at": "2030-10-27T00:30:00+00:00", "local": "2030-10-27T01:30:00+01:00"}),
+                 ("Europe/London", {**schedule, "at": "2030-10-27T01:30:00+00:00", "local": "2030-10-27T01:30:00+00:00"}))
+        for shown, record in cases:
+            with self.subTest(shown=shown, record=record), patch.object(browser_backends, "datetime", Clock):
+                self.assertFalse(browser_backends.youtube_schedule_zone_agrees(shown, record))
 
     def test_offset_only_missing_abbreviated_ambiguous_and_conflicting_zones_never_submit(self):
         for index, text in enumerate(("", "GMT-04:00", "GMT+00:00", "EST", "CST", "Time zone China Standard Time",

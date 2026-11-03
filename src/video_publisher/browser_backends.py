@@ -619,6 +619,16 @@ def studio_offsets(text):
             for sign, hours, minutes in re.findall(r"GMT\s*([+\-−])\s*(\d{1,2})(?::?(\d{2}))?", text or "")}
 
 
+def studio_zone_offsets_agree(offsets, local, current):
+    """A trusted named zone may label itself with today's or the target-date offset.
+
+    This checks a display label, never converts the scheduled wall time by that label.
+    Both callers first establish the target's local time from the named zone's rules.
+    """
+    valid = {local.utcoffset().total_seconds() / 60, current.utcoffset().total_seconds() / 60}
+    return len(offsets) <= 1 and offsets <= valid
+
+
 def youtube_schedule_passed(schedule):
     """Whether a scheduled video's time has come, or None if its record can't say."""
     try:
@@ -628,32 +638,35 @@ def youtube_schedule_passed(schedule):
 
 
 def youtube_schedule_zone_agrees(shown, schedule):
-    """Explicit read-back zones must agree with the approved target, not today's offset."""
+    """Check the approved instant in its trusted zone; display offsets follow the pre-Save rule."""
+    # UTC+01:00 is an offset label, not a second named zone called UTC.
+    shown = re.sub(r'\bUTC(?=\s*[+\-−])', 'GMT', shown)
     # An IANA key such as Etc/GMT+5 is a name, not a GMT+5 display.
     names = set(re.findall(r'(?<![\w/])(?:UTC|[A-Za-z][A-Za-z0-9_+\-]*(?:/[A-Za-z0-9_+\-]+)+)(?![\w/])', shown))
     offsets_text = shown
     for name in names:
         if name != 'UTC':
             offsets_text = offsets_text.replace(name, '')
-    offsets = studio_offsets(re.sub(r'\bUTC(?=\s*[+\-−])', 'GMT', offsets_text))
-    if not names and not offsets:
+    offsets = studio_offsets(offsets_text)
+    if not names and not offsets and not schedule.get('timezone'):
         return True  # Older wall-clock-only readback remains bounded by the pre-Save check.
     try:
         local = datetime.fromisoformat(schedule['local'])
         intended = datetime.fromisoformat(schedule['at'])
         if local.utcoffset() is None or intended.utcoffset() is None or local != intended:
             return False
-        if offsets and offsets != {local.utcoffset().total_seconds() / 60}:
+        name = schedule.get('timezone')
+        if names and names != {name}:
             return False
-        if names:
+        if name:
             from zoneinfo import ZoneInfo
-            if names != {schedule.get('timezone')}:
-                return False
-            name = next(iter(names))
             zone = timezone.utc if name == 'UTC' else ZoneInfo(name)
-            if intended.astimezone(zone).isoformat() != local.isoformat():
+            target = intended.astimezone(zone)
+            if target.isoformat() != local.isoformat() or target.replace(fold=1 - target.fold).utcoffset() != target.utcoffset():
                 return False
-        return True
+            return studio_zone_offsets_agree(offsets, target, datetime.now(zone))
+        # Legacy offset-only evidence cannot establish target-date zone rules.
+        return not offsets or offsets == {local.utcoffset().total_seconds() / 60}
     except (KeyError, TypeError, ValueError):
         return False
 
