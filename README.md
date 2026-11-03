@@ -23,7 +23,7 @@
 ## 开始之前
 
 - 使用能在你电脑上运行命令的 AI 助手，如 Codex 或 Claude Code；只有聊天功能的窗口不够。
-- 在中国大陆使用 YouTube、Instagram 或 X，先确认能稳定访问；需要时准备可用的 VPN。
+- 在中国大陆使用 YouTube、Instagram 或 X，需要自己想办法哦。
 - X 需要订阅，且账号确实能进入 Media Studio；仅付费不保证可用。
 
 ## 🚀 一句话开始

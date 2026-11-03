@@ -23,7 +23,7 @@ You finish a video, and then you still have to write titles for every platform, 
 ## Before you start
 
 - Use an AI assistant that can run commands on your computer, such as Codex or Claude Code. A chat-only window is not enough.
-- In mainland China, first arrange reliable access to YouTube, Instagram or X, with a working VPN if needed.
+- In mainland China, you’ll need to find your own way to access YouTube, Instagram or X.
 - X needs both a subscription and actual Media Studio access. Paying alone does not establish access.
 
 ## 🚀 Start with one message

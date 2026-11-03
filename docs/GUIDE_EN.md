@@ -8,15 +8,17 @@ The full detail: how far each feature has been tried, what to know about each pl
 
 ## A longer prompt for beginners
 
+In mainland China, you’ll need to find your own way to access YouTube, Instagram or X.
+
 Replace the brackets with your details and give the whole message to an assistant that can run local commands. Leave unknowns blank so it can ask only what is missing. Never fill in passwords.
 
 > I'm new to computers. Please guide me through my first publication in plain language.
 >
 > Install CrossCast from https://github.com/whitecarp/publishops-crosscast in its own Python virtual environment, without changing other Python programs' environments.
 >
-> Run vpub doctor, read the skill it names, and explain any issues. Use saved preferences and this conversation; ask only the unknown setup choices together: which platforms I want and have accounts on; for YouTube/Instagram/X, whether I'm in mainland China and have reliable access or a working VPN; for X, whether I have both a subscription and actual Media Studio access; and whether I want to review every post before it goes out.
+> Run vpub doctor, read the skill it names, and explain any issues. Use saved preferences and this conversation; ask only the unknown setup choices together: which platforms I want and have accounts on; for YouTube/Instagram/X, whether I can access those websites; for X, whether I have both a subscription and actual Media Studio access; and whether I want to review every post before it goes out.
 >
-> Remember only my chosen platforms and show-first preference, not account names, location or VPN details. Run onboard only for those usable platforms. Leave X out if I lack either its subscription or actual Media Studio access.
+> Remember only my chosen platforms and show-first preference, not account names, location or access details. Run onboard only for those usable platforms. Leave X out if I lack either its subscription or actual Media Studio access.
 >
 > I will sign in myself on the official pages. Never ask me to send passwords, cookies, tokens or verification codes. Stop for platform checks and wait for me; do not keep retrying sign-in.
 >

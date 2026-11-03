@@ -23,7 +23,7 @@
 ## 開始之前
 
 - 能在你電腦上執行指令的 AI 助手，如 Codex 或 Claude Code；只有聊天功能的視窗不夠。
-- 在中國大陸使用 YouTube、Instagram 或 X，先確認能穩定連線；需要時準備可用的 VPN。
+- 在中國大陸使用 YouTube、Instagram 或 X，需要自己想辦法哦。
 - X 需要訂閱，而且帳號確實能進入 Media Studio；僅付費不保證可用。
 
 [不熟悉電腦？複製這段更完整的新手提示詞](docs/GUIDE_ZH_TW.md#新手完整提示詞)，裡面有首次預覽和安全回報步驟。

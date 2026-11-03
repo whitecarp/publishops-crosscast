@@ -14,7 +14,7 @@
   var TW = {
     beforeTitle: "開始之前",
     beforeAgent: "用能執行本機指令的 AI 助手，如 Codex 或 Claude Code；只有聊天功能的視窗不夠。",
-    beforeNetwork: "在中國大陸使用 YouTube、Instagram 或 X，先確認能穩定連線；需要時準備可用的 VPN。",
+    beforeNetwork: "在中國大陸使用 YouTube、Instagram 或 X，需要自己想辦法哦。",
     beforeX: "X 需要訂閱，而且帳號確實能進入 Media Studio；僅付費不保證可用。",
     beginnerGuide: "<a href=\"https://github.com/whitecarp/publishops-crosscast/blob/main/docs/GUIDE_ZH_TW.md#新手完整提示詞\" rel=\"noopener\">不熟悉電腦？複製完整的新手提示詞</a>，含首次預覽與安全回報步驟。",
     skip: "跳到正文", navLabel: "頁面導覽",
@@ -175,7 +175,7 @@
   var EN = {
     beforeTitle: "Before you start",
     beforeAgent: "Use an assistant that can run local commands, such as Codex or Claude Code. A chat-only window is not enough.",
-    beforeNetwork: "In mainland China, arrange reliable access to YouTube, Instagram or X, with a working VPN if needed.",
+    beforeNetwork: "In mainland China, you’ll need to find your own way to access YouTube, Instagram or X.",
     beforeX: "X requires both a subscription and actual Media Studio access. Paying alone does not establish access.",
     beginnerGuide: "<a href=\"https://github.com/whitecarp/publishops-crosscast/blob/main/docs/GUIDE_EN.md#a-longer-prompt-for-beginners\" rel=\"noopener\">New to computers? Use this longer message</a>, with a first-release preview and safe feedback steps.",
     skip: "Skip to content", navLabel: "Page sections",
