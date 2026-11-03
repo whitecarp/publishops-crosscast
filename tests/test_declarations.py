@@ -63,7 +63,7 @@ class DeclarationTests(unittest.TestCase):
         self.env = patch.dict(os.environ, {"VPUB_HOME": str(self.root / "runtime")})
         self.env.start()
         self.video = self.root / "ordinary.mp4"
-        self.video.write_bytes(b"synthetic test fixture, not a playable upload")
+        self.video.write_bytes(b"\x00\x00\x00\x18ftypisom\x00\x00\x00\x00isommp42")  # Container header, not a playable upload.
         self.manifest = self.root / "publish.json"
 
     def tearDown(self):

@@ -864,8 +864,8 @@ def run_command(args):
         out = Path(args.out)
         if out.exists():
             raise VpubError("already_exists", "Manifest already exists; no overwrite.")
-        if not Path(args.video).is_file():
-            raise VpubError("invalid_video", f"Video file not found: {args.video}")
+        from .rehearsal import inspect_video
+        inspect_video(args.video)
         chosen = args.platforms.split(",")
         if not chosen or set(chosen) - set(PLATFORMS) or len(chosen) != len(set(chosen)):
             raise VpubError("invalid_platform", "Choose a unique subset of supported platforms.")
@@ -890,9 +890,14 @@ def run_command(args):
     if args.command in {"plan", "publish"}:
         selected = args.platforms.split(",") if args.platforms else None
         plan = load_plan(args.manifest, selected)
+        from .rehearsal import dry_run, inspect_video
+        media = inspect_video(plan["video"])
         if args.command == "plan" or args.dry_run:
             from .safety import plan_flags
-            return {**plan, **plan_flags(plan), "mode": "LOCAL_DRY_RUN", "platform_writes": 0}
+            checks = dry_run(plan, media) if args.command == "publish" else {
+                "mode": "LOCAL_DRY_RUN", "platform_writes": 0, "media_check": media,
+                "note": "Plan only; use publish --dry-run to check saved sign-in records. No live readiness checks were made."}
+            return {**plan, **plan_flags(plan), **checks}
         return publish_plan(plan, args.confirm)
     if args.command == "safety":
         from . import safety

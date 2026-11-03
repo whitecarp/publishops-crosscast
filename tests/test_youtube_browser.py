@@ -240,7 +240,7 @@ class Temporary(unittest.TestCase):
         sleep.start()
         self.addCleanup(sleep.stop)
         self.video = self.root / "video.mp4"
-        self.video.write_bytes(b"fixture-video")
+        self.video.write_bytes(b"\x00\x00\x00\x18ftypisom\x00\x00\x00\x00isommp42")  # Container header, not a playable upload.
 
 
 class FormCase(Temporary):
