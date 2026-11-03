@@ -648,6 +648,30 @@ class InstagramReadinessTests(LayoutCase):
                         await self.rejected(stage, 'wrong_work')
                     self.assertEqual([delay], fired)
 
+    async def test_first_visible_dialog_cannot_be_reacquired_after_replacement(self):
+        original = fixtures.Handle.is_visible
+        for stage in ('menu', 'confirmation'):
+            for delay in (0, 1500, 10000):
+                with self.subTest(stage=stage, delay=delay):
+                    self.reset_delayed(delay, delay)
+                    fired = []
+
+                    async def replace_after_visible(handle):
+                        visible = await original(handle)
+                        if (visible and not fired and self.page.stage == stage
+                                and stage in self.page.rendered
+                                and handle.nodes[0] is self.page.stage_nodes[stage][0]):
+                            old = handle.nodes[0]
+                            self.replace_node(old, copy(old))
+                            fired.append(self.page.elapsed[stage])
+                        return visible
+
+                    with patch.object(fixtures.Handle, 'is_visible', replace_after_visible):
+                        await self.rejected(stage, 'wrong_work')
+                    self.assertEqual([delay], fired)
+                    if stage == 'confirmation':
+                        await self.cannot_retry()
+
     async def test_wrong_account_or_url_during_wait_even_at_deadline_refuses(self):
         for stage in ('menu', 'confirmation'):
             for drift in ('account', 'url'):

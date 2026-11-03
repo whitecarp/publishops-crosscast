@@ -324,15 +324,21 @@ async def execute(page, actual, target, operation, receipt_path):
         for elapsed in range(0, CONTROL_WAIT_MILLISECONDS + 1, CONTROL_POLL_MILLISECONDS):
             # Poll without another click. A loading shell (or the outgoing menu)
             # may lack the required labels, but multiple overlays fail at once.
-            await candidate(page.get_by_role('dialog'))
+            observed_dialog = await candidate(page.get_by_role('dialog'))
             if await runtime.visible(page.get_by_role('menu')) or await runtime.visible(page.get_by_role('alertdialog')):
                 raise VpubError('layout_changed', 'An unbound overlay appeared while the post controls loaded.')
             dialog = await candidate(dialog_query)
             controls = [await candidate(query) for query in control_queries]
+            if observed_dialog is not None:
+                # The first visible dialog cannot be silently exchanged during
+                # the qualifying-label/control reads, even before the guard.
+                await same_node(page.get_by_role('dialog'), observed_dialog, 'first observed post dialog')
+                if dialog is not None and not await dialog.evaluate(SAME, observed_dialog):
+                    raise VpubError('wrong_work', 'The post dialog changed while its controls were being read.')
             if dialog is not None and all(control is not None for control in controls):
                 # Capture the first ready nodes before the next guard can yield
                 # to a replacement. The caller revalidates these exact handles.
-                return (dialog, *controls)
+                return (observed_dialog if observed_dialog is not None else dialog, *controls)
             await guard(page)
             await target_bound(page, actual, target, queries, retained, headerless=selection.headerless)
             if elapsed == CONTROL_WAIT_MILLISECONDS:
