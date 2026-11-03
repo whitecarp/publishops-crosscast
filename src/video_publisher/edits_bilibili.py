@@ -1,7 +1,8 @@
 """Corrections to a published Bilibili work through the included bili-cli. Bilibili reviews each one again."""
+import json
 from . import adapters
 from .chapters import chapter_lines
-from .core import HELD_BACK, VpubError, file_sha, now
+from .core import HELD_BACK, VpubError, digest, file_sha, now
 
 # bili-cli answered and said no, so the change did not go through. Anything else may have reached Bilibili.
 REFUSED = {"invalid_argument", "not_logged_in", "auth_expired", "not_found", "risk_control", "captcha_required", "rate_limited", HELD_BACK}
@@ -73,6 +74,29 @@ def tags_of(found):
     return {tag for tag in (found.get("tag") or "").split(",") if tag}
 
 
+def description_segments(found):
+    """Compare structured descriptions without resolving or notifying any mentioned account."""
+    value = found.get("desc_v2")
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except ValueError:
+            return value  # An unknown format is not evidence of plain text.
+    return value
+
+
+def can_replace_description(found):
+    segments = description_segments(found)
+    if segments is None or segments == [] or segments == "":
+        # Older creator records can omit rich text. Don't flatten a possible mention.
+        return "@" not in (found.get("desc") or "")
+    return (isinstance(segments, list) and all(
+        isinstance(row, dict) and type(row.get("type")) in (int, str) and row.get("type") in (1, "1")
+        and isinstance(row.get("raw_text"), str)
+        and row.get("biz_id") in (None, "", 0) for row in segments)
+        and "".join(row["raw_text"] for row in segments) == (found.get("desc") or ""))
+
+
 def submit(args, checkpoint, work, landed):
     """Once only. A refusal is recorded so it can be tried again; an unclear ending keeps the receipt, which blocks a repeat."""
     try:
@@ -83,8 +107,8 @@ def submit(args, checkpoint, work, landed):
         raise
 
 
-def run(account, identity, receipt, patch, checkpoint, verify_only):
-    result = change(account, identity, receipt, patch, checkpoint, verify_only)
+def run(account, identity, receipt, patch, checkpoint, verify_only, previous=None):
+    result = change(account, identity, receipt, patch, checkpoint, verify_only, previous=previous)
     # The owner asked that a video's widgets be looked at after every update, since an edit sends it back for review.
     if result.get("platform_writes"):
         from .widgets_bilibili import seen
@@ -92,7 +116,7 @@ def run(account, identity, receipt, patch, checkpoint, verify_only):
     return result
 
 
-def change(account, identity, receipt, patch, checkpoint, verify_only):
+def change(account, identity, receipt, patch, checkpoint, verify_only, previous=None):
     work = receipt["id"]
     signed_in = adapters.auth_status("bilibili", account, "cli")["identity"]
     if str(signed_in) != str(identity):
@@ -122,16 +146,38 @@ def change(account, identity, receipt, patch, checkpoint, verify_only):
     wanted = {"title": patch["title"].strip(), "description": patch["description"].strip()}
     tags = patch.get("tags")
     before = archive(work)
+    preserved = (previous or {}).get("preserved_description_sha256")
+    if preserved:
+        evidence["preserved_description_sha256"] = preserved
+        if digest(description_segments(before)) != preserved:
+            state = "EDIT_SUBMITTED_UNVERIFIED" if (previous or {}).get("state") in {"EDIT_SUBMITTING", "EDIT_SUBMITTED_UNVERIFIED"} else "EDIT_MISMATCH"
+            return {**evidence, "state": state, "platform_writes": 0,
+                    "reason": "The description's linked structure differs from the saved edit; nothing changed."}
     if text_of(before) == wanted and (tags is None or tags_of(before) == set(tags)):
         return {**evidence, "state": "EDIT_VERIFIED", "unchanged": True, "platform_writes": 0}
     if verify_only:
         return {**evidence, "state": "EDIT_MISMATCH", "platform_writes": 0, "reason": "The saved text differs; no write attempted."}
-    checkpoint({"state": "EDIT_SUBMITTING", "id": work, "before": text_of(before)})
-    args = ["upload", "edit", work, "--title", patch["title"], "--desc", patch["description"]]
+    replace_description = wanted["description"] != text_of(before)["description"]
+    if replace_description and not can_replace_description(before):
+        raise VpubError("description_mentions_require_browser",
+                        "This description contains linked mentions or unrecognized rich text; nothing changed.",
+                        "Edit its description in Bilibili Creator Center to preserve the @ links. Title/tag edits can keep the existing description unchanged.")
+    if not replace_description:
+        evidence["preserved_description_sha256"] = digest(description_segments(before))
+    def matches(found):
+        return text_of(found) == wanted and (replace_description or
+            description_segments(found) == description_segments(before))
+    checkpoint({"state": "EDIT_SUBMITTING", "id": work, "before": text_of(before),
+                **({"preserved_description_sha256": evidence["preserved_description_sha256"]} if not replace_description else {})})
+    args = ["upload", "edit", work, "--title", patch["title"]]
+    # bili-cli preserves desc_v2 only when --desc is absent. Even sending identical
+    # plain words would remove the original linked @ segments.
+    if replace_description:
+        args += ["--desc", patch["description"]]
     for tag in tags or []:
         args += ["--tag", tag]
-    submit(args, checkpoint, work, lambda: text_of(archive(work)) == wanted)
+    submit(args, checkpoint, work, lambda: matches(archive(work)))
     after = archive(work)
     # Bilibili can drop an individual tag it dislikes; that is reported, and the title and description still decide.
     dropped = sorted(set(tags or []) - tags_of(after))
-    return {**evidence, "state": "EDIT_VERIFIED" if text_of(after) == wanted else "EDIT_SUBMITTED_UNVERIFIED", "platform_writes": 1, "tags_dropped": dropped, "note": REVIEW}
+    return {**evidence, "state": "EDIT_VERIFIED" if matches(after) else "EDIT_SUBMITTED_UNVERIFIED", "platform_writes": 1, "tags_dropped": dropped, "note": REVIEW}

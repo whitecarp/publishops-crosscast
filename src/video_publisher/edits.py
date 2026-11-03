@@ -83,6 +83,7 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
     flagged={'text_flags':flags} if flags and not verify_only else {}
     if dry_run: return {'key':key,'id':work_id,'patch':patch,'platform_writes':0,'edit_id':edit_id,**flagged}
     tried=False
+    saved={}
     if path.exists():
         saved=read_json(path)
         # A prior success is history, not current platform state. The backend
@@ -91,14 +92,16 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
         if tried and not verify_only and not person_approved:
             raise VpubError('inspect_existing_edit','A save was already attempted; inspect the existing work before any retry.',
                             'If a person has looked at the work and the change is not there, add --person-approved to try once more.')
-    def checkpoint(data): atomic_json(path,{'key':key,'edit_id':edit_id,'at':now(),**data})
+    preserved = ({'preserved_description_sha256': saved['preserved_description_sha256']}
+                 if platform == 'bilibili' and saved.get('preserved_description_sha256') else {})
+    def checkpoint(data): atomic_json(path,{'key':key,'edit_id':edit_id,'at':now(),**preserved,**data})
     # The record keeps that the flag was given, for a person to read later. It is someone's word, not proof that a person looked.
     approved={'person_approved':True} if person_approved and not verify_only else {}
     if not verify_only: checkpoint({'state':'EDIT_PREPARING','id':work_id,**approved})
     from . import adapters
     if platform=='bilibili':
         from .edits_bilibili import run as edit_bilibili
-        result=edit_bilibili(account,actual,receipt,patch,checkpoint,verify_only)
+        result=edit_bilibili(account,actual,receipt,patch,checkpoint,verify_only,previous=saved)
     elif platform=='youtube' and adapters.addon_installed():
         if 'chapters' in patch: raise VpubError('unsupported_edit','With the add-on, put the chapter lines in the description and edit that.')
         result=adapters.youtube_api().update_video(account,work_id,patch,checkpoint,verify_only)
