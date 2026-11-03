@@ -232,7 +232,11 @@ class PlaylistCreationTests(TemporaryHomes):
 
 class PlaylistEmptyReadTests(TemporaryHomes):
     class Page:
+        url = "https://studio.youtube.com/channel/fixture-owner/content/playlists"
+
         def locator(self, selector):
+            if selector == "ytcp-playlist-section-content":
+                return type("MissingSection", (), {"evaluate_all": AsyncMock(return_value=False)})()
             assert selector == "#navigate-after"
             return "next-control"
 

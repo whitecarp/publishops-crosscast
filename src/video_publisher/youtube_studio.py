@@ -449,11 +449,11 @@ def playlist_videos(rows):
     return items
 
 
-async def studio_table(page, rows, script, parse, *, require_last_page=False):
-    """Walk a Studio list. Strict playlist reads need a last-page control and complete ID/title extraction."""
+async def studio_table(page, rows, script, parse, *, require_last_page=False, empty_first_page=None):
+    """Strict reads need complete extraction plus a last-page control, or explicit first-page emptiness."""
     items = {}
     extracted = True
-    for _ in range(TABLE_PAGES):
+    for index in range(TABLE_PAGES):
         raw = await rows.evaluate_all(script)
         found = parse(raw)
         if require_last_page:
@@ -464,6 +464,8 @@ async def studio_table(page, rows, script, parse, *, require_last_page=False):
         items.update(found)
         after = await visible(page.locator("#navigate-after"))
         if after is None:
+            if require_last_page and index == 0 and not raw and empty_first_page and await empty_first_page():
+                return [], True
             return list(items.values()), bool(items) and not require_last_page
         if await after.get_attribute("aria-disabled") == "true":
             return list(items.values()), extracted
@@ -488,7 +490,36 @@ async def open_playlist_list(page, identity):
 
 async def read_playlists(page, identity):
     # Missing rows or a missing Next control do not prove a title is absent before automatic creation.
-    return await studio_table(page, await open_playlist_list(page, identity), PLAYLIST_ROWS, playlist_items, require_last_page=True)
+    return await studio_table(page, await open_playlist_list(page, identity), PLAYLIST_ROWS, playlist_items,
+                              require_last_page=True, empty_first_page=lambda: playlist_list_empty(page, identity))
+
+
+async def playlist_list_empty(page, identity):
+    """Only the channel list's own explicit empty panel can replace missing pagination.
+
+    Do not reuse the video-inside-a-playlist empty state or match arbitrary page text.
+    Unknown layouts stay incomplete. Check the panel and conflicting DOM in one snapshot.
+    """
+    address = urlsplit(page.url)
+    if address.scheme != "https" or address.netloc != "studio.youtube.com" or address.path != f"/channel/{identity}/content/playlists" or address.query:
+        return False
+    return await page.locator("ytcp-playlist-section-content").evaluate_all("""sections => {
+        const shown = e => !!e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden'
+            && !e.closest('[hidden],[aria-hidden="true"]');
+        const active = sections.filter(shown);
+        if (active.length !== 1 || document.querySelector('ytcp-playlist-row')) return false;
+        const section = active[0];
+        const blocked = '[role="dialog"],[role="alertdialog"],[role="alert"],[role="progressbar"],'
+            + '[aria-busy="true"],ytcp-dialog,ytcp-playlist-creation-dialog,ytcp-filter-chip';
+        if ([...document.querySelectorAll(blocked)].some(shown)) return false;
+        if ([...section.querySelectorAll('input')].some(e => shown(e) && e.value.trim())) return false;
+        const panels = [...section.querySelectorAll('.no-content')].filter(shown);
+        if (panels.length !== 1) return false;
+        const header = panels[0].querySelector('.no-content-header') || panels[0];
+        if (!shown(header)) return false;
+        const text = header.innerText.replace(/\\s+/g, ' ').trim();
+        return ['No content available', '没有可显示的内容', '沒有可顯示的內容'].includes(text);
+    }""")
 
 
 async def playlist_title(page, identity, playlist):
