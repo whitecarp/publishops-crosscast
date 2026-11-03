@@ -224,12 +224,26 @@ async def execute(page, actual, target, operation, receipt_path):
         await options_control.click(timeout=10000)
         control = page.locator(MENU).filter(has_text=DELETE)
         delete_control = await retain(control, 'video delete menu', held)
+        # Studio renders its ordinary menu inside a dialog. Retain only the
+        # wrappers containing this exact Delete node; never accept a separate
+        # confirmation merely because it is also labelled as a dialog.
+        menu_dialogs = page.get_by_role('dialog').or_(page.get_by_role('alertdialog'))
+        handles = await menu_dialogs.element_handles()
+        held.extend(handles)
+        wrappers = [node for node in handles if await node.is_visible()]
+        if not all([await node.evaluate(CONTAINS, delete_control) for node in wrappers]):
+            raise VpubError('layout_changed', 'An unrelated dialog is open beside the video menu.')
 
         async def menu_bound():
             await check_row(page, target, tab, row, original_row)
             await same_node(control, delete_control, 'original video delete menu')
-            if await rt.visible(page.get_by_role('dialog')):
-                raise VpubError('layout_changed', 'An unbound confirmation appeared before Delete.')
+            current = [node for node in await menu_dialogs.all() if await node.is_visible()]
+            if len(current) != len(wrappers):
+                raise VpubError('layout_changed', 'The video menu dialog changed before Delete.')
+            for node in current:
+                if (not any([await node.evaluate(SAME, old) for old in wrappers])
+                        or not await node.evaluate(CONTAINS, delete_control)):
+                    raise VpubError('layout_changed', 'An unbound confirmation appeared before Delete.')
 
         await menu_bound()
         state.begin_press(receipt_path, target)
