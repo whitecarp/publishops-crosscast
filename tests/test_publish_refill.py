@@ -205,7 +205,10 @@ class PublishRefillTests(unittest.TestCase):
         self.behavior = publish
         with patch.object(cli, "pushed_back", latch):
             answer = self.run_plan()
-        self.assertEqual(self.started, ["x", "instagram", "youtube"])
+        # The first two workers may enter in either OS scheduling order. The
+        # warning must still come from the sole refill, with no fourth launch.
+        self.assertCountEqual(self.started[:2], ["x", "instagram"])
+        self.assertEqual(self.started[2:], ["youtube"])
         self.assertEqual(self.clicks, [])
         self.assertEqual(answer["results"]["douyin"], {"state": "NOT_STARTED", "code": "stopped"})
         self.assertEqual(core.read_json(core.home() / "STOP.json")["platform"], "youtube")

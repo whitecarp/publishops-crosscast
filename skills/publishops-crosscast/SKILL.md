@@ -5,7 +5,7 @@ description: Publish and look after videos on Bilibili, YouTube, Douyin, Instagr
 
 # PublishOps CrossCast
 
-Use the installed `vpub` CLI. Run `vpub doctor` first. If missing, install as the user's README says, in its own Python virtual environment, then verify installation. Commands return JSON on stdout and progress on stderr; read `--help` for unfamiliar commands.
+Run `vpub doctor` first. If missing, follow the user's README to install in its own venv and verify. Commands return JSON on stdout, progress on stderr; read unfamiliar commands' `--help`.
 
 See [details](references/details.md) for platform limits and recovery.
 
@@ -37,7 +37,7 @@ vpub go final-crosscast
 
 ## Signing in
 
-The user signs in on official pages. Bilibili uses QR through the included bili-cli; other supported platforms use dedicated Chrome profiles, then run in the background. Never request passwords, PINs, cookies or codes, or import host-browser credentials. A new-device check or recovery stops that platform until the user completes it; never answer for them or repeatedly restart login.
+The person signs in on official pages: Bilibili QR, dedicated Chrome otherwise. Never collect credentials/PINs/codes, import profiles, or answer checks. Browser login returns promptly; check `vpub auth status PLATFORM --method browser --wait 5`. Pending means wait. On `login_interrupted`, close its leftover window, then login once with the saved profile. If repeatedly stopped, use the person's terminal, never bypass host controls. [Details](references/details.md#host-limited-sign-in).
 
 Packaged Windows AI apps can have separate copies of `%LOCALAPPDATA%`. A sign-in in another app may therefore be unavailable here, not expired. Explain; the user can sign in here or set `VPUB_HOME` to a normal shared folder. Never copy browser profiles. TikTok is unsupported.
 

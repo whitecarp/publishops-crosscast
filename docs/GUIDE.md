@@ -321,6 +321,8 @@ vpub auth status all
 
 登录 YouTube（免费路径）、抖音、Instagram 或 X 时，会打开 CrossCast 自己的 Chrome 窗口。平台可能把它当成新设备，要求验证或找回账号：请你自己在平台的官方页面完成，不要反复重新登录。
 
+登录命令会很快返回，窗口随后打开。请保留窗口，用 `vpub auth status PLATFORM --method browser --wait 5` 查看进度（若指定了 `--account`，两条命令保持一致）。AI 应用终止等待命令后，登录进程可能仍能完成；先查状态，不要再开一次。`login_interrupted` 表示进程已停止且尚未记录完成：关闭遗留的 CrossCast 登录窗口，再运行一次登录，沿用保存的配置。如果应用反复终止进程，请在自己的终端运行这些命令，不必绕过应用限制；这也不会解除平台停止状态。
+
 YouTube 的 OAuth 客户端 JSON 和登录令牌只留在本机，不要提交到 GitHub。
 
 </details>
