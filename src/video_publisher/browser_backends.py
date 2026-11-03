@@ -215,6 +215,7 @@ class Transaction:
         stage("pressing")
         # Persist BEFORE clicking. A timeout must never cause another click.
         await button.click(timeout=20000)
+        stage("waiting for platform confirmation")
 
 
 async def links(page, platform, identity):
