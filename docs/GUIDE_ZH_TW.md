@@ -310,7 +310,7 @@ vpub verify RECEIPT_KEY
 
 `--dry-run` 不會上傳。`response.json` 由 AI 助手依 `request.json` 中的範本撰寫。中斷後用 `vpub resume RECEIPT_KEY` 接著做，用 `vpub receipts` 查看所有回執。
 
-可選：`vpub publish ready.json --confirm <confirmation-code> --workers 2` 讓兩個已選的瀏覽器平台同時執行。預設仍是 `--workers 1`；B站、API 和宿主瀏覽器路線保持循序執行。平台警告會停止所有路線。Ctrl+C 會記錄停止並等待正在執行的任務停止；已提交內容的回執仍保留。並行與取消邏輯已做離線測試，兩個平台同時執行時的實際上傳速度、記憶體用量與隱藏視窗表現仍待實測。
+可選：`vpub go final-crosscast --workers 2`（或 `vpub publish ready.json --confirm <confirmation-code> --workers 2`） 讓兩個已選的瀏覽器平台同時執行。預設仍是 `--workers 1`；B站、API 和宿主瀏覽器路線保持循序執行。平台警告會停止所有路線。Ctrl+C 會記錄停止並等待正在執行的任務停止；已提交內容的回執仍保留。並行與取消邏輯已做離線測試，兩個平台同時執行時的實際上傳速度、記憶體用量與隱藏視窗表現仍待實測。
 
 </details>
 

@@ -138,6 +138,18 @@ class TwoCommandTests(unittest.TestCase):
         self.assertEqual([("bilibili", "一个完整的标题"), ("youtube", "一个完整的标题")], self.sent)
         self.assertTrue(cli.finished(answer))
 
+    def test_go_forwards_opt_in_parallelism_and_keeps_serial_default(self):
+        self.prepare(platforms="youtube,x")
+        self.write_copy()
+        with patch.object(cli, "publish_plan", return_value={"results": {}}) as publish:
+            run("go", self.work, "--workers", "2")
+            self.assertEqual(2, publish.call_args.kwargs["workers"])
+            run("go", self.work)
+            self.assertEqual(1, publish.call_args.kwargs["workers"])
+            before = publish.call_count
+            run("go", self.work, "--workers", "2", "--dry-run")
+            self.assertEqual(before, publish.call_count)
+
     def test_a_dry_run_stops_before_the_upload(self):
         self.prepare()
         self.write_copy()

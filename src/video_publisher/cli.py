@@ -576,6 +576,8 @@ def parser():
     q.add_argument("--folder", help="Where to keep its files. Default: a folder named after the video, beside it.")
     q = sub.add_parser("go", help="Publish a prepared folder: fit the covers, check it, post it and read it back.", description="Publish a prepared folder: fit the covers, check it, post it and read it back. Safe to run again: what already went out is skipped, never repeated.")
     q.add_argument("folder")
+    q.add_argument("--workers", type=int, choices=(1, 2), default=1,
+                   help="Run up to two browser platforms at once; default 1. Other routes stay serial.")
     q.add_argument("--dry-run", action="store_true", help="Do everything up to the upload and stop.")
     q.add_argument("--confirm", help="The code vpub go gives when it stops for something flagged in the text.")
     q = sub.add_parser("init", help="Start a plan for one video.")
@@ -1007,7 +1009,7 @@ def run_command(args):
         return quick.prepare(args)
     if args.command == "go":
         from . import quick
-        return quick.go(args.folder, args.confirm, args.dry_run)
+        return quick.go(args.folder, args.confirm, args.dry_run, workers=args.workers)
     if args.command == "init":
         out = Path(args.out)
         if out.exists():
