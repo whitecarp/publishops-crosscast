@@ -113,6 +113,28 @@ class DocsTests(unittest.TestCase):
         """An assistant reads it in every fresh conversation, on its user's own quota. The detail belongs in references/details.md."""
         self.assertLess(len((ROOT / "skills/publishops-crosscast/SKILL.md").read_bytes()), 8000)
 
+    def test_feedback_excludes_both_data_homes_and_sign_in_files(self):
+        paths = [ROOT / "skills/publishops-crosscast/SKILL.md", *sorted((ROOT / "docs").glob("GUIDE*.md"))]
+        for path in paths:
+            with self.subTest(path=path.name):
+                text = path.read_text(encoding="utf-8")
+                for excluded in ("VPUB_HOME", "BILI_CLI_HOME", "%APPDATA%\\bili-cli",
+                                 "$XDG_CONFIG_HOME/bili-cli", "~/.config/bili-cli",
+                                 "credential.json", "pending_login.json"):
+                    self.assertIn(excluded, text)
+
+    def test_review_examples_pair_current_confirmation_with_separate_approval(self):
+        paths = [*sorted((ROOT / "docs").glob("GUIDE*.md")),
+                 ROOT / "skills/publishops-crosscast/references/details.md"]
+        for path in paths:
+            with self.subTest(path=path.name):
+                text = path.read_text(encoding="utf-8")
+                self.assertNotIn("--reviewed", text)
+                self.assertIn("vpub go final-crosscast --confirm CODE --person-approved", text)
+                self.assertIn("vpub publish ready.json --confirm CODE --person-approved", text)
+                self.assertIn("vpub browser authorize-publish KEY --identity ID`", text)
+                self.assertIn("vpub browser authorize-publish KEY --identity ID --confirm CODE --person-approved", text)
+
     def test_help_lists_every_command_under_a_heading(self):
         words = cli.parser().format_help()
         names = {action.dest for action in cli.parser()._subparsers._group_actions[0]._choices_actions}
