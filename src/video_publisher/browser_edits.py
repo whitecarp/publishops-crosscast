@@ -7,6 +7,7 @@ from .core import VpubError, X_AI_LINE, X_POST_LIMIT, atomic_json, file_sha, now
 from .browser_runtime import failure_record, look_until, risk_check, unique_visible, visible
 from .browser_backends import choose_file, douyin_card_words, douyin_editor_address, douyin_editor_boxes, douyin_type_caption, normalize, work_url
 from .progress import stage
+from .edits import x_edit_readback_note, x_edit_was_attempted
 
 # A post's AI line at the very end of its words, in the wordings this tool writes. A page can show the line break as a space, so any space will do: losing a declaration is worse than keeping one a sentence happened to end on.
 AI_LINE = X_AI_LINE
@@ -77,16 +78,22 @@ async def execute(page, platform, identity, payload):
     patch=payload['patch'];receipt=payload['receipt'];work_id=receipt['id']
     output=Path(payload['edit_receipt_path'])
     x_evidence={}
+    x_attempted=False
     def save(**fields):
         result={'id':work_id,'platform':platform,'identity':identity,'at':now(),**x_evidence,**fields}
+        if platform=='x' and fields.get('state') in {'EDIT_SUBMITTING','EDIT_SUBMITTED_UNVERIFIED'}:
+            result.update(x_edit_readback_note(x_attempted))
+        if platform=='x' and x_attempted: result['final_submit_attempted']=True
         # A check only reads. What it means for a save already tried is for edits.send to record, so a check cut off here leaves that save on record.
         if not payload.get('verify_only'): atomic_json(output,result)
         return result
     async def submit(button,still_holds=None):
+        nonlocal x_attempted
         await risk_check(page)
         stop_check(platform)
         if still_holds: await still_holds()  # What was read before that wait may not be true after it.
         stop_check(platform)
+        if platform=='x': x_attempted=True
         save(state='EDIT_SUBMITTING')
         stage('pressing')
         await button.click(timeout=20000)
@@ -119,6 +126,8 @@ async def execute(page, platform, identity, payload):
                     before=before,caption=after,platform_writes=1,**evidence)
     if platform=='x':
         url=work_url('x',identity,work_id)
+        prior=read_json(output) if output.exists() else {}
+        x_attempted=bool(payload.get('verify_only') and x_edit_was_attempted(prior,identity,work_id))
         await page.goto(url,wait_until='domcontentloaded',timeout=60000)
         await risk_check(page)
         post,fields,reason=await x_edit_post(page,identity,work_id)
@@ -134,12 +143,11 @@ async def execute(page, platform, identity, payload):
         # A verification must compare the frozen attempted text, not recompute
         # omitted hashtags/declarations from a post whose text may have changed,
         # including after a prior success or a subsequent mismatch.
-        prior=read_json(output) if output.exists() else {}
         if (payload.get('verify_only')
                 and prior.get('platform')=='x' and prior.get('identity')==identity
                 and str(prior.get('id'))==str(work_id) and isinstance(prior.get('expected_text'),str)):
             wanted=prior['expected_text']
-        x_evidence={'expected_text':wanted,'verification_source':'exact_owned_post_version'}
+        x_evidence={'url':url,'expected_text':wanted,'verification_source':'exact_owned_post_version'}
         if normalize(fields['text'])==normalize(wanted):
             return save(state='EDIT_VERIFIED',unchanged=True,url=url,platform_writes=0)
         if payload.get('verify_only'):

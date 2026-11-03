@@ -74,6 +74,113 @@ class XReceiptTests(unittest.TestCase):
         self.assertEqual(old, read_json(old_path))
         call.assert_not_called()
 
+    def test_uncertain_edit_errors_require_inspection_without_suggesting_an_override(self):
+        proposed = edits.validate_patch('x', COPY)
+        path = home() / 'edits' / (digest(['key', proposed]) + '.json')
+        for state in ('EDIT_SUBMITTING', 'EDIT_SUBMITTED_UNVERIFIED'):
+            for bound in (False, True):
+                with self.subTest(state=state, bound=bound):
+                    old = {'state': state, **({'platform': 'x', 'identity': 'owner', 'id': '123'} if bound else {})}
+                    atomic_json(path, old)
+                    with patch.object(adapters, 'browser_call') as call, self.assertRaises(VpubError) as caught:
+                        edits.send('x', 'default', 'owner', {'id': '123'}, 'key', proposed, False, False)
+                    self.assertEqual('inspect_existing_edit', caught.exception.code)
+                    self.assertIn('may have succeeded', caught.exception.message)
+                    self.assertIn('Do not retry', caught.exception.hint)
+                    self.assertIn('Open the post on X', caught.exception.hint)
+                    self.assertNotIn('--person-approved', caught.exception.hint)
+                    self.assertEqual(old, read_json(path))
+                    call.assert_not_called()
+
+    def test_browser_error_after_a_press_keeps_its_cause_and_inspection_guidance(self):
+        proposed = edits.validate_patch('x', COPY)
+        pending = {'state': 'EDIT_SUBMITTING', 'platform': 'x', 'identity': 'owner', 'id': '123',
+                   'expected_text': proposed['post_text']}
+        def timed_out(*args, **kwargs):
+            atomic_json(kwargs['edit_receipt_path'], pending)
+            raise VpubError('browser_timeout', 'Fake timeout after Update.', 'Inspect the original receipt.')
+        with patch.object(adapters, 'browser_call', side_effect=timed_out) as call, self.assertRaises(VpubError) as caught:
+            edits.send('x', 'default', 'owner', {'id': '123'}, 'key', proposed, False, False)
+        self.assertEqual('browser_timeout', caught.exception.code)
+        self.assertIn('Fake timeout after Update.', caught.exception.message)
+        self.assertIn('may have succeeded', caught.exception.message)
+        self.assertIn('Do not retry', caught.exception.hint)
+        self.assertIn('Open the post on X', caught.exception.hint)
+        self.assertNotIn('--person-approved', caught.exception.hint)
+        path = home() / 'edits' / (digest(['key', proposed]) + '.json')
+        self.assertEqual(pending, read_json(path))
+        call.assert_called_once()
+
+    def test_read_error_without_a_bound_attempt_keeps_its_original_meaning(self):
+        proposed = edits.validate_patch('x', COPY)
+        path = home() / 'edits' / (digest(['key', proposed]) + '.json')
+        for prior in (None, {'platform': 'x', 'identity': 'other', 'id': '123', 'state': 'EDIT_SUBMITTING'}):
+            with self.subTest(prior=prior):
+                if prior is not None: atomic_json(path, prior)
+                error = VpubError('state_unavailable', 'No text available.', 'Original inspection hint.')
+                with patch.object(adapters, 'browser_call', side_effect=error), self.assertRaises(VpubError) as caught:
+                    edits.send('x', 'default', 'owner', {'id': '123'}, 'key', proposed, False, True)
+                self.assertIs(error, caught.exception)
+                if prior is None: self.assertFalse(path.exists())
+                else: self.assertEqual(prior, read_json(path))
+
+    def test_read_only_recovery_keeps_warning_until_exact_text_is_verified(self):
+        proposed = edits.validate_patch('x', COPY)
+        path = home() / 'edits' / (digest(['key', proposed]) + '.json')
+        attempted = proposed['post_text'] + '\n\n#Original'
+        atomic_json(path, {'state': 'EDIT_SUBMITTING', 'platform': 'x', 'identity': 'owner', 'id': '123',
+                           'expected_text': attempted})
+        answers = [{'state': 'EDIT_SUBMITTED_UNVERIFIED', 'reason': 'post_text_mismatch', 'platform_writes': 0},
+                   {'state': 'EDIT_SUBMITTED_UNVERIFIED', 'reason': 'version_chain_unavailable', 'platform_writes': 0},
+                   {'state': 'EDIT_VERIFIED', 'platform_writes': 0}]
+        with patch.object(adapters, 'browser_call', side_effect=answers) as call:
+            for answer in answers:
+                result = edits.send('x', 'default', 'owner', {'id': '123'}, 'key', proposed, False, True)
+                self.assertEqual(attempted, result['expected_text'])
+                self.assertEqual(0, result['platform_writes'])
+                self.assertIs(True, result['final_submit_attempted'])
+                if answer['state'] != 'EDIT_VERIFIED':
+                    self.assertEqual('EDIT_SUBMITTED_UNVERIFIED', result['state'])
+                    self.assertIn('may have succeeded', result.get('message', ''))
+                    self.assertIn('Do not retry', result.get('hint', ''))
+                    self.assertNotIn('--person-approved', result['hint'])
+                else:
+                    self.assertEqual('EDIT_VERIFIED', result['state'])
+                    for field in ('message', 'hint', 'reason'):
+                        self.assertNotIn(field, result)
+                durable = read_json(path)
+                self.assertEqual(result, {k:durable[k] for k in result})
+            self.assertTrue(all(c.kwargs['verify_only'] for c in call.call_args_list))
+
+    def test_fresh_verify_mismatches_do_not_imply_an_attempted_edit(self):
+        proposed = edits.validate_patch('x', COPY)
+        response = {'id': '123', 'identity': 'owner', 'platform': 'x',
+                    'state': 'EDIT_SUBMITTED_UNVERIFIED', 'platform_writes': 0}
+        with patch.object(adapters, 'browser_call', return_value=response) as call:
+            for _ in range(2):
+                result = edits.send('x', 'default', 'owner', {'id': '123'}, 'key', proposed, False, True)
+                self.assertEqual('EDIT_MISMATCH', result['state'])
+                self.assertIn('This call made no edit', result['message'])
+                self.assertNotIn('may have succeeded', result['message'])
+                self.assertNotIn('final_submit_attempted', result)
+                self.assertNotIn('--person-approved', str(result))
+            self.assertTrue(all(c.kwargs['verify_only'] for c in call.call_args_list))
+
+    def test_unrelated_saved_receipt_cannot_supply_attempt_or_frozen_text(self):
+        proposed = edits.validate_patch('x', COPY)
+        path = home() / 'edits' / (digest(['key', proposed]) + '.json')
+        for changed in ({'platform': 'instagram'}, {'identity': 'other'}, {'id': '456'}):
+            with self.subTest(changed=changed):
+                atomic_json(path, {'platform': 'x', 'identity': 'owner', 'id': '123', **changed,
+                                   'state': 'EDIT_VERIFIED', 'platform_writes': 1, 'final_submit_attempted': True,
+                                   'expected_text': 'Unrelated frozen words'})
+                with patch.object(adapters, 'browser_call', return_value={'state': 'EDIT_SUBMITTED_UNVERIFIED', 'platform_writes': 0}):
+                    result = edits.send('x', 'default', 'owner', {'id': '123'}, 'key', proposed, False, True)
+                self.assertEqual('EDIT_MISMATCH', result['state'])
+                self.assertNotIn('expected_text', result)
+                self.assertNotIn('final_submit_attempted', result)
+                self.assertIn('This call made no edit', result['message'])
+
     def test_unavailable_check_keeps_attempted_words_and_blocks_a_retry(self):
         proposed = edits.validate_patch('x', COPY)
         path = home() / 'edits' / (digest(['key', proposed]) + '.json')
