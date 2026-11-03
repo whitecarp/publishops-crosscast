@@ -463,11 +463,16 @@ async def studio_table(page, rows, script, parse, *, require_last_page=False, em
                          and all(item.get("title") for item in found.values()))
         items.update(found)
         after = await visible(page.locator("#navigate-after"))
+        last_page = after is not None and await after.get_attribute("aria-disabled") == "true"
+        if require_last_page and not raw:
+            # A stale disabled Next can survive while rows are loading. It proves
+            # neither an empty channel nor that a later page finished loading.
+            complete = (index == 0 and (after is None or last_page) and empty_first_page
+                        and await empty_first_page())
+            return list(items.values()), bool(complete)
         if after is None:
-            if require_last_page and index == 0 and not raw and empty_first_page and await empty_first_page():
-                return [], True
             return list(items.values()), bool(items) and not require_last_page
-        if await after.get_attribute("aria-disabled") == "true":
+        if last_page:
             return list(items.values()), extracted
         first = await rows.first.inner_text()
         await after.click(timeout=15000)
@@ -495,7 +500,7 @@ async def read_playlists(page, identity):
 
 
 async def playlist_list_empty(page, identity):
-    """Only the channel list's own explicit empty panel can replace missing pagination.
+    """Only the channel list's own explicit empty panel proves that zero rows is a complete read.
 
     Do not reuse the video-inside-a-playlist empty state or match arbitrary page text.
     Unknown layouts stay incomplete. Check the panel and conflicting DOM in one snapshot.
@@ -512,7 +517,9 @@ async def playlist_list_empty(page, identity):
         const blocked = '[role="dialog"],[role="alertdialog"],[role="alert"],[role="progressbar"],'
             + '[aria-busy="true"],ytcp-dialog,ytcp-playlist-creation-dialog,ytcp-filter-chip';
         if ([...document.querySelectorAll(blocked)].some(shown)) return false;
-        if ([...section.querySelectorAll('input')].some(e => shown(e) && e.value.trim())) return false;
+        // Studio can place the list's filter input in a toolbar outside the section.
+        if ([...document.querySelectorAll('input')].some(e => ['text', 'search'].includes(e.type)
+            && shown(e) && e.value.trim())) return false;
         const panels = [...section.querySelectorAll('.no-content')].filter(shown);
         if (panels.length !== 1) return false;
         const header = panels[0].querySelector('.no-content-header') || panels[0];

@@ -26,6 +26,7 @@ class EmptyChannelPlaylists(Browser):
         self.addCleanup(env.stop)
         self.site.playlists.clear()
         self.empty_body = section(EMPTY)
+        self.empty_pager = False
         original = FakeYouTube.list_page
 
         def list_page(site):
@@ -33,7 +34,8 @@ class EmptyChannelPlaylists(Browser):
             if site.playlists:
                 return html
             # No pagination when the channel has no playlists. Keep the native Create form.
-            html = html.replace('<ytcp-icon-button id="navigate-after" aria-disabled="true"></ytcp-icon-button>', '')
+            if not self.empty_pager:
+                html = html.replace('<ytcp-icon-button id="navigate-after" aria-disabled="true"></ytcp-icon-button>', '')
             return self.empty_body + html
 
         target = patch.object(FakeYouTube, "list_page", list_page)
@@ -77,6 +79,35 @@ class EmptyChannelPlaylists(Browser):
             with self.subTest(words=words):
                 self.empty_body = section(EMPTY.replace("No content available", words))
                 self.assertEqual(([], True), await yt.read_playlists(self.page, CHANNEL))
+
+    async def test_disabled_next_without_valid_empty_evidence_never_creates(self):
+        self.empty_pager = True
+        for body in (section(""), section('<div role="progressbar">Loading</div>'),
+                     section('<div role="alert">Could not load playlists</div>'),
+                     section('<div role="progressbar">Loading</div>' + EMPTY),
+                     section('<div role="alert">Could not load playlists</div>' + EMPTY)):
+            with self.subTest(body=body):
+                await self.refused(body)
+
+    async def test_disabled_next_with_explicit_empty_evidence_allows_one_create(self):
+        self.empty_pager = True
+        self.assertEqual(([], True), await yt.read_playlists(self.page, CHANNEL))
+        self.assertEqual([{"id": "PLnewnewnewnewnewnewnew", "title": "Wanted"}],
+                         await yt.ensure_playlists(self.page, CHANNEL, ["Wanted"]))
+        self.assertEqual(1, len(self.site.writes))
+
+    async def test_filter_inputs_outside_section_block_both_empty_paths(self):
+        for pager in (False, True):
+            self.empty_pager = pager
+            for control in ('<input type="search" value="Wanted">',
+                            '<input type="text" value="Wanted">', '<input value="Wanted">'):
+                with self.subTest(pager=pager, control=control):
+                    await self.refused('<header>' + control + '</header>' + section(EMPTY))
+            # An unused or hidden filter is not evidence of a filtered list.
+            for control in ('<input type="search" value="">', '<input type="search" value="Wanted" hidden>'):
+                with self.subTest(pager=pager, control=control):
+                    self.empty_body = '<header>' + control + '</header>' + section(EMPTY)
+                    self.assertEqual(([], True), await yt.read_playlists(self.page, CHANNEL))
 
     async def test_absent_hidden_loading_and_error_states_never_prove_empty(self):
         for body in (section(""), section(EMPTY.replace('class="no-content"', 'class="no-content" hidden')),

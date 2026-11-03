@@ -257,13 +257,20 @@ class PlaylistEmptyReadTests(TemporaryHomes):
                 self.assertEqual(expected_count, len(rows))
                 self.assertFalse(complete)
 
-    def test_explicit_last_page_keeps_complete_empty_and_nonempty_reads(self):
+    def test_explicit_last_page_needs_empty_evidence_but_keeps_nonempty_reads(self):
         next_control = type("Next", (), {"get_attribute": AsyncMock(return_value="true")})()
         for raw in ([], [{"href": "/playlist/PLold/edit", "title": "Other"}]):
             with self.subTest(raw=raw):
                 rows, complete = self.read(raw, next_control)
                 self.assertEqual(len(raw), len(rows))
-                self.assertTrue(complete)
+                self.assertEqual(bool(raw), complete)
+
+    def test_playlist_video_empty_disabled_next_behavior_is_unchanged(self):
+        rows = type("Rows", (), {"evaluate_all": AsyncMock(return_value=[])})()
+        next_control = type("Next", (), {"get_attribute": AsyncMock(return_value="true")})()
+        with patch.object(studio, "visible", new=AsyncMock(return_value=next_control)):
+            result = immediate(studio.studio_table(self.Page(), rows, studio.VIDEO_LINKS, studio.playlist_videos))
+        self.assertEqual(([], True), result)
 
     def test_other_table_consumers_keep_their_existing_missing_next_behavior(self):
         rows = type("Rows", (), {"evaluate_all": AsyncMock(return_value=[{"id": "old"}])})()
@@ -360,6 +367,11 @@ class PlaylistExtractionTests(TemporaryHomes):
         result, sent = self.ensure(pages)
         self.assertEqual([{"id": "PLcreated", "title": "Wanted"}], result)
         self.assertEqual([({"title": "Wanted", "privacy": "private"}, ["PLfirst", "PLlast"])], sent)
+
+    def test_zero_rows_on_later_disabled_page_is_not_complete(self):
+        with self.assertRaises(core.VpubError) as caught:
+            self.ensure([[{"href": "/playlist/PLfirst/edit", "title": "First"}], []])
+        self.assertEqual("read_incomplete", caught.exception.code)
 
     def test_nonplaylist_consumer_keeps_existing_extraction_behavior(self):
         page = self.Page([[{"href": "/video/abcdefghijk/edit", "title": "Video"}, {"href": "", "title": "Unparsed"}]])
