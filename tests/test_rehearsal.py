@@ -28,6 +28,7 @@ class RehearsalTests(unittest.TestCase):
         self.video.write_bytes(MP4_HEADER)
         self.manifest = self.root / "plan.json"
         value = cli.template(self.video)
+        value["title"] = "Rehearsal fixture"
         value["platforms"] = {p: {"account": "default", "method": "cli" if p == "bilibili" else "browser",
                                   "visibility": "public" if p in {"bilibili", "douyin"} else "account" if p in {"x", "instagram"} else "private",
                                   "ai_generated": True} for p in cli.PLATFORMS}

@@ -22,6 +22,7 @@ class OverviewFixture(unittest.TestCase):
         self.video.write_bytes(b"synthetic test fixture, not a playable upload")
         self.manifest = self.root / "publish.json"
         value = cli.template(self.video)
+        value["title"] = "Overview fixture"
         value["platforms"]["youtube"]["category_id"] = "1"
         atomic_json(self.manifest, value)
 

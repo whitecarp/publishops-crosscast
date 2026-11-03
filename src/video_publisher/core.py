@@ -373,7 +373,9 @@ def load_plan(path, selected=None):
         tags = v.get("tags", m.get("tags", []))
         limit = title_limit(platform, v.get("method"))
         if not isinstance(title, str) or not title.strip() or len(title) > limit or any(c in title for c in "\r\n\x00"):
-            raise VpubError("invalid_title", f"{platform} title must contain 1–{limit} characters, one line.")
+            raise VpubError("invalid_title", f"{platform} title must contain 1–{limit} characters, one line.",
+                            f"Write platforms.{platform}.title, or set the root title and omit that platform's title override. "
+                            "For generated copy, run vpub metadata request, then vpub metadata apply.")
         if platform == "youtube" and ("<" in title or ">" in title):
             raise VpubError("invalid_title", "YouTube titles cannot contain < or >.")
         if not isinstance(desc, str) or "\x00" in desc or len(desc) > (2000 if platform != "youtube" else 5000):

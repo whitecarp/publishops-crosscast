@@ -72,6 +72,7 @@ class DeclarationTests(unittest.TestCase):
 
     def write(self, ai_generated=False, **routes):
         value = cli.template(self.video, ai_generated=ai_generated)
+        value["title"] = "Ordinary video"
         self.assertEqual(["AI"] if ai_generated else [], value["tags"])
         value["tags"] = ["vlog"]  # what metadata apply would write
         value["platforms"]["youtube"]["category_id"] = "22"

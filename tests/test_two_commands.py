@@ -145,6 +145,30 @@ class TwoCommandTests(unittest.TestCase):
         self.assertEqual(0, answer["platform_writes"])
         self.assertEqual([], self.sent)
 
+    def test_blank_prepared_titles_become_authored_final_in_a_dry_run(self):
+        self.prepare(platforms="bilibili,youtube,douyin,instagram,x")
+        manifest = self.work / "publish.json"
+        prepared = json.loads(manifest.read_text(encoding="utf-8"))
+        self.assertEqual("", prepared["title"])
+        self.assertTrue(all("title" not in options for options in prepared["platforms"].values()))
+        self.assertEqual("", json.loads((self.work / "request.json").read_text(encoding="utf-8"))["source"]["title"])
+        error = self.refused("copy_not_written", run, "go", self.work, "--dry-run")
+        self.assertIn("douyin.title", error.message)
+        self.write_copy(title="Final")
+        with patch.object(adapters, "preflight", side_effect=AssertionError("No account access")), \
+                patch.object(adapters, "auth_status", side_effect=AssertionError("No account access")), \
+                patch.object(adapters, "browser_call", side_effect=AssertionError("No browser access")), \
+                patch.object(adapters, "bili", side_effect=AssertionError("No platform access")), \
+                patch.object(adapters, "publish", side_effect=AssertionError("No upload")):
+            answer = run("go", self.work, "--dry-run")
+        self.assertEqual(0, answer["platform_writes"])
+        self.assertEqual({"Final"}, {options["title"] for options in answer["platforms"].values()})
+        self.assertEqual(prepared, json.loads(manifest.read_text(encoding="utf-8")))
+        (built,) = (self.work / "build").glob("*/localized.json")
+        localized = json.loads(built.read_text(encoding="utf-8"))
+        self.assertEqual("", localized["title"])
+        self.assertEqual({"Final"}, {options["title"] for options in localized["platforms"].values()})
+
     def test_covers_are_fitted_on_the_way(self):
         self.prepare("--cover", self.picture("wide.png", (1600, 900)), "--portrait", self.picture("tall.png", (900, 1600)), platforms="bilibili,douyin")
         self.write_copy()
