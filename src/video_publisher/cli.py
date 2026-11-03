@@ -256,7 +256,8 @@ def parser():
     p.add_argument("--version", action="version", version=__version__)
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("doctor", help="Local dependency checks; no login or upload.")
-    sub.add_parser("capabilities", help="Show actual backends and verification boundaries.")
+    sub.add_parser("capabilities", help="Short capability overview; --full for route details and test limits.").add_argument(
+        "--full", action="store_true", help="Show the complete capability record (legacy output).")
     full = sub.add_parser('read-all', help='Paid add-on: complete supported paginated reads with durable API cursors.').add_subparsers(dest='action', required=True)
     q=full.add_parser('start');q.add_argument('platform',choices=PLATFORMS)
     q.add_argument('resource',choices=['works','comments','collections','collection-items'])
@@ -771,7 +772,7 @@ def run_command(args):
             return notifications.claim(args.id, args.available_tool, args.inventory)
         return notifications.record(args.id, args.claim_token, args.response)
     if args.command == "capabilities":
-        return capabilities()
+        return capabilities() if args.full else capabilities_summary()
     if args.command == "browser":
         from . import native_browser
         if args.action in {"delete-request", "delete-record", "repost-deleted"}:
@@ -997,6 +998,40 @@ def platform_routes(platform):
             "optional_api_route": ("Installed (method: api)." if addon else f"Needs the paid CrossCast API add-on (method: api). {NOT_ON_SALE}") if platform in {"youtube", "x", "instagram"} else None,
             "standalone_cli_publish": True,
             "live_upload_verified": platform in {"youtube", "x", "instagram", "douyin"}}
+
+
+def capabilities_summary():
+    """A local overview for first use; the detailed Python/API contract stays intact."""
+    addon = adapters.addon_installed()
+    routes = {p: platform_routes(p) for p in PLATFORMS}
+    notes = {
+        "bilibili": "Included bili-cli; publishing, creator data and interactions. Use bili schema for its commands.",
+        "youtube": "Uploads, playlists, comments and edits. Category required; cards/end screens unavailable; thumbnail read-back unconfirmed.",
+        "douyin": "Uploads, chapters, collections and edits. Covers can need human help; nested-reply replies unsupported.",
+        "instagram": "Uploads, captions, comments and saved collections. Mobile portrait-cover replacement needs the user.",
+        "x": "Browser publishing requires a subscription AND actual Media Studio access. Editing is platform-controlled.",
+    }
+    return {
+        "product": "PublishOps CrossCast", "version": __version__, "detail": "summary",
+        "account_status": "Not checked; this command makes no platform requests.",
+        "platforms": {p: {"default_method": routes[p]["default_method"],
+                          "live_upload_verified": routes[p]["live_upload_verified"],
+                          "scope": notes[p]} for p in PLATFORMS},
+        "paid_api_addon": {
+            "installed": addon,
+            "scope": "Official YouTube/X/Instagram APIs, complete reads, reports and Gmail reminders.",
+            "availability": "Installed; route permissions still required." if addon else NOT_ON_SALE,
+        },
+        "operations": "works/stats/comments, engage, collection/playlist, ops/messages sync, edit-work; support varies by platform.",
+        "language": "Bilibili/Douyin: Chinese -> Simplified Chinese; otherwise source + Simplified Chinese. YouTube/Instagram/X: English -> English; otherwise source + English. Replies: commenter's language only.",
+        "covers": "Use the production cover. Douyin/Instagram share a portrait; preserve the video's original ratio. Check cropping and small text.",
+        "limits": ["Reads are bounded; not every operation has a live test. Use --full for exact limits.",
+                   "TikTok suspended; no full historical inbox/analytics.",
+                   "Login is not permission to post or interact. Stop on platform checks; verify uncertain writes, never blindly repeat."],
+        "next": ["vpub doctor", "vpub auth login --help", "vpub init --help"],
+        "details": "vpub capabilities --full",
+        "state_dirs": "VPUB_HOME controls CrossCast; BILI_CLI_HOME separately controls bili-cli. Set both for isolated tests.",
+    }
 
 
 def capabilities():
