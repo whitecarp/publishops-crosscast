@@ -30,16 +30,18 @@
 >
 > 完成後給我已核驗的作品連結，結果不明的另行說明。逾時不要盲目重發，先看原任務回執並依狀態繼續。
 >
-> 最後在資料目錄之外建立回報資料夾，只放 doctor、status 和相關 receipts 的去識別化摘錄、重現步驟與必要的去識別化對話片段。輸出可能含帳號 ID、私密文案與路徑，不要直接複製。不要匯出整個資料目錄、瀏覽器資料、完整聊天或原始回執。讓我檢查後，再由我決定是否分享。
+> 最後在 CrossCast 和 bili-cli 的資料目錄（VPUB_HOME、BILI_CLI_HOME 或各自預設位置）之外建立回報資料夾，只放 doctor、status 和相關 receipts 的去識別化摘錄、重現步驟與必要的去識別化對話片段。輸出可能含帳號 ID、私密文案與路徑，不要直接複製。不要匯出任何一個資料目錄、登入資料、瀏覽器資料、完整聊天或原始回執。讓我檢查後，再由我決定是否分享。
 
 助手可用 `vpub preferences --platforms youtube,instagram --show-first yes` 儲存你實際選的平台與每次預覽偏好；這只是例子，不要照搬平台。`vpub preferences --show-first no` 關閉後續每次預覽，首次發布仍先由助手展示。只填寫要更改的選項。啟用每次預覽後，助手應使用目前方案的確認碼，方案變更後舊確認不能重用；不會在指令執行到一半時詢問。
 
 ### 回報前先移除私密資訊
 
 1. 在本機查看 `vpub doctor`、`vpub status` 和 `vpub receipts`，不要為了回報重新發布或登入。**這些輸出不會自動去識別化，可能含帳號或作品 ID、私密文案與檔案路徑。**
-2. 在 CrossCast 資料目錄（`VPUB_HOME`）之外建立回報資料夾。只放版本、系統、指令、重現步驟、預期與實際結果、錯誤碼，以及本次問題需要的去識別化摘錄。帳號名、ID、作品連結、信箱、私密文字與本機路徑改為一致的占位符；移除密碼、Cookie、權杖及驗證碼。
-3. 對話只摘錄重現問題必需的片段，逐條移除私密資訊。**不要提交整個資料目錄、瀏覽器資料、完整聊天匯出、原始日誌或未去識別化的回執。**
+2. 在 CrossCast 資料目錄（`VPUB_HOME`）和 bili-cli 資料目錄（`BILI_CLI_HOME` 或預設位置）之外建立回報資料夾。只放版本、系統、指令、重現步驟、預期與實際結果、錯誤碼，以及本次問題需要的去識別化摘錄。帳號名、ID、作品連結、信箱、私密文字與本機路徑改為一致的占位符；移除密碼、Cookie、權杖及驗證碼。
+3. 對話只摘錄重現問題必需的片段，逐條移除私密資訊。**不要提交 CrossCast 或 bili-cli 的整個資料目錄、登入資料（包括 `credential.json` 和 `pending_login.json`）、瀏覽器資料、完整聊天匯出、原始日誌或未去識別化的回執。**
 4. 自己開啟回報檔逐項檢查，再決定是否提交到 [GitHub Issues](https://github.com/whitecarp/publishops-crosscast/issues)。助手不應自動上傳回報。
+
+bili-cli 的登入資料獨立存放：若設定了 `BILI_CLI_HOME`，使用該目錄；否則 Windows 使用 `%APPDATA%\bili-cli`（未設定 `APPDATA` 時使用使用者家目錄下的 `bili-cli`），macOS/Linux 使用 `$XDG_CONFIG_HOME/bili-cli`（未設定 `XDG_CONFIG_HOME` 時使用 `~/.config/bili-cli`）。排除 CrossCast 資料目錄並不會自動排除這些位置；它們都不能放入回報包。
 
 ## 🎬 發一支影片是什麼樣子
 

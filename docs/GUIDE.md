@@ -30,16 +30,18 @@
 >
 > 完成后给我已核验的作品链接，结果不明的单独说明。超时不要盲目再发，先看原任务回执并按状态继续。
 >
-> 最后在数据目录之外建立反馈文件夹，只放 doctor、status 和相关 receipts 的脱敏摘录、复现步骤与必要的脱敏对话片段。输出可能含账号 ID、私密文案和路径，不要直接复制。不要导出整个数据目录、浏览器资料、完整聊天或原始回执。让我检查后，再由我决定是否分享。
+> 最后在 CrossCast 和 bili-cli 的数据目录（VPUB_HOME、BILI_CLI_HOME 或各自默认位置）之外建立反馈文件夹，只放 doctor、status 和相关 receipts 的脱敏摘录、复现步骤与必要的脱敏对话片段。输出可能含账号 ID、私密文案和路径，不要直接复制。不要导出任何一个数据目录、登录资料、浏览器资料、完整聊天或原始回执。让我检查后，再由我决定是否分享。
 
 助手可用 `vpub preferences --platforms youtube,instagram --show-first yes` 保存你实际选择的平台和每次预览偏好；这里只是例子，不要照搬平台。`vpub preferences --show-first no` 关闭后续每次预览，首次发布仍先由助手展示。只填写你要改的选项。启用每次预览后，助手应按当前方案的确认码执行，方案变化后旧确认不能复用；不会在命令运行到一半时问你。
 
 ### 反馈前先脱敏
 
 1. 在本机查看 `vpub doctor`、`vpub status` 和 `vpub receipts`，不要为收集反馈重新发布或登录。**这些输出不是自动脱敏的，可能含账号或作品 ID、私密文案和文件路径。**
-2. 在 CrossCast 数据目录（`VPUB_HOME`）之外新建反馈文件夹。仅保存版本、系统、命令、复现步骤、预期与实际结果、错误码，以及本次问题需要的脱敏摘录。账号名、ID、作品链接、邮箱、私密文字和本机路径改为一致的占位符；移除密码、Cookie、令牌和验证码。
-3. 对话只摘录复现必需的片段并逐条脱敏。**不要提交整个数据目录、浏览器资料、完整聊天导出、原始日志或未经脱敏的回执。**
+2. 在 CrossCast 数据目录（`VPUB_HOME`）和 bili-cli 数据目录（`BILI_CLI_HOME` 或默认位置）之外新建反馈文件夹。仅保存版本、系统、命令、复现步骤、预期与实际结果、错误码，以及本次问题需要的脱敏摘录。账号名、ID、作品链接、邮箱、私密文字和本机路径改为一致的占位符；移除密码、Cookie、令牌和验证码。
+3. 对话只摘录复现必需的片段并逐条脱敏。**不要提交 CrossCast 或 bili-cli 的整个数据目录、登录资料（包括 `credential.json` 和 `pending_login.json`）、浏览器资料、完整聊天导出、原始日志或未经脱敏的回执。**
 4. 自己打开反馈文件逐项检查，再决定是否提交到 [GitHub Issues](https://github.com/whitecarp/publishops-crosscast/issues)。助手不应自动上传反馈。
+
+bili-cli 的登录资料独立存放：若设置了 `BILI_CLI_HOME`，使用该目录；否则 Windows 使用 `%APPDATA%\bili-cli`（未设置 `APPDATA` 时使用用户主目录下的 `bili-cli`），macOS/Linux 使用 `$XDG_CONFIG_HOME/bili-cli`（未设置 `XDG_CONFIG_HOME` 时使用 `~/.config/bili-cli`）。排除 CrossCast 数据目录并不会自动排除这些位置；它们都不能放入反馈包。
 
 ## 🎬 发一条视频是什么样
 

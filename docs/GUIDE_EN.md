@@ -30,16 +30,18 @@ Replace the brackets with your details and give the whole message to an assistan
 >
 > Give me links to verified works and clearly separate uncertain results. After a timeout, inspect the original receipt and use its recovery path; never blindly repost.
 >
-> Finally create a feedback folder outside the data directory containing only redacted doctor/status/relevant receipts excerpts, reproduction steps and necessary redacted chat excerpts. Outputs may contain account IDs, private copy and file paths; do not copy them directly. Never export the whole data folder, browser profiles, full chat or raw receipts. Let me review the files and decide whether to share them.
+> Finally create a feedback folder outside both CrossCast's and bili-cli's data directories (VPUB_HOME, BILI_CLI_HOME or their default locations), containing only redacted doctor/status/relevant receipts excerpts, reproduction steps and necessary redacted chat excerpts. Outputs may contain account IDs, private copy and file paths; do not copy them directly. Never export either data folder, sign-in files, browser profiles, full chat or raw receipts. Let me review the files and decide whether to share them.
 
 The assistant can save your actual choices with `vpub preferences --platforms youtube,instagram --show-first yes`; those platforms are examples, not defaults. `vpub preferences --show-first no` turns off review on later publications; the assistant still shows the first one. Supply only the options you want to change. With show-first enabled, confirmation is for the current plan only; a changed plan needs a new confirmation. Commands do not pause for interactive questions.
 
 ### Redact feedback before sharing
 
 1. Inspect `vpub doctor`, `vpub status` and `vpub receipts` locally. Do not publish or sign in again to collect feedback. **These outputs are not automatically redacted and may contain account/work IDs, private text and file paths.**
-2. Create a feedback folder outside CrossCast's data directory (`VPUB_HOME`). Include versions, OS, commands, reproduction steps, expected/actual results, error codes and only the relevant redacted excerpts. Replace account names, IDs, work links, email addresses, private text and local paths with consistent placeholders; remove passwords, cookies, tokens and verification codes.
-3. Include only necessary, individually redacted chat excerpts. **Never submit the entire data directory, browser profiles, a full chat export, raw logs or unredacted receipts.**
+2. Create a feedback folder outside both CrossCast's data directory (`VPUB_HOME`) and bili-cli's data directory (`BILI_CLI_HOME` or its default location). Include versions, OS, commands, reproduction steps, expected/actual results, error codes and only the relevant redacted excerpts. Replace account names, IDs, work links, email addresses, private text and local paths with consistent placeholders; remove passwords, cookies, tokens and verification codes.
+3. Include only necessary, individually redacted chat excerpts. **Never submit either application's entire data directory, sign-in files (including `credential.json` and `pending_login.json`), browser profiles, a full chat export, raw logs or unredacted receipts.**
 4. Open and inspect every feedback file yourself before deciding to share it on [GitHub Issues](https://github.com/whitecarp/publishops-crosscast/issues). The assistant should not upload feedback automatically.
+
+bili-cli stores sign-in data separately: it uses `BILI_CLI_HOME` when set. Otherwise, Windows uses `%APPDATA%\bili-cli` (`bili-cli` under the user's home directory if `APPDATA` is unset); macOS/Linux use `$XDG_CONFIG_HOME/bili-cli` (`~/.config/bili-cli` if `XDG_CONFIG_HOME` is unset). Excluding CrossCast's data directory does not automatically exclude these locations; keep all of them out of the feedback package.
 
 ## 🎬 What publishing one video looks like
 
