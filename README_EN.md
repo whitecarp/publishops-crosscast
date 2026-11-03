@@ -34,6 +34,7 @@ You finish a video, and then you still have to write titles for every platform, 
 Please install https://github.com/whitecarp/publishops-crosscast
 Run vpub doctor, and read the skill file it names.
 Publish final.mp4 publicly to [my chosen platforms], with cover.jpg as the cover and titles and descriptions written for each platform.
+Before the first publication on each platform, show the exact current plan and wait for my yes; a confirmation code is not my consent.
 The video is in English, (was / wasn't) made with AI, and is about: (one sentence)
 ```
 
@@ -121,7 +122,7 @@ It's your own account, so these are on by default:
 <details>
 <summary>Do I have to approve each release?</summary>
 
-For your first publication, the assistant shows a local dry run and waits for you to say publish. After that it follows your publishing requests; saved show-first means reviewing each current plan. Changes to content, accounts, platforms, audience or scope still need confirmation. You can always ask to preview. Preferences are not standing authorization to publish.
+Before the first publication on each platform in this local data folder, the assistant shows the exact current plan and stops until you say publish. This counts platforms, not first use of each account or channel. Later requests on that platform follow your instructions; saved show-first or a requested preview means waiting for your approval each time. When review is required, the current `--confirm CODE` must be paired with a separate `--person-approved`. The code alone is not consent, and the flag is only the caller's attestation: software cannot prove you said yes. Changes to content, accounts, platforms, audience or scope still need confirmation. Preferences are not standing authorization to publish.
 
 </details>
 

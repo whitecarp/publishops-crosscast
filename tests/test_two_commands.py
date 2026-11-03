@@ -34,8 +34,9 @@ class TwoCommandTests(unittest.TestCase):
                 "options": {"submission_mode": "publish", "visibility": "public"},
                 "receipt": {"state": "SUBMISSION_VERIFIED", "platform": "youtube", "id": "abcdefghijk"},
             }
-            key = ledger.claim("youtube", "returning-fixture", "f" * 64, prior)
-            ledger.save(key, "SUBMISSION_VERIFIED", prior)
+            for platform in ('bilibili', 'youtube', 'douyin', 'x', 'instagram'):
+                key = ledger.claim(platform, "returning-fixture", "f" * 64, prior)
+                ledger.save(key, "SUBMISSION_VERIFIED", prior)
         finally:
             ledger.close()
         self.video = self.folder / "final.mp4"
@@ -302,7 +303,8 @@ class TwoCommandTests(unittest.TestCase):
         self.write_copy(title="联系我 13812345678")
         first = self.go()["confirmation"]
         self.assertEqual(first, self.go()["confirmation"])
-        self.assertTrue(self.go("--confirm", first)["all_submissions_verified"])
+        self.assertEqual('NEEDS_A_PERSON', self.go("--confirm", first)['state'])
+        self.assertTrue(self.go("--confirm", first, '--person-approved')["all_submissions_verified"])
 
     def test_options_added_to_the_folders_plan_are_kept(self):
         self.prepare()
@@ -353,7 +355,9 @@ class TwoCommandTests(unittest.TestCase):
         self.assertIn(answer["confirmation"], answer["next"])
         self.refused("confirmation_required", self.go, "--confirm", "wrong")
         self.assertEqual([], self.sent)
-        self.assertTrue(self.go("--confirm", answer["confirmation"])["all_submissions_verified"])
+        self.assertEqual('NEEDS_A_PERSON', self.go("--confirm", answer['confirmation'])['state'])
+        self.assertEqual([], self.sent)
+        self.assertTrue(self.go("--confirm", answer["confirmation"], '--person-approved')["all_submissions_verified"])
         self.assertEqual(2, len(self.sent))
 
     def test_a_draft_needs_no_visibility(self):

@@ -134,7 +134,7 @@ def retry_rejected(key, identity, evidence_path):
             ledger.close()
 
 
-def authorize_publish(key, identity):
+def authorize_publish(key, identity, confirmation=None, *, person_approved=False):
     """Explicit operator authorization to submit the existing draft, never reupload."""
     with publication_lock():
         job = request(key)
@@ -146,11 +146,21 @@ def authorize_publish(key, identity):
             if identity != old["data"].get("browser_identity"):
                 raise VpubError("wrong_account", "Confirm the original account in the current browser first.")
             data = old["data"]
-            data.setdefault("submission_authorizations", []).append({"at": now(), "identity": identity,
-                "previous_state": old["state"], "previous_plan_hash": data["plan_hash"], "previous_receipt": data.get("receipt")})
             plan = deepcopy({k:v for k,v in data["approved_plan"].items() if k != "confirmation"})
             plan["platforms"][old["platform"]]["submission_mode"] = "publish"
             plan["confirmation"] = digest(plan)
+            from .publication_review import check
+            waiting = check(plan, confirmation, person_approved, draft_promotion=True)
+            if waiting:
+                return {**waiting, "key": key, "final_submission_allowed": False,
+                        "next": "Stop and show the changed publication plan to the user. Wait for their yes. "
+                                f"Only then run vpub browser authorize-publish {key} --identity {identity} "
+                                f"--confirm {plan['confirmation']} --person-approved. "
+                                "This attests their approval; the CLI cannot verify who supplied it. "
+                                "Keep the existing draft; do not upload again."}
+            data.setdefault("submission_authorizations", []).append({"at": now(), "identity": identity,
+                "previous_state": old["state"], "previous_plan_hash": data["plan_hash"], "previous_receipt": data.get("receipt"),
+                "person_approved": person_approved is True})
             opts = plan["platforms"][old["platform"]]
             data.update(approved_plan=plan, plan_hash=plan["confirmation"], options=opts)
             job["plan"]["platforms"] = deepcopy(plan["platforms"])

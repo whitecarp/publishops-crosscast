@@ -137,7 +137,10 @@ class WorkflowTests(unittest.TestCase):
                 self.assertEqual("SKIPPED_EXISTING", cli.publish_plan(plan, plan["confirmation"], reviewed=True)["results"][platform]["state"])
                 self.code("wrong_account", native_browser.authorize_publish, key, "wrong")
                 snapshot = native_browser.request(key)["plan"]["video"]
-                authorization = native_browser.authorize_publish(key, identity)
+                waiting = native_browser.authorize_publish(key, identity)
+                self.assertEqual('NEEDS_A_PERSON', waiting['state'])
+                self.assertFalse(native_browser.request(key)['final_submission_allowed'])
+                authorization = native_browser.authorize_publish(key, identity, waiting['confirmation'], person_approved=True)
                 self.assertTrue(authorization["final_submission_allowed"])
                 self.assertFalse(authorization["can_begin"])
                 self.assertEqual(0, authorization["platform_writes"])

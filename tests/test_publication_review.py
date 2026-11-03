@@ -27,7 +27,7 @@ class ReviewFixture:
         ledger = core.Ledger()
         try:
             data = {'options': {'submission_mode': mode}}
-            key = ledger.claim('youtube', 'default', 'prior-unrelated-video', data)
+            key = ledger.claim('x', 'default', 'prior-unrelated-video', data)
             ledger.save(key, state, data)
         finally:
             ledger.close()
@@ -38,7 +38,7 @@ class ReviewGateTests(ReviewFixture, unittest.TestCase):
         answer = cli.publish_plan(self.p, 'fixture')
         self.assertEqual('NEEDS_A_PERSON', answer['state'])
         self.assertEqual(['first_publication'], answer['review_reasons'])
-        self.assertIn('--reviewed', answer['next'])
+        self.assertIn('--person-approved', answer['next'])
         self.assertEqual(0, answer['platform_writes'])
         self.assertFalse(cli.finished(answer))
         self.dispatch.assert_not_called()
@@ -59,7 +59,7 @@ class ReviewGateTests(ReviewFixture, unittest.TestCase):
         ledger = core.Ledger()
         try:
             data = {'options': {'submission_mode': 'publish'}, 'association': 'Imported mapping'}
-            key = ledger.claim('youtube', 'default', 'imported-video', data)
+            key = ledger.claim('x', 'default', 'imported-video', data)
             ledger.save(key, 'SUBMISSION_VERIFIED', data)
         finally:
             ledger.close()
@@ -158,6 +158,8 @@ class FirstGoTests(ReviewFixture, unittest.TestCase):
         self.assertEqual('NEEDS_A_PERSON', lower['state'])
         self.dispatch.assert_not_called()
         self.run_cli('go', folder, '--confirm', preview['confirmation'])
+        self.dispatch.assert_not_called()
+        self.run_cli('go', folder, '--confirm', preview['confirmation'], '--person-approved')
         self.dispatch.assert_called_once()
 
     def test_legacy_review_survives_metadata_cover_and_instagram_exports(self):

@@ -136,7 +136,7 @@ class ReviewTests(LocalTests):
         self.review_plan()
         answer = run('go', self.folder)
         with patch.object(cli, 'publish_plan', return_value={'platform_writes': 0}) as publish:
-            run('go', self.folder, '--confirm', answer['confirmation'])
+            run('go', self.folder, '--confirm', answer['confirmation'], '--person-approved')
         self.assertEqual(answer['confirmation'], publish.call_args.args[1])
         self.write_copy('A different film')
         changed = run('go', self.folder)

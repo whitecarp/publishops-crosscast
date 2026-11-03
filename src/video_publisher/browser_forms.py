@@ -13,7 +13,7 @@ from .categories import STUDIO_CATEGORIES
 from .core import VpubError, douyin_caption, stop_check
 from .browser_runtime import look_until, risk_check, unique_visible, visible
 from .progress import stage
-from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, X_CHOSEN_TIME, YT_EDIT_DRAFT, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style,
+from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, X_CHOSEN_TIME, YT_EDIT_DRAFT, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style, studio_zone_offsets_agree,
                                upload_file, wait_until, work_url, works, verify, verify_scheduled_x, x_chosen_time_says, x_new_works, x_new_posts, x_schedule_baseline, x_schedule_moment, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
 
 X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
@@ -993,8 +993,7 @@ def yt_schedule_zone(text, when):
         raise VpubError('schedule_unverified', 'The intended time repeats during a daylight-saving change in Studio\'s named zone. The upload is kept as a draft; nothing was published.')
     # Etc/GMT+5 is an IANA key with the opposite sign, not a displayed GMT+5 offset.
     offsets = studio_offsets(text.replace(name, ''))
-    valid_offsets = {local.utcoffset().total_seconds() / 60, datetime.now(zone).utcoffset().total_seconds() / 60}
-    if len(offsets) > 1 or not offsets <= valid_offsets:
+    if not studio_zone_offsets_agree(offsets, local, datetime.now(zone)):
         raise VpubError('schedule_unverified', 'Studio\'s displayed offset conflicts with its named time zone. The upload is kept as a draft; nothing was published.')
     return local, name
 
