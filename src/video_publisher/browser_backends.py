@@ -179,8 +179,10 @@ class Transaction:
 
     def media(self):
         src = Path(self.plan["video"])
-        # The upload's file name, as a link to the private snapshot rather than a second copy of the video.
-        dst = snapshot_file(src, src.with_name(self.media_name()), self.plan["video_sha256"], link=True)
+        # Each platform owns its alias. If hardlinks are unavailable, two
+        # browsers must not replace the same copy while one is uploading it.
+        target = src.parent / ("upload-" + self.platform) / self.media_name()
+        dst = snapshot_file(src, target, self.plan["video_sha256"], link=True)
         self.save(phase="selecting_media", media_selected=True, upload_filename=dst.name)
         stage("uploading")
         return dst
@@ -211,9 +213,11 @@ class Transaction:
         stop_check(self.platform)
         if still_holds:
             await still_holds()  # What was read before that wait may not be true after it.
+        stop_check(self.platform)
         self.save(state="UNKNOWN", phase="submitting", final_submit_attempted=True, final_presses=self.receipt.get("final_presses", 0) + 1, review_url=page.url)
         stage("pressing")
         # Persist BEFORE clicking. A timeout must never cause another click.
+        stop_check(self.platform)  # Saving the receipt can wait on its own lock.
         await button.click(timeout=20000)
         stage("waiting for platform confirmation")
 

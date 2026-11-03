@@ -72,106 +72,236 @@ def snapshot_plan(plan, platform):
     return safe
 
 
-def publish_plan(plan, confirm):
-    from .overview import DRAFTS
+def _publish_platform(plan, platform, snapshot_lock):
+    """One attempt owns its connection, plan and checkpoint, even in a worker."""
+    plan = deepcopy(plan)
+    opts = plan["platforms"][platform]
+    stopped = {"state": "NOT_STARTED", "code": "stopped"}
+    try:
+        stop_check(platform)
+    except VpubError:
+        return stopped
+    # Serialize initial schema setup too; SQLite connections stay thread-local.
+    with snapshot_lock:
+        ledger = Ledger()
+    try:
+        account = opts["account"]
+        key = ledger.key(platform, account, plan["video_sha256"])
+        old = ledger.get(key)
+        if old and only_a_preview(old, opts):
+            ledger.forget_preview(key)
+            old = None
+        if old:
+            return {"state": "SKIPPED_EXISTING", "key": key,
+                    "previous_state": old["state"], "receipt": old["data"].get("receipt"),
+                    "hint": "Use verify; existing/uncertain attempts are never automatically resubmitted."}
+        try:
+            from .language_policy import route
+            language = opts.get('content_language', 'und')
+            if language.lower().split('-')[0] not in {'und', 'mul', 'zxx'}:
+                policy = route(language, platform)
+                if opts.get('metadata_mode', 'target_only') != policy['mode']:
+                    raise VpubError('metadata_required', 'Prepare source plus platform-language copy before uploading.', 'Run vpub metadata request, let the host model supply both sections, then metadata apply.')
+            stop_check(platform)
+            identity = adapters.preflight(platform, opts)
+            if opts.get('method') == 'browser':
+                opts = {**opts, 'expected_identity': identity['identity']}
+        except Exception as e:
+            code = e.code if isinstance(e, VpubError) else "preflight_error"
+            pushed_back(platform, code)
+            return {"state": "NOT_STARTED", "code": code,
+                    "message": e.message if isinstance(e, VpubError) else type(e).__name__,
+                    "hint": e.hint if isinstance(e, VpubError) else "Inspect account setup."}
+        # Platforms share the approved video/cover destination. Finish each
+        # snapshot phase under one lock, retaining snapshot_file's hash checks.
+        try:
+            with snapshot_lock:
+                stop_check(platform)
+                safe_plan = snapshot_plan(plan, platform)
+            stop_check(platform)
+        except (VpubError, OSError) as e:
+            return {"state": "NOT_STARTED", "code": e.code if isinstance(e, VpubError) else "snapshot_failed",
+                    "message": e.message if isinstance(e, VpubError) else type(e).__name__,
+                    "hint": "Nothing was uploaded to this platform. Check the files and free disk space, then create a fresh plan."}
+        record = {"plan_hash": plan["confirmation"], "title": opts["title"], "identity": identity,
+                  "options": opts, "approved_plan": plan, "upload_plan": safe_plan, "started_at": now()}
+        if not ledger.claim(platform, account, plan["video_sha256"], record):
+            return {"state": "SKIPPED_EXISTING", "key": key}
 
+        def checkpoint(receipt):
+            record["receipt"] = receipt
+            ledger.save(key, receipt["state"], record)
+
+        try:
+            stop_check(platform)
+            receipt = adapters.publish(platform, safe_plan, opts, checkpoint)
+            checkpoint(receipt)
+            if receipt["state"] == "WAITING_FOR_USER":
+                adapters.email_reminder(key, platform, 1)
+            return {"key": key, **receipt}
+        except Exception as e:
+            code = e.code if isinstance(e, VpubError) else "backend_error"
+            # Latch a warning before any recovery I/O lets a peer advance.
+            pushed_back(platform, code)
+            # A durable platform ID always survives a failed read-back.
+            receipt = record.get("receipt", {})
+            durable = home() / "browser-receipts" / (plan["confirmation"] + "-" + platform + ".json")
+            if not receipt.get("id") and durable.exists():
+                candidate = read_json(durable)
+                if candidate.get("platform") in {None, platform}:
+                    receipt = candidate
+                    record["receipt"] = receipt
+            if never_sent(e) or (code in {"browser_busy", "stopped", "page_not_ready"} and not receipt):
+                ledger.save(key, "IN_PROGRESS", record)
+                ledger.forget(key)
+                return {"state": "NOT_STARTED", "code": code, "message": e.message, "hint": e.hint}
+            state = "SUBMITTED_UNVERIFIED" if receipt.get("id") else receipt.get("state", "UNKNOWN")
+            record.update(error={"code": code,
+                                 "message": e.message if isinstance(e, VpubError) else type(e).__name__})
+            ledger.save(key, state, record)
+            return {**receipt, "key": key, "state": state, "code": code,
+                    "hint": "Inspect/verify the original work; do not create another submission."}
+    finally:
+        ledger.close()
+
+
+def _stop_interrupted_publish():
+    """Latch an operator stop without replacing a platform's existing reason."""
+    import os
+
+    try:
+        # Exclusive creation preserves an existing stop, even across a race.
+        # Presence already stops readers while these few bytes are written.
+        with (home() / "STOP.json").open("x", encoding="utf-8") as stream:
+            json.dump({"source": "operator", "code": "interrupted", "at": now(),
+                       "reason": "Publication interrupted by the operator."}, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except FileExistsError:
+        pass
+
+
+def _publish_browser_batch(plan, platforms, snapshot_lock):
+    """At most two distinct profiles, with no executor backlog or retry."""
+    from concurrent.futures import ThreadPoolExecutor, wait
+    import signal
+    from threading import current_thread, main_thread
+
+    interrupted = None
+
+    def defer_interrupt(signum, frame):
+        nonlocal interrupted
+        interrupted = KeyboardInterrupt()
+
+    # Defer ordinary Ctrl-C even between submit() and recording its future.
+    # Background callers never install process-wide signal handlers.
+    defer = current_thread() is main_thread() and signal.getsignal(signal.SIGINT) is signal.default_int_handler
+    if defer:
+        signal.signal(signal.SIGINT, defer_interrupt)
+    pool = None
+    futures = {}
+    try:
+        pool = ThreadPoolExecutor(max_workers=len(platforms), thread_name_prefix="vpub-publish")
+        for platform in platforms:
+            if interrupted is not None:
+                break
+            try:
+                stop_check(platform)
+            except VpubError:
+                break
+            futures[platform] = pool.submit(_publish_platform, plan, platform, snapshot_lock)
+    except KeyboardInterrupt as exc:
+        interrupted = exc
+    finally:
+        # Do not let Ctrl-C release publication_lock while an upload still owns
+        # a profile. Wait on futures before joining threads (an interrupted join
+        # can mark a live thread as stopped on some Python versions).
+        stop_recorded, stop_error = False, None
+        try:
+            while pool is not None:
+                try:
+                    if interrupted is not None and not stop_recorded:
+                        try:
+                            _stop_interrupted_publish()
+                        except OSError as exc:
+                            stop_error = exc  # Even a failed stop write cannot skip draining.
+                        stop_recorded = True
+                        try:
+                            print(json.dumps({"event": "publication_stopping", "message":
+                                "Waiting for active uploads to reach their next stop check. This can take minutes; "
+                                "repeated Ctrl+C will not force them closed. Keeping existing receipts; do not start another upload."}),
+                                file=sys.stderr, flush=True)
+                        except (OSError, ValueError):
+                            pass  # A closed progress stream must not release the lock early.
+                    done, pending = wait(futures.values(), timeout=0.05)
+                    # A worker can also report an interruption. Observe it while
+                    # peers are active, never through an unbounded result().
+                    for future in done:
+                        failure = future.exception()
+                        if isinstance(failure, KeyboardInterrupt):
+                            interrupted = failure
+                    if pending or (interrupted is not None and not stop_recorded):
+                        continue
+                    pool.shutdown(wait=True)
+                    break
+                except KeyboardInterrupt as exc:
+                    interrupted = exc
+        finally:
+            if defer:
+                signal.signal(signal.SIGINT, signal.default_int_handler)
+        if stop_error is not None:
+            raise stop_error
+        if interrupted is not None:
+            raise interrupted
+    results = {}
+    for platform, future in futures.items():
+        try:
+            results[platform] = future.result()
+        except Exception as exc:
+            # A malformed receipt or a failed local save on one platform must
+            # not hide another platform's result. Its existing claim remains;
+            # this is deliberately not permission to retry an unknown write.
+            results[platform] = {
+                "state": "UNKNOWN", "code": "backend_error",
+                "key": Ledger.key(platform, plan["platforms"][platform]["account"], plan["video_sha256"]),
+                "message": type(exc).__name__,
+                "hint": "Inspect this attempt's original record; do not upload it again.",
+            }
+    return results
+
+
+def publish_plan(plan, confirm, workers=1):
+    from .overview import DRAFTS
+    from threading import Lock
+
+    if type(workers) is not int or workers not in (1, 2):
+        raise VpubError("invalid_workers", "Publication workers must be 1 or 2.")
     if confirm != plan["confirmation"]:
         raise VpubError("confirmation_required", "The confirmation hash must match the current plan.", "Run vpub plan MANIFEST and review the exact platforms, accounts and visibility.")
     for platform in plan["platforms"]:
         platform_check(platform)
         stop_check(platform)
     results = {}
+    snapshot_lock = Lock()
     with publication_lock():
-        ledger = Ledger()
-        try:
-            for platform, opts in plan["platforms"].items():
-                try:
-                    stop_check(platform)
-                except VpubError:
-                    break  # A platform objected during this run. The rest wait, and what already ran is still reported.
-                account = opts["account"]
-                key = ledger.key(platform, account, plan["video_sha256"])
-                old = ledger.get(key)
-                if old and only_a_preview(old, opts):
-                    ledger.forget_preview(key)
-                    old = None
-                if old:
-                    results[platform] = {"state": "SKIPPED_EXISTING", "key": key,
-                                         "previous_state": old["state"], "receipt": old["data"].get("receipt"),
-                                         "hint": "Use verify; existing/uncertain attempts are never automatically resubmitted."}
+        batch = []
+        for platform, opts in plan["platforms"].items():
+            browser = platform in {"douyin", "instagram", "x", "youtube"} and opts.get("method") == "browser"
+            if workers == 2 and browser:
+                batch.append(platform)
+                if len(batch) < workers:
                     continue
-                try:
-                    from .language_policy import route
-                    language=opts.get('content_language','und')
-                    if language.lower().split('-')[0] not in {'und','mul','zxx'}:
-                        policy=route(language,platform)
-                        if opts.get('metadata_mode','target_only')!=policy['mode']:
-                            raise VpubError('metadata_required','Prepare source plus platform-language copy before uploading.', 'Run vpub metadata request, let the host model supply both sections, then metadata apply.')
-                    identity = adapters.preflight(platform, opts)
-                    if opts.get('method') == 'browser':
-                        opts = {**opts, 'expected_identity': identity['identity']}
-                except Exception as e:
-                    code = e.code if isinstance(e, VpubError) else "preflight_error"
-                    results[platform] = {"state": "NOT_STARTED", "code": code,
-                                         "message": e.message if isinstance(e, VpubError) else type(e).__name__,
-                                         "hint": e.hint if isinstance(e, VpubError) else "Inspect account setup."}
-                    if pushed_back(platform, code):
-                        break
-                    continue
-                # Copy the approved bytes so a rendering process cannot mutate
-                # the source while a backend is streaming it.
-                try:
-                    safe_plan = snapshot_plan(plan, platform)
-                except (VpubError, OSError) as e:
-                    results[platform] = {"state": "NOT_STARTED", "code": e.code if isinstance(e, VpubError) else "snapshot_failed",
-                                         "message": e.message if isinstance(e, VpubError) else type(e).__name__,
-                                         "hint": "Nothing was uploaded to this platform. Check the files and free disk space, then create a fresh plan."}
-                    continue
-                record = {"plan_hash": plan["confirmation"], "title": opts["title"], "identity": identity,
-                          "options": opts, "approved_plan": plan, "upload_plan": safe_plan, "started_at": now()}
-                claimed = ledger.claim(platform, account, plan["video_sha256"], record)
-                if not claimed:
-                    results[platform] = {"state": "SKIPPED_EXISTING", "key": key}
-                    continue
-
-                def checkpoint(receipt):
-                    record["receipt"] = receipt
-                    ledger.save(key, receipt["state"], record)
-
-                try:
-                    receipt = adapters.publish(platform, safe_plan, opts, checkpoint)
-                    checkpoint(receipt)
-                    if receipt["state"] == "WAITING_FOR_USER":
-                        adapters.email_reminder(key, platform, 1)
-                    results[platform] = {"key": key, **receipt}
-                except Exception as e:
-                    code = e.code if isinstance(e, VpubError) else "backend_error"
-                    if never_sent(e) or (code in {"browser_busy", "stopped", "page_not_ready"} and not record.get("receipt")):
-                        # The worker was refused the profile lock before it opened a page, a stop landed before its first step, the site's first page came back empty before any work on it, or bili-cli held the upload back to keep its spacing.
-                        ledger.save(key, "IN_PROGRESS", record)
-                        ledger.forget(key)
-                        results[platform] = {"state": "NOT_STARTED", "code": code, "message": e.message, "hint": e.hint}
-                        continue
-                    # A durable platform ID always survives a failed read-back.
-                    receipt = record.get("receipt", {})
-                    durable = home() / "browser-receipts" / (plan["confirmation"] + "-" + platform + ".json")
-                    if not receipt.get("id") and durable.exists():
-                        candidate = read_json(durable)
-                        if candidate.get("platform") in {None, platform}:
-                            receipt = candidate
-                            record["receipt"] = receipt
-                    state = "SUBMITTED_UNVERIFIED" if receipt.get("id") else receipt.get("state", "UNKNOWN")
-                    record.update(error={"code": code,
-                                         "message": e.message if isinstance(e, VpubError) else type(e).__name__})
-                    ledger.save(key, state, record)
-                    results[platform] = {**receipt, "key": key, "state": state, "code": code,
-                                         "hint": "Inspect/verify the original work; do not create another submission."}
-                    if pushed_back(platform, code):
-                        break
-        finally:
-            ledger.close()
-    for p in plan["platforms"]:
-        results.setdefault(p, {"state": "NOT_STARTED", "code": "stopped"})
+            else:
+                if batch:
+                    results.update(_publish_browser_batch(plan, batch, snapshot_lock))
+                    batch = []
+                results[platform] = _publish_platform(plan, platform, snapshot_lock)
+                continue
+            results.update(_publish_browser_batch(plan, batch, snapshot_lock))
+            batch = []
+        if batch:
+            results.update(_publish_browser_batch(plan, batch, snapshot_lock))
+    results = {p: results.get(p, {"state": "NOT_STARTED", "code": "stopped"}) for p in plan["platforms"]}
     drafts = {p for p, o in plan["platforms"].items() if o.get("submission_mode") == "draft_only"}
     verified = all(v["state"] == "SUBMISSION_VERIFIED" or
                    (v["state"] == "SKIPPED_EXISTING" and v.get("previous_state") in {"SUBMISSION_VERIFIED", "EXISTING_VERIFIED"})
@@ -453,6 +583,8 @@ def parser():
     q.add_argument("--folder", help="Where to keep its files. Default: a folder named after the video, beside it.")
     q = sub.add_parser("go", help="Publish a prepared folder: fit the covers, check it, post it and read it back.", description="Publish a prepared folder: fit the covers, check it, post it and read it back. Safe to run again: what already went out is skipped, never repeated.")
     q.add_argument("folder")
+    q.add_argument("--workers", type=int, choices=(1, 2), default=1,
+                   help="Run up to two browser platforms at once; default 1. Other routes stay serial.")
     q.add_argument("--dry-run", action="store_true", help="Do everything up to the upload and stop.")
     q.add_argument("--confirm", help="The code vpub go gives when it stops for something flagged in the text.")
     q = sub.add_parser("init", help="Start a plan for one video.")
@@ -559,6 +691,8 @@ def parser():
         if cmd == "publish":
             q.add_argument("--confirm")
             q.add_argument("--dry-run", action="store_true")
+            q.add_argument("--workers", type=int, choices=(1, 2), default=1,
+                           help="Concurrent browser publications (default: 1); other routes remain serial barriers.")
     q = sub.add_parser("works", help="List your works on a platform.")
     q.add_argument("platform", choices=PLATFORMS)
     q.add_argument("--account", choices=["default"], default="default")
@@ -882,7 +1016,7 @@ def run_command(args):
         return quick.prepare(args)
     if args.command == "go":
         from . import quick
-        return quick.go(args.folder, args.confirm, args.dry_run)
+        return quick.go(args.folder, args.confirm, args.dry_run, workers=args.workers)
     if args.command == "init":
         out = Path(args.out)
         if out.exists():
@@ -921,7 +1055,7 @@ def run_command(args):
                 "mode": "LOCAL_DRY_RUN", "platform_writes": 0, "media_check": media,
                 "note": "Plan only; use publish --dry-run to check saved sign-in records. No live readiness checks were made."}
             return {**plan, **plan_flags(plan), **checks}
-        return publish_plan(plan, args.confirm)
+        return publish_plan(plan, args.confirm, workers=args.workers)
     if args.command == "safety":
         from . import safety
         if args.action == "status":
@@ -1194,9 +1328,15 @@ def main():
         print(json.dumps({"ok": False, "error": {"code": "invalid_file", "message": f"A file could not be read as UTF-8 JSON or text{where}.",
                                                  "hint": "Fix the file and run the command again."}}))
         raise SystemExit(2)
-    except (KeyboardInterrupt, Exception) as e:
+    except KeyboardInterrupt:
+        hint = "Inspect the existing receipts before continuing; an interrupted upload may already have been submitted. Do not upload it again."
+        if (home() / "STOP.json").exists():
+            hint += f" CrossCast remains stopped, including browser reads and verify. Only a person may inspect the reason and clear it with {how_to_clear_a_stop()}."
+        print(json.dumps({"ok": False, "error": {"code": "interrupted", "message": "Publication or command interrupted.", "hint": hint}}))
+        raise SystemExit(3)
+    except Exception as e:
         # OAuth exceptions may embed tokens/URLs: never serialize their bodies.
-        print(json.dumps({"ok": False, "error": {"code": "interrupted" if isinstance(e, KeyboardInterrupt) else "internal_error",
+        print(json.dumps({"ok": False, "error": {"code": "internal_error",
                                                  "message": type(e).__name__,
                                                  "hint": "Check setup/receipts. An interrupted upload must not be blindly retried."}}))
         raise SystemExit(3)

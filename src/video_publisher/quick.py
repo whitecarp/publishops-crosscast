@@ -115,7 +115,7 @@ def build(folder, words):
     return place / "ready.json"
 
 
-def go(folder, confirm=None, dry_run=False):
+def go(folder, confirm=None, dry_run=False, workers=1):
     folder = Path(folder).resolve()
     if not (folder / "publish.json").is_file():
         raise VpubError("not_prepared", f"{folder} isn't a prepared folder.", "Start with vpub prepare VIDEO.")
@@ -139,4 +139,4 @@ def go(folder, confirm=None, dry_run=False):
         return {"ready": False, "state": "NEEDS_A_PERSON", "text_flags": plan["text_flags"], "text_flags_note": plan["text_flags_note"],
                 "confirmation": plan["confirmation"], "platform_writes": 0,
                 "next": f'Tell the user what was flagged. If they approve it for the configured audience: vpub go "{folder}" --confirm {plan["confirmation"]}. Otherwise change copy.json and run vpub go again.'}
-    return step("publish", ready, "--confirm", confirm or plan["confirmation"])
+    return step("publish", ready, "--confirm", confirm or plan["confirmation"], "--workers", workers)

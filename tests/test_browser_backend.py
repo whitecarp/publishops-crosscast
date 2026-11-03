@@ -219,10 +219,16 @@ class BrowserSafetyTests(unittest.TestCase):
     def test_interrupted_named_copy_is_replaced_and_needs_no_second_copy_of_the_video(self):
         tx=Transaction('douyin','tester',self.plan)
         source=Path(self.plan['video'])
-        named=source.with_name('crosscast-'+self.plan['video_sha256'][:16]+source.suffix)
+        legacy=source.with_name('crosscast-'+self.plan['video_sha256'][:16]+source.suffix)
+        legacy.write_bytes(b'legacy upload stays untouched')
+        named=source.parent/'upload-douyin'/legacy.name
+        named.parent.mkdir()
         named.write_bytes(b'fixture')
-        self.assertEqual(source.read_bytes(),tx.media().read_bytes())
+        media=tx.media()
+        self.assertEqual(named,media)
+        self.assertEqual(source.read_bytes(),media.read_bytes())
         self.assertTrue(os.path.samefile(source,named))
+        self.assertEqual(b'legacy upload stays untouched',legacy.read_bytes())
 
 
 if __name__=='__main__': unittest.main()
