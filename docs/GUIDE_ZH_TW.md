@@ -238,6 +238,8 @@ vpub capabilities  # 查看這次安裝提供的發布方式；vpub doctor 會�
 
 需要 Python 3.10–3.14 和 Google Chrome。Windows 安裝腳本已經實測；macOS、Linux 尚未驗收。
 
+上面的安裝指令使用目前的 main 分支。現有 v0.16.0 發行套件仍要求 Python 3.10–3.12。
+
 <details>
 <summary><b>Windows 安裝腳本</b></summary>
 

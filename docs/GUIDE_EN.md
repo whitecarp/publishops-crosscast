@@ -238,6 +238,8 @@ Requires Python 3.10–3.14. Neither command signs in or publishes. See [Install
 
 Requires Python 3.10–3.14 and Google Chrome. The Windows installer has been tested; macOS and Linux have not been validated.
 
+The install command above uses the current main branch. The existing v0.16.0 release downloads still require Python 3.10–3.12.
+
 <details>
 <summary><b>Windows installer</b></summary>
 
