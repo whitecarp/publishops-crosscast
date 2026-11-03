@@ -14,6 +14,7 @@ SAME = '(node, retained) => node === retained && node.isConnected'
 CONTAINS = '(node, child) => node.isConnected && child.isConnected && node.contains(child)'
 EXACT_WAIT_MILLISECONDS = 30000
 POLL_MILLISECONDS = 500
+CONFIRM_WAIT_MILLISECONDS = 10000
 
 
 async def guard(page):
@@ -70,8 +71,10 @@ async def target_bound(page, actual, target, retained):
 
 async def overlays_bound(page, *, menu=None, dialog=None):
     for role, expected in (('menu', menu), ('dialog', dialog), ('alertdialog', dialog)):
+        expected = expected if isinstance(expected, (list, tuple)) else (() if expected is None else (expected,))
         for node in await page.get_by_role(role).all():
-            if await node.is_visible() and (expected is None or not await node.evaluate(SAME, expected)):
+            matches = [await node.evaluate(SAME, retained) for retained in expected]
+            if await node.is_visible() and not any(matches):
                 raise VpubError('layout_changed', 'An unbound menu or dialog is already open.')
     if dialog is None and await runtime.visible(page.locator(FINAL)):
         raise VpubError('layout_changed', 'An unbound delete confirmation is already open.')
@@ -198,17 +201,45 @@ async def execute(page, actual, target, operation, receipt_path):
         await menu_bound()
         stop_check('x')
         await control.click(timeout=10000)
-        dialogs = page.get_by_role('dialog').or_(page.get_by_role('alertdialog'))
-        confirmation_query = dialogs.filter(has=page.locator(FINAL))
-        confirmation = await retain(confirmation_query, 'post deletion confirmation')
         final_query = page.locator(FINAL)
-        final = await retain(final_query, 'final post Delete')
+        dialogs = page.get_by_role('dialog').or_(page.get_by_role('alertdialog'))
+        # The menu click may return before the sheet renders. Wait for one
+        # final control, without clicking the menu again. All visible dialog
+        # wrappers must contain that same node, so nested wrappers are allowed
+        # while unrelated dialogs and duplicate final controls remain refused.
+        for elapsed in range(0, CONFIRM_WAIT_MILLISECONDS + 1, POLL_MILLISECONDS):
+            candidates = await final_query.element_handles()
+            held.extend(candidates)
+            shown = [node for node in candidates if await node.is_visible()]
+            if len(shown) > 1:
+                raise VpubError('layout_changed', 'Expected one visible final post Delete.')
+            if shown:
+                final = shown[0]
+                wrappers = await dialogs.element_handles()
+                held.extend(wrappers)
+                confirmation = [node for node in wrappers if await node.is_visible()]
+                if confirmation:
+                    if not all([await node.evaluate(CONTAINS, final) for node in confirmation]):
+                        raise VpubError('layout_changed', 'An unrelated dialog is open beside the delete confirmation.')
+                    break
+            await guard(page)
+            await target_bound(page, actual, target, original)
+            if elapsed == CONFIRM_WAIT_MILLISECONDS:
+                raise VpubError('layout_changed', 'The post deletion confirmation did not become ready; only verify this attempt.')
+            await page.wait_for_timeout(POLL_MILLISECONDS)
         await guard(page)
         await target_bound(page, actual, target, original)
-        await same_node(confirmation_query, confirmation, 'post deletion confirmation')
         await same_node(final_query, final, 'final post Delete')
+        # Revalidate the retained ancestor chain, not a locator that could
+        # silently follow a replacement confirmation after the safety checks.
+        current = [node for node in await dialogs.all() if await node.is_visible()]
+        if len(current) != len(confirmation):
+            raise VpubError('wrong_work', 'The deletion confirmation was replaced.')
+        for node in current:
+            if not any([await node.evaluate(SAME, retained) for retained in confirmation]):
+                raise VpubError('wrong_work', 'The deletion confirmation was replaced.')
         await overlays_bound(page, menu=menu, dialog=confirmation)
-        if (not await confirmation.evaluate(CONTAINS, final)
+        if (not all([await node.evaluate(CONTAINS, final) for node in confirmation])
                 or not x_pages.DELETE_POST.fullmatch((await final.inner_text()).strip())):
             raise VpubError('layout_changed', 'X did not retain the bound delete confirmation.')
         stop_check('x')
