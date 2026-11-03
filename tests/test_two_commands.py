@@ -21,7 +21,7 @@ class TwoCommandTests(unittest.TestCase):
     def setUp(self):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
-        self.folder = Path(folder.name) / "my videos"
+        self.folder = Path(folder.name).resolve() / "my videos"
         self.folder.mkdir()
         patcher = patch.dict("os.environ", {"VPUB_HOME": str(self.folder.parent / "home"), "BILI_CLI_HOME": str(self.folder.parent / "bili")})
         patcher.start()
