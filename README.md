@@ -4,7 +4,7 @@
 
 <br>
 
-<a href="https://github.com/whitecarp/publishops-crosscast/releases"><img src="https://img.shields.io/badge/version-0.16.0%20alpha-f59e0b" alt="版本 0.16.0 alpha"></a> <img src="https://img.shields.io/badge/python-3.10%E2%80%933.12-3776ab" alt="Python 3.10–3.12"> <img src="https://img.shields.io/badge/Windows-%E5%B7%B2%E5%AE%9E%E6%B5%8B-555" alt="Windows 已实测"> <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-17213a" alt="MIT 许可证"></a>
+<a href="https://github.com/whitecarp/publishops-crosscast/releases"><img src="https://img.shields.io/badge/version-0.16.0%20alpha-f59e0b" alt="版本 0.16.0 alpha"></a> <img src="https://img.shields.io/badge/python-3.10%E2%80%933.14-3776ab" alt="Python 3.10–3.14"> <img src="https://img.shields.io/badge/Windows-%E5%B7%B2%E5%AE%9E%E6%B5%8B-555" alt="Windows 已实测"> <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-17213a" alt="MIT 许可证"></a>
 
 **简体中文** | [繁體中文](README_ZH_TW.md) | [English](README_EN.md)
 
@@ -42,7 +42,7 @@ vpub doctor              # 检查本机缺什么
 vpub auth login douyin   # 每个平台登录一次
 ```
 
-需要 Python 3.10–3.12 和 Google Chrome。Windows 已实测，macOS 和 Linux 尚未验收。完整步骤见[使用说明](docs/GUIDE.md#-安装)。
+需要 Python 3.10–3.14 和 Google Chrome。Windows 已实测，macOS 和 Linux 尚未验收。完整步骤见[使用说明](docs/GUIDE.md#-安装)。
 
 </details>
 

@@ -232,11 +232,13 @@ vpub doctor        # check local dependencies
 vpub capabilities  # see which publishing routes this install offers; vpub doctor checks what's missing
 ```
 
-Requires Python 3.10–3.12. Neither command signs in or publishes. See [Install](#-install) for sign-in and the manual flow.
+Requires Python 3.10–3.14. Neither command signs in or publishes. See [Install](#-install) for sign-in and the manual flow.
 
 </details>
 
-Requires Python 3.10–3.12 and Google Chrome. The Windows installer has been tested; macOS and Linux have not been validated.
+Requires Python 3.10–3.14 and Google Chrome. The Windows installer has been tested; macOS and Linux have not been validated.
+
+The install command above uses the current main branch. The existing v0.16.0 release downloads still require Python 3.10–3.12.
 
 <details>
 <summary><b>Windows installer</b></summary>
@@ -247,7 +249,7 @@ cd publishops-crosscast
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-The script prints the full path to `vpub.exe` but does not add it to PATH. Use that path directly, or run commands from the virtual environment the script creates. If it can't find Python 3.10–3.12, run it again with `-Python` and the full path to a suitable `python.exe`.
+The script prints the full path to `vpub.exe` but does not add it to PATH. Use that path directly, or run commands from the virtual environment the script creates. If it can't find Python 3.10–3.14, run it again with `-Python` and the full path to a suitable `python.exe`.
 
 </details>
 

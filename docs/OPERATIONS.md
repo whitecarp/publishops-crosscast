@@ -422,7 +422,7 @@ vpub dm unlock x
 
 ## 安裝與開始
 
-需要 Python 3.10–3.12，Git URL 安裝另需 Git。[Windows 安裝腳本](../install.ps1) 尋找相容 Python、建立獨立環境並安裝依賴；缺少 Python 時提示 Agent 準備。背景瀏覽器需要 Google Chrome，缺少時可用 `vpub setup --install-browser` 安裝。YouTube API 需要桌面 OAuth 用戶端 JSON，另外三站無需申請平台開發者金鑰；不需要獨立模型 API 金鑰。
+需要 Python 3.10–3.14，Git URL 安裝另需 Git。[Windows 安裝腳本](../install.ps1) 尋找相容 Python、建立獨立環境並安裝依賴；缺少 Python 時提示 Agent 準備。背景瀏覽器需要 Google Chrome，缺少時可用 `vpub setup --install-browser` 安裝。YouTube API 需要桌面 OAuth 用戶端 JSON，另外三站無需申請平台開發者金鑰；不需要獨立模型 API 金鑰。
 
 ```sh
 pip install "git+https://github.com/whitecarp/publishops-crosscast.git"
