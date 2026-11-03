@@ -7,6 +7,7 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import site
 import subprocess
 import sys
 
@@ -202,6 +203,15 @@ def included_bili_version():
     return version
 
 
+def skill_file():
+    """A pip install leaves no checkout, so the skill sits under the share folder of the environment, or of the user after pip install --user."""
+    for root in (Path(sys.prefix) / "share/publishops-crosscast", Path(site.getuserbase()) / "share/publishops-crosscast", Path(__file__).resolve().parents[2]):
+        path = root / "skills/publishops-crosscast/SKILL.md"
+        if path.is_file():
+            return str(path)
+    return None
+
+
 def doctor():
     from .overview import chrome_path, stop_state
     addon = adapters.addon_installed()
@@ -220,6 +230,8 @@ def doctor():
         issues.append({"code": "stopped", "message": stop["message"], "fix": stop["hint"]})
     return {"version": __version__, "python": sys.version.split()[0], "dependencies": modules,
             "bili_cli_version": included_bili_version(), "google_chrome": chrome, "paid_api_addon": addon, "ready": not issues, "issues": issues,
+            "next": issues[0]["fix"] if issues else "Sign in once per platform with vpub onboard --platforms bilibili,youtube,douyin, then start a video with vpub init --video FILE --out publish.json.",
+            "skill": skill_file(),
             "local_stop": (home() / "STOP.json").exists(), "runtime_directory": str(home()),
             "credentials_configured": {
                 "youtube_api": (home() / "accounts/default/youtube-token.json").exists(),
@@ -251,14 +263,35 @@ def template(video, content_language="und", ai_generated=True):
                           "douyin": {**base, "title": "我的原创视频"}}}
 
 
+# The order a newcomer needs them in. A new command goes here too, and a test holds that to it.
+HELP_GROUPS = (
+    ("Start here", ("doctor", "onboard", "auth", "setup")),
+    ("Publish a video", ("init", "metadata", "covers", "plan", "publish", "status", "verify", "resume", "receipts")),
+    ("After posting", ("works", "stats", "edit", "edit-work", "comments", "messages", "engage", "dm", "collection", "playlist", "widgets", "ops", "adopt")),
+    ("Safety and housekeeping", ("safety", "stop", "cleanup", "preferences", "capabilities")),
+    ("Special cases", ("instagram", "browser")),
+    ("Paid add-on, not on sale yet", ("report", "read-all", "notify")),
+)
+
+
+def grouped_help(p, actions):
+    words = {action.dest: action.help for action in actions}
+    wide = max(map(len, words)) + 2
+    lines = [p.format_usage().rstrip(), "", p.description, ""]
+    for title, names in HELP_GROUPS:
+        lines += [f"{title}:", *[f"  {name:<{wide}}{words[name]}" for name in names], ""]
+    return "\n".join([*lines, "Run vpub COMMAND --help for the details of one command.", ""])
+
+
 def parser():
-    p = argparse.ArgumentParser(prog="vpub", description="PublishOps CrossCast: multi-platform video release operations console.")
+    p = argparse.ArgumentParser(prog="vpub", usage="vpub [--version] COMMAND ...", description="Publish a video to Bilibili, YouTube, Douyin, Instagram and X, and look after it afterwards.")
     p.add_argument("--version", action="version", version=__version__)
-    sub = p.add_subparsers(dest="command", required=True)
-    sub.add_parser("doctor", help="Local dependency checks; no login or upload.")
+    sub = p.add_subparsers(dest="command", required=True, metavar="COMMAND")
+    p.format_help = lambda: grouped_help(p, sub._choices_actions)
+    sub.add_parser("doctor", help="Check this computer is ready; no sign-in or upload.")
     sub.add_parser("capabilities", help="Short capability overview; --full for route details and test limits.").add_argument(
         "--full", action="store_true", help="Show the complete capability record (legacy output).")
-    full = sub.add_parser('read-all', help='Paid add-on: complete supported paginated reads with durable API cursors.').add_subparsers(dest='action', required=True)
+    full = sub.add_parser('read-all', help='Complete reads of long lists, resumable.').add_subparsers(dest='action', required=True)
     q=full.add_parser('start');q.add_argument('platform',choices=PLATFORMS)
     q.add_argument('resource',choices=['works','comments','collections','collection-items'])
     q.add_argument('--work');q.add_argument('--collection');q.add_argument('--page-size',type=int,default=50)
@@ -266,7 +299,7 @@ def parser():
     for action in ('resume','status'):
         q=full.add_parser(action);q.add_argument('run_id');q.add_argument('--out')
         if action=='resume':q.add_argument('--max-pages',type=int,default=100)
-    e=sub.add_parser('engage',help='Explicit work likes and saves; no automatic or bulk engagement.').add_subparsers(dest='action',required=True)
+    e=sub.add_parser('engage',help='Like or save one work; never automatic or in bulk.').add_subparsers(dest='action',required=True)
     q=e.add_parser('status');q.add_argument('platform',choices=PLATFORMS);q.add_argument('work');q.add_argument('--collection');q.add_argument('--out')
     q=e.add_parser('collections');q.add_argument('platform',choices=PLATFORMS);q.add_argument('--cursor');q.add_argument('--out')
     for action in ('like','save'):
@@ -274,7 +307,7 @@ def parser():
         q.add_argument('--remove',action='store_true');q.add_argument('--collection');q.add_argument('--dry-run',action='store_true');q.add_argument('--out')
         q.add_argument('--test-id',help='Explicit test label; retained and excluded from ordinary engagement reports.')
     q=e.add_parser('verify');q.add_argument('key');q.add_argument('--out')
-    c = sub.add_parser('comments', help='Read comments and send direct single-language replies.').add_subparsers(dest='action',required=True)
+    c = sub.add_parser('comments', help='Read comments and reply, one at a time.').add_subparsers(dest='action',required=True)
     q=c.add_parser('collect',help='Bounded comment pages and visible reply expansion; no complete-history claim.')
     q.add_argument('platform',choices=PLATFORMS);q.add_argument('work');q.add_argument('--limit',type=int,default=50)
     q.add_argument('--pages',type=int,default=3);q.add_argument('--reply-pages',type=int,default=1);q.add_argument('--out')
@@ -294,7 +327,7 @@ def parser():
             q.add_argument('--language',default='auto',help='The language of the new words, for the label. By default it goes by the label they carry, then their script, then the old words.')
     q=c.add_parser('verify-action');q.add_argument('key');q.add_argument('--out')
     q=c.add_parser('resume-action',help='Explicitly retry a pending like, pin, hide or moderation receipt only after confirming its unchanged original state.');q.add_argument('key');q.add_argument('--out')
-    d=sub.add_parser('dm',help='Explicit single-recipient private messages; no automatic or bulk sends.').add_subparsers(dest='action',required=True)
+    d=sub.add_parser('dm',help='Read and send direct messages, one person at a time.').add_subparsers(dest='action',required=True)
     q=d.add_parser('unlock',help='Open the official X Chat window for user-entered PIN; sends nothing.')
     q.add_argument('platform',choices=['x']);q.add_argument('--out')
     for action in ('list','read','send'):
@@ -312,7 +345,7 @@ def parser():
     q=c.add_parser('replies',help='Read a Bilibili/YouTube reply page; retain continuation cursor.')
     q.add_argument('platform',choices=['bilibili','youtube']);q.add_argument('work');q.add_argument('comment_id')
     q.add_argument('--limit',type=int,default=20);q.add_argument('--cursor');q.add_argument('--out')
-    cl=sub.add_parser('collection',help='Instagram/X private collections and Douyin/Bilibili work collections.').add_subparsers(dest='action',required=True)
+    cl=sub.add_parser('collection',help='Manage collections and bookmark folders; YouTube has playlist.').add_subparsers(dest='action',required=True)
     for action in ('list','items','create','rename','delete'):
         q=cl.add_parser(action);q.add_argument('platform',choices=['instagram','x','douyin','bilibili'])
         if action in ('items','rename','delete'):q.add_argument('collection')
@@ -323,12 +356,12 @@ def parser():
     q=cl.add_parser('verify');q.add_argument('key');q.add_argument('--out')
     for action in ('add','remove'):
         q=cl.add_parser(action);q.add_argument('platform',choices=['douyin','instagram','x','bilibili']);q.add_argument('collection');q.add_argument('work');q.add_argument('--request-id',required=True);q.add_argument('--out')
-    wg=sub.add_parser('widgets',help="Bilibili's interactive widgets on your own video: link, follow, vote and rating.").add_subparsers(dest='action',required=True)
+    wg=sub.add_parser('widgets',help="Add Bilibili's link, follow, vote and rating widgets to your own video.").add_subparsers(dest='action',required=True)
     q=wg.add_parser('list',help="What Bilibili lists on a video.");q.add_argument('work');q.add_argument('--page',type=int,default=1);q.add_argument('--out')
     q=wg.add_parser('add',help="A file's widgets on a video that's already public. Sends only what isn't there.");q.add_argument('work');q.add_argument('file',help='JSON list of widgets.');q.add_argument('--dry-run',action='store_true');q.add_argument('--again',action='store_true',help="Send again what may have gone, once you've seen it isn't there.");q.add_argument('--out')
     q=wg.add_parser('verify',help="Only reads, and compares with what was asked for.");q.add_argument('work');q.add_argument('--out')
     q=wg.add_parser('remove',help="One widget off a video. Never a reserve widget.");q.add_argument('work');q.add_argument('widget');q.add_argument('--page',type=int,default=1);q.add_argument('--dry-run',action='store_true');q.add_argument('--out')
-    pl=sub.add_parser('playlist',help="Owned YouTube playlists on YouTube's own pages, or the official API with the add-on.").add_subparsers(dest='action',required=True)
+    pl=sub.add_parser('playlist',help="Manage your own YouTube playlists.").add_subparsers(dest='action',required=True)
     for action in ('list','items'):
         q=pl.add_parser(action)
         if action=='items':q.add_argument('playlist')
@@ -343,8 +376,8 @@ def parser():
         if action in ('remove','move'):q.add_argument('item')
         if action=='move':q.add_argument('--position',type=int,required=True)
         q.add_argument('--request-id',required=True);q.add_argument('--out')
-    o=sub.add_parser('ops',help='Read-only watchlists and multi-platform collection.').add_subparsers(dest='action',required=True)
-    m=sub.add_parser('messages',help='Unified local comments, mentions and DM previews; no automatic replies.').add_subparsers(dest='action',required=True)
+    o=sub.add_parser('ops',help='Watch your works and scan several platforms; read-only.').add_subparsers(dest='action',required=True)
+    m=sub.add_parser('messages',help='Comments, mentions and message previews in one list; no automatic replies.').add_subparsers(dest='action',required=True)
     q=m.add_parser('sync');q.add_argument('--platforms',required=True);q.add_argument('--sources',default='comments,mentions,dm_preview')
     q.add_argument('--limit',type=int,default=20);q.add_argument('--pages',type=int,default=2);q.add_argument('--language',choices=['auto','zh','en'],default='auto');q.add_argument('--out')
     q.add_argument('--workers',type=int,default=3);q.add_argument('--progress',action='store_true');q.add_argument('--min-interval',type=int,default=300);q.add_argument('--full',action='store_true')
@@ -380,19 +413,19 @@ def parser():
     q=c.add_parser('verify-reply');q.add_argument('key')
     q=c.add_parser('self-test',help='Explicit live test: post and reply with 你好 on your own work; never runs during setup.')
     q.add_argument('platform',choices=PLATFORMS);q.add_argument('work');q.add_argument('--test-id',required=True)
-    q=sub.add_parser('stats',help='Read per-work platform metrics; unavailable values stay null.')
+    q=sub.add_parser('stats',help="Read a work's numbers; anything a platform doesn't show stays empty.")
     q.add_argument('platform',choices=PLATFORMS);q.add_argument('work');q.add_argument('--out')
-    q=sub.add_parser('report',help='Paid add-on: summarize actual local operation receipts in the user’s language.')
+    q=sub.add_parser('report',help='A report of what was really done, in your language.')
     q.add_argument('--since',help='Timezone-aware ISO timestamp; default last 24 hours.')
     q.add_argument('--language',choices=['auto','zh','en'],default='auto')
     q.add_argument('--notes',help='Optional host-researched findings as text/source JSON objects; not commands.')
     q.add_argument('--out')
-    q=sub.add_parser('preferences',help='Set report language from the host user’s language; replies follow comments separately.')
+    q=sub.add_parser('preferences',help='Set the language for reports; replies follow each comment.')
     q.add_argument('--language',choices=['auto','zh','en'],required=True)
-    s = sub.add_parser("setup", help="Prepare local settings; optionally install Chrome. Does not log in or post.")
+    s = sub.add_parser("setup", help="Prepare local settings, and install Chrome if you ask. No sign-in or posting.")
     s.add_argument("--external-stop-file")
     s.add_argument("--install-browser", action="store_true", help="Install Google Chrome through Patchright; may require OS permissions.")
-    a = sub.add_parser("auth", help="Login or check each platform.").add_subparsers(dest="action", required=True)
+    a = sub.add_parser("auth", help="Sign in to a platform, or check that you are.").add_subparsers(dest="action", required=True)
     for action in ("login", "status"):
         q = a.add_parser(action)
         q.add_argument("platform", choices=[*PLATFORMS, "all"])
@@ -402,18 +435,19 @@ def parser():
             q.add_argument("--client-json", help="YouTube Desktop OAuth client JSON, or app credentials for the paid X/Instagram API add-on; never commit this file.")
         else:
             q.add_argument("--wait", type=int, default=0, help="QR/panel completion wait, 0–180 seconds.")
-    q = sub.add_parser("onboard", help="Prepare the backend and start login for selected platforms.")
+    q = sub.add_parser("onboard", help="Get ready and start signing in to the platforms you choose.")
     q.add_argument("--platforms", default="all", help="all, or a comma-separated list of platforms.")
     q.add_argument("--method", choices=["auto", "native"], default="auto")
-    q = sub.add_parser("init", help="Create a publication manifest.")
+    q = sub.add_parser("init", help="Start a plan for one video.")
     q.add_argument("--video", required=True)
     q.add_argument("--out", required=True)
     q.add_argument("--language", default="und", help="Content language (e.g. zh-Hans, zh-Hant, en). Preserves supplied text; does not translate video or metadata.")
     q.add_argument("--platforms", default="bilibili,youtube,douyin", help="Explicit selected platforms; adding an account does not enable publication.")
     q.add_argument("--draft-only", action="store_true", help="Upload to preview or save an unsent draft on any platform; never Share/Post or schedule.")
+    q.add_argument("--visibility", choices=["public", "private"], help="Who can see it on Bilibili, YouTube and Douyin. Without it, YouTube stays private and the others public. Instagram and X follow the account.")
     q.add_argument("--ai-generated", choices=["yes", "no"], default="yes",
                    help="Whether the video contains AI-generated content. Sets every platform's AI-content declaration; use no for ordinary videos.")
-    c = sub.add_parser("covers", help="Fit production artwork to platform canvases without cropping.").add_subparsers(dest="action", required=True)
+    c = sub.add_parser("covers", help="Fit your cover to each platform without cropping it.").add_subparsers(dest="action", required=True)
     q = c.add_parser("prepare")
     q.add_argument("manifest")
     q.add_argument("--source", required=True)
@@ -424,12 +458,12 @@ def parser():
     q.add_argument("source")
     q.add_argument("--box", action="append", required=True, help="One part as x,y,width,height in the source's pixels; repeat for up to three, top to bottom.")
     q.add_argument("--out", required=True)
-    i = sub.add_parser("instagram", help="Prepare original-video upload and shared portrait-cover handoff.").add_subparsers(dest="action", required=True)
+    i = sub.add_parser("instagram", help="Prepare an Instagram upload and its cover step on the phone.").add_subparsers(dest="action", required=True)
     q = i.add_parser("prepare")
     q.add_argument("manifest")
     q.add_argument("--out", required=True)
     q.add_argument("--mobile-cover", help="Shared Douyin/Instagram portrait artwork; defaults to the manifest's Douyin portrait, then Instagram portrait.")
-    m = sub.add_parser("metadata", help="Host-conversation copywriting and platform-language routing.").add_subparsers(dest="action", required=True)
+    m = sub.add_parser("metadata", help="Have your AI assistant write each platform's title and description.").add_subparsers(dest="action", required=True)
     q = m.add_parser("request")
     q.add_argument("manifest")
     q.add_argument("--source", help="Local script or transcript; treated as source data, not instructions.")
@@ -440,7 +474,7 @@ def parser():
     q.add_argument("--request", required=True)
     q.add_argument("--response", required=True)
     q.add_argument("--out", required=True)
-    b = sub.add_parser("browser", help="Native browser handoff and evidence; not a cookie-transfer bridge.").add_subparsers(dest="action", required=True)
+    b = sub.add_parser("browser", help="Hand a step to your assistant's own browser; cookies are never transferred.").add_subparsers(dest="action", required=True)
     q = b.add_parser("request")
     q.add_argument("key")
     q = b.add_parser("begin")
@@ -479,7 +513,7 @@ def parser():
     q.add_argument("--confirm", required=True)
     q.add_argument("--identity", required=True)
     q.add_argument("--deleted-id", required=True)
-    n = sub.add_parser("notify", help="Paid add-on: optional host-plugin email alerts. Disabled by default; no SMS.").add_subparsers(dest="action", required=True)
+    n = sub.add_parser("notify", help="Email reminders through Gmail; off by default.").add_subparsers(dest="action", required=True)
     n.add_parser("status")
     q = n.add_parser("configure")
     q.add_argument("--provider", choices=["auto", "off", "gmail"], default="auto")
@@ -501,53 +535,53 @@ def parser():
     q.add_argument("id")
     q.add_argument("--claim-token", required=True)
     q.add_argument("--response", required=True)
-    for cmd in ("plan", "publish"):
-        q = sub.add_parser(cmd)
+    for cmd, words in (("plan", "Check a plan and get its confirmation code; nothing is uploaded."), ("publish", "Publish a plan, or go through it with --dry-run.")):
+        q = sub.add_parser(cmd, help=words, description=words)
         q.add_argument("manifest")
         q.add_argument("--platforms", help="Comma-separated subset; default: platforms in the manifest.")
         if cmd == "publish":
             q.add_argument("--confirm")
             q.add_argument("--dry-run", action="store_true")
-    q = sub.add_parser("works", help="Read your works: API pages or browser visible first page.")
+    q = sub.add_parser("works", help="List your works on a platform.")
     q.add_argument("platform", choices=PLATFORMS)
     q.add_argument("--account", choices=["default"], default="default")
     q.add_argument('--limit',type=int,default=20);q.add_argument('--cursor');q.add_argument('--out')
-    sub.add_parser("receipts", help="Read the local publication ledger.")
-    q = sub.add_parser("status", help="What needs attention now, with the exact next command; local records only, no sign-in or platform request.")
+    sub.add_parser("receipts", help="Read the local record of what was published.")
+    q = sub.add_parser("status", help="What needs attention now, with the exact next command; local only.")
     q.add_argument("--limit", type=int, default=20, help="Most attempts to list, 1-200.")
     q.add_argument("--out")
-    q = sub.add_parser("cleanup", help="Preview private video copies of finished publications that are safe to remove; no platform request.")
+    q = sub.add_parser("cleanup", help="See which finished videos' private copies can go; local only.")
     q.add_argument("--apply", action="store_true", help="Delete what the preview lists.")
     q.add_argument("--out")
-    q = sub.add_parser("resume", help="Resume a saved YouTube upload session or inspect an existing browser attempt; never blindly resubmit.")
+    q = sub.add_parser("resume", help="Pick up an attempt that stopped; it never blindly resubmits.")
     q.add_argument("key")
     covering = q.add_mutually_exclusive_group()
     covering.add_argument("--no-cover", action="store_true", help="Finish a browser attempt without its planned cover, when the cover is what keeps stopping it.")
     covering.add_argument("--cover", help="Finish a browser attempt with this JPG or PNG as its cover, when its plan had none and it hasn't been pressed yet.")
-    words = "Verify an existing work and finish any chapters or Bilibili widgets its plan still needs; never upload."
+    words = "Check a work on its platform, and finish chapters or widgets its plan still needs; never uploads."
     q = sub.add_parser("verify", help=words, description=words)
     q.add_argument("key")
-    q = sub.add_parser('edit', help='Correct an existing recorded work by ID; never upload/delete a video.')
+    q = sub.add_parser('edit', help="Change a published work's words, cover or chapters; never uploads or deletes a video.")
     q.add_argument('key')
     q.add_argument('patch', help='JSON with expected_identity and replacement caption, Douyin portrait or chapters.')
     q.add_argument('--dry-run', action='store_true')
     q.add_argument('--verify-only', action='store_true', help='Read back the existing correction without saving; covers return evidence for visual inspection.')
     q.add_argument('--person-approved', action='store_true', help='After an unclear save: a person has looked at the work, the change is not there, and this tries once more.')
-    q = sub.add_parser('edit-work', help='Correct a work adopted with vpub ops adopt, by platform and ID; never upload/delete a video.')
+    q = sub.add_parser('edit-work', help='The same for a work you adopted with vpub ops adopt.')
     q.add_argument('platform', choices=PLATFORMS)
     q.add_argument('work')
     q.add_argument('patch', help='The same JSON as vpub edit.')
     q.add_argument('--dry-run', action='store_true')
     q.add_argument('--verify-only', action='store_true', help='Read back the existing correction without saving.')
     q.add_argument('--person-approved', action='store_true', help='After an unclear save: a person has looked at the work, the change is not there, and this tries once more.')
-    q = sub.add_parser("adopt", help="Associate an already-published video to avoid duplicate Bilibili uploads.")
+    q = sub.add_parser("adopt", help="Link a video already on Bilibili, so it isn't uploaded twice.")
     q.add_argument("manifest")
     q.add_argument("--platform", choices=["bilibili", "youtube"], required=True)
     q.add_argument("--id", required=True)
-    q = sub.add_parser("stop", help="Pause all publication attempts from this tool.")
+    q = sub.add_parser("stop", help="Pause everything this tool publishes.")
     q.add_argument("--reason", default="Operator paused publication")
     q.add_argument("--clear", action="store_true", help="Resume after a person has looked at why it stopped.")
-    sf = sub.add_parser("safety", help="Limits that protect the account on every reply, message and like; local only.").add_subparsers(dest="action", required=True)
+    sf = sub.add_parser("safety", help="The limits that protect your account on replies, messages and likes; local only.").add_subparsers(dest="action", required=True)
     sf.add_parser("status", help="Today's use, the limits, linked people and whether the tool is stopped.")
     q = sf.add_parser("set", help="Change a limit; each has a fixed upper bound.")
     for name in ("replies-per-day", "messages-per-day", "likes-per-day", "per-person-per-day", "repeat-days"):
@@ -830,8 +864,8 @@ def run_command(args):
         out = Path(args.out)
         if out.exists():
             raise VpubError("already_exists", "Manifest already exists; no overwrite.")
-        if not Path(args.video).is_file():
-            raise VpubError("invalid_video", f"Video file not found: {args.video}")
+        from .rehearsal import inspect_video
+        inspect_video(args.video)
         chosen = args.platforms.split(",")
         if not chosen or set(chosen) - set(PLATFORMS) or len(chosen) != len(set(chosen)):
             raise VpubError("invalid_platform", "Choose a unique subset of supported platforms.")
@@ -842,17 +876,28 @@ def run_command(args):
         options.update(x={"account": "default", "method": "native", "visibility": "account", "ai_generated": ai_generated},
                        instagram={"account": "default", "method": "native", "visibility": "account", "ai_generated": ai_generated})
         value["platforms"] = {p: {**options[p], "method": adapters.default_method(p)} for p in chosen}
+        if args.visibility:
+            for name, options in value["platforms"].items():
+                if options["visibility"] != "account":
+                    options["visibility"] = args.visibility
         if args.draft_only:
             for options in value["platforms"].values():
                 options["submission_mode"] = "draft_only"
         atomic_json(out, value)
-        return {"manifest": str(out.resolve()), "next": "Edit titles, declarations and visibility, then run vpub plan."}
+        where = out.resolve()
+        return {"manifest": str(where), "visibility": {name: options["visibility"] for name, options in value["platforms"].items()},
+                "next": f'vpub metadata request "{where}" --source SCRIPT_OR_SUMMARY.txt --out "{where.with_name("request.json")}"'}
     if args.command in {"plan", "publish"}:
         selected = args.platforms.split(",") if args.platforms else None
         plan = load_plan(args.manifest, selected)
+        from .rehearsal import dry_run, inspect_video
+        media = inspect_video(plan["video"])
         if args.command == "plan" or args.dry_run:
             from .safety import plan_flags
-            return {**plan, **plan_flags(plan), "mode": "LOCAL_DRY_RUN", "platform_writes": 0}
+            checks = dry_run(plan, media) if args.command == "publish" else {
+                "mode": "LOCAL_DRY_RUN", "platform_writes": 0, "media_check": media,
+                "note": "Plan only; use publish --dry-run to check saved sign-in records. No live readiness checks were made."}
+            return {**plan, **plan_flags(plan), **checks}
         return publish_plan(plan, args.confirm)
     if args.command == "safety":
         from . import safety

@@ -22,12 +22,13 @@ You finish a video, and then you still have to write titles for every platform, 
 
 ## 🚀 Start with one message
 
-**Send this to your AI assistant**, replacing `final.mp4` with your video. It installs itself and walks you through signing in:
+**Send this to your AI assistant**, with your own file names and description. It installs itself and walks you through signing in:
 
 ```text
 Please install https://github.com/whitecarp/publishops-crosscast
-Read skills/publishops-crosscast/SKILL.md, then run vpub doctor.
-Publish final.mp4 publicly to Bilibili, YouTube, Douyin, Instagram, and X, with titles and descriptions written for each platform.
+Run vpub doctor, and read the skill file it names.
+Publish final.mp4 publicly to Bilibili, YouTube, Douyin, Instagram, and X, with cover.jpg as the cover and titles and descriptions written for each platform.
+The video is about: (one sentence)
 ```
 
 The first time on each platform, you scan the QR code or enter the code yourself. After that it publishes in the background.
@@ -36,7 +37,7 @@ The first time on each platform, you scan the QR code or enter the code yourself
 <summary>Or install it yourself in a terminal</summary>
 
 ```bash
-pip install "git+https://github.com/whitecarp/publishops-crosscast.git"
+pip install https://github.com/whitecarp/publishops-crosscast/archive/refs/heads/main.zip
 vpub doctor              # see what this machine is missing
 vpub auth login douyin   # sign in once per platform
 ```

@@ -10,7 +10,7 @@ from video_publisher import __version__, cli
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = [*sorted(ROOT.glob("README*.md")), *sorted((ROOT / "docs").glob("*.md")), ROOT / "CONTRIBUTING.md", ROOT / "NOTICE.md",
-        ROOT / "skills/publishops-crosscast/SKILL.md"]
+        ROOT / "skills/publishops-crosscast/SKILL.md", ROOT / "skills/publishops-crosscast/references/details.md"]
 FENCE = re.compile(r"^```")
 
 
@@ -108,6 +108,17 @@ class DocsTests(unittest.TestCase):
             elif not (ROOT / "docs" / target.split("?")[0]).exists():
                 problems.append(target)
         self.assertEqual([], problems)
+
+    def test_the_skill_stays_short_enough_to_read_every_time(self):
+        """An assistant reads it in every fresh conversation, on its user's own quota. The detail belongs in references/details.md."""
+        self.assertLess(len((ROOT / "skills/publishops-crosscast/SKILL.md").read_bytes()), 8000)
+
+    def test_help_lists_every_command_under_a_heading(self):
+        words = cli.parser().format_help()
+        names = {action.dest for action in cli.parser()._subparsers._group_actions[0]._choices_actions}
+        self.assertEqual(names, {name for _, group in cli.HELP_GROUPS for name in group})
+        self.assertLess(words.index("doctor"), words.index("Paid add-on"))
+        self.assertIn("publish", words)
 
     def test_every_word_on_the_site_is_in_every_language(self):
         page = (ROOT / "docs/index.html").read_text(encoding="utf-8")

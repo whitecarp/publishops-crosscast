@@ -100,7 +100,7 @@ class PlanTests(Workspace):
     def setUp(self):
         super().setUp()
         self.video = self.root / "video.mp4"
-        self.video.write_bytes(b"synthetic test fixture, not a playable upload")
+        self.video.write_bytes(b"\x00\x00\x00\x18ftypisom\x00\x00\x00\x00isommp42")  # Container header, not a playable upload.
         self.manifest = self.root / "publish.json"
         self.value = cli.template(self.video)
         self.value["platforms"]["youtube"]["category_id"] = "1"

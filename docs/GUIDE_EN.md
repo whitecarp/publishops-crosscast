@@ -296,6 +296,8 @@ vpub publish ready.json --confirm <confirmation-code>
 vpub verify RECEIPT_KEY
 ```
 
+`--dry-run` checks local files without contacting a platform. Missing sign-in records produce a login command and exit code 4. Saved records do not prove a live sign-in; publishing checks the account, so separate status calls are optional. The media check recognises a container header, not playback or platform acceptance.
+
 `--dry-run` does not upload. Your AI assistant writes `response.json` following the template inside `request.json`. After an interruption, continue with `vpub resume RECEIPT_KEY`; `vpub receipts` lists every receipt.
 
 </details>

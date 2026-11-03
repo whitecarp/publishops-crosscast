@@ -88,8 +88,8 @@
             <span data-i18n="promptLabel">对你的 AI 助手说</span>
             <button type="button" class="copy" data-copy="installPrompt" data-i18n="copy" aria-label="复制这段话" data-i18n-aria="copyPromptA">复制</button>
           </div>
-          <p class="prompt" id="installPrompt" data-i18n="installPrompt">帮我从 https://github.com/whitecarp/publishops-crosscast 安装 PublishOps CrossCast，阅读 skills/publishops-crosscast/SKILL.md 并运行 vpub doctor。然后把 final.mp4 公开发布到 B站、YouTube、抖音、Instagram 和 X，标题和简介按平台来写。</p>
-          <p class="prompt-hint" data-i18n="promptHint">把 final.mp4 换成你的视频文件；平台和公开范围可以按需修改。</p>
+          <p class="prompt" id="installPrompt" data-i18n="installPrompt">帮我从 https://github.com/whitecarp/publishops-crosscast 安装 PublishOps CrossCast，运行 vpub doctor 并读取它给出的 skill 文件。然后把 final.mp4 公开发布到 B站、YouTube、抖音、Instagram 和 X，封面用 cover.jpg，标题和简介按平台来写。这条视频讲的是：（用一句话说说）</p>
+          <p class="prompt-hint" data-i18n="promptHint">把文件名和内容换成你的；平台和公开范围可以按需修改。</p>
         </div>
         <div class="cta-row">
           <a class="btn btn-primary" href="#start" data-i18n="ctaStart">三步上手</a>
@@ -377,7 +377,7 @@
         <li class="step">
           <h3 data-i18n="st1">安装</h3>
           <p data-i18n="st1d">需要 Python 3.10–3.12 和 Google Chrome。把上面那段话交给 AI 助手，或者自己运行：</p>
-          <div class="cmd"><code id="cmdInstall">python -m pip install "git+https://github.com/whitecarp/publishops-crosscast.git"</code><button type="button" class="copy copy-sm" data-copy="cmdInstall" data-i18n="copy" aria-label="复制安装命令" data-i18n-aria="copyInstallA">复制</button></div>
+          <div class="cmd"><code id="cmdInstall">python -m pip install https://github.com/whitecarp/publishops-crosscast/archive/refs/heads/main.zip</code><button type="button" class="copy copy-sm" data-copy="cmdInstall" data-i18n="copy" aria-label="复制安装命令" data-i18n-aria="copyInstallA">复制</button></div>
           <p class="step-note" data-i18n-html="st1n">Windows 也可以用仓库里的 <code>install.ps1</code>；macOS 和 Linux 尚未验收。</p>
         </li>
         <li class="step">

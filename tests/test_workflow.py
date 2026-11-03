@@ -20,7 +20,7 @@ class WorkflowTests(unittest.TestCase):
         self.env = patch.dict(os.environ, {"VPUB_HOME": str(self.root / "runtime")})
         self.env.start()
         self.video = self.root / "complete.mp4"
-        self.video.write_bytes(b"synthetic test fixture, not a playable upload")
+        self.video.write_bytes(b"\x00\x00\x00\x18ftypisom\x00\x00\x00\x00isommp42")  # Container header, not a playable upload.
         self.manifest = self.root / "publish.json"
         self.value = cli.template(self.video)
         self.value["platforms"]["youtube"]["category_id"] = "1"  # Explicit synthetic fixture choice.
@@ -321,7 +321,7 @@ class WorkflowTests(unittest.TestCase):
         key = self.native_job()
         self.video.write_bytes(b"later render")
         job = native_browser.request(key)
-        self.assertEqual(b"synthetic test fixture, not a playable upload", Path(job["plan"]["video"]).read_bytes())
+        self.assertEqual(b"\x00\x00\x00\x18ftypisom\x00\x00\x00\x00isommp42", Path(job["plan"]["video"]).read_bytes())
 
     def test_native_begin_is_single_use(self):
         key = self.native_job()
