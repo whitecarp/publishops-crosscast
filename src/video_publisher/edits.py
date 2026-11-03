@@ -9,6 +9,7 @@ from .safety import check_public_text, public_text_flags
 
 X_EDIT_UNVERIFIED_MESSAGE = ('An attempted X edit may have succeeded. Reading old text at the original post address does not prove failure.')
 X_EDIT_INSPECTION_HINT = ('Do not retry or submit another edit based on this read-back. Open the post on X and inspect its current text and any available edit history. '
+                          'If a correction is needed, make it manually on X; CrossCast will not retry this uncertain edit, even with person approval. '
                           'Edit-version behavior has not been verified on a live account.')
 
 

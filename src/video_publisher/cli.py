@@ -302,16 +302,16 @@ def publish_plan(plan, confirm, workers=1, *, reviewed=False):
         raise VpubError("invalid_workers", "Publication workers must be 1 or 2.")
     if confirm != plan["confirmation"]:
         raise VpubError("confirmation_required", "The confirmation hash must match the current plan.", "Run vpub plan MANIFEST and review the exact platforms, accounts and visibility.")
-    from .publication_review import pending, requirements
+    from .publication_review import check
     for platform in plan["platforms"]:
         platform_check(platform)
         stop_check(platform)
     results = {}
     snapshot_lock = Lock()
     with publication_lock():
-        review = requirements(plan)
-        if review['review_required'] and reviewed is not True:
-            return pending(plan, review)
+        waiting = check(plan, confirm, reviewed)
+        if waiting:
+            return waiting
         batch = []
         for platform, opts in plan["platforms"].items():
             browser = platform in {"douyin", "instagram", "x", "youtube"} and opts.get("method") == "browser"
@@ -632,6 +632,7 @@ def parser():
                    help="Run up to two browser platforms at once; default 1. Other routes stay serial.")
     q.add_argument("--dry-run", action="store_true", help="Build and check locally; no upload or live account check. Show the result before authorizing publication.")
     q.add_argument("--confirm", help="The current plan code after the user reviews a show-first plan or flagged text; stale codes are refused.")
+    q.add_argument('--person-approved', action='store_true', help='Attest the person saw this exact plan and said yes. A confirmation code alone does not attest review.')
     q = sub.add_parser("init", help="Start a plan for one video.")
     q.add_argument("--video", required=True)
     q.add_argument("--out", required=True)
@@ -680,6 +681,8 @@ def parser():
     q = b.add_parser("authorize-publish", help="After explicit operator authorization, allow submission of the same saved draft/preview; never reupload.")
     q.add_argument("key")
     q.add_argument("--identity", required=True)
+    q.add_argument("--confirm", help="Current code of the changed publication plan returned by this command.")
+    q.add_argument('--person-approved', action='store_true', help='Attest the person saw this exact publication plan and said yes. Never infer this from its confirmation code.')
     q = b.add_parser("retry-rejected", help="Explicitly recover a rejected Instagram/X upload after fresh same-account absence evidence; uncertain submissions cannot retry.")
     q.add_argument("key")
     q.add_argument("--identity", required=True)
@@ -735,7 +738,7 @@ def parser():
         q.add_argument("--platforms", help="Comma-separated subset; default: platforms in the manifest.")
         if cmd == "publish":
             q.add_argument("--confirm")
-            q.add_argument('--reviewed', action='store_true', help='Attest the user reviewed and approved this exact plan. Required for first publication or saved show-first; use with its current --confirm code.')
+            q.add_argument('--person-approved', dest='reviewed', action='store_true', help='Attest the person saw this exact plan and said yes. Required for first publication on each platform or saved show-first; use with its current --confirm code.')
             q.add_argument("--dry-run", action="store_true")
             q.add_argument("--workers", type=int, choices=(1, 2), default=1,
                            help="Concurrent browser publications (default: 1); other routes remain serial barriers.")
@@ -763,14 +766,14 @@ def parser():
     q.add_argument('patch', help='JSON with expected_identity and replacement caption, Douyin portrait or chapters.')
     q.add_argument('--dry-run', action='store_true')
     q.add_argument('--verify-only', action='store_true', help='Read back the existing correction without saving; covers return evidence for visual inspection.')
-    q.add_argument('--person-approved', action='store_true', help='After an unclear save: a person has looked at the work, the change is not there, and this tries once more.')
+    q.add_argument('--person-approved', action='store_true', help='On platforms other than X, attest a person inspected an unclear save and approved one retry. An uncertain X edit cannot be retried through CrossCast; inspect or correct it manually on X.')
     q = sub.add_parser('edit-work', help='The same for a work you adopted with vpub ops adopt.')
     q.add_argument('platform', choices=PLATFORMS)
     q.add_argument('work')
     q.add_argument('patch', help='The same JSON as vpub edit.')
     q.add_argument('--dry-run', action='store_true')
     q.add_argument('--verify-only', action='store_true', help='Read back the existing correction without saving.')
-    q.add_argument('--person-approved', action='store_true', help='After an unclear save: a person has looked at the work, the change is not there, and this tries once more.')
+    q.add_argument('--person-approved', action='store_true', help='On platforms other than X, attest a person inspected an unclear save and approved one retry. An uncertain X edit cannot be retried through CrossCast; inspect or correct it manually on X.')
     q = sub.add_parser("adopt", help="Link a video already on Bilibili, so it isn't uploaded twice.")
     q.add_argument("manifest")
     q.add_argument("--platform", choices=["bilibili", "youtube"], required=True)
@@ -1020,7 +1023,7 @@ def run_command(args):
         if args.action == "begin":
             return native_browser.begin(args.key, args.identity)
         if args.action == "authorize-publish":
-            return native_browser.authorize_publish(args.key, args.identity)
+            return native_browser.authorize_publish(args.key, args.identity, args.confirm, person_approved=args.person_approved)
         if args.action == "retry-rejected":
             return native_browser.retry_rejected(args.key, args.identity, args.evidence)
         if args.action == "revise":
@@ -1064,7 +1067,7 @@ def run_command(args):
         return quick.prepare(args)
     if args.command == "go":
         from . import quick
-        return quick.go(args.folder, args.confirm, args.dry_run, workers=args.workers)
+        return quick.go(args.folder, args.confirm, args.dry_run, workers=args.workers, person_approved=args.person_approved)
     if args.command == "init":
         out = Path(args.out)
         if out.exists():

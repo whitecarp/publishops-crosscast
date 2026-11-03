@@ -129,7 +129,7 @@ class PublishWorkersTests(unittest.TestCase):
     def test_cli_choices_dispatch_and_dry_run(self):
         parser = cli.parser()
         self.assertEqual(parser.parse_args(["publish", "fixture"]).workers, 1)
-        args = parser.parse_args(["publish", "fixture", "--confirm", "fixture", "--workers", "2", "--reviewed"])
+        args = parser.parse_args(["publish", "fixture", "--confirm", "fixture", "--workers", "2", "--person-approved"])
         with patch.object(cli, "load_plan", return_value=self.plan()), patch.object(cli, "publish_plan", return_value={}) as publish:
             cli.run_command(args)
             publish.assert_called_once_with(self.plan(), "fixture", workers=2, reviewed=True)

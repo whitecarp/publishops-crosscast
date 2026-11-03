@@ -640,7 +640,7 @@ def youtube_schedule_passed(schedule):
 def youtube_schedule_zone_agrees(shown, schedule):
     """Check the approved instant in its trusted zone; display offsets follow the pre-Save rule."""
     # UTC+01:00 is an offset label, not a second named zone called UTC.
-    shown = re.sub(r'\bUTC(?=\s*[+\-−])', 'GMT', shown)
+    shown = re.sub(r'(?<![\w/])UTC(?=\s*[+\-−])', 'GMT', shown)
     # An IANA key such as Etc/GMT+5 is a name, not a GMT+5 display.
     names = set(re.findall(r'(?<![\w/])(?:UTC|[A-Za-z][A-Za-z0-9_+\-]*(?:/[A-Za-z0-9_+\-]+)+)(?![\w/])', shown))
     offsets_text = shown

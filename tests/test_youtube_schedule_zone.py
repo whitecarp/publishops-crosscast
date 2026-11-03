@@ -164,6 +164,12 @@ class ScheduleZoneTests(yt.FormCase):
             with self.subTest(shown=shown, record=record), patch.object(browser_backends, "datetime", Clock):
                 self.assertFalse(browser_backends.youtube_schedule_zone_agrees(shown, record))
 
+    def test_unknown_slash_zone_cannot_be_rewritten_to_a_supported_zone(self):
+        schedule = {'at': '2031-04-15T15:00:00+00:00', 'local': '2031-04-15T10:00:00-05:00',
+                    'timezone': 'Etc/GMT+5'}
+        self.assertFalse(browser_backends.youtube_schedule_zone_agrees('10:00 Etc/UTC+5', schedule))
+        self.assertTrue(browser_backends.youtube_schedule_zone_agrees('10:00 Etc/GMT+5', schedule))
+
     def test_offset_only_missing_abbreviated_ambiguous_and_conflicting_zones_never_submit(self):
         for index, text in enumerate(("", "GMT-04:00", "GMT+00:00", "EST", "CST", "Time zone China Standard Time",
                                       "America/New_York or America/Lima", "America/New_York\nAmerica/Lima",
