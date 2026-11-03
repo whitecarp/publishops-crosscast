@@ -1,6 +1,8 @@
 """Host interruptions with real synthetic processes; never imports or opens a browser."""
 import concurrent.futures
+import contextlib
 import ctypes
+import io
 import os
 from pathlib import Path
 import signal
@@ -324,13 +326,67 @@ class AuthJobLifecycleTests(unittest.TestCase):
             auth_jobs.run_job(self.root / "request.json")
 
     def test_legacy_pending_account_is_checked_using_its_request(self):
-        path = auth_jobs.job_path("youtube")
+        path = home() / "auth-jobs" / "youtube.json"
         atomic_json(path, {"state": "LOGIN_PENDING", "platform": "youtube", "expires_epoch": time.time() + 900})
         atomic_json(path.with_suffix(".request.json"), {"platform": "youtube", "account": "named"})
         self.assertEqual("LOGIN_PENDING", auth_jobs.wait("youtube", account="named")["state"])
         with self.assertRaises(VpubError) as caught:
             auth_jobs.start("youtube", "default")
         self.assertEqual("login_account_mismatch", caught.exception.code)
+
+    def test_legacy_main_final_save_cannot_erase_replacement_before_claim(self):
+        from video_publisher import browser_worker
+        for succeeds in (False, True):
+            with self.subTest(succeeds=succeeds), tempfile.TemporaryDirectory() as tmp, \
+                    patch.dict(os.environ, {"VPUB_HOME": str(Path(tmp) / "vpub"), "BILI_CLI_HOME": str(Path(tmp) / "bili")}):
+                legacy = home() / "auth-jobs" / "youtube.json"
+                old_request = legacy.with_suffix(".request.json")
+                atomic_json(legacy, {"state": "LOGIN_PENDING", "platform": "youtube", "expires_epoch": 1})
+                atomic_json(old_request, {"action": "login", "platform": "youtube", "account": "default", "job_path": str(legacy)})
+                original_request = old_request.read_bytes()
+                replacement = {}
+
+                async def finishing_old_login(payload):
+                    self.assertEqual(str(legacy), payload["job_path"])
+                    with patch.object(auth_jobs.subprocess, "Popen"):
+                        replacement.update(auth_jobs.start("youtube", "default"))
+                    if not succeeds:
+                        raise VpubError("login_timeout", "Synthetic old login expired")
+                    return {"logged_in": True, "platform": "youtube", "account": "default", "identity": "old-synthetic"}
+
+                # The real main performs the late FAILED/LOGGED_IN save to its original job_path.
+                with patch.object(browser_worker, "run", finishing_old_login), \
+                        patch.object(sys, "argv", ["worker", "--job", str(old_request)]), contextlib.redirect_stdout(io.StringIO()):
+                    browser_worker.main()
+                self.assertEqual("LOGGED_IN" if succeeds else "FAILED", read_json(legacy)["state"])
+                self.assertEqual(replacement["attempt"], read_json(auth_jobs.job_path("youtube")).get("attempt"))
+                self.assertEqual(original_request, old_request.read_bytes())
+                request = auth_jobs.job_path("youtube").parent / replacement["attempt"] / "request.json"
+                worker = types.SimpleNamespace(main=lambda: atomic_json(request.with_name("result.json"),
+                                                                        {"state": "LOGGED_IN", "logged_in": True, "identity": "new-synthetic"}))
+                with patch.dict(sys.modules, {**fake_modules(), "video_publisher.browser_worker": worker}):
+                    auth_jobs.run_job(request)
+                self.assertEqual("new-synthetic", auth_jobs.wait("youtube")["identity"])
+
+    def test_legacy_expiry_is_read_only_and_late_completion_stays_visible_before_replacement(self):
+        from video_publisher import browser_worker
+        legacy = home() / "auth-jobs" / "youtube.json"
+        request = legacy.with_suffix(".request.json")
+        atomic_json(legacy, {"state": "LOGIN_PENDING", "platform": "youtube", "expires_epoch": 1})
+        atomic_json(request, {"action": "login", "platform": "youtube", "account": "default", "job_path": str(legacy)})
+        original = legacy.read_bytes()
+        with self.assertRaises(VpubError) as caught:
+            auth_jobs.wait("youtube")
+        self.assertEqual("login_interrupted", caught.exception.code)
+        self.assertEqual(original, legacy.read_bytes())
+        self.assertFalse(auth_jobs.job_path("youtube").exists())
+
+        async def completed(payload):
+            return {"logged_in": True, "platform": "youtube", "account": "default", "identity": "late-synthetic"}
+        with patch.object(browser_worker, "run", completed), patch.object(sys, "argv", ["worker", "--job", str(request)]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            browser_worker.main()
+        self.assertEqual("late-synthetic", auth_jobs.wait("youtube")["identity"])
 
     def test_concurrent_starts_launch_once(self):
         calls = []
@@ -351,7 +407,7 @@ class AuthJobLifecycleTests(unittest.TestCase):
         self.assertEqual("login_interrupted", caught.exception.code)
 
     def test_old_final_result_and_expired_untracked_job(self):
-        path = auth_jobs.job_path("youtube")
+        path = home() / "auth-jobs" / "youtube.json"
         final = {"state": "LOGGED_IN", "platform": "youtube", "logged_in": True}
         atomic_json(path, final)
         self.assertEqual(final, auth_jobs.wait("youtube"))

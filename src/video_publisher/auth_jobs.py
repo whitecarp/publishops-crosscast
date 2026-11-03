@@ -21,7 +21,9 @@ PLATFORMS = {"douyin", "instagram", "x", "youtube"}
 def job_path(platform):
     if platform not in PLATFORMS:
         raise VpubError("native_login_required", "Use the official website directly in the host's built-in browser.")
-    return home() / "auth-jobs" / (platform + ".json")
+    # Old browser_worker.main instances can still finish at auth-jobs/<platform>.json.
+    # They must never be able to replace this ownership index or its requests.
+    return home() / "auth-jobs" / "owners" / (platform + ".json")
 
 
 def _turn(path):
@@ -36,10 +38,11 @@ def _hint(platform, account="default"):
             "If the host keeps stopping it, run these commands in your own terminal; do not keep retrying in the host.")
 
 
-def _interrupted(path, saved):
+def _interrupted(path, saved, persist=True):
     saved = {**saved, "state": "LOGIN_INTERRUPTED", "interrupted_at": now(),
              "hint": _hint(saved["platform"], saved.get("account", "default"))}
-    atomic_json(path, saved)
+    if persist:
+        atomic_json(path, saved)
     return saved
 
 
@@ -63,13 +66,8 @@ def _file(folder, name):
     return path
 
 
-def _require_account(path, saved, account):
+def _require_account(saved, account):
     actual = saved.get("account")
-    if not actual and "attempt" not in saved:
-        old_request = path.with_suffix(".request.json")
-        if old_request.exists():
-            payload = read_json(old_request)
-            actual = payload.get("account") if payload.get("platform") == path.stem else None
     if not actual and saved.get("state") in PENDING:
         raise VpubError("login_account_unknown", "This older sign-in record does not identify its account.",
                         "Finish or close its CrossCast sign-in window; do not start a second login while it is open.")
@@ -90,29 +88,36 @@ def _result(path, saved):
 
 def _status(path):
     """Called under the short ownership lock; workers write only their own result."""
-    if not path.exists():
+    source = path if path.exists() else path.parent.parent / path.name
+    if not source.exists():
         return None
-    saved = read_json(path)
+    saved = read_json(source)
+    if source != path and "attempt" not in saved and not saved.get("account"):
+        request = source.with_suffix(".request.json")
+        if request.exists():
+            payload = read_json(request)
+            if payload.get("platform") == path.stem and payload.get("account"):
+                saved = {**saved, "account": payload["account"]}
     if "attempt" not in saved:  # Older jobs have no process ownership record.
         if saved.get("state") in PENDING and saved.get("expires_epoch", 0) <= time.time():
-            return _interrupted(path, saved)
+            return _interrupted(path, saved, persist=source == path)
         return saved
-    _folder(path, saved["attempt"])
+    _folder(source, saved["attempt"])
     if saved.get("platform") != path.stem:
         raise _invalid()
     account_name(saved.get("account"))
     if saved.get("state") == "LOGIN_INTERRUPTED":
         return saved
-    result = _result(path, saved)
+    result = _result(source, saved)
     if result.get("state") not in PENDING:
         return result
     pid = saved.get("worker_pid")
     if (pid and not alive(pid)) or (not pid and time.time() >= saved["start_deadline"]):
         # A worker can save its final answer immediately before exiting.
-        result = _result(path, saved)
+        result = _result(source, saved)
         if result.get("state") not in PENDING:
             return result
-        return _interrupted(path, saved)
+        return _interrupted(path, saved, persist=source == path)
     return result
 
 
@@ -122,7 +127,7 @@ def status(platform, account="default"):
     with _turn(path):
         result = _status(path)
         if result:
-            _require_account(path, read_json(path), account)
+            _require_account(result, account)
         return result
 
 
@@ -132,12 +137,12 @@ def start(platform, account):
     with _turn(path):
         previous = _status(path)
         if previous and previous.get("state") in PENDING:
-            _require_account(path, read_json(path), account)
+            _require_account(previous, account)
             return previous  # An elapsed login deadline does not prove a live worker stopped.
         if path.exists():
             saved = read_json(path)
             if saved.get("worker_pid") and alive(saved["worker_pid"]):
-                _require_account(path, saved, account)
+                _require_account(saved, account)
                 return previous
         attempt = uuid.uuid4().hex
         folder = _folder(path, attempt)
@@ -171,7 +176,7 @@ def start(platform, account):
 def run_job(request):
     """Claim before touching the browser; a late worker cannot start a replacement attempt."""
     request = Path(request).absolute()
-    folder = _folder(home() / "auth-jobs" / "unused.json", request.parent.name)
+    folder = _folder(home() / "auth-jobs" / "owners" / "unused.json", request.parent.name)
     if request != _file(folder, "request.json"):
         raise _invalid()
     payload = read_json(request)
@@ -184,7 +189,7 @@ def run_job(request):
         saved = _status(path)
         if not saved or saved.get("attempt") != payload["attempt"] or saved.get("state") != "STARTING":
             return
-        _require_account(path, saved, payload["account"])
+        _require_account(saved, payload["account"])
         if saved.get("worker_pid") and saved["worker_pid"] != os.getpid():
             return
         saved["worker_pid"] = os.getpid()

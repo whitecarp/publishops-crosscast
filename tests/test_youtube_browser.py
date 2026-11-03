@@ -984,7 +984,7 @@ class RouteTests(Temporary):
             with patch("video_publisher.browser_broker.release"), patch("video_publisher.auth_jobs.time.sleep"):
                 adapters.auth_login("youtube", "default")
         popen.assert_called_once()
-        self.assertEqual("youtube", read_json(home() / "auth-jobs/youtube.request.json")["platform"])
+        self.assertEqual("youtube", read_json(home() / "auth-jobs/owners/youtube.request.json")["platform"])
 
     def test_publish_and_verify_go_through_the_browser(self):
         options = {"method": "browser", "account": "default", "expected_identity": CHANNEL}
