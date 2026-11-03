@@ -1,4 +1,5 @@
 """One exact Instagram post, with conservative page and complete-profile read-back."""
+from dataclasses import dataclass
 import re
 from urllib.parse import urljoin, urlsplit
 
@@ -19,12 +20,103 @@ SAME = '(node, retained) => node === retained && node.isConnected'
 CONTAINS = '(node, child) => node.isConnected && child.isConnected && node.contains(child)'
 SCOPE_LINKS = "node => [...node.querySelectorAll('a[href]')].map(e => e.getAttribute('href'))"
 POST_PATH = re.compile(r'/(?:[A-Za-z0-9_.]+/)?(?:p|reel|reels)/[A-Za-z0-9_-]+/?')
+POST_PANELS = 'main div:has(> hr):has(svg[aria-label="More options"])'
+AUTHOR_BAR = ':scope > div:first-child'
+LAYOUT_OPTIONS = '[role="button"]:has(svg[aria-label="More options"])'
+TIMESTAMP = ':scope > div:has(svg[aria-label="Like"]):has(svg[aria-label="Comment"]):has(svg[aria-label="Share"]):has(svg[aria-label="Save"]) a[href]:has(time)'
+NAV_AVATARS = 'a[href]:has(img[alt])'
+CONTROL_WAIT_MILLISECONDS = 10000
+CONTROL_POLL_MILLISECONDS = 500
+NAV_IDENTITY = r"""links => {
+  const content = 'main,[role="main"],article,[role="dialog"],[role="alertdialog"],[contenteditable="true"]';
+  const shown = e => e.isConnected && !!e.getClientRects().length
+    && getComputedStyle(e).visibility !== 'hidden' && !e.closest('[hidden],[aria-hidden="true"]');
+  const names = [];
+  for (const link of links) {
+    if (!shown(link) || link.closest(content)) continue;
+    const pictures = [...link.querySelectorAll('img[alt]')].filter(shown);
+    if (pictures.length !== 1) continue;
+    const name = /^([A-Za-z0-9_.]{1,30})'s profile picture$/.exec(pictures[0].getAttribute('alt'))?.[1];
+    if (!name || ['accounts', 'explore', 'reels'].includes(name)) continue;
+    const href = link.getAttribute('href');
+    if (href !== '/' + name + '/' && href !== '/' + name) continue;
+    // Observed seven-link sidebar, separate from main and all post/comment text.
+    for (let scope = link.parentElement; scope && ['DIV', 'SPAN'].includes(scope.tagName); scope = scope.parentElement) {
+      if (scope.closest(content) || scope.querySelectorAll(content).length) break;
+      const anchors = [...scope.querySelectorAll('a[href]')].filter(shown);
+      if (anchors.length !== 7) continue;
+      const icons = [...scope.querySelectorAll('svg[aria-label]')].filter(shown);
+      const navigation = ['Home', 'Reels', 'Messages', 'Search', 'Notifications'].map(label => {
+        const found = icons.filter(icon => icon.getAttribute('aria-label') === label);
+        return found.length === 1 ? found[0].closest('a[href]') : null;
+      });
+      if (navigation.some(anchor => !anchor || !anchors.includes(anchor) || anchor === link)
+          || new Set(navigation).size !== 5) continue;
+      const avatars = anchors.filter(anchor => [...anchor.querySelectorAll('img[alt]')].some(img =>
+        shown(img) && /^[A-Za-z0-9_.]{1,30}'s profile picture$/.test(img.getAttribute('alt'))));
+      if (avatars.length !== 1 || avatars[0] !== link) continue;
+      names.push(name);
+      break;
+    }
+  }
+  return names;
+}"""
+POST_STRUCTURE = r"""(scope, bound) => {
+  const {author, more, permalink, identity} = bound;
+  const shown = e => e && e.isConnected && !!e.getClientRects().length
+    && getComputedStyle(e).visibility !== 'hidden' && !e.closest('[hidden],[aria-hidden="true"]');
+  const controls = 'textarea,[contenteditable="true"],form,ul,ol,[role="list"]';
+  const visible = (root, query) => [...root.querySelectorAll(query)].filter(shown);
+  const main = scope.closest('main');
+  if (![scope, author, more, permalink].every(shown) || !main
+      || scope.closest('[role="dialog"],[role="alertdialog"],article')
+      || visible(document, 'main').length !== 1) return false;
+  const children = [...scope.children].filter(shown);
+  // Observed author/options area, separator, caption area, then actions/time.
+  if (children.length !== 5 || children[0].tagName !== 'DIV' || children[1].tagName !== 'HR'
+      || children.slice(2).some(child => child.tagName !== 'DIV')) return false;
+  const bar = children[0], actions = children[3];
+  if (!bar.contains(author) || !bar.contains(more) || visible(bar, controls).length
+      || !actions.contains(permalink) || visible(actions, controls).length
+      || visible(permalink, 'time').length !== 1) return false;
+  const profiles = visible(bar, 'a[href]').filter(link => {
+    try { return /^\/[A-Za-z0-9_.]{1,30}\/?$/.test(new URL(link.getAttribute('href'), 'https://www.instagram.com/').pathname); }
+    catch { return false; }
+  });
+  if (profiles.length !== 1 || profiles[0] !== author || author.innerText.trim() !== identity) return false;
+  const icons = visible(scope, 'svg[aria-label="More options"]');
+  if (icons.length !== 1 || icons[0].closest('[role="button"]') !== more) return false;
+  if (more.getAttribute('role') !== 'button' || more.contains(author)) return false;
+  for (const label of ['Like', 'Comment', 'Share', 'Save']) {
+    if (visible(actions, 'svg[aria-label="' + label + '"]').length !== 1) return false;
+  }
+  const stamps = visible(actions, 'a[href]').filter(link => visible(link, 'time').length);
+  return stamps.length === 1 && stamps[0] === permalink;
+}"""
+
+
+@dataclass
+class PostSelection:
+    queries: tuple
+    headerless: bool = False
 
 
 async def guard(page):
     stop_check('instagram')
     await runtime.risk_check(page)
     stop_check('instagram')
+
+
+async def current_identity(page):
+    current = await runtime.identity(page, 'instagram')
+    # A readable different account must never be overridden by the fallback.
+    if current is not None:
+        return current
+    candidates = page.locator(NAV_AVATARS)
+    if not await candidates.count():
+        return None
+    names = await candidates.evaluate_all(NAV_IDENTITY)
+    return names[0] if len(names) == 1 else None
 
 
 def exact_address(page, actual, target):
@@ -36,7 +128,7 @@ def exact_address(page, actual, target):
 
 async def exact_account(page, actual, target):
     exact_address(page, actual, target)
-    if actual != target['identity'] or await runtime.identity(page, 'instagram') != actual:
+    if actual != target['identity'] or await current_identity(page) != actual:
         raise VpubError('wrong_account', 'The current Instagram account changed or cannot be read.')
     exact_address(page, actual, target)
 
@@ -53,7 +145,7 @@ async def profile_current(page, actual, target):
     await guard(page)
     if not profile_address(page, actual):
         return False
-    current = await runtime.identity(page, 'instagram')
+    current = await current_identity(page)
     return current == actual and profile_address(page, actual)
 
 
@@ -92,7 +184,7 @@ async def overlays_bound(page, dialog=None):
                 raise VpubError('layout_changed', 'An unbound menu or dialog is already open.')
 
 
-async def target_bound(page, actual, target, queries, retained):
+async def target_bound(page, actual, target, queries, retained, *, headerless=False):
     await exact_account(page, actual, target)
     scope, author, more, permalink = retained
     for query, handle, label in zip(queries, retained, ('exact post container', 'own post author', 'exact post options', 'exact post permalink')):
@@ -103,6 +195,9 @@ async def target_bound(page, actual, target, queries, retained):
     if (not await scope.evaluate(CONTAINS, permalink)
             or not exact_permalink(await permalink.get_attribute('href'), actual, target)):
         raise VpubError('wrong_work', 'The retained permalink no longer identifies this exact post.')
+    if headerless and not await scope.evaluate(POST_STRUCTURE, {'author': author, 'more': more,
+                                                              'permalink': permalink, 'identity': actual}):
+        raise VpubError('owner_unverified', 'The observed author, options and timestamp no longer share one post layout.')
     await scope_permalink(scope, actual, target)
     await exact_account(page, actual, target)
 
@@ -124,7 +219,18 @@ async def exact(page, actual, target):
         return None, True
     owned = page.locator(f'main header a[href="/{actual}/"], article header a[href="/{actual}/"]')
     if not any([await link.is_visible() for link in await owned.all()]):
-        return None, False
+        # A headerless layout must supply its own structural proof. Never widen
+        # the author query to all profile links in main or the whole page.
+        if await runtime.visible(page.locator('article')) or await runtime.visible(page.locator('main header')):
+            return None, False
+        panels = page.locator(POST_PANELS)
+        if not await runtime.visible(panels):
+            return None, False
+        panel = await runtime.unique_visible(panels, 'exact headerless post panel')
+        queries = (panels, panel.locator(AUTHOR_BAR).locator(f'a[href="/{actual}/"]'),
+                   panel.locator(AUTHOR_BAR).locator(LAYOUT_OPTIONS), panel.locator(TIMESTAMP))
+        # Retain and validate the complete structure before opening any options.
+        return PostSelection(queries, headerless=True), False
     # Bind the author's header and options to one article (or the sole main post
     # on layouts without article). A global owner link cannot authorize another menu.
     author = page.locator(f'header a[href="/{actual}/"]')
@@ -136,8 +242,8 @@ async def exact(page, actual, target):
     scope = await runtime.unique_visible(scopes, 'exact post container')
     await scope_permalink(scope, actual, target)
     await exact_account(page, actual, target)
-    return (scopes, scope.locator(f'header a[href="/{actual}/"]'), scope.get_by_role('button', name=OPTIONS),
-            scope.locator(permalinks)), False
+    return PostSelection((scopes, scope.locator(f'header a[href="/{actual}/"]'), scope.get_by_role('button', name=OPTIONS),
+                          scope.locator(permalinks))), False
 
 
 async def listing(page, actual, target):
@@ -190,9 +296,10 @@ async def execute(page, actual, target, operation, receipt_path):
         raise VpubError('wrong_account', 'Use the publishing Instagram account from the receipt.')
     if target.get('platform') != 'instagram' or not re.fullmatch(r'[A-Za-z0-9_-]{5,32}', target['id']):
         raise VpubError('wrong_work', 'Use the exact Instagram post from the publication receipt.')
-    queries, gone = await exact(page, actual, target)
-    if queries is None:
+    selection, gone = await exact(page, actual, target)
+    if selection is None:
         return await evidence(page, actual, target, gone, 0)
+    queries = selection.queries
     held = []
 
     async def retain(locator, label):
@@ -205,27 +312,56 @@ async def execute(page, actual, target, operation, receipt_path):
         await same_node(locator, handle, label)
         return handle
 
+    async def wait_controls(dialog_query, control_queries, label):
+        async def candidate(query):
+            handles = await query.element_handles()
+            held.extend(handles)
+            shown = [handle for handle in handles if await handle.is_visible()]
+            if len(shown) > 1:
+                raise VpubError('layout_changed', f'Ambiguous {label}; nothing else is pressed.')
+            return shown[0] if shown else None
+
+        for elapsed in range(0, CONTROL_WAIT_MILLISECONDS + 1, CONTROL_POLL_MILLISECONDS):
+            # Poll without another click. A loading shell (or the outgoing menu)
+            # may lack the required labels, but multiple overlays fail at once.
+            await candidate(page.get_by_role('dialog'))
+            if await runtime.visible(page.get_by_role('menu')) or await runtime.visible(page.get_by_role('alertdialog')):
+                raise VpubError('layout_changed', 'An unbound overlay appeared while the post controls loaded.')
+            dialog = await candidate(dialog_query)
+            controls = [await candidate(query) for query in control_queries]
+            if dialog is not None and all(control is not None for control in controls):
+                # Capture the first ready nodes before the next guard can yield
+                # to a replacement. The caller revalidates these exact handles.
+                return (dialog, *controls)
+            await guard(page)
+            await target_bound(page, actual, target, queries, retained, headerless=selection.headerless)
+            if elapsed == CONTROL_WAIT_MILLISECONDS:
+                raise VpubError('layout_changed', f'The {label} did not become ready; no click was retried.')
+            await page.wait_for_timeout(CONTROL_POLL_MILLISECONDS)
+
     try:
         retained = [await retain(query, label) for query, label in zip(
             queries, ('exact post container', 'own post author', 'exact post options', 'exact post permalink'))]
         await guard(page)
-        await target_bound(page, actual, target, queries, retained)
+        await target_bound(page, actual, target, queries, retained, headerless=selection.headerless)
         await overlays_bound(page)
         stop_check('instagram')
         await retained[2].click(timeout=10000)
         menus = page.get_by_role('dialog').filter(has=page.get_by_role('button', name=EDIT))
-        menu = await retain(menus, 'own post options')
+        edit_query = menus.get_by_role('button', name=EDIT)
         delete_query = menus.get_by_role('button', name=DELETE)
-        delete = await retain(delete_query, 'own post Delete')
+        menu, edit, delete = await wait_controls(menus, (edit_query, delete_query), 'own post options')
 
         async def menu_bound():
-            await target_bound(page, actual, target, queries, retained)
+            await target_bound(page, actual, target, queries, retained, headerless=selection.headerless)
             await same_node(menus, menu, 'own post options')
+            await same_node(edit_query, edit, 'own post Edit')
             await same_node(delete_query, delete, 'own post Delete')
             await overlays_bound(page, menu)
-            if not await menu.evaluate(CONTAINS, delete):
-                raise VpubError('wrong_work', 'Delete left the bound post menu.')
+            if not await menu.evaluate(CONTAINS, edit) or not await menu.evaluate(CONTAINS, delete):
+                raise VpubError('wrong_work', 'Edit or Delete left the bound post menu.')
 
+        await guard(page)
         await menu_bound()
         if operation != 'delete':
             await guard(page)
@@ -240,11 +376,10 @@ async def execute(page, actual, target, operation, receipt_path):
         stop_check('instagram')
         await delete.click(timeout=10000)
         confirmations = page.get_by_role('dialog').filter(has_text=CONFIRM)
-        dialog = await retain(confirmations, 'post deletion confirmation')
         final_query = confirmations.get_by_role('button', name=DELETE)
-        final = await retain(final_query, 'final post Delete')
+        dialog, final = await wait_controls(confirmations, (final_query,), 'post deletion confirmation')
         await guard(page)
-        await target_bound(page, actual, target, queries, retained)
+        await target_bound(page, actual, target, queries, retained, headerless=selection.headerless)
         await same_node(confirmations, dialog, 'post deletion confirmation')
         await same_node(final_query, final, 'final post Delete')
         await overlays_bound(page, dialog)
