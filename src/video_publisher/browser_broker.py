@@ -67,6 +67,14 @@ def failure_path(platform, account):
     return state_path(platform, account).with_suffix(".failure")
 
 
+def file_version(path):
+    try:
+        info = path.stat()
+        return info.st_ino, info.st_size, info.st_mtime_ns
+    except OSError:
+        return None
+
+
 def new_address():
     token = secrets.token_hex(16)
     if sys.platform == "win32":
@@ -101,6 +109,8 @@ def connect(platform, account, wait=None):
     try:
         saved = read_json(path)
     except (OSError, ValueError):
+        return None
+    if isinstance(saved, dict) and saved.get('state') == 'closed':
         return None
     results = Queue()
 
@@ -140,9 +150,8 @@ def call(payload, timeout):
     # A busy session still owns the profile, so wait for it; a second session could never start.
     conn = connect(platform, account, BUSY_SECONDS)
     if conn is None:
-        state_path(platform, account).unlink(missing_ok=True)
         failure = failure_path(platform, account)
-        failure.unlink(missing_ok=True)
+        previous_failure = file_version(failure)
         if not wait_for_lock(platform, account, CLOSING_SECONDS):
             raise busy_error()
         progress.stage("starting the browser", stages)
@@ -151,7 +160,7 @@ def call(payload, timeout):
         while conn is None and time.monotonic() < deadline:
             if process.poll() is not None:
                 # Its startup error is the answer; a one-shot worker would only repeat the sign-in check.
-                if failure.exists():
+                if failure.exists() and file_version(failure) != previous_failure:
                     error = read_json(failure)
                     raise VpubError(error["code"], error["message"], error.get("hint", ""))
                 return None
@@ -338,14 +347,19 @@ async def run(platform, account, on_closing=None):
                 key = secrets.token_bytes(32)
                 address = new_address()
                 listener = Listener(address, authkey=key)
+                state = {"address": address, "key": key.hex(), "pid": os.getpid()}
                 try:
-                    atomic_json(path, {"address": address, "key": key.hex(), "pid": os.getpid()})
+                    atomic_json(path, state)
                     if sys.platform != "win32":
                         path.chmod(0o600)
                     idle = min(idle_seconds(), YOUTUBE_IDLE_SECONDS) if platform == "youtube" else None
                     await serve(listener, handle, platform, idle=idle, usable=lambda: usable)
                 finally:
-                    path.unlink(missing_ok=True)
+                    # Reuse this small marker without deleting a file. The
+                    # profile's kernel lock is still held; preserve replacements.
+                    with contextlib.suppress(OSError, ValueError):
+                        if read_json(path) == state:
+                            atomic_json(path, {"state": "closed", "pid": os.getpid()})
             finally:
                 if on_closing:
                     on_closing()
@@ -359,7 +373,7 @@ def main():
     try:
         asyncio.run(run(platform, account, exit_soon))
     except VpubError as exc:
-        # run() removes only its own state file; a session that won the lock keeps running.
+        # A session that won the lock keeps its state; failed startup never deletes it.
         atomic_json(failure_path(platform, account), {"code": exc.code, "message": exc.message, "hint": exc.hint})
     except Exception:
         pass  # The client falls back to a one-shot worker, which reports the real error.

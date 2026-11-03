@@ -196,7 +196,7 @@ class AnswerTests(unittest.TestCase):
             raise VpubError("browser_error", "Could not confirm that the background browser processes have stopped.")
         with patch.object(hd, "run", side_effect=worker):
             self.assertEqual(answer, hd.call_worker({"action": "publish"}, 1))
-        self.assertEqual([], list((home() / "browser-jobs").iterdir()))
+        self.assertEqual(2, len(list((home() / "browser-jobs").iterdir())))
 
     def test_a_finished_commands_answer_stands_after_a_timeout_too(self):
         answer = {"ok": True, "data": {"state": "SUBMISSION_VERIFIED"}}
@@ -216,7 +216,7 @@ class AnswerTests(unittest.TestCase):
         with patch.object(hd, "run", side_effect=VpubError("browser_unavailable", "No desktop.")), self.assertRaises(VpubError) as caught:
             hd.call_worker({"action": "publish"}, 1)
         self.assertEqual("browser_unavailable", caught.exception.code)
-        self.assertEqual([], list((home() / "browser-jobs").iterdir()))
+        self.assertEqual(1, len(list((home() / "browser-jobs").iterdir())))
 
 
 class TimesOutWhenTold:

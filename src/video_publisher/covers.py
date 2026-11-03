@@ -6,10 +6,10 @@ from copy import deepcopy
 import os
 from pathlib import Path
 import re
-import tempfile
 import shutil
 from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
 from .core import VpubError, atomic_json, digest, file_sha, load_plan, read_json, shared_portrait
+from .runtime_scratch import scratch
 
 PRESETS = {
     "bilibili": {"landscape": (1600, 1000)},
@@ -86,7 +86,7 @@ def portrait(source, boxes, output):
         left, top, wide, tall = part["box"]
         canvas.paste(image.crop((left, top, left + wide, top + tall)).resize(tuple(part["placed"][2:]), Image.Resampling.LANCZOS), tuple(part["placed"][:2]))
     output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".crosscast-portrait-", dir=output.parent) as tmp:
+    with scratch(output.parent) as tmp:
         target = Path(tmp) / output.name
         for quality in (92, 85, 75, 60):
             canvas.save(target, "JPEG", quality=quality, optimize=True)
@@ -168,7 +168,7 @@ def prepare(manifest, source, out_dir, output, portrait=None):
     value.pop("cover", None)
     value["covers"] = {}
     assets = []
-    with tempfile.TemporaryDirectory(prefix=".crosscast-covers-", dir=directory.parent) as tmp:
+    with scratch(directory.parent) as tmp:
         staging = Path(tmp)
         for job in jobs:
             if job['role']=='portrait':

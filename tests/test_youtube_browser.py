@@ -1138,14 +1138,14 @@ class HiddenDesktopTests(Temporary):
         self.assertIsNotNone(started.poll())
         self.assertEqual(hidden_desktop.DESKTOP, done.read_text())
 
-    def test_the_answer_comes_back_and_no_private_files_stay(self):
+    def test_the_answer_comes_back_and_private_files_wait_for_cleanup(self):
         def worker(argv, timeout):
             request = read_json(argv[-1])
             self.assertEqual("status", request["action"])
             atomic_json(request["result_path"], {"ok": True, "data": {"identity": CHANNEL}})
         with patch.object(hidden_desktop, "run", side_effect=worker):
             self.assertEqual({"ok": True, "data": {"identity": CHANNEL}}, hidden_desktop.call_worker({"action": "status"}, 10))
-        self.assertEqual([], list((home() / "browser-jobs").iterdir()))
+        self.assertEqual(2, len(list((home() / "browser-jobs").iterdir())))
 
     def test_no_answer_and_timeouts_are_reported_and_clean_up(self):
         with patch.object(hidden_desktop, "run"), self.assertRaises(VpubError) as caught:
@@ -1154,7 +1154,7 @@ class HiddenDesktopTests(Temporary):
         with patch.object(hidden_desktop, "run", side_effect=subprocess.TimeoutExpired("x", 1)), self.assertRaises(VpubError) as caught:
             hidden_desktop.call_worker({"action": "status"}, 10)
         self.assertEqual("browser_timeout", caught.exception.code)
-        self.assertEqual([], list((home() / "browser-jobs").iterdir()))
+        self.assertEqual(2, len(list((home() / "browser-jobs").iterdir())))
 
     @unittest.skipUnless(os.name == "nt", "Windows desktops")
     def test_a_real_process_runs_on_the_hidden_desktop(self):

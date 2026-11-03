@@ -121,9 +121,9 @@ def apply(manifest, request_path, response_path, output):
         for role, filename in variants.items():
             variants[role] = str((path.parent / filename).resolve())
     # Validate using a same-directory temporary file, then promote only on success.
-    import tempfile
+    from .runtime_scratch import scratch
     out.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=out.parent) as tmp:
+    with scratch(out.parent) as tmp:
         candidate = Path(tmp) / "metadata.json"
         atomic_json(candidate, value)
         plan = load_plan(candidate)

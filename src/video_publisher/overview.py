@@ -9,7 +9,7 @@ import sys
 
 from . import adapters
 from .core import PLATFORMS, Ledger, VpubError, digest, file_sha, home, how_to_clear_a_stop, part_left_undone, publication_lock, read_json, stop_check
-from .process_lock import alive
+from .process_lock import alive, released
 
 FINISHED = {"SUBMISSION_VERIFIED", "EXISTING_VERIFIED", "AGENT_REPORTED_VERIFIED", "AGENT_REPORTED_DELETED"}
 DRAFTS = {"PREVIEW_READY", "DRAFT_SAVED"}
@@ -61,6 +61,8 @@ def workspace_busy():
     if not path.exists():
         return False
     owner = read_quietly(path)
+    if released(owner):
+        return False
     return alive(owner.get("pid") if isinstance(owner, dict) else owner)
 
 
@@ -138,6 +140,8 @@ def background_browsers():
     sessions = []
     for path in sorted((home() / "browser-brokers").glob("*.json")):
         saved = read_quietly(path)
+        if isinstance(saved, dict) and saved.get('state') == 'closed':
+            continue
         pid = saved.get("pid") if isinstance(saved, dict) else None
         if type(pid) is int and alive(pid):
             sessions.append({"session": path.stem, "pid": pid})
@@ -357,17 +361,36 @@ def status(limit=20):
 def cleanup(apply=False):
     """Remove private video copies that nothing can need again. Previews unless asked to apply."""
     with publication_lock():
+        from . import runtime_files
         root = home() / "jobs"
         folders = snapshot_folders(read_rows())
+        runtime_reason = 'Registered runtime entries require separate safe cleanup.'
+        for item in folders:
+            if 'kept_because' not in item and runtime_files.registered_in(item['folder']):
+                item['kept_because'] = runtime_reason
         removable = [item for item in folders if "kept_because" not in item]
         kept = [item for item in folders if "kept_because" in item]
+        # Shared hardlinks may retain every byte outside these folders. Count
+        # only single-link files; this deliberately underestimates shared data.
+        for item in removable:
+            item['bytes'] = sum(path.stat().st_size for path in Path(item['folder']).rglob('*')
+                                if path.is_file() and path.stat().st_nlink == 1)
         total = sum(item["bytes"] for item in removable)
         if not apply:
-            return {"mode": "PREVIEW", "removable": removable, "kept": kept, "reclaimable_bytes": total, "platform_writes": 0,
-                    "next": "vpub cleanup --apply" if removable else None}
+            runtime = runtime_files.cleanup()
+            return {"mode": "PREVIEW", "removable": removable, "kept": kept, "reclaimable_bytes": total + runtime['reclaimable_bytes'], "platform_writes": 0,
+                    "runtime_files": runtime, 'byte_accounting': runtime['byte_accounting'],
+                    "next": "vpub cleanup --apply" if removable or runtime['removable'] else None}
+        removed = []
         for item in removable:
             folder = Path(item["folder"])
             if folder.parent != root or folder.is_symlink():
                 raise VpubError("unsafe_path", "Cleanup only removes folders directly inside its own jobs directory.")
+            if runtime_files.registered_in(folder):
+                kept.append({**item, 'kept_because': runtime_reason})
+                continue
             shutil.rmtree(folder)
-        return {"mode": "APPLIED", "removed": removable, "kept": kept, "freed_bytes": total, "platform_writes": 0}
+            removed.append(item)
+        runtime = runtime_files.cleanup(apply=True)
+        return {"mode": "APPLIED", "removed": removed, "kept": kept, "freed_bytes": sum(item['bytes'] for item in removed) + runtime['freed_bytes'], "platform_writes": 0,
+                "runtime_files": runtime, 'byte_accounting': runtime['byte_accounting']}

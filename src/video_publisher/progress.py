@@ -41,10 +41,10 @@ def stage(word, path=None):
     if not path or word not in STAGES:
         return
     try:
-        # A file only the waiting command makes, so a session it stopped waiting for leaves nothing behind.
-        if os.path.isfile(path):
-            with open(path, "a", encoding="ascii") as file:
-                file.write(word + "\n")
+        # Do not recreate a file that explicit cleanup removed after its owner exited.
+        descriptor = os.open(path, os.O_WRONLY | os.O_APPEND)
+        with os.fdopen(descriptor, "a", encoding="ascii") as file:
+            file.write(word + "\n")
     except OSError:
         pass
 
@@ -129,4 +129,5 @@ def relay(platform, payload):
         if thread and thread.is_alive():
             thread.join(1)
         with contextlib.suppress(Exception):
-            path.unlink()
+            from .runtime_files import defer
+            defer(path)
