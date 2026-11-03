@@ -1,41 +1,28 @@
-<p align="center">
-  <a href="README.md">简体中文</a> · <a href="README_ZH_TW.md">繁體中文</a> · <b>English</b>
-</p>
+<div align="center">
 
-<p align="center">
-  <img src="assets/hero-en.svg" alt="One message, every platform you choose: you tell your AI assistant once, it writes each platform's copy, fits covers and submits platform by platform; the example release plan shows Bilibili and YouTube verified, Douyin submitted and unverified, Instagram publishing and X queued" width="860">
-</p>
+<img src="assets/hero-en.svg" alt="Conceptual publishing workflow: one request, AI-written copy and fitted covers, then five platforms with example progress states; not a publication record" width="100%">
 
-<h1 align="center">PublishOps CrossCast</h1>
+<br>
 
-<p align="center">
-  <b>One message. Every platform you choose.</b><br>
-  Your AI assistant writes each platform's title and description and fits the covers; after the first sign-in, the CLI submits platform by platform in the background and keeps a receipt for every step.
-</p>
+<a href="https://github.com/whitecarp/publishops-crosscast/releases"><img src="https://img.shields.io/badge/version-0.16.0%20alpha-f59e0b" alt="Version 0.16.0 alpha"></a> <img src="https://img.shields.io/badge/python-3.10%E2%80%933.12-3776ab" alt="Python 3.10–3.12"> <img src="https://img.shields.io/badge/Windows-tested-555" alt="Windows tested"> <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-17213a" alt="MIT License"></a>
 
-<p align="center">
-  <img src="https://img.shields.io/badge/version-0.16.0%20alpha-f59e0b" alt="Version 0.16.0 alpha">
-  <img src="https://img.shields.io/badge/python-3.10%E2%80%933.12-3776ab" alt="Python 3.10–3.12">
-  <img src="https://img.shields.io/badge/Windows-tested-555" alt="Windows tested">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-17213a" alt="MIT License"></a>
-</p>
+[简体中文](README.md) | [繁體中文](README_ZH_TW.md) | **English**
 
-<p align="center">
-  <a href="#-start-with-one-message">Quick start</a> ·
-  <a href="#-what-it-does-for-you">What it does</a> ·
-  <a href="#-platform-support">Platforms</a> ·
-  <a href="#-safety-rails">Safety rails</a> ·
-  <a href="#-install">Install</a> ·
-  <a href="#-faq">FAQ</a> ·
-  <a href="https://whitecarp.github.io/publishops-crosscast/?lang=en">Website</a>
-</p>
+</div>
 
-> [!IMPORTANT]
-> **0.16.0 alpha.** YouTube, Douyin, Instagram and X have all been published for real and read back, and Bilibili has been uploaded and verified with bili-cli, some of this with earlier versions; see the [validation record](docs/VALIDATION_EN.md). It is still alpha: sign-ins expire, platforms may ask for verification at any time, and long unattended runs have not been validated.
+## 💡 What it is
+
+You finish a video, and then you still have to write titles for every platform, refit the cover and upload it five times. **CrossCast lets your AI assistant do all of that.** Say one sentence, and it writes the copy, fits the covers and posts to Bilibili, YouTube, Douyin, Instagram and X. After that, edits, comment replies and stats can go through it too.
+
+<p align="center"><img src="assets/one-message.png" alt="Conceptual illustration of one request going through an AI assistant to five platforms, not a publication record" width="88%"></p>
+
+> 🎬 Five platforms · 🤖 Works with Codex and Claude Code · 🔑 No extra API key · 🛡️ Safety rails on · 🆓 Free and open source
+
+> **All five platforms have real publishing records.** This is still 0.16.0 alpha, and some features haven't been tried on a real account. The [guide](docs/GUIDE_EN.md#-what-it-does-and-how-far-each-part-has-been-tried) records the tested scope for each version and feature.
 
 ## 🚀 Start with one message
 
-Send this to your AI assistant (any assistant that can run commands, such as Codex or Claude Code), replacing `final.mp4` with your video:
+**Send this to your AI assistant**, replacing `final.mp4` with your video. It installs itself and walks you through signing in:
 
 ```text
 Please install https://github.com/whitecarp/publishops-crosscast
@@ -43,25 +30,18 @@ Read skills/publishops-crosscast/SKILL.md, then run vpub doctor.
 Publish final.mp4 publicly to Bilibili, YouTube, Douyin, Instagram, and X, with titles and descriptions written for each platform.
 ```
 
-**Have these ready before you start:**
-
-- **Bilibili**: scan a QR code once with the Bilibili app (through bili-cli).
-- **YouTube**: free publishing uses YouTube Studio in a dedicated Chrome that runs in the background; you only see it to sign in or pass a Google check. CLI publishing through the official API needs the paid API add-on and your own Google desktop OAuth client.
-- **Douyin, Instagram and X**: the first sign-in opens CrossCast's own official Chrome window, where you scan a QR code or enter your password and verification code yourself; after that, the CLI reuses the sign-in in the background.
-- **X**: the free route publishes only through Media Studio, so the account must be subscribed and able to open Media Studio.
-- **A new-device check**: CrossCast signs in through its own dedicated browser, and YouTube, Douyin, Instagram or X may treat it as a new device and ask you to verify who you are or to recover the account. Complete that yourself on the platform's own page; your AI assistant never answers it for you. Restarting the sign-in again and again does not help, and a saved sign-in can be asked to verify again later.
-- **Google Chrome on your computer**: if it's missing, run `vpub setup --install-browser`.
+The first time on each platform, you scan the QR code or enter the code yourself. After that it publishes in the background.
 
 <details>
-<summary>Prefer to install it yourself in a terminal?</summary>
+<summary>Or install it yourself in a terminal</summary>
 
-```sh
+```bash
 pip install "git+https://github.com/whitecarp/publishops-crosscast.git"
-vpub doctor        # check local dependencies
-vpub capabilities  # see which publishing routes this install offers; vpub doctor checks what's missing
+vpub doctor              # see what this machine is missing
+vpub auth login douyin   # sign in once per platform
 ```
 
-Requires Python 3.10–3.12. Neither command signs in or publishes. See [Install](#-install) for sign-in and the manual flow.
+Requires Python 3.10–3.12 and Google Chrome. Windows is tested; macOS and Linux have not been verified yet. Full steps are in the [guide](docs/GUIDE_EN.md#-install).
 
 </details>
 
@@ -69,228 +49,97 @@ Requires Python 3.10–3.12. Neither command signs in or publishes. See [Install
 
 > **You**: Publish final.mp4 publicly to all five platforms, and keep the titles casual.
 
-| Step | What the AI assistant and vpub do |
-| --- | --- |
-| ✍️&nbsp;Auto&nbsp;copy | Simplified Chinese for Bilibili and Douyin, English for YouTube, Instagram and X; a video in another language keeps its own words first, then the translation<br>A YouTube category chosen from the video; lengths and tags checked, no external links |
-| 🖼️&nbsp;Auto&nbsp;covers | Landscape: 16:10 for Bilibili, 16:9 for YouTube and X<br>Portrait: one portrait image generated by the AI assistant, shared by Douyin and Instagram; the video stays as it is |
-| 🧾&nbsp;Auto&nbsp;plan | Platforms, accounts, visibility and AI disclosure listed, plus a confirmation code |
-| 🔁&nbsp;Rehearse | One `--dry-run` pass that never touches a platform |
-| 📮&nbsp;Submit | After sign-in, videos are submitted automatically in the background |
+```text
+✍️  Copy      Simplified Chinese for Bilibili/Douyin, English for YouTube/Instagram/X; original first when translating
+🖼️  Covers    Sized for each platform, with your original left alone
+🧾  Plan      Where it goes, which account, and who can see it
+🔁  Rehearse  Goes through the steps without posting anything
+📮  Publish   Posts to each platform in the background, and only counts once it's found there
+```
 
-> **AI assistant**: All five platforms are submitted. Works already read back are marked "Verified"; the ones still in review will be updated once they pass. Please swap the Instagram cover to the portrait image on your phone.
+> **AI assistant**: All five platforms are submitted. The ones I can already see on the platform are marked "Verified"; I'll update the ones still in review once they pass. Please change Instagram's cover to the portrait image on your phone.
 
 <sub>An illustration, not a real publication record.</sub>
 
 ## ✨ What it does for you
 
-### ✍️ Copy written for every platform, automatically
+### ✍️ Copy for every platform
+Your AI assistant writes titles, descriptions and tags; CrossCast checks them. Bilibili and Douyin use Simplified Chinese; YouTube, Instagram and X use English. When the video's language differs, keep the original first, then the translation. Chinese content on Bilibili and Douyin uses Simplified Chinese only.
 
-Simplified Chinese for Bilibili and Douyin, English for YouTube, Instagram and X. When the video is in another language, the original text comes first, followed by a translation into the platform's language; Chinese content is written only in Simplified Chinese on Bilibili and Douyin. Your current AI assistant writes the words, while vpub supplies the writing brief and checks lengths and formats. There is no built-in model and no extra model API key. YouTube categories are chosen from the video's content.
-
-### 🖼️ Covers fitted to each platform's canvas, automatically
-
-A separate cover is saved for each platform's canvas with the whole image kept: no cropping, stretching or overwriting the original. Bilibili gets 16:10, YouTube 16:9, and X a landscape cover set through Media Studio. For Douyin and Instagram, the AI assistant (such as Codex) generates one dedicated portrait image that both share, instead of padding a landscape image with black bars. With no image generator, `vpub covers portrait` lays chosen parts of the cover into that portrait with no AI. The video itself is never converted to portrait and keeps its original ratio. The Instagram cover is changed on your phone.
-
-### 🧾 A plan before anything moves
-
-Every release starts with a plan that spells out platforms, accounts, visibility and AI disclosure, along with a confirmation code. Change the video, cover or copy and the code changes, so an old confirmation no longer applies and what gets published is exactly the version you approved. A `--dry-run` rehearsal never touches a platform.
+### 🖼️ Covers that fit
+A new file sized for each platform, with no cropping or stretching, and your original left alone. Douyin and Instagram need a portrait cover: your assistant can draw one, or it can be laid out from your image.
 
 ### 📮 Sign in once, then publish in the background
-
-After the first sign-in, the CLI does the uploading itself: Bilibili through bili-cli, and YouTube, Douyin, Instagram and X through a dedicated Chrome the CLI runs in the background. The official API routes for YouTube, X and Instagram need the paid add-on, which isn't on sale yet; everything else here works without it. Uploads can carry chapters (Bilibili, YouTube, Douyin) and join a playlist (YouTube) or a collection (Bilibili, Douyin). Bilibili, YouTube, Douyin and X can schedule a future time; Instagram cannot, and a plan that asks for it is refused. `vpub init --draft-only` uploads without publishing: Bilibili and YouTube keep an unpublished draft, Douyin presses its own save-and-leave button, and its upload page may then offer the draft under 继续编辑 (CrossCast only looks, because it can't show whose draft that is and opening it may use it up), and Instagram and X stop at a preview that may not last, so it is never called saved.
-
-### 🔁 Pick up where it stopped
-
-If an upload is interrupted, `vpub resume` continues the original task: X continues from the Studio media it already saved, and YouTube resumes the same upload session with the paid add-on. YouTube's free route and Douyin go back to the draft an upload left, and finish it from there. A file goes up again only if there's no draft of it and YouTube never gave it an ID. Instagram keeps nothing until Share, so an attempt that stopped before it starts over. If a cover is what keeps stopping an attempt, `vpub resume KEY --no-cover` finishes it without one, and `--cover FILE` gives an attempt a cover its plan didn't have. A submission with an unclear result is never clicked again automatically. If YouTube's read-back shows the work is still a draft, nothing went public, so `vpub resume` presses Publish on that same draft. `vpub status` lists what is unfinished with the exact next command, using local records only, and `vpub cleanup` frees the disk space taken by copies of finished videos.
-
-### 🔍 A receipt for every step
-
-Each platform's progress keeps its real name: Queued → Publishing → Submitted, unverified → Verified. Only a work read back from the platform's page or API counts as "Verified"; a queued task, a sign-in link or a local receipt is not a successful publication.
+Where supported, schedule posts (except on Instagram), save drafts or stop at a preview, add chapters, and join collections or playlists at upload. Interrupted attempts can resume, but some may need another upload before submission.
 
 ### ✏️ Edit after posting
+Change titles, descriptions, covers and chapters, depending on the platform. Works CrossCast didn't post can be edited too, once adopted.
 
-`vpub edit` changes a published work in place: Bilibili titles, descriptions, tags, covers and chapters; YouTube titles, descriptions, thumbnails and chapters; Douyin titles, descriptions, portrait covers and chapters; Instagram captions; and X posts when an Edit option appears. The video and visibility stay the same. For older works CrossCast didn't publish, adopt them with `vpub ops adopt`, then edit them with `vpub edit-work`.
+### 💬 Comments and messages
+Read comments and reply only in the commenter's language, see @ mentions, send single direct messages, like and save, and pin, hide or delete comments. Each action covers only the one thing you asked for, and nothing is sent in bulk.
 
-`vpub widgets` puts Bilibili's interactive widgets on your own video: a link to another video, a follow or triple button, a vote and a rating. Choose them in the plan, or add them to a video that's already up. Bilibili doesn't list them before a video is public, so a plan's wait until then, and `vpub verify` sends them. `vpub verify` and a Bilibili edit also report what's on the video. Reserve widgets are left out, since removing one notifies everyone who booked it. This hasn't run on a real account through `vpub` yet.
+### 📊 Stats
+See your works, views and engagement, and check several platforms at once for new comments and changes in stats. It can also tell you what's unfinished and what to do next.
 
-### 💬 Comments, likes and messages
+### 🎛️ Bilibili widgets
+Add related-video cards, follow buttons, polls and ratings to your own Bilibili videos.
 
-Read comments and reply in the commenter's language, like and save works, read and send direct messages on Douyin, Instagram and X, and check @-mentions. You can also pin, hide, delete or remove individual comments where the platform allows it, and manage your collections and playlists (reordering them is part of the paid add-on). Each action covers only the single item you authorized; nothing is sent in bulk. What's available differs by platform; see the [feature scope](docs/FEATURES_EN.md).
+## 📺 Supported platforms
 
-### 📊 Stats and operations reports
+- **Bilibili**: scan a QR code with the Bilibili app
+- **YouTube and Douyin**: sign in once in the Chrome window CrossCast opens
+- **Instagram**: sign in the same way; covers change on your phone, and it can't schedule
+- **X**: sign in the same way; the account must be subscribed and able to open Media Studio
 
-See plays and engagement for a single work, and scan several platforms for new comments and changes in numbers. The full operations report is part of the paid add-on.
+TikTok is paused. What to know about each platform is in the [guide](docs/GUIDE_EN.md#-platform-support).
 
-### 📧 Email when it needs you (optional)
+## 🆓 Free and paid
 
-*Part of the paid add-on, which isn't on sale yet.*
+Everything above is free and MIT licensed. The paid add-on isn't on sale yet, and you don't need it. It only adds advanced things like official API publishing, operations reports and email reminders. The [full list](docs/GUIDE_EN.md#-free-and-paid) is in the guide.
 
-When a platform needs you to scan a QR code or verify, CrossCast can email you a reminder. Gmail only; off by default and turned on only when you ask.
+## 🛡️ Safety rails
 
-## 🧭 Platform support
+It's your own account, so these are on by default:
 
-| Platform | Sign-in | Publishing route | Tested |
-| --- | --- | --- | --- |
-| **Bilibili** | Bilibili app QR code (bili-cli) | bili-cli, can schedule | ✅&nbsp;bili-cli |
-| **YouTube** | Free: sign in once in the dedicated Chrome. Paid add-on: Google desktop OAuth client | Free: background Chrome on YouTube Studio, with playlists and scheduling. Paid add-on: official API | ✅&nbsp;API and free route |
-| **Douyin** | Dedicated official Chrome | CLI background browser, can schedule and join a collection | ✅&nbsp;Published |
-| **Instagram** | Dedicated official Chrome | CLI background browser; cover changed on your phone; no scheduling | ✅&nbsp;Published |
-| **X** | Dedicated official Chrome | Free: Media Studio only (subscription and actual access required), can schedule; official API: paid add-on, not on sale yet | ✅&nbsp;Published |
-| **TikTok** | — | — | ⏸️&nbsp;Suspended |
-
-See the [validation record](docs/VALIDATION_EN.md) for details. Bilibili uploads were made by the author directly with bili-cli, and `vpub capabilities` still marks Bilibili as untested. These are past real publications: they do not mean publishing will succeed for your account, region and platform status.
-
-**Know before you post**
-
-- **YouTube**: the free route can also read your works, stats, comments and playlists, reply to comments, like videos and comments, edit or delete your own comments, change titles, descriptions and thumbnails, and create, change and delete playlists in the background. On a real account so far, the reads have been tried, and so have creating, changing (name, description, visibility) and deleting a private playlist and adding a video to it and removing it, liking and saving a video and liking a comment (each undone), replying to a comment, and editing your own comment and putting it back. Changing a private video's title and description and putting them back was confirmed, and so were pinning a comment and taking the pin off. CrossCast reads a pin on the video's own page, because Studio's row and menu keep offering to pin a pinned comment. A delete of your own reply was tried once: the reply left the page, but CrossCast could not prove that YouTube had accepted it, so it was reported as unconfirmed, and it stays that way until one more real delete shows what a success answer looks like. These checks do not establish acceptance of other writes; private test uploads and the public posts of 2026-11-02 are recorded separately in the validation record. A new thumbnail is reported as unconfirmed (`EDIT_SUBMITTED_UNVERIFIED`), because Studio shows nothing to compare it with, so look at it in Studio. Reordering a playlist and the held-for-review queue need the paid API add-on, as do the official API routes. The free background route adds the video to playlists by their titles and can schedule it (in the time zone Studio shows, otherwise this computer's); both are read back before the final Save. On a real account draft runs chose a new playlist and kept a schedule's date and time, on and off the quarter hour, and read them back. Those runs stop before the final Save, so a video joining a playlist at that Save, and a saved schedule, have not been confirmed there yet. On the paid API route only, while your Google project is in testing mode, add the signing-in account under "Test users" first; under Google's rules, videos uploaded by an API project created after July 28, 2020 that has not passed Google's audit are locked to private. The free route needs neither.
-- **X**: the free route is Media Studio only. The account must be subscribed and able to open Media Studio; accounts without it are limited to 140-second, 512 MB videos, which this free browser route does not support. X currently serves two versions of its website: a signed-in test account still gets the earlier one, and signed-out visitors get a rebuilt one. CrossCast's X route handles both, and stops with an error if a page matches neither; the receipt for that attempt says whether anything had already gone out. The rebuilt-site paths come from X's public page code and have not been tried on a signed-in account. On the earlier site a post comes out of a folder through the share menu on the folder's own page. On a real account (the earlier site), creating, renaming and deleting a folder, adding a post to a folder and taking it out again, and liking and saving a post were confirmed. So were a reply, which a follow-up `vpub comments verify-reply` confirmed, and deleting it. Uploads through Media Studio stopped three times before posting anything, because the uploaded file's page did not open, and a fourth time when X asked for a verification. After changes to that step, a draft got as far as X's composer with the right file's details filled in, and was removed unposted. The next upload, for scheduling, waited ten minutes for the same page and stopped there, with nothing scheduled; the cause isn't confirmed. After another change to that step, a scheduling test reached X's calendar and showed that the calendar's Save only confirms the date, and that the real final button reads Done. With that changed, the next test pressed Done once and the post appeared on X's schedule page with its exact words, date and time and a video, and it was cancelled from that page before its time, with its clip deleted. A draft on a fresh upload also reached the composer with its video matching the file's, and was removed unposted. No scheduled post has reached its time. Ordinary posts have gone out on a real account, as the validation notes record.
-- **Instagram**: the video keeps its original ratio, and the cover must be changed on your phone: open the work's "Edit cover → Add from camera roll", pick the portrait image shared with Douyin, then check how the profile grid crops it. Instagram can't be scheduled, so a plan that asks for it is refused. Deleting your own comment was tried once on a real account: a fresh read afterwards no longer listed it, but CrossCast could not prove that Instagram had accepted the delete, so it was reported as unconfirmed (`COMMENT_UNVERIFIED`), and it stays that way until one more real delete shows what a success answer looks like.
-- **Douyin**: long-term sign-in stability is still being validated, and an interrupted web upload cannot resume, so check existing drafts first: if Douyin's upload page is already offering a kept draft, a new upload stops with `existing_draft_requires_attention` before any video is chosen, and you continue or discard that draft there yourself, then run it again. A draft was kept on a real account once, when `vpub resume` finished an earlier attempt: Douyin then offered it under 继续编辑 with the exact test title. A later draft ended `PREVIEW_READY` with CrossCast seeing such an offer itself, which it records and does not count as reading the draft back. The stop for an offer already there before an upload has not run there. Creating and deleting a collection passed on a real account (a first try had stopped at a wait after the cover upload, which is longer now), and the upload form's collection picker listed real collections. A private schedule was confirmed from its card, with the right words, time and private mark, and removed by hand before its time, so none has reached its time yet. **Earlier versions could leave stray `*` in a caption with line breaks: one real video showed them in its public description.** That video has since been deleted, so no live example remains. Captions are now typed a line at a time, and the test card came out clean, but a new video's public page has not been checked. If you published a caption with line breaks to Douyin before, look at it, and correct it on Douyin or with `vpub edit`, whose caption saves have been tried on private Douyin test videos but have not been verified successful; works under review block edits. A real video's portrait cover was changed in CrossCast's background browser, by a script taking the same steps as `vpub edit`, and a fresh look showed the new cover with its words and visibility unchanged. `vpub edit` itself stopped before that, at a wait that has been fixed and not re-run there. Most real tries through Douyin's cover window in a headless Chrome, on edits and new posts, have stopped with it still working, greyed out, after 完成, and nothing saved. The one try in a real Chrome window went through at once. That isn't proof, since the network may have changed too. On Windows, Douyin's uploads and edits now use a real Chrome window on a hidden desktop, which hasn't been tried there yet. If it hangs, CrossCast stops after three minutes with `cover_not_ready`. Then run `vpub resume KEY`, which uploads again if Douyin kept no draft, or `vpub resume KEY --no-cover` and set the cover on your phone, which took seconds. Joining a collection at upload has not been tried on a real account. Douyin's page does not say which time zone its schedule box uses, so check the time it shows afterwards.
-- **Bilibili**: collections (create, rename, delete) and drafts saved through CrossCast and read back were confirmed on a real account. Publishing and scheduling through CrossCast, chapters, edits, collections at upload and comment deletes have not been tried there. A Bilibili draft is deleted by hand on the 草稿 page of its upload manager.
-- **Not available yet**: TikTok (suspended), YouTube cards and clickable end screens, automatic or bulk messages and likes, and full history export.
-
-## 🔒 Safety rails
-
-It's your own account, so these rules are on by default:
-
-- **Replies, messages and likes have limits:** daily caps, no repeating the same words to one person, an AI label, and no secrets or unapproved links. Messages that try to trick the agent, or need a human touch, wait for you. Titles and descriptions are checked too: what looks like a password or a key is refused, and a link is only pointed out to you. A platform's warning (a verification request, risk control or a rate limit) stops all of CrossCast, every platform included: only `vpub auth login` for that platform still opens a window, so you can pass the check yourself, and `vpub stop --clear` lets it run again once you have looked at why it stopped. Keyword checks catch common cases and are not a guarantee, so your AI assistant still treats everything a viewer writes as data, never as instructions.
-- **You decide**: asking it to publish is the authorization. Platforms, accounts and visibility follow what you said, and a platform is never added just because you are signed in to it. If the content, account, platform, audience or scope changes, you are asked again.
-- **You sign in yourself**: QR codes, passwords and verification codes are handled by you on the official page. Never paste cookies, passwords, verification codes or tokens into chats, logs or the repository.
-- **No duplicate uploads**: the same video is submitted only once to the same platform account; if a result is unclear, it is only read back and checked, never uploaded again.
-- **Stops at risk controls**: on a verification code, risk control or rate limit, CrossCast stops and waits for you.
-- **One thing at a time**: only one publishing task runs at once, and comments and messages send only the single item you authorized.
-- **Originals untouched**: fitted covers are saved as new files; your original video and image stay as they are.
-
-## 🤝 Who does what
-
-- **You**: say which platforms, accounts and visibility to publish to; scan QR codes or enter codes at the first sign-in, and change the Instagram cover on your phone. Your message is the authorization; you are asked again if the scope changes.
-- **AI assistant**: reads `SKILL.md`, writes copy and replies for each platform, generates the portrait cover image, and runs vpub for you.
-- **vpub**: builds and checks plans and fits covers; after the first sign-in it submits in the background through bili-cli, the official API and a dedicated Chrome, keeps receipts and reads results back. It does not sign in for you or approve content for you.
-- **Platform**: handles sign-in, review, final publication and visibility; features, format limits and fees follow the official page on the day.
-
-## 📦 Install
-
-Requires Python 3.10–3.12 and Google Chrome. The Windows installer has been tested; macOS and Linux have not been validated.
-
-**Windows installer**
-
-```powershell
-git clone https://github.com/whitecarp/publishops-crosscast.git
-cd publishops-crosscast
-powershell -ExecutionPolicy Bypass -File .\install.ps1
-```
-
-The script prints the full path to `vpub.exe` but does not add it to PATH. Use that path directly, or run commands from the virtual environment the script creates. If it can't find Python 3.10–3.12, run it again with `-Python` and the full path to a suitable `python.exe`.
-
-**pip from Git** (requires Git and a compatible Python)
-
-```sh
-pip install "git+https://github.com/whitecarp/publishops-crosscast.git"
-vpub doctor
-vpub onboard --platforms bilibili,douyin,youtube
-```
-
-A pip install leaves no checkout, so `SKILL.md` is in that Python environment's folder, at `share/publishops-crosscast/skills/publishops-crosscast/SKILL.md`. When `vpub doctor` finds something to fix, it ends with exit code 4 and `ok: false`, and each item under `issues` says how.
-
-**Sign in to each platform**
-
-```sh
-vpub auth login youtube --method browser
-vpub auth login youtube --method api --client-json /path/to/client.json  # paid API add-on, instead of the line above
-vpub auth login douyin
-vpub auth login instagram
-vpub auth login x
-vpub auth status all
-```
-
-Signing in to YouTube (free route), Douyin, Instagram or X opens CrossCast's own Chrome window. A platform may treat it as a new device and ask for a check or account recovery: finish it yourself on the platform's own page, and don't restart the sign-in again and again.
-
-Keep the YouTube OAuth client JSON and sign-in tokens on your machine; never commit them to GitHub.
-
-<details>
-<summary><b>Prefer to drive it yourself? A look at the manual flow</b></summary>
-
-```sh
-vpub init --video final.mp4 --language en --out publish.json --platforms bilibili,douyin,youtube
-vpub metadata request publish.json --source script.txt --out request.json
-vpub metadata apply publish.json --request request.json --response response.json --out localized.json
-vpub covers prepare localized.json --source cover.jpg --portrait portrait.jpg --out-dir covers --out ready.json
-vpub plan ready.json
-vpub publish ready.json --dry-run
-vpub publish ready.json --confirm <confirmation-code>
-vpub verify RECEIPT_KEY
-```
-
-`--dry-run` does not upload. Your AI assistant writes `response.json` following the template inside `request.json`. After an interruption, continue with `vpub resume RECEIPT_KEY`; `vpub receipts` lists every receipt.
-
-</details>
-
-## 💰 Costs and privacy
-
-- **Model:** CrossCast itself needs no extra model API; your current AI assistant writes the copy.
-- **Possible costs:** your AI assistant's subscription, an X subscription (the free browser publishing route needs Media Studio), and YouTube API quota (set by Google). Free or unlimited use is not promised.
-- **Local data:** sign-in sessions, tasks, settings and receipts live in the local application data directory. Do not commit them to GitHub. Before sharing manifests, screenshots or logs, remove account identifiers, work IDs, private paths and credentials.
-- **Secrets:** never paste cookies, verification codes, passwords, tokens or OAuth files into chats, logs or the repository.
+- ⏱️ **Limits**: daily caps on replies, messages and likes, no repeating the same words to one person, and an AI label
+- 🛑 **Stops on a warning**: if a platform asks for verification, or shows a risk check or rate limit, every platform stops until you've dealt with it
+- 🔁 **No blind retries**: an unclear submission is checked on the platform, not automatically submitted again
+- 🔑 **You do the signing in**: never paste cookies, passwords or codes into a chat
+- 🖼️ **Originals untouched**: covers are saved as new files, and your video and image stay as they are
 
 ## ❓ FAQ
 
 <details>
-<summary><b>Do I have to approve each release?</b></summary>
+<summary>Do I have to approve each release?</summary>
 
-No. Asking it to publish is the authorization: it submits with the platforms, accounts and visibility you named, and only asks again if the content, account, platform, audience or scope changes. To look first, say "don't post yet", or run a `--dry-run`.
-
-</details>
-
-<details>
-<summary><b>Does YouTube need an OAuth client?</b></summary>
-
-Only on the paid API route, where an API key on its own cannot authorize uploads. The free route publishes through YouTube Studio in a background Chrome, with no OAuth client. You authorize once on Google's page with a "Desktop app" OAuth client; it happens on your own computer, and the token stays there.
+No. Asking it to publish is the authorization: it submits with the platforms, accounts and visibility you named, and only asks again if the content, account, platform, audience or scope changes. To look first, say "don't post yet".
 
 </details>
 
 <details>
-<summary><b>Can I post to X without a subscription?</b></summary>
+<summary>Could my account get banned?</summary>
 
-Not through the free browser route: it publishes only through Media Studio, so the account must be subscribed and able to open Media Studio. Paying or signing in doesn't guarantee Media Studio access, so it is checked before uploading. The official API route belongs to the separate paid add-on, which is not on sale yet; this does not establish support for free or Basic accounts.
-
-</details>
-
-<details>
-<summary><b>Why does the Instagram cover have to be changed on a phone?</b></summary>
-
-In testing, the portrait image shared with Douyin could only be applied through the phone app's "Edit cover → Add from camera roll". Your AI assistant prepares the image; you do the step on your phone.
+Automation always carries risk. CrossCast limits its use by default and stops on a verification request, risk check or rate limit until you've dealt with it. A platform may also treat its dedicated browser as a new device and ask you to verify who you are, which you do yourself on the official page.
 
 </details>
 
 <details>
-<summary><b>Can I publish videos that aren't AI-generated?</b></summary>
+<summary>Is it ready for real releases?</summary>
 
-Yes. Tell your AI assistant whether the video is AI-generated: if it is, each platform's AI-content declaration is ticked (on X it is a line in the post text); if not, it is published as an ordinary video without an AI label.
-
-</details>
-
-<details>
-<summary><b>If I only run vpub in a terminal, can it publish?</b></summary>
-
-Yes. After the first sign-in, the CLI does the uploading in the background, with no AI assistant stepping through a browser. When a sign-in expires or a platform asks for verification, you need to handle it on the official page.
+It's still in testing. Sign-ins expire, platforms may ask for verification at any time, and long unattended runs have not been validated. The first time, you can have your assistant rehearse first and check the plan before posting.
 
 </details>
 
-<details>
-<summary><b>What if a submission result is unclear?</b></summary>
+More questions are in the [guide](docs/GUIDE_EN.md#-faq).
 
-Use `vpub verify` to read it back, or `vpub resume` to continue the original task; do not blindly upload again. `vpub receipts` shows the local receipts, but a receipt on its own is not platform evidence.
+## 📚 Docs
 
-</details>
+This repo focuses on refining the software itself. Where the project came from, with research and production records, is in [agentic-work-lab](https://github.com/whitecarp/agentic-work-lab).
 
-## 📚 Docs and credits
-
-| | |
-| --- | --- |
-| 🧭 [Feature scope](docs/FEATURES_EN.md) | What each platform supports and how |
-| ✅ [Validation record](docs/VALIDATION_EN.md) | Real publications and test results for each version |
-| 🐦 [X Media Studio guide](docs/X_GUIDE_EN.md) | Uploading, covers and publishing on X |
-| 🌐 [Website](https://whitecarp.github.io/publishops-crosscast/?lang=en) | Project overview page |
-| 🐞 [Report an issue](https://github.com/whitecarp/publishops-crosscast/issues) | Feedback (remove account and private details first) |
+- [Guide](docs/GUIDE_EN.md): how far each feature has been tried, what to know about each platform, installing and the manual flow
+- [Features](docs/FEATURES_EN.md): what each platform supports and how
+- [Validation record](docs/VALIDATION_EN.md): real publications and test results for each version
+- [Website](https://whitecarp.github.io/publishops-crosscast/?lang=en)
+- [Report a problem](https://github.com/whitecarp/publishops-crosscast/issues): remove account details and private information first
 
 Credits: [agentic-work-lab](https://github.com/whitecarp/agentic-work-lab) (development origin) · [bili-cli](https://github.com/kukemc/bili-cli) (Bilibili features; its code is included). Third-party licenses are listed in [NOTICE](NOTICE.md). CrossCast is released under the [MIT License](LICENSE) as an independent integration tool, not an official product of any video platform.

@@ -15,4 +15,5 @@
 - **可访问性**：跳转链接、可见焦点环；复制结果用 `role=status` 播报，失败时自动选中文字；发布单与平台表为读屏提供隐藏标签；`forced-colors` 下印章保留边框。
 - **分享图**：`docs/og.png`（1200×630）用于 `og:image` / `twitter:card`，由 `assets/og.svg` 在 Chrome 里截图生成；图上不写版本号，免得升级时过期。GitHub 仓库的 Social preview 需要在仓库 Settings 里手动上传同一张图。
 - **README 头图**：`assets/hero.svg`、`hero-zh-tw.svg`、`hero-en.svg` 与站点同一概念（左侧是你说的一句话，右侧是发布单），纯 SVG，系统字体回退栈，无脚本与外链。
+- **README**：面向新手，只说它能做什么、怎么开始，用简单的话。不用表格，因为 GitHub 上的中文表格在手机上会挤成一列一字。细节和逐项实测放在 `docs/GUIDE*.md`。插图 `assets/one-message.png` 没有文字，三种语言共用。
 - **维护**：改文案时同时改 `index.html`（简中）和 `site.js` 里的 TW、EN 词典；新增 `data-i18n` 键时三种语言都要有。示意内容（平台、状态、画布）要和当前 CLI 能力一致，不写观众版没有的功能。
