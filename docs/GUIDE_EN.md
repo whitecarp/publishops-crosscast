@@ -106,6 +106,8 @@ Simplified Chinese for Bilibili and Douyin, English for YouTube, Instagram and X
 
 A separate cover is saved for each platform's canvas with the whole image kept: no cropping, stretching or overwriting the original. Bilibili gets 16:10, YouTube 16:9, and X a landscape cover set through Media Studio. For Douyin and Instagram, the AI assistant (such as Codex) generates one dedicated portrait image that both share, instead of padding a landscape image with black bars. With no image generator, `vpub covers portrait` lays chosen parts of the cover into that portrait with no AI. The video itself is never converted to portrait and keeps its original ratio. The Instagram cover is changed on your phone.
 
+Bilibili (including drafts) needs a supplied cover or ffmpeg on PATH to extract one. Prepare and rehearsal check this locally: pass --cover IMAGE or install ffmpeg if missing. Finding the tool does not prove the video can be decoded.
+
 </details>
 
 <details>

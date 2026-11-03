@@ -70,6 +70,8 @@ def fill(work, args, video, folder, show_first=None):
     if args.cover or args.portrait:
         check_supplied(args.cover, args.portrait, value["platforms"])
         atomic_json(work / "covers.json", {name: str(Path(path).resolve()) for name, path in (("cover", args.cover), ("portrait", args.portrait)) if path})
+    from .rehearsal import require_local_prerequisites
+    require_local_prerequisites({**value, "cover": args.cover})
     source = "\n\n".join([*([args.about] if args.about else []), *([Path(args.source).read_text(encoding="utf-8-sig")] if args.source else [])])
     if source:
         (work / "source.txt").write_text(source, encoding="utf-8")

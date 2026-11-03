@@ -24,6 +24,9 @@ class RehearsalTests(unittest.TestCase):
         env = patch.dict(os.environ, {"VPUB_HOME": str(self.root / "vpub"), "BILI_CLI_HOME": str(self.root / "bili")})
         env.start()
         self.addCleanup(env.stop)
+        tool = patch("video_publisher.rehearsal.shutil.which", return_value="ffmpeg.exe")
+        tool.start()
+        self.addCleanup(tool.stop)
         self.video = self.root / "film.mp4"
         self.video.write_bytes(MP4_HEADER)
         self.manifest = self.root / "plan.json"

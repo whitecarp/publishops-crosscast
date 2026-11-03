@@ -106,6 +106,8 @@ B站、抖音用简体中文，YouTube、Instagram、X 用英文。视频本身�
 
 按各平台画布另存封面，完整保留画面，不裁切、不拉伸、不覆盖原图：B站 16:10，YouTube 16:9，X 通过 Media Studio 设置横版封面。抖音和 Instagram 的竖版封面，由 AI 助手（如 Codex）自动生成一张专用竖版图，两边共用，不会拿横版图加黑边凑数。没有 AI 画图时，`vpub covers portrait` 不用 AI，也能把封面里选定的部分重新排成这张竖版图。视频本身不转竖版，保留原比例。Instagram 的封面要在手机上换。
 
+B站（含存草稿）需要提供封面，或在 PATH 中有 ffmpeg 自动截图。`prepare` 和演练会提前检查；缺少时用 `--cover 图片` 或安装 ffmpeg。找到工具不代表已经验证视频能解码。
+
 </details>
 
 <details>

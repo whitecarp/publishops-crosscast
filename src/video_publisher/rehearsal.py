@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shutil
 import sys
 
 from .core import VpubError, home, stop_check
@@ -95,11 +96,37 @@ def sign_in(platform, options):
             "note": "Sign in when missing. Otherwise a separate auth status is optional: publishing already checks the live account."}
 
 
+def local_prerequisites(plan):
+    """Only requirements proved locally; never load a platform client or a credential.
+
+    Bilibili's CLI (including its draft helper) needs either a supplied cover or
+    ffmpeg on PATH. Other browser routes can use the site's generated thumbnail.
+    Finding ffmpeg does not prove that it can decode this particular video.
+    """
+    options = plan.get("platforms", {}).get("bilibili")
+    if not options or options.get("method", "cli") != "cli":
+        return []
+    landscape = plan.get("covers", {}).get("bilibili", {}).get("landscape")
+    cover = landscape.get("path") if isinstance(landscape, dict) else landscape
+    if cover or plan.get("cover") or shutil.which("ffmpeg"):
+        return []
+    return [{"platform": "bilibili", "code": "cover_tool_missing",
+             "message": "Bilibili needs a cover image or ffmpeg to extract one; neither is available.",
+             "hint": "Pass --cover IMAGE to vpub prepare (or set cover in the plan), or install ffmpeg and put it on PATH. Nothing was uploaded."}]
+
+
+def require_local_prerequisites(plan):
+    issues = local_prerequisites(plan)
+    if issues:
+        issue = issues[0]
+        raise VpubError(issue["code"], issue["message"], issue["hint"])
+
+
 def dry_run(plan, media=None):
     if media is None:
         media = inspect_video(plan["video"])
     accounts = {platform: sign_in(platform, options) for platform, options in plan["platforms"].items()}
-    blockers = []
+    blockers = local_prerequisites(plan)
     for platform, account in accounts.items():
         if account["saved_record_present"] is False:
             blockers.append({"platform": platform, "code": "no_saved_sign_in", "next_command": account["next_command"]})

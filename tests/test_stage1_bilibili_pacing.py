@@ -262,6 +262,12 @@ class CollectionTests(Spaced):
 
 
 class UploadTests(Spaced):
+    def setUp(self):
+        super().setUp()
+        tool = patch("video_publisher.rehearsal.shutil.which", return_value="ffmpeg.exe")
+        tool.start()
+        self.addCleanup(tool.stop)
+
     def plan(self):
         return {"confirmation": "hash", "video_sha256": "a" * 64, "platforms": {"bilibili": {"account": "default", "title": "T", "description": "D", "tags": ["a"], "visibility": "public", "ai_generated": True, "method": "cli"}}, "video": "v.mp4"}
 

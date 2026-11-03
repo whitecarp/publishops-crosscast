@@ -15,6 +15,9 @@ from video_publisher.core import (Ledger, VpubError, atomic_json, home, load_pla
 
 class WorkflowTests(unittest.TestCase):
     def setUp(self):
+        tool = patch("video_publisher.rehearsal.shutil.which", return_value="ffmpeg.exe")
+        tool.start()
+        self.addCleanup(tool.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.env = patch.dict(os.environ, {"VPUB_HOME": str(self.root / "runtime")})

@@ -26,6 +26,10 @@ class TwoCommandTests(unittest.TestCase):
         patcher = patch.dict("os.environ", {"VPUB_HOME": str(self.folder.parent / "home"), "BILI_CLI_HOME": str(self.folder.parent / "bili")})
         patcher.start()
         self.addCleanup(patcher.stop)
+        # This suite models a ready local toolchain; missing ffmpeg has its own tests.
+        tool = patch("video_publisher.rehearsal.shutil.which", return_value="ffmpeg.exe")
+        tool.start()
+        self.addCleanup(tool.stop)
         # These workflows belong to a returning customer; first-run review has
         # separate coverage. This prior publication is unrelated to final.mp4.
         ledger = Ledger()
@@ -168,6 +172,15 @@ class TwoCommandTests(unittest.TestCase):
         self.write_copy()
         answer = self.go("--dry-run")
         self.assertEqual(0, answer["platform_writes"])
+        self.assertEqual([], self.sent)
+
+    def test_go_rechecks_cover_tool_if_it_disappeared_after_prepare(self):
+        self.prepare()
+        self.write_copy()
+        with patch("video_publisher.rehearsal.shutil.which", return_value=None):
+            answer = self.go("--dry-run")
+        self.assertFalse(answer["ready"])
+        self.assertIn("cover_tool_missing", [b["code"] for b in answer["blockers"]])
         self.assertEqual([], self.sent)
 
     def test_blank_prepared_titles_become_authored_final_in_a_dry_run(self):

@@ -223,8 +223,9 @@ class StatusTests(OverviewFixture):
     def test_bilibili_attempt_without_an_id_is_never_sent_to_resume(self):
         key = self.row("IN_PROGRESS", method="cli", platform="bilibili")
         item = self.attention()[key]
-        self.assertIsNone(item["next_command"])
-        self.assertIn("Never upload", item["note"])
+        self.assertEqual("vpub works bilibili --limit 20", item["next_command"])
+        self.assertIn("keep UNKNOWN", item["note"])
+        self.assertIn("Do not re-encode", item["note"])
         with_id = self.row("SUBMITTED_UNVERIFIED", method="cli", platform="bilibili", receipt={"id": "BV1234567890"}, sha="other")
         self.assertEqual("vpub verify " + with_id, self.attention()[with_id]["next_command"])
 

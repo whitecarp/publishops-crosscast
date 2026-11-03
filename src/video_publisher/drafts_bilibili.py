@@ -28,6 +28,8 @@ def request(cred, path, method="GET", **options):
 
 async def add(cred, draft):
     video = Path(draft["video"])
+    # Finish local cover preparation before requesting a slot or uploading bytes.
+    cover = Path(draft["cover"]) if draft.get("cover") else upload._extract_cover(video)
     predicted = await upload._predict_zone(cred, draft["title"])
     if predicted is None and not draft.get("tid"):
         raise BiliError("invalid_argument", "无法自动预测分区。", hint="在计划里写明 tid。")
@@ -37,7 +39,6 @@ async def add(cred, draft):
     guard.check("upload")
     await upload._preflight(cred, video)
     part = await upload._upload_file(cred, video, None)
-    cover = Path(draft["cover"]) if draft.get("cover") else upload._extract_cover(video)
     meta = {"title": draft["title"], "copyright": 1, "tid": draft.get("tid") or predicted["tid"], "tag": ",".join(draft["tags"]), "desc_format_id": 9999, "desc": draft["description"],
             "recreate": -1, "dynamic": "", "interactive": 0, "act_reserve_create": 0, "no_disturbance": 0, "no_reprint": 0, "subtitle": {"open": 0, "lan": ""}, "dolby": 0, "lossless_music": 0,
             "up_selection_reply": False, "up_close_reply": False, "up_close_danmu": False, "web_os": 1, "is_only_self": 1 if draft["private"] else 0,
