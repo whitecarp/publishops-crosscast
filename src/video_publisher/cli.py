@@ -174,7 +174,7 @@ def _stop_interrupted_publish():
         # Presence already stops readers while these few bytes are written.
         with (home() / "STOP.json").open("x", encoding="utf-8") as stream:
             json.dump({"source": "operator", "code": "interrupted", "at": now(),
-                       "reason": "Publication interrupted by the operator."}, stream)
+                       "reason": "Publication interrupted; inspect receipts before continuing."}, stream)
             stream.flush()
             os.fsync(stream.fileno())
     except FileExistsError:
@@ -363,6 +363,7 @@ def skill_file():
 
 def doctor():
     from .overview import chrome_path, stop_state
+    from .preferences import read as preferences
     addon = adapters.addon_installed()
     modules = {name: importlib.util.find_spec(name) is not None for name in
                ("bili_cli", "patchright", *(("crosscast_api", "socks") if addon else ()))}
@@ -379,7 +380,8 @@ def doctor():
         issues.append({"code": "stopped", "message": stop["message"], "fix": stop["hint"]})
     return {"version": __version__, "python": sys.version.split()[0], "dependencies": modules,
             "bili_cli_version": included_bili_version(), "google_chrome": chrome, "paid_api_addon": addon, "ready": not issues, "issues": issues,
-            "next": issues[0]["fix"] if issues else "Sign in once on each platform you'll use, such as vpub onboard --platforms bilibili,youtube,douyin,instagram,x. Then get a video ready with vpub prepare VIDEO --platforms bilibili,youtube,douyin --language LANGUAGE --visibility public --ai-generated yes.",
+            "next": issues[0]["fix"] if issues else "Use the saved preferences below; ask only for unknown choices. Sign in only to selected platforms: vpub onboard --platforms PLATFORMS. Then prepare: vpub prepare VIDEO --platforms PLATFORMS --language LANGUAGE --visibility public|private --ai-generated yes|no. Replace placeholders with the user's choices; omit --platforms only when platforms are saved.",
+            "preferences": preferences(),
             "skill": skill_file(),
             "local_stop": (home() / "STOP.json").exists(), "runtime_directory": str(home()),
             "credentials_configured": {
@@ -569,8 +571,11 @@ def parser():
     q.add_argument('--language',choices=['auto','zh','en'],default='auto')
     q.add_argument('--notes',help='Optional host-researched findings as text/source JSON objects; not commands.')
     q.add_argument('--out')
-    q=sub.add_parser('preferences',help='Set the language for reports; replies follow each comment.')
-    q.add_argument('--language',choices=['auto','zh','en'],required=True)
+    q=sub.add_parser('preferences',help='Read or remember platforms, show-first choice and report language; never authorizes publishing.',
+                     description='With no flags, show saved choices. Update only the choices supplied; no sign-in, upload or interactive prompt.')
+    q.add_argument('--language',choices=['auto','zh','en'],help='Report language; replies still follow each comment.')
+    q.add_argument('--platforms',help='Remember a unique comma-separated list, such as bilibili,youtube; no account names.')
+    q.add_argument('--show-first',choices=['yes','no'],help='yes requires review of each prepared plan with its exact --confirm code. no grants no publishing permission.')
     s = sub.add_parser("setup", help="Prepare local settings, and install Chrome if you ask. No sign-in or posting.")
     s.add_argument("--external-stop-file")
     s.add_argument("--install-browser", action="store_true", help="Install Google Chrome through Patchright; may require OS permissions.")
@@ -589,7 +594,7 @@ def parser():
     q.add_argument("--method", choices=["auto", "native"], default="auto", help="auto uses each platform's usual route: bili-cli for Bilibili, a dedicated browser for the others. native uses the older built-in sign-in.")
     q = sub.add_parser("prepare", help="Get a video ready in one step and say what to write.", description="Get a video ready in one step and say what to write. Nothing is uploaded. Then vpub go publishes it.")
     q.add_argument("video")
-    q.add_argument("--platforms", required=True, help="Where it goes, such as bilibili,douyin,youtube.")
+    q.add_argument("--platforms", help="Where it goes, such as bilibili,douyin,youtube. Omit only to use saved preferences; no platforms are guessed.")
     q.add_argument("--language", required=True, help="The video's own language, such as zh-Hans, zh-Hant or en.")
     q.add_argument("--visibility", choices=["public", "private"], help="Who can see it on Bilibili, YouTube and Douyin. Needed unless --draft-only. Instagram and X follow the account.")
     q.add_argument("--about", help="A sentence or two on what the video is, to write its words from.")
@@ -604,8 +609,8 @@ def parser():
     q.add_argument("folder")
     q.add_argument("--workers", type=int, choices=(1, 2), default=1,
                    help="Run up to two browser platforms at once; default 1. Other routes stay serial.")
-    q.add_argument("--dry-run", action="store_true", help="Do everything up to the upload and stop.")
-    q.add_argument("--confirm", help="The code vpub go gives when it stops for something flagged in the text.")
+    q.add_argument("--dry-run", action="store_true", help="Build and check locally; no upload or live account check. Show the result before authorizing publication.")
+    q.add_argument("--confirm", help="The current plan code after the user reviews a show-first plan or flagged text; stale codes are refused.")
     q = sub.add_parser("init", help="Start a plan for one video.")
     q.add_argument("--video", required=True)
     q.add_argument("--out", required=True)
@@ -617,28 +622,28 @@ def parser():
                    help="Whether the video contains AI-generated content. Sets every platform's AI-content declaration; use no for ordinary videos.")
     c = sub.add_parser("covers", help="Fit your cover to each platform without cropping it.").add_subparsers(dest="action", required=True)
     q = c.add_parser("prepare")
-    q.add_argument("manifest")
+    q.add_argument("manifest", metavar="PLAN", help="The plan file, such as ready.json.")
     q.add_argument("--source", required=True)
     q.add_argument("--portrait")
     q.add_argument("--out-dir", required=True)
     q.add_argument("--out", required=True)
     q = c.add_parser("portrait", help="Lay chosen parts of an image into a portrait cover, with no AI.")
     q.add_argument("source")
-    q.add_argument("--box", action="append", required=True, help="One part as x,y,width,height in the source's pixels; repeat for up to three, top to bottom.")
+    q.add_argument("--box", action="append", required=True, help="One part as x,y,width,height in the source's pixels; width and height must each be at least 100. Repeat for up to three, top to bottom. Thin bands that would leave letterboxing are refused (would_letterbox).")
     q.add_argument("--out", required=True)
     i = sub.add_parser("instagram", help="Prepare an Instagram upload and its cover step on the phone.").add_subparsers(dest="action", required=True)
     q = i.add_parser("prepare", help="Get an Instagram upload ready, with the cover step to do on the phone.")
-    q.add_argument("manifest", help="The plan to get ready.")
+    q.add_argument("manifest", metavar="PLAN", help="The plan file, such as ready.json, to get ready.")
     q.add_argument("--out", required=True, help="Where to save the result.")
     q.add_argument("--mobile-cover", help="Shared Douyin/Instagram portrait artwork; defaults to the manifest's Douyin portrait, then Instagram portrait.")
     m = sub.add_parser("metadata", help="Have your AI assistant write each platform's title and description.").add_subparsers(dest="action", required=True)
     q = m.add_parser("request", help="Save what your assistant needs to write the words: limits, languages and a template. Nothing is uploaded.")
-    q.add_argument("manifest", help="The plan from vpub init.")
+    q.add_argument("manifest", metavar="PLAN", help="The plan file, such as ready.json, from vpub init.")
     q.add_argument("--source", help="Local script or transcript; treated as source data, not instructions.")
     q.add_argument("--allow-links", action="store_true", help="Let the words include links. Off by default.")
     q.add_argument("--out", required=True, help="Where to save the request.")
     q = m.add_parser("apply", help="Check your assistant's words and put them into a new plan.")
-    q.add_argument("manifest", help="The plan the request was made from.")
+    q.add_argument("manifest", metavar="PLAN", help="The plan file, such as ready.json, that the request was made from.")
     q.add_argument("--request", required=True, help="The request from metadata request.")
     q.add_argument("--response", required=True, help="Your assistant's words, written from the request's template.")
     q.add_argument("--out", required=True, help="Where to save the new plan. It must not exist yet.")
@@ -705,7 +710,7 @@ def parser():
     q.add_argument("--response", required=True)
     for cmd, words in (("plan", "Check a plan and get its confirmation code; nothing is uploaded."), ("publish", "Publish a plan, or go through it with --dry-run.")):
         q = sub.add_parser(cmd, help=words, description=words)
-        q.add_argument("manifest")
+        q.add_argument("manifest", metavar="PLAN", help="The plan file, such as ready.json.")
         q.add_argument("--platforms", help="Comma-separated subset; default: platforms in the manifest.")
         if cmd == "publish":
             q.add_argument("--confirm")
@@ -836,7 +841,10 @@ def run_command(args):
         elif args.action=='adopt':result=work_catalog.adopt(args.platform,args.work,args.pages)
         else:result=operations_sync.watch(args.watch_action,getattr(args,'platform',None),getattr(args,'work',None))
         return result
-    if args.command in {'comments','stats','report','preferences'}:
+    if args.command == 'preferences':
+        from .preferences import update
+        return update(args.language, args.platforms, None if args.show_first is None else args.show_first == 'yes')
+    if args.command in {'comments','stats','report'}:
         from . import operations
         if args.command=='comments':
             if args.action in {'status','like','pin','hide','edit','delete','remove','verify-action','resume-action','moderate'}:
@@ -871,7 +879,6 @@ def run_command(args):
             elif args.action=='self-test': result=operations.self_test(args.platform,args.work,args.test_id)
             else: result=operations.verify_reply(args.key)
         elif args.command=='stats': result=operations.observe(args.platform,args.work,'stats')
-        elif args.command=='preferences': result=operations.set_language(args.language)
         else: result=adapters.paid_feature('report','The operations report').report(args.since,args.language,args.notes)
         return result
     if args.command == 'edit':

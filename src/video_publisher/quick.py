@@ -17,6 +17,13 @@ def step(*words):
 
 
 def prepare(args):
+    from .preferences import platform_list, read as preferences
+    choices = preferences()
+    platforms = platform_list(args.platforms) if args.platforms is not None else choices['preferred_platforms']
+    if not platforms:
+        raise VpubError('platforms_required', 'Choose where this video goes; no platforms have been saved.',
+                        'Ask the user which platforms they use, then pass --platforms PLATFORM_LIST or save them with vpub preferences --platforms PLATFORM_LIST. The CLI never prompts.')
+    args.platforms = ','.join(platforms)
     video = Path(args.video).resolve()
     if not video.is_file():
         raise VpubError("invalid_video", f"Video file not found: {args.video}")
@@ -35,7 +42,7 @@ def prepare(args):
     except PermissionError:
         raise VpubError("folder_not_writable", f"Can't write to {folder.parent}.", "Choose a place with --folder.")
     try:
-        answer = fill(work, args, video, folder)
+        answer = fill(work, args, video, folder, choices['show_first'])
         when_the_file_is_free(lambda: os.replace(work, folder))
     except BaseException:
         shutil.rmtree(work, ignore_errors=True)
@@ -43,7 +50,7 @@ def prepare(args):
     return answer
 
 
-def fill(work, args, video, folder):
+def fill(work, args, video, folder, show_first=None):
     from .covers import check_supplied
     manifest = work / "publish.json"
     words = ["init", "--video", video, "--out", manifest, f"--language={args.language}", f"--platforms={args.platforms}", f"--ai-generated={args.ai_generated}"]
@@ -66,9 +73,22 @@ def fill(work, args, video, folder):
     job = step("metadata", "request", manifest, *(["--source", work / "source.txt"] if source else []), "--out", work / "request.json")
     template = {"platforms": job["response_template"]["platforms"]}
     atomic_json(work / "copy.json", template)
+    atomic_json(work / "review.json", {'schema_version': 1, 'show_first': show_first})
+    instructions = [line.replace('Return request_id plus platforms with', 'Keep only the top-level platforms object in copy.json; go adds request_id. Each platform entry needs')
+                    for line in job['host_instructions']]
+    publishing = {}
+    for name, options in value['platforms'].items():
+        publishing[name] = {field: options[field] for field in ('visibility', 'ai_generated', 'made_for_kids', 'schedule', 'submission_mode') if field in options}
+        if options['visibility'] == 'account':
+            publishing[name]['visibility_note'] = 'Follows the account audience; public if the account is public. --visibility does not make this platform private.'
+        if name == 'instagram':
+            publishing[name]['cover_note'] = 'Set the cover in Instagram on your phone after posting; CrossCast does not apply it automatically.'
+        if name == 'youtube':
+            publishing[name]['audience_note'] = 'made_for_kids defaults to false. If the video is made for kids, set platforms.youtube.made_for_kids to true in publish.json before go.'
     return {"state": "NEEDS_COPY", "folder": str(folder), "copy_file": str(folder / "copy.json"), "copy_template": template,
-            "targets": job["targets"], "instructions": job["host_instructions"], "platform_writes": 0,
-            "publishing": {name: {field: options[field] for field in ("visibility", "ai_generated", "made_for_kids", "schedule", "submission_mode") if field in options} for name, options in value["platforms"].items()},
+            "targets": job["targets"], "instructions": instructions, "platform_writes": 0,
+            "publishing": publishing, 'review_required': show_first is True,
+            'review_note': 'Show-first is remembered for this folder. When required, go waits for this plan to be reviewed and its exact --confirm code; preferences never authorize publishing.',
             "next": f'Write the words into copy.json, then run: vpub go "{folder}"'}
 
 
@@ -115,6 +135,19 @@ def build(folder, words):
     return place / "ready.json"
 
 
+def review_required(folder):
+    from .preferences import read as preferences
+    path = folder / 'review.json'
+    saved = read_json(path) if path.exists() else {'schema_version': 1, 'show_first': None}
+    if (not isinstance(saved, dict) or saved.get('schema_version') != 1
+            or set(saved) != {'schema_version', 'show_first'}
+            or saved['show_first'] is not None and type(saved['show_first']) is not bool):
+        raise VpubError('invalid_review', 'The prepared review settings are invalid; nothing was uploaded.',
+                        'Keep review.json from prepare; show_first must be true, false or null.')
+    # Turning a preference off later cannot waive a review already requested for this folder.
+    return saved['show_first'] is True or preferences()['show_first'] is True
+
+
 def go(folder, confirm=None, dry_run=False, workers=1):
     folder = Path(folder).resolve()
     if not (folder / "publish.json").is_file():
@@ -125,18 +158,25 @@ def go(folder, confirm=None, dry_run=False, workers=1):
         raise VpubError("copy_not_written", "Nothing was published, because copy.json still has blanks: " + ", ".join(blanks) + ".",
                         f'Write them in "{folder / "copy.json"}" and run this again. request.json beside it has the limits and instructions.')
     ready = build(folder, words)
+    show_first = review_required(folder)
     if dry_run:
         from . import cli
         answer = step("publish", ready, "--dry-run")
+        answer['review_required'] = show_first
+        answer['confirmation_note'] = ('This is the current plan code, not publishing authorization. Use --confirm only after the user reviews a show-first plan or flagged text; ordinary go supplies its own code. Changed plans need a new code.')
         if "next" not in answer and cli.finished(answer):
             drafts = sorted(name for name, options in answer.get("platforms", {}).items() if options.get("submission_mode") == "draft_only")
             what = ("save it unpublished, as a draft or preview" if len(drafts) == len(answer.get("platforms", {}))
                     else f"publish it, with {', '.join(drafts)} saved only as a draft" if drafts else "publish it")
-            answer["next"] = f'Nothing was uploaded. To {what}, run: vpub go "{folder}"'
+            if show_first or answer.get('text_flags'):
+                answer['next'] = f'Nothing was uploaded. Show this plan and any flagged text to the user. After approval for its configured audience, to {what}, run: vpub go "{folder}" --confirm {answer["confirmation"]}'
+            else:
+                answer["next"] = f'Nothing was uploaded. To {what}, run: vpub go "{folder}"'
         return answer
     plan = step("plan", ready)
-    if plan.get("text_flags") and not confirm:
-        return {"ready": False, "state": "NEEDS_A_PERSON", "text_flags": plan["text_flags"], "text_flags_note": plan["text_flags_note"],
+    if (show_first or plan.get("text_flags")) and not confirm:
+        return {"ready": False, "state": "NEEDS_A_PERSON", "text_flags": plan.get("text_flags", {}), "text_flags_note": plan.get("text_flags_note"),
+                'review_required': show_first, 'review': plan,
                 "confirmation": plan["confirmation"], "platform_writes": 0,
-                "next": f'Tell the user what was flagged. If they approve it for the configured audience: vpub go "{folder}" --confirm {plan["confirmation"]}. Otherwise change copy.json and run vpub go again.'}
+                "next": f'Show the user this plan, including its text, audience, AI labels, covers and any flagged text. If they approve it for the configured audience: vpub go "{folder}" --confirm {plan["confirmation"]}. Otherwise change copy.json or publish.json and run vpub go again.'}
     return step("publish", ready, "--confirm", confirm or plan["confirmation"], "--workers", workers)

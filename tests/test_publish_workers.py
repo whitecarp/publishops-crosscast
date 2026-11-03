@@ -507,6 +507,7 @@ class PublishWorkersTests(unittest.TestCase):
         with patch.object(cli, "_stop_interrupted_publish", stop_then_release), patch.object(browser_backends, "risk_check", AsyncMock()), self.assertRaises(KeyboardInterrupt):
             self.run_plan(self.plan(("x", "instagram", "douyin")))
         self.assertEqual(self.rows()["x"]["state"], "IN_PROGRESS")
+        self.assertEqual(core.read_json(core.home() / "STOP.json")["reason"], "Publication interrupted; inspect receipts before continuing.")
         self.assertFalse(self.rows()["instagram"]["data"]["receipt"]["final_submit_attempted"])
         button.click.assert_not_awaited()
         self.assertNotIn("douyin", self.rows())
