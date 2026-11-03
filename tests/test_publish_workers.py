@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor, wait
 from copy import deepcopy
 import io
+import json
 import os
 from pathlib import Path
 import signal
@@ -586,7 +587,8 @@ class PublishWorkersTests(unittest.TestCase):
 
         self.publish.side_effect = publish
         operator_thread = threading.Thread(target=operator)
-        with patch.object(cli, "_stop_interrupted_publish", observed_stop), patch.object(browser_backends, "risk_check", AsyncMock()):
+        progress = io.StringIO()
+        with patch.object(cli, "_stop_interrupted_publish", observed_stop), patch.object(browser_backends, "risk_check", AsyncMock()), patch.object(cli.sys, "stderr", progress):
             operator_thread.start()
             try:
                 with self.assertRaises(KeyboardInterrupt):
@@ -596,6 +598,9 @@ class PublishWorkersTests(unittest.TestCase):
                 operator_thread.join(4)
         self.assertFalse(operator_thread.is_alive())
         self.assertEqual(errors, [])
+        updates = [json.loads(line) for line in progress.getvalue().splitlines()]
+        self.assertEqual([event["event"] for event in updates], ["publication_stopping"])
+        self.assertIn("minutes", updates[0]["message"])
         self.assertIs(signal.getsignal(signal.SIGINT), previous)
         button.click.assert_not_awaited()
         self.assertEqual(set(self.rows()), {"x", "instagram"})
@@ -631,6 +636,23 @@ class PublishWorkersTests(unittest.TestCase):
         self.assertFalse((core.home() / "STOP.json").exists())
         self.assertEqual(list(self.rows()), ["x"])
         self.assertEqual(self.rows()["x"]["state"], "IN_PROGRESS")
+
+    def test_interrupt_answer_explains_the_persistent_stop_without_clearing_it(self):
+        stop = core.home() / "STOP.json"
+        for stopped in (False, True):
+            with self.subTest(stopped=stopped):
+                if stopped:
+                    core.atomic_json(stop, {"source": "safety", "code": "human_verification_required"})
+                before = stop.read_bytes() if stopped else None
+                output = io.StringIO()
+                with patch.object(cli.sys, "argv", ["vpub", "status"]), patch.object(cli, "execute", side_effect=KeyboardInterrupt()), patch.object(cli.sys, "stdout", output), self.assertRaises(SystemExit) as caught:
+                    cli.main()
+                self.assertEqual(caught.exception.code, 3)
+                answer = json.loads(output.getvalue())["error"]
+                self.assertEqual(answer["code"], "interrupted")
+                self.assertIn("Do not upload it again", answer["hint"])
+                self.assertEqual("vpub stop --clear" in answer["hint"], stopped)
+                self.assertEqual(stop.read_bytes() if stopped else None, before)
 
     def test_final_submit_still_marks_before_click_and_does_not_repeat(self):
         plan = self.plan(("x",))

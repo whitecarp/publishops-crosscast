@@ -310,7 +310,7 @@ vpub verify RECEIPT_KEY
 
 `--dry-run` 不会上传。`response.json` 由 AI 助手按 `request.json` 中的模板撰写。中断后用 `vpub resume RECEIPT_KEY` 接着做，用 `vpub receipts` 查看所有回执。
 
-可选：`vpub go final-crosscast --workers 2`（或 `vpub publish ready.json --confirm <confirmation-code> --workers 2`） 让两个已选的浏览器平台同时执行。默认仍是 `--workers 1`；B站、API 和宿主浏览器路线保持串行。平台警告会停止所有路线。Ctrl+C 会记录停止并等待正在执行的任务停止；已提交内容的回执仍保留。并行和取消逻辑已做离线测试，两个平台同时执行时的真实上传速度、内存占用和隐藏窗口表现仍待实测。
+可选：`vpub go final-crosscast --workers 2`（或 `vpub publish ready.json --confirm <confirmation-code> --workers 2`） 会把 YouTube、抖音、Instagram 和 X 两个两个一起发，不再一个接一个。B站，以及走付费插件或你的助手自带浏览器的平台，仍然一个接一个发。任何平台发出警告，仍会停下所有平台。按 Ctrl+C 会等正在上传的平台安全停下，已经发出的记录照样保留，之后 CrossCast 保持停止，直到你用 `vpub stop --clear` 解除。目前只做过离线测试：能快多少、两个隐藏浏览器占多少内存，还没在真实账号上测过。
 
 </details>
 

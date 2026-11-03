@@ -310,7 +310,7 @@ vpub verify RECEIPT_KEY
 
 `--dry-run` does not upload. Your AI assistant writes `response.json` following the template inside `request.json`. After an interruption, continue with `vpub resume RECEIPT_KEY`; `vpub receipts` lists every receipt.
 
-Optional: `vpub go final-crosscast --workers 2` (or `vpub publish ready.json --confirm <confirmation-code> --workers 2`) lets two selected browser platforms run at once. The default is `--workers 1`; Bilibili, API and host-browser routes remain serial. Platform warnings stop all routes. Ctrl+C records a stop and waits for active workers to finish stopping; receipts for anything already submitted are retained. Concurrency and cancellation have offline tests; real upload speed, memory use and hidden-window behavior with two platforms still need a live check.
+Optional: `vpub go final-crosscast --workers 2` (or `vpub publish ready.json --confirm <confirmation-code> --workers 2`) publishes to YouTube, Douyin, Instagram and X two at a time instead of one after another. Bilibili, and anything going through the paid add-on or your assistant's own browser, still goes one at a time. A platform's warning still stops every platform. Ctrl+C waits for each upload in progress to stop safely, keeps the record of anything already posted, and leaves CrossCast stopped until you clear it with `vpub stop --clear`. So far this has only been tested offline: how much faster it is, and how much memory two hidden browsers use, haven't been measured on a real account.
 
 </details>
 

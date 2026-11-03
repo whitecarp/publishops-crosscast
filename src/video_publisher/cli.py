@@ -226,6 +226,13 @@ def _publish_browser_batch(plan, platforms, snapshot_lock):
                         except OSError as exc:
                             stop_error = exc  # Even a failed stop write cannot skip draining.
                         stop_recorded = True
+                        try:
+                            print(json.dumps({"event": "publication_stopping", "message":
+                                "Waiting for active uploads to reach their next stop check. This can take minutes; "
+                                "repeated Ctrl+C will not force them closed. Keeping existing receipts; do not start another upload."}),
+                                file=sys.stderr, flush=True)
+                        except (OSError, ValueError):
+                            pass  # A closed progress stream must not release the lock early.
                     done, pending = wait(futures.values(), timeout=0.05)
                     # A worker can also report an interruption. Observe it while
                     # peers are active, never through an unbounded result().
@@ -1321,9 +1328,15 @@ def main():
         print(json.dumps({"ok": False, "error": {"code": "invalid_file", "message": f"A file could not be read as UTF-8 JSON or text{where}.",
                                                  "hint": "Fix the file and run the command again."}}))
         raise SystemExit(2)
-    except (KeyboardInterrupt, Exception) as e:
+    except KeyboardInterrupt:
+        hint = "Inspect the existing receipts before continuing; an interrupted upload may already have been submitted. Do not upload it again."
+        if (home() / "STOP.json").exists():
+            hint += f" CrossCast remains stopped, including browser reads and verify. Only a person may inspect the reason and clear it with {how_to_clear_a_stop()}."
+        print(json.dumps({"ok": False, "error": {"code": "interrupted", "message": "Publication or command interrupted.", "hint": hint}}))
+        raise SystemExit(3)
+    except Exception as e:
         # OAuth exceptions may embed tokens/URLs: never serialize their bodies.
-        print(json.dumps({"ok": False, "error": {"code": "interrupted" if isinstance(e, KeyboardInterrupt) else "internal_error",
+        print(json.dumps({"ok": False, "error": {"code": "internal_error",
                                                  "message": type(e).__name__,
                                                  "hint": "Check setup/receipts. An interrupted upload must not be blindly retried."}}))
         raise SystemExit(3)
