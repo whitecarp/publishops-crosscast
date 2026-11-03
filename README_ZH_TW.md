@@ -22,12 +22,13 @@
 
 ## 🚀 一句話開始
 
-**把下面這段話交給你的 AI 助手**，把 `final.mp4` 換成你的影片，它會自己裝好，再帶你登入：
+**把下面這段話交給你的 AI 助手**，把檔名和內容換成你的，它會自己裝好，再帶你登入：
 
 ```text
 請安裝 https://github.com/whitecarp/publishops-crosscast
-讀取 skills/publishops-crosscast/SKILL.md，然後執行 vpub doctor。
-把 final.mp4 公開發布到 B站、YouTube、抖音、Instagram 和 X，標題和簡介依平台來寫。
+執行 vpub doctor，讀取它給出的 skill 檔案。
+把 final.mp4 公開發布到 B站、YouTube、抖音、Instagram 和 X，封面用 cover.jpg，標題和簡介依平台來寫。
+這支影片講的是：（用一句話說說）
 ```
 
 每個平台第一次都要你自己掃碼或輸入驗證碼登入一次，之後就在背景發布。
@@ -36,7 +37,7 @@
 <summary>或者自己在終端機裡裝</summary>
 
 ```bash
-pip install "git+https://github.com/whitecarp/publishops-crosscast.git"
+pip install https://github.com/whitecarp/publishops-crosscast/archive/refs/heads/main.zip
 vpub doctor              # 檢查本機缺什麼
 vpub auth login douyin   # 每個平台登入一次
 ```

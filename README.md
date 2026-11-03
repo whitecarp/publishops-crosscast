@@ -22,12 +22,13 @@
 
 ## 🚀 一句话开始
 
-**把下面这段话发给你的 AI 助手**，把 `final.mp4` 换成你的视频，它会自己装好，再带你登录：
+**把下面这段话发给你的 AI 助手**，把文件名和内容换成你的，它会自己装好，再带你登录：
 
 ```text
 请安装 https://github.com/whitecarp/publishops-crosscast
-读取 skills/publishops-crosscast/SKILL.md，然后运行 vpub doctor。
-把 final.mp4 公开发布到 B站、YouTube、抖音、Instagram 和 X，标题和简介按平台来写。
+运行 vpub doctor，读取它给出的 skill 文件。
+把 final.mp4 公开发布到 B站、YouTube、抖音、Instagram 和 X，封面用 cover.jpg，标题和简介按平台来写。
+这条视频讲的是：（用一句话说说）
 ```
 
 每个平台第一次都要你自己扫码或输入验证码登录一次，之后就在后台发布。
@@ -36,7 +37,7 @@
 <summary>或者自己在终端里装</summary>
 
 ```bash
-pip install "git+https://github.com/whitecarp/publishops-crosscast.git"
+pip install https://github.com/whitecarp/publishops-crosscast/archive/refs/heads/main.zip
 vpub doctor              # 检查本机缺什么
 vpub auth login douyin   # 每个平台登录一次
 ```

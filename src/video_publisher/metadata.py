@@ -9,6 +9,7 @@ import re
 
 from .core import PLATFORMS, VpubError, atomic_json, digest, load_plan, read_json, title_limit
 
+from .categories import STUDIO_CATEGORIES
 from .language_policy import route
 
 
@@ -27,11 +28,16 @@ def request(manifest, source=None, allow_links=False):
                "source_language": value.get("content_language", "und"),
                "source": {"title": value.get("title", ""), "description": value.get("description", ""),
                           "tags": value.get("tags", []), "script_or_transcript": context},
+               "response_template": {"request_id": "copy request_id from this file", "platforms": {p: {
+                   "title": "", "description": "", "tags": [], "metadata_language": routes[p]["language"], "metadata_mode": routes[p]["mode"],
+                   **({"description_parts": ["", ""]} if routes[p]["mode"] == "bilingual" else {}),
+                   **({"category_id": platforms[p].get("category_id") or ""} if p == "youtube" else {}),
+                   **({"chapters": platforms[p]["chapters"]} if platforms[p].get("chapters") else {})} for p in platforms}},
                "targets": {p: {**routes[p],
                                "title_limit": title_limit(p, platforms[p].get("method")),
                                "description_limit": 1000 if p == "douyin" else 5000 if p == "youtube" else 2000,
                                "chapters": platforms[p].get("chapters", []),
-                               **({"category_selection": {"required": True, "current_id": platforms[p].get("category_id")}} if p == "youtube" else {})}
+                               **({"category_selection": {"required": True, "current_id": platforms[p].get("category_id"), "choices": {number: name.title() for number, name in STUDIO_CATEGORIES.items()}}} if p == "youtube" else {})}
                            for p in platforms}, "allow_links": allow_links,
                "host_instructions": [
                    "Use the current host conversation's model to write or translate titles, descriptions and tags. No extra API key is needed in this mode.",
@@ -40,7 +46,7 @@ def request(manifest, source=None, allow_links=False):
                    "For bilingual output include description_parts as two nonempty strings in source/target order. description must equal those parts joined by two newlines. Keep both languages within the platform limit; shorten both together rather than dropping the source language. Titles should fit platform limits and preserve episode identity. Matching-language copy is not duplicated.",
                    "No links by default. Remove platform-specific BV numbers and timestamps used solely as cross-platform source references, retaining the relevant context in plain words. Do not alter subtitle timing/chapter markers without distinguishing them.",
                    "No new video/audio/subtitles are rendered. content_language remains the video's original language; metadata_language records the written text's target.",
-                   "For YouTube also return category_id as a string. Preserve an explicit current_id; otherwise inspect current Studio/API category choices and choose from the actual script/content, not merely the use of AI. Animated narrative, tutorials, and technical demonstrations need different judgments. Do not silently use People & Blogs. If content is insufficient, obtain context before applying.",
+                   "For YouTube also return category_id as a string. Preserve an explicit current_id; otherwise choose from category_selection.choices by the actual script/content, not merely the use of AI. Animated narrative, tutorials, and technical demonstrations need different judgments. Do not silently use People & Blogs. If content is insufficient, obtain context before applying.",
                    "Return request_id plus platforms with title, description, tags, metadata_language and metadata_mode; YouTube also requires category_id. If a target contains chapters, additionally return chapters with translated titles but identical start_seconds. Never invent chapter timing. A human review is needed only if the user chose it or host policy requires it; reuse standing publication authorization."]}
     return {**payload, "request_id": digest(payload), "generation_state": "HOST_MODEL_REQUIRED"}
 

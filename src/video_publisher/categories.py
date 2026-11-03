@@ -9,5 +9,6 @@ STUDIO_CATEGORIES = {"1": "FILM", "2": "AUTOS", "10": "MUSIC", "15": "PETS", "17
 
 def validate_youtube(category_id):
     if not isinstance(category_id, str) or not re.fullmatch(r"[1-9][0-9]{0,3}", category_id):
-        raise VpubError("category_required", "Choose category_id from the video's content and current YouTube categories. Use metadata request/apply or set it explicitly; there is no default.")
+        raise VpubError("category_required", "Choose category_id from the video's content. Use metadata request/apply or set it explicitly; there is no default.",
+                        "YouTube's categories: " + ", ".join(f"{number} {name.title()}" for number, name in STUDIO_CATEGORIES.items()))
     return category_id

@@ -192,7 +192,7 @@ def prepare(manifest, source, out_dir, output, portrait=None):
                    "skipped": skipped, "state": "PREPARED", "platform_writes": 0,
                    "mode": "landscape_contain_shared_portrait", "text_translated": False,
                    "portrait_policy": "Douyin and Instagram receive the identical portrait file/hash. Keep titles and faces within the central crop-safe area; mobile grid adjustment remains separately verified.",
-                   "next": "Apply supported covers to the existing work and inspect each saved variant; preparation is not upload verification."}
+                   "next": "Look at each saved cover, then run vpub plan on the new manifest. Preparing covers uploads nothing."}
         atomic_json(staging / "cover-receipt.json", receipt)
         staging.rename(directory)
     atomic_json(output, value)
