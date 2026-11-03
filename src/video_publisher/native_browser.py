@@ -44,6 +44,8 @@ def queue(platform, plan, options):
 
 
 def request(key):
+    from .work_delete_state import refuse_other_action
+    refuse_other_action(key)
     ledger = Ledger()
     try:
         old = ledger.get(key)
@@ -178,6 +180,8 @@ def authorize_publish(key, identity, confirmation=None, *, person_approved=False
 def revise(key, manifest, confirmation, identity):
     """Update approved text in place; keep the existing upload and its durable ID."""
     with publication_lock():
+        from .work_delete_state import refuse_other_action
+        refuse_other_action(key)
         ledger = Ledger()
         try:
             old = ledger.get(key)
@@ -239,6 +243,8 @@ def record(key, evidence_path):
         raise VpubError("invalid_evidence", "Supply a short factual UI observation, at most 1000 characters.")
     # Recording an outcome remains possible after STOP: preserving receipts is safe.
     with publication_lock():
+        from .work_delete_state import refuse_other_action
+        refuse_other_action(key)
         ledger = Ledger()
         try:
             old = ledger.get(key)
@@ -342,6 +348,8 @@ def revise_cover(key, cover_path, identity, portrait_path=None):
     if not source.is_file() or source.suffix.lower() not in {".jpg", ".jpeg", ".png"} or not source.stat().st_size:
         raise VpubError("invalid_cover", "Choose a nonempty production JPG or PNG cover.")
     with publication_lock():
+        from .work_delete_state import refuse_other_action
+        refuse_other_action(key)
         ledger = Ledger()
         try:
             old = ledger.get(key)

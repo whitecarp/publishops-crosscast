@@ -85,6 +85,9 @@ Where supported, schedule posts (except on Instagram), save drafts or stop at a 
 ### ✏️ Edit after posting
 Change titles, descriptions, covers and chapters, depending on the platform. Works CrossCast didn't post can be edited too, once adopted.
 
+### 🗑️ Delete one published post
+Preview with `vpub delete RECEIPT_KEY --dry-run` and get a separate explicit yes for each post. Four browser routes (YouTube, Douyin, Instagram and X) are built but untried live; Bilibili is unsupported. See the [guide](docs/GUIDE_EN.md#delete-one-published-post) for commands, approval and verification limits.
+
 ### 💬 Comments and messages
 Read comments and reply only in the commenter's language, see @ mentions, send single direct messages, like and save, and pin, hide or delete comments. Each action covers only the one thing you asked for, and nothing is sent in bulk.
 

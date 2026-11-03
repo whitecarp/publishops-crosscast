@@ -74,6 +74,7 @@ This table covers the free version only. Some real-account records come from ear
 **After posting**
 
 - **Edit a published work**: ✅ YouTube, Instagram · 🟡 Bilibili, Douyin, X
+- **Delete one published post**: 🟡 YouTube, Douyin, Instagram, X; Bilibili unsupported
 - **Adopt older works**: ✅ Bilibili, Douyin, Instagram, X · 🟡 YouTube
 - **Works list and stats**: ✅ All five
 - **Read and reply to comments**: ✅ All five
@@ -151,6 +152,27 @@ Each platform's progress keeps its real name: Queued → Publishing → Submitte
 X edits have not passed real-account validation. `EDIT_SUBMITTED_UNVERIFIED` can mean the edit succeeded; old text at the original address does not prove failure. Open the post on X and inspect its current text and edit history. Do not submit another edit based on that read-back.
 
 `vpub widgets` puts Bilibili's interactive widgets on your own video: a link to another video, a follow or triple button, a vote and a rating. Choose them in the plan, or add them to a video that's already up. Bilibili doesn't list them before a video is public, so a plan's wait until then, and `vpub verify` sends them. `vpub verify` and a Bilibili edit also report what's on the video. Reserve widgets are left out, since removing one notifies everyone who booked it. This hasn't run on a real account through `vpub` yet.
+
+</details>
+
+### Delete one published post
+
+<details>
+<summary><b>Commands, per-post approval and verification limits</b></summary>
+
+Use a verified CrossCast publication receipt key, not a platform ID, URL, adopted work, draft or uncertain publication. Preview the target first; get one separate explicit yes for each post. Permission to publish is not permission to delete.
+
+```sh
+vpub delete RECEIPT_KEY --dry-run
+# Only after the person explicitly approves deleting this exact post; use the preview CODE
+vpub delete RECEIPT_KEY --confirm CODE --person-approved
+```
+
+The original publication history stays intact; `vpub status` lists deletion records under `deletions`. If the outcome is uncertain, use only `vpub delete RECEIPT_KEY --verify-only` to read back; never repeat the deletion.
+
+The four browser deletion routes for YouTube, Douyin, Instagram and X are built but untried on real accounts. Bilibili is unsupported: there is no verified own-video deletion API or explicit gone-response contract. Private Douyin works without a verifiable exact ID are refused. Nonempty X and Instagram profiles cannot yet prove a complete list, so deletion stays pending even if the post page appears gone. Future live tests need separate user approval.
+
+Verified deletion requires explicit evidence that this exact post is gone and a fresh, complete own-works list without it. Generic unavailability, permission errors and network failures do not count.
 
 </details>
 

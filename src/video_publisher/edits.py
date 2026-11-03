@@ -103,6 +103,8 @@ def validate_patch(platform, value, verifying=False, ai_generated=True):
 
 def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, person_approved=False):
     """One correction, once. An uncertain X save cannot be retried, even with person approval; verification stays read-only."""
+    from .work_delete_state import refuse_other_action
+    refuse_other_action(key)
     work_id=receipt['id']
     if actual!=patch['expected_identity']: raise VpubError('wrong_account','Correction identity differs from the publication receipt.')
     stop_check(platform)

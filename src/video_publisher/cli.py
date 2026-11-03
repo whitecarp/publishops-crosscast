@@ -21,7 +21,7 @@ UNFINISHED_STATES = {"WAITING_FOR_PUBLIC", "REMOVE_UNVERIFIED", "INCOMPLETE", "I
                      "ACTION_READY", "ACTION_REPLACED", "ACTION_SUBMITTING", "ACTION_UNVERIFIED", "ACTION_FAILED", "PARTIAL", "WAITING_FOR_USER", "PREPARATION_INCOMPLETE", "SUBMITTED_UNVERIFIED", "UNKNOWN",
                      "EDIT_SUBMITTING", "EDIT_SUBMITTED_UNVERIFIED", "EDIT_UNAVAILABLE", "REPLY_READY", "REPLY_PENDING", "REPLY_SUBMITTING", "REPLY_UNVERIFIED", "REPLY_REJECTED",
                      "TEST_SEED_UNVERIFIED", "TEST_REPLY_UNVERIFIED", "TEST_COMMENT_NOT_VISIBLE", "FAILED_BEFORE_SUBMIT", "UNVERIFIED", "EDIT_FAILED", "EDIT_MISMATCH",
-                     "READY", "SUBMITTING", "PLATFORM_REJECTED", "BROWSER_VERIFICATION_REQUIRED", "TEST_READY", "TEST_SEED_SUBMITTING"}
+                     "READY", "SUBMITTING", "PLATFORM_REJECTED", "BROWSER_VERIFICATION_REQUIRED", "TEST_READY", "TEST_SEED_SUBMITTING", "DELETE_READY", "DELETE_PENDING"}
 # Marks JSON leaves as they are that can still end a line, act on a terminal or reorder what a reader sees. A viewer can type any of them.
 UNSAFE_OUTPUT = re.compile("[\x7f-\x9f؜​‎‏ -‮⁠-⁩\ud800-\udfff﻿]")
 # Commands whose --out saves the JSON result. For the others, --out names the file the command produces.
@@ -441,7 +441,7 @@ def template(video, content_language="und", ai_generated=True):
 HELP_GROUPS = (
     ("Start here", ("doctor", "onboard", "auth", "setup")),
     ("Publish a video", ("prepare", "go", "init", "metadata", "covers", "plan", "publish", "status", "verify", "resume", "receipts")),
-    ("After posting", ("works", "stats", "edit", "edit-work", "comments", "messages", "engage", "dm", "collection", "playlist", "widgets", "ops", "adopt")),
+    ("After posting", ("works", "stats", "edit", "edit-work", "delete", "comments", "messages", "engage", "dm", "collection", "playlist", "widgets", "ops", "adopt")),
     ("Safety and housekeeping", ("safety", "stop", "cleanup", "preferences", "capabilities")),
     ("Special cases", ("instagram", "browser")),
     ("Paid add-on, not on sale yet", ("report", "read-all", "notify")),
@@ -749,6 +749,13 @@ def parser():
     q.add_argument("--account", choices=["default"], default="default")
     q.add_argument('--limit',type=int,default=20);q.add_argument('--cursor');q.add_argument('--out')
     sub.add_parser("receipts", help="Read the local record of what was published.")
+    q = sub.add_parser('delete', help='Delete one verified CrossCast publication, with a target-bound code and the person\'s approval.')
+    q.add_argument('key', help='Publication receipt key, never a platform ID or URL.')
+    mode = q.add_mutually_exclusive_group()
+    mode.add_argument('--dry-run', action='store_true', help='Show the exact target and approval code without contacting a platform.')
+    mode.add_argument('--verify-only', action='store_true', help='Read back an existing deletion; never presses Delete again.')
+    q.add_argument('--confirm')
+    q.add_argument('--person-approved', action='store_true', help='Attest the person approved deletion of this exact post, once.')
     q = sub.add_parser("status", help="What needs attention now, with the exact next command; local only.")
     q.add_argument("--limit", type=int, default=20, help="Most attempts to list, 1-200.")
     q.add_argument("--out")
@@ -809,6 +816,13 @@ def execute(args):
 
 
 def run_command(args):
+    if args.command == 'delete':
+        from .work_delete import run
+        return run(args.key, dry_run=args.dry_run, confirm=args.confirm,
+                   person_approved=args.person_approved, verify_only=args.verify_only)
+    if args.command in {'edit', 'resume', 'verify', 'browser'} and getattr(args, 'key', None):
+        from .work_delete_state import refuse_other_action
+        refuse_other_action(args.key)
     if args.command=='dm':
         from . import direct_messages as dm
         if args.action=='verify':result=dm.verify(args.key)
@@ -920,6 +934,8 @@ def run_command(args):
         return result
     if args.command == "resume":
         with publication_lock():
+            from .work_delete_state import refuse_other_action
+            refuse_other_action(args.key)
             ledger = Ledger()
             try:
                 row = ledger.get(args.key)
@@ -1167,6 +1183,8 @@ def verify_attempt(ledger, old, holds_the_lock):
     """Without the lock it goes by what was read when that was decided, and it gets nowhere to record an attempt, so it can only read. A review found a second read here could pick up a receipt
     the publisher had just saved, and send chapters the publisher then sent too."""
     key = old["key"]
+    from .work_delete_state import refuse_other_action
+    refuse_other_action(key)
     receipt = old["data"].get("receipt", {"title": old["data"].get("title")})
     seen = old["updated_at"]
 
@@ -1191,8 +1209,12 @@ def verify_attempt(ledger, old, holds_the_lock):
 
 
 def keep_verified(ledger, old, read, result, seen=None):
-    """A verify's answer, in the ledger and for a browser attempt in the receipt resume reads. Returns what was saved, or None if the record has moved on since `seen`."""
+    """Save under the caller's publication lock; return None if the record changed since `seen`."""
     key = old["key"]
+    # Deletion preserves the ledger timestamp, so its separate record must also
+    # be checked after an in-flight read, before either publication store changes.
+    from .work_delete_state import refuse_other_action
+    refuse_other_action(key)
     plan_hash = old['data'].get('plan_hash') or old['data'].get('approved_plan', {}).get('confirmation')
     durable = home() / 'browser-receipts' / (plan_hash+'-'+old['platform']+'.json') if result.get('method') == 'browser' and plan_hash else None
     with receipt_turn(durable) if durable else contextlib.nullcontext():
@@ -1256,6 +1278,13 @@ def platform_routes(platform):
             "live_upload_verified": platform in {"youtube", "x", "instagram", "douyin"}}
 
 
+WORK_DELETION_SCOPE = (
+    "vpub delete RECEIPT_KEY --dry-run; approve the exact post with --confirm CODE --person-approved; "
+    "recover with --verify-only, never repeat Delete. Verified CrossCast publications only; adopted/draft records excluded; "
+    "original receipt retained. YouTube/Douyin/Instagram/X browser deletion routes are built but not live-tested. Bilibili unsupported."
+)
+
+
 def capabilities_summary():
     """A local overview for first use; the detailed Python/API contract stays intact."""
     addon = adapters.addon_installed()
@@ -1279,6 +1308,7 @@ def capabilities_summary():
             "availability": "Installed; route permissions still required." if addon else NOT_ON_SALE,
         },
         "operations": "works/stats/comments, engage, collection/playlist, ops/messages sync, edit-work; support varies by platform.",
+        "work_deletion": WORK_DELETION_SCOPE,
         "language": "Bilibili/Douyin: Chinese -> Simplified Chinese; otherwise source + Simplified Chinese. YouTube/Instagram/X: English -> English; otherwise source + English. Replies: commenter's language only.",
         "covers": "Use the production cover. Douyin/Instagram share a portrait; preserve the video's original ratio. Check cropping and small text.",
         "limits": ["Reads are bounded; not every operation has a live test. Use --full for exact limits.",
@@ -1315,6 +1345,7 @@ def capabilities():
             "cover_fitting": "Landscape contain fitting; Douyin and Instagram share identical dedicated portrait bytes. No landscape-to-portrait padding fallback. covers portrait builds that image with no AI from parts the agent chooses, inside the central 3:4 safe area, and refuses a layout that would only fill a band. Grid cropping, small text and aesthetics require separate visual checks.",
             "instagram_media": "Instagram preparation preserves original video bytes and ratio. Use a separate upload cover and shared Douyin portrait through the mobile camera-roll picker; no inserted lead-in or transcoding.",
             "instagram_deletion": "Explicit native deletion request, UI result/absence evidence, retained history, and separately authorized same-video cover replacement. No standalone deletion API.",
+            "work_deletion": WORK_DELETION_SCOPE,
             "paid_add_on": f"{NOT_ON_SALE} Anything here that needs it is unavailable until it is, so don't offer it as something to buy. Everything else works without it.",
             "email": "Paid add-on. Gmail only, disabled by default. Enable only on explicit request; no ordinary-setup prompt. Host verifies the exact account and live send tool, helps install/connect a missing plugin or leaves email off. Self-send only. Works with any assistant's connected Gmail send tool: claim with its exact name, then call it once with the returned message. No Outlook, QQ, NetEase, SMTP or SMS. A TEST does not enable ongoing alerts.",
             "bilibili_widgets": "A Bilibili plan's widgets list, or vpub widgets add on a video already up, puts link, follow, vote and rating widgets on your own video through the included bili-cli, 35 seconds apart. Each read first and read back, so one already there isn't sent again, and one that may have gone is only read again. Bilibili doesn't list them before a video is public, so a plan's wait for vpub verify after that. A failed read is an unknown, and nothing is sent after it. vpub verify and a Bilibili edit also report what's on the video as widgets_seen. Reserve widgets are left out, since removing one notifies everyone who booked it. This route hasn't run on a real account.",
@@ -1364,6 +1395,7 @@ def finished(value):
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
+    args = None
     try:
         args = parser().parse_args()
         value = execute(args)
@@ -1383,9 +1415,14 @@ def main():
                                                  "hint": "Fix the file and run the command again."}}))
         raise SystemExit(2)
     except KeyboardInterrupt:
-        hint = "Inspect the existing receipts before continuing; an interrupted upload may already have been submitted. Do not upload it again."
+        deleting = getattr(args, 'command', None) == 'delete'
+        hint = ("Deletion may already have reached the platform. Inspect the exact post and its deletion receipt. Never repeat Delete."
+                if deleting else "Inspect the existing receipts before continuing; an interrupted upload may already have been submitted. Do not upload it again.")
         if (home() / "STOP.json").exists():
             hint += f" CrossCast remains stopped, including browser reads and verify. Only a person may inspect the reason and clear it with {how_to_clear_a_stop()}."
+        if deleting:
+            key = args.key if re.fullmatch(r'[a-f0-9]{64}', args.key) else 'RECEIPT_KEY'
+            hint += f" After a person has inspected and cleared any STOP, use vpub delete {key} --verify-only to read back the existing attempt."
         print(json.dumps({"ok": False, "error": {"code": "interrupted", "message": "Publication or command interrupted.", "hint": hint}}))
         raise SystemExit(3)
     except Exception as e:
