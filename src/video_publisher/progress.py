@@ -18,7 +18,7 @@ import uuid
 from .core import home
 
 STAGES = {"waiting for the browser", "starting the browser", "checking the account", "opening the page", "reading the page",
-          "uploading", "pressing", "reading back", "closing the browser"}
+          "uploading", "pressing", "waiting for platform confirmation", "reading back", "closing the browser"}
 # Once this command has pressed something on a platform, whatever it then reads there is the read-back.
 READ_BACK = {"checking the account", "opening the page", "reading the page"}
 # The longest a command stays silent, so one long stage is not mistaken for a hang.

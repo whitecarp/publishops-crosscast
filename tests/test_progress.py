@@ -274,6 +274,18 @@ class RelayTests(Temporary):
             progress.stage("starting the browser", path)
         self.assertEqual(["starting the browser"], stages_of(self.relayed(during=during)[0]))
 
+    def test_waiting_after_a_publish_is_repeated_without_claiming_success(self):
+        def during(path):
+            progress.stage("pressing", path)
+            progress.stage("waiting for platform confirmation", path)
+            time.sleep(0.3)
+            progress.stage("reading the page", path)
+        with patch.object(progress, "QUIET_SECONDS", 0.05), patch.object(progress, "LOOK_SECONDS", 0.01):
+            seen = stages_of(self.relayed("instagram", during)[0])
+        self.assertEqual("pressing", seen[0])
+        self.assertGreaterEqual(seen.count("waiting for platform confirmation"), 2)
+        self.assertEqual("reading back", seen[-1])
+
     def test_what_follows_a_press_is_the_read_back_including_in_a_later_step(self):
         def press(path):
             for word in ("reading the page", "pressing", "opening the page", "reading the page"):
@@ -455,6 +467,25 @@ class PressTests(Temporary):
         with patch("video_publisher.browser_backends.risk_check", new=AsyncMock()):
             asyncio.run(tx.submit(page, button))
         self.assertEqual([("pressing\n", True)], order)
+        self.assertEqual("pressing\nwaiting for platform confirmation\n", stages.read_text())
+        self.assertEqual("UNKNOWN", read_json(tx.path)["state"])
+        self.assertEqual(1, read_json(tx.path)["final_presses"])
+
+    def test_a_timed_out_publish_click_remains_uncertain_without_a_second_click(self):
+        stages = self.stages_file()
+        video = self.root / "video.mp4"
+        video.write_bytes(b"v")
+        plan = {"video": str(video), "video_sha256": "a" * 64, "confirmation": "b" * 64, "options": {"title": "T", "submission_mode": "publish"}}
+        tx = Transaction("instagram", OWNER, plan)
+        button = MagicMock(click=AsyncMock(side_effect=TimeoutError("click timed out")))
+        page = MagicMock(url="https://www.instagram.com/")
+        with patch("video_publisher.browser_backends.risk_check", new=AsyncMock()):
+            with self.assertRaises(TimeoutError):
+                asyncio.run(tx.submit(page, button))
+        self.assertEqual("pressing\n", stages.read_text())
+        button.click.assert_awaited_once()
+        self.assertTrue(read_json(tx.path)["final_submit_attempted"])
+        self.assertEqual("UNKNOWN", read_json(tx.path)["state"])
 
     def test_a_read_says_nothing_about_pressing(self):
         stages = self.stages_file()
