@@ -35,6 +35,7 @@ dependencies = [
   "curl_cffi>=0.7",
   "patchright==1.58.2",
   "twitter-text-parser==3.0.0",
+  "tzdata; sys_platform == 'win32'",
   # The parser loads its emoji data through pkg_resources (removed in setuptools 81).
   "setuptools>=77,<81",
 ]

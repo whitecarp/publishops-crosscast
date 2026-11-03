@@ -7,6 +7,30 @@ from .language_policy import route
 from .safety import check_public_text, public_text_flags
 
 
+X_EDIT_UNVERIFIED_MESSAGE = ('An attempted X edit may have succeeded. Reading old text at the original post address does not prove failure.')
+X_EDIT_INSPECTION_HINT = ('Do not retry or submit another edit based on this read-back. Open the post on X and inspect its current text and any available edit history. '
+                          'Edit-version behavior has not been verified on a live account.')
+
+
+def x_edit_receipt_matches(saved, identity, work_id):
+    return (saved.get('platform')=='x' and saved.get('identity')==identity
+            and str(saved.get('id'))==str(work_id))
+
+
+def x_edit_was_attempted(saved, identity, work_id):
+    return x_edit_receipt_matches(saved,identity,work_id) and (
+        saved.get('final_submit_attempted') is True or saved.get('platform_writes')==1
+        or saved.get('state')=='EDIT_SUBMITTING'
+        or saved.get('state')=='EDIT_SUBMITTED_UNVERIFIED' and 'platform_writes' not in saved)
+
+
+def x_edit_readback_note(attempted):
+    if attempted:
+        return {'message':X_EDIT_UNVERIFIED_MESSAGE,'hint':X_EDIT_INSPECTION_HINT}
+    return {'message':'This call made no edit. The requested post text or identity could not be verified.',
+            'hint':'Open the post on X and inspect its current text. This check does not establish that an edit was attempted or failed.'}
+
+
 def validate_patch(platform, value, verifying=False, ai_generated=True):
     allowed={'expected_identity','title','description','tags','content_language','metadata_language','metadata_mode','portrait','chapters','duration_seconds','cover'}
     if not isinstance(value,dict) or set(value)-allowed or not isinstance(value.get('expected_identity'),str) or not value['expected_identity']:
@@ -93,8 +117,8 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
             same_work=prior.get('key')==key or (prior.get('platform')==platform and
                 prior.get('identity')==actual and str(prior.get('id'))==str(work_id))
             if same_work and prior.get('state') in {'EDIT_SUBMITTING','EDIT_SUBMITTED_UNVERIFIED'}:
-                raise VpubError('inspect_existing_edit','A save on this work is still unverified; inspect its existing receipt before another edit.',
-                                f'Inspect {prior_path}. Only if a person confirms the change is absent, add --person-approved to try once more.')
+                raise VpubError('inspect_existing_edit',X_EDIT_UNVERIFIED_MESSAGE,
+                                f'{X_EDIT_INSPECTION_HINT} Receipt: {prior_path}')
     tried=False
     saved={}
     if path.exists():
@@ -103,6 +127,9 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
         # reads the existing work and skips saving only when it still matches.
         tried=saved.get('state') in {'EDIT_SUBMITTING','EDIT_SUBMITTED_UNVERIFIED'}
         if tried and not verify_only and not person_approved:
+            if platform=='x':
+                raise VpubError('inspect_existing_edit',X_EDIT_UNVERIFIED_MESSAGE,
+                                f'{X_EDIT_INSPECTION_HINT} Receipt: {path}')
             raise VpubError('inspect_existing_edit','A save was already attempted; inspect the existing work before any retry.',
                             'If a person has looked at the work and the change is not there, add --person-approved to try once more.')
     preserved = ({'preserved_description_sha256': saved['preserved_description_sha256']}
@@ -119,14 +146,26 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
         if 'chapters' in patch: raise VpubError('unsupported_edit','With the add-on, put the chapter lines in the description and edit that.')
         result=adapters.youtube_api().update_video(account,work_id,patch,checkpoint,verify_only)
     else:
-        result=adapters.browser_call(platform,'edit',account,expected_identity=actual,
-            receipt=receipt,patch=patch,edit_receipt_path=str(path),verify_only=verify_only)
+        try:
+            result=adapters.browser_call(platform,'edit',account,expected_identity=actual,
+                receipt=receipt,patch=patch,edit_receipt_path=str(path),verify_only=verify_only)
+        except VpubError as exc:
+            if platform=='x' and path.exists() and x_edit_was_attempted(read_json(path),actual,work_id):
+                raise VpubError(exc.code,f'{exc.message} {X_EDIT_UNVERIFIED_MESSAGE}',
+                                f'{exc.hint} {X_EDIT_INSPECTION_HINT} Receipt: {path}'.strip()) from exc
+            raise
     # A check changes nothing, so it must not leave what reads as a save that was tried and block the real one.
     if verify_only and not tried and result.get('state')=='EDIT_SUBMITTED_UNVERIFIED': result={**result,'state':'EDIT_MISMATCH'}
     # A check can confirm an unclear save, and nothing less clears it: a page can show the old words for a while, and a cover cannot be compared at all.
     if verify_only and tried and result.get('state')!='EDIT_VERIFIED': result={**result,'state':'EDIT_SUBMITTED_UNVERIFIED'}
-    if platform=='x' and verify_only and saved:
+    x_attempted = platform=='x' and (x_edit_was_attempted(saved,actual,work_id) or x_edit_was_attempted(result,actual,work_id))
+    if platform=='x' and verify_only and x_edit_receipt_matches(saved,actual,work_id):
         result={**saved,**result}  # Keep frozen attempted text when a read cannot find the owned version.
+        if result.get('state')=='EDIT_VERIFIED':
+            for field in ('message','hint','reason'): result.pop(field,None)
+    if platform=='x' and result.get('state') in {'EDIT_MISMATCH','EDIT_SUBMITTED_UNVERIFIED'}:
+        result={**result,**x_edit_readback_note(x_attempted)}
+    if x_attempted: result['final_submit_attempted']=True
     result={**result,**approved,**flagged}
     checkpoint(result)
     return result

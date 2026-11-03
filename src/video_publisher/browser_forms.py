@@ -4,9 +4,10 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .categories import STUDIO_CATEGORIES
 from .core import VpubError, douyin_caption, stop_check
@@ -962,6 +963,47 @@ async def yt_set_time(page, clock, wanted):
     return steps
 
 
+def yt_schedule_zone(text, when):
+    """Only an explicit zone identifies target-date rules; a GMT offset or abbreviation does not.
+
+    Named-zone lines are a conservative supported display contract, not a claim
+    that every live Studio layout exposes one. Unknown layouts stay as drafts.
+    """
+    names, unreadable = set(), False
+    named_zone = r'UTC|[A-Za-z][A-Za-z0-9_+\-]*(?:/[A-Za-z0-9_+\-]+)+'
+    for line in text.splitlines():
+        line, labelled = re.subn(r'^(?:Time zone|Timezone|时区|時區)\s*:?\s*', '', normalize(line), flags=re.I)
+        line = re.sub(r'(?<![\w/])\(?GMT\s*[+\-−]\s*\d{1,2}(?::?\d{2})?\)?', '', line).strip()
+        if re.fullmatch(named_zone, line):
+            names.add(line)
+        elif line and (labelled or re.search(named_zone, line)):
+            unreadable = True  # Do not drop a second, ambiguous zone expression.
+    if unreadable or len(names) != 1:
+        raise VpubError('schedule_unverified', 'YouTube Studio did not identify one explicit time zone. A GMT offset alone cannot establish the target-date time. The upload is kept as a draft; nothing was published.',
+                        'Inspect this retained draft and schedule it manually in Studio. Do not upload it again.')
+    name = next(iter(names))
+    try:
+        zone = timezone.utc if name == 'UTC' else ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise VpubError('schedule_unverified', 'The named Studio time zone has no available time-zone rules. The upload is kept as a draft; nothing was published.',
+                        'Use a supported installation with time-zone data, or schedule this retained draft manually in Studio.') from exc
+    local = when.astimezone(zone)
+    # The form cannot choose between two occurrences of a repeated fall-back minute.
+    if local.replace(fold=1 - local.fold).utcoffset() != local.utcoffset():
+        raise VpubError('schedule_unverified', 'The intended time repeats during a daylight-saving change in Studio\'s named zone. The upload is kept as a draft; nothing was published.')
+    # Etc/GMT+5 is an IANA key with the opposite sign, not a displayed GMT+5 offset.
+    offsets = studio_offsets(text.replace(name, ''))
+    valid_offsets = {local.utcoffset().total_seconds() / 60, datetime.now(zone).utcoffset().total_seconds() / 60}
+    if len(offsets) > 1 or not offsets <= valid_offsets:
+        raise VpubError('schedule_unverified', 'Studio\'s displayed offset conflicts with its named time zone. The upload is kept as a draft; nothing was published.')
+    return local, name
+
+
+async def yt_schedule_local(page, when):
+    scheduler = await unique_visible(page.locator(f'{YT_DIALOG} ytcp-visibility-scheduler'), 'YouTube schedule time zone')
+    return yt_schedule_zone(await scheduler.inner_text(), when)
+
+
 async def yt_schedule(page, when):
     """Fill Studio's own schedule and read the date and time back. Nothing is saved here."""
     for selector in ('#second-container-expand-button', '#schedule-radio-button'):
@@ -975,12 +1017,7 @@ async def yt_schedule(page, when):
     await wait_until(page, lambda: visible(day), seconds=30, label='YouTube schedule date')
     day = await unique_visible(day, 'YouTube schedule date')
     clock = await unique_visible(page.locator(f'{YT_DIALOG} #time-of-day-container input'), 'YouTube schedule time')
-    scheduler = page.locator(f'{YT_DIALOG} ytcp-visibility-scheduler')
-    offsets = studio_offsets(await scheduler.first.inner_text() if await scheduler.count() else '')
-    if len(offsets) > 1:
-        raise VpubError('schedule_unverified', 'YouTube Studio named more than one time zone. The upload is kept as a draft; nothing was published.')
-    # Studio's own time zone when it names one, otherwise this computer's, which the browser shares.
-    local = when.astimezone(timezone(timedelta(minutes=next(iter(offsets)))) if offsets else None)
+    local, zone = await yt_schedule_local(page, when)
     date_style = studio_style(STUDIO_DATES, await day.inner_text())
     time_style = studio_style(STUDIO_TIMES, await clock.input_value())
     if not date_style or not time_style:
@@ -997,7 +1034,7 @@ async def yt_schedule(page, when):
         raise VpubError('schedule_unverified', f'The YouTube schedule was not confirmed: Studio shows {normalize(shown_day)} {normalize(shown_time)} for {local.strftime("%Y-%m-%d %H:%M")}. Its time box held {normalize(held_before)} before, then {entered}. The upload is kept as a draft; nothing was published.',
                          "A time on the quarter hour can be chosen from Studio's own list, which has worked on a real channel. Choose one and make a new plan.")
     return {'at': when.isoformat(), 'local': local.isoformat(), 'date': [local.year, local.month, local.day],
-            'time': [local.hour, local.minute], 'timezone_basis': 'studio' if offsets else 'computer', 'time_entry': entered}
+            'time': [local.hour, local.minute], 'timezone_basis': 'studio', 'timezone': zone, 'time_entry': entered}
 
 
 async def yt_press_answer(page, done):
@@ -1040,7 +1077,20 @@ async def yt_press_publish(page, tx, done):
     from .youtube_studio import PIN_TICKS, act_and_settle
     # An explicit resume may already have independently proved this is a draft.
     again = bool(tx.resuming and tx.receipt.get('still_a_draft') and tx.receipt['final_submit_attempted'])
-    await act_and_settle(page, lambda: tx.submit(page, done, again=again), PIN_TICKS)
+
+    async def schedule_still_holds():
+        when = datetime.fromisoformat(tx.options['schedule'].replace('Z', '+00:00'))
+        local, zone = await yt_schedule_local(page, when)
+        recorded = tx.receipt.get('schedule') or {}
+        day = await unique_visible(page.locator(f'{YT_DIALOG} #datepicker-trigger'), 'YouTube schedule date')
+        clock = await unique_visible(page.locator(f'{YT_DIALOG} #time-of-day-container input'), 'YouTube schedule time')
+        if (recorded.get('at') != when.isoformat() or recorded.get('local') != local.isoformat() or recorded.get('timezone') != zone
+                or studio_read(STUDIO_DATES, await day.inner_text()) != (local.year, local.month, local.day)
+                or studio_read(STUDIO_TIMES, await clock.input_value()) != (local.hour, local.minute)):
+            raise VpubError('schedule_unverified', 'The Studio schedule or time zone changed before Save. The upload is kept as a draft; nothing was published.')
+
+    await act_and_settle(page, lambda: tx.submit(page, done, again=again,
+                                               still_holds=schedule_still_holds if tx.options.get('schedule') else None), PIN_TICKS)
     answer = None
     for tick in range(YT_PRESS_ANSWER_SECONDS * 2 + 1):
         stop_check('youtube')

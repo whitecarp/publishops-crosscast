@@ -49,7 +49,7 @@ def request(manifest, source=None, allow_links=False):
                    "X takes one post: the title, description, tags and the AI line CrossCast adds must fit post_limit as post_counting describes, which bilingual text reaches fast. Never drop required credits to fit; if they don't fit, ask the user.",
                    "No new video/audio/subtitles are rendered. content_language remains the video's original language; metadata_language records the written text's target.",
                    "For YouTube also return category_id as a string. Preserve an explicit current_id; otherwise choose from category_selection.choices by the actual script/content, not merely the use of AI. Animated narrative, tutorials, and technical demonstrations need different judgments. Do not silently use People & Blogs. If content is insufficient, obtain context before applying.",
-                   "Return request_id plus platforms with title, description, tags, metadata_language and metadata_mode; YouTube also requires category_id. If a target contains chapters, additionally return chapters with translated titles but identical start_seconds. Never invent chapter timing. A human review is needed only if the user chose it or host policy requires it; reuse standing publication authorization."]}
+                   "Return request_id plus platforms with title, description, tags, metadata_language and metadata_mode; YouTube also requires category_id. If a target contains chapters, additionally return chapters with translated titles but identical start_seconds. Never invent chapter timing. Review the first publication in this local home and every saved show-first plan with the user. Otherwise reuse standing publication authorization, subject to host policy."]}
     return {**payload, "request_id": digest(payload), "generation_state": "HOST_MODEL_REQUIRED"}
 
 
@@ -69,6 +69,8 @@ def apply(manifest, request_path, response_path, output):
             or set(response["platforms"]) != set(original["platforms"]) or not all(isinstance(text, dict) for text in response["platforms"].values())):
         raise VpubError("invalid_metadata", "Response must cover exactly the requested platforms.")
     value = deepcopy(original)
+    from .publication_review import carry_choice
+    carry_choice(path, out, value)
     for platform, text in response["platforms"].items():
         required = {"title", "description", "tags", "metadata_language", "metadata_mode"}
         target = job['targets'][platform]

@@ -83,7 +83,7 @@ class MetadataTests(unittest.TestCase):
 
     def test_cover_edit_and_playlist_receipt_require_real_observations(self):
         plan=load_plan(self.path,['youtube'])
-        key=cli.publish_plan(plan,plan['confirmation'])['results']['youtube']['key']
+        key=cli.publish_plan(plan,plan['confirmation'], reviewed=True)['results']['youtube']['key']
         identity='UC'+'a'*22
         native_browser.begin(key,identity)
         native_browser.revise_cover(key,self.cover,identity)

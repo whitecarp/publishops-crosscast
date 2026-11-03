@@ -18,6 +18,8 @@ vpub plan ready.json
 vpub publish ready.json --confirm <confirmation-code>
 ```
 
+First publication or saved show-first returns `NEEDS_A_PERSON` before account access. Show that exact plan and wait for the user. After approval, repeat with its current code and `--reviewed`. Never add the flag automatically to get past this stop.
+
 ## Login and execution
 
 - Reuse CrossCast's own saved account sessions. Bilibili uses the included bili-cli, whose `bili` command is also available directly; YouTube, Douyin, Instagram and X use dedicated browser profiles controlled by the CLI in the background, so only sign-in and platform checks need the user. YouTube uses OAuth and the official API instead with the paid add-on, and `method: native` remains an explicit fallback.

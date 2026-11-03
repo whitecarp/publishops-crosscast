@@ -275,7 +275,7 @@ class UploadTests(Spaced):
 
     def publish(self):
         with patch.object(cli, "snapshot_plan", side_effect=lambda plan, platform: plan):
-            return cli.publish_plan(self.plan(), "hash")
+            return cli.publish_plan(self.plan(), "hash", reviewed=True)
 
     def test_a_second_upload_held_back_keeps_nothing_and_can_run_again(self):
         first = self.publish()["results"]["bilibili"]
@@ -297,7 +297,7 @@ class UploadTests(Spaced):
                 return {"drafts": []}
             raise VpubError(HELD_BACK, "upload 操作间隔至少 300 秒。", "等待。")
         with patch.object(adapters, "bili", bili), patch.object(cli, "snapshot_plan", side_effect=lambda plan, platform: plan):
-            result = cli.publish_plan(plan, "hash")["results"]["bilibili"]
+            result = cli.publish_plan(plan, "hash", reviewed=True)["results"]["bilibili"]
         self.assertEqual(("NOT_STARTED", HELD_BACK), (result["state"], result["code"]))
         ledger = Ledger()
         self.assertEqual([], ledger.rows())

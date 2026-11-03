@@ -466,7 +466,9 @@ class CheckingTests(Temporary):
                 with self.assertRaises(VpubError) as caught:
                     self.run_send({"state": "EDIT_VERIFIED", "platform_writes": 1}, False)
                 self.assertEqual("inspect_existing_edit", caught.exception.code)
-                self.assertIn("--person-approved", caught.exception.hint)
+                self.assertNotIn("--person-approved", caught.exception.hint)
+                self.assertIn("may have succeeded", caught.exception.message)
+                self.assertIn("Open the post on X", caught.exception.hint)
 
     def test_once_a_person_has_looked_it_can_be_tried_once_more(self):
         self.tried()

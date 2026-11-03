@@ -127,6 +127,8 @@ def prepare(manifest, source, out_dir, output, portrait=None):
     directory, output = Path(out_dir).resolve(), Path(output).resolve()
     original = read_json(path)
     load_plan(path)
+    from .publication_review import carry_choice
+    carry_choice(path, output, original)
     portrait = Path(portrait).resolve() if portrait else None
     variants = original.get('covers', {})
     shared = shared_portrait(variants)

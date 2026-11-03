@@ -47,7 +47,7 @@ class PublishRefillTests(unittest.TestCase):
 
     def run_plan(self, plan=None):
         plan = plan or self.plan()
-        return cli.publish_plan(plan, plan["confirmation"], workers=2)
+        return cli.publish_plan(plan, plan["confirmation"], workers=2, reviewed=True)
 
     @staticmethod
     def verified(platform):

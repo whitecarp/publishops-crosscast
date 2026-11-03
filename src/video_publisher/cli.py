@@ -294,7 +294,7 @@ def _publish_browser_batch(plan, platforms, snapshot_lock):
     return results
 
 
-def publish_plan(plan, confirm, workers=1):
+def publish_plan(plan, confirm, workers=1, *, reviewed=False):
     from .overview import DRAFTS
     from threading import Lock
 
@@ -302,12 +302,16 @@ def publish_plan(plan, confirm, workers=1):
         raise VpubError("invalid_workers", "Publication workers must be 1 or 2.")
     if confirm != plan["confirmation"]:
         raise VpubError("confirmation_required", "The confirmation hash must match the current plan.", "Run vpub plan MANIFEST and review the exact platforms, accounts and visibility.")
+    from .publication_review import pending, requirements
     for platform in plan["platforms"]:
         platform_check(platform)
         stop_check(platform)
     results = {}
     snapshot_lock = Lock()
     with publication_lock():
+        review = requirements(plan)
+        if review['review_required'] and reviewed is not True:
+            return pending(plan, review)
         batch = []
         for platform, opts in plan["platforms"].items():
             browser = platform in {"douyin", "instagram", "x", "youtube"} and opts.get("method") == "browser"
@@ -367,9 +371,26 @@ def doctor():
     addon = adapters.addon_installed()
     modules = {name: importlib.util.find_spec(name) is not None for name in
                ("bili_cli", "patchright", *(("crosscast_api", "socks") if addon else ()))}
-    chrome, stop = chrome_path(), stop_state()
+    chrome = chrome_path()
+    preference_issue = None
+    try:
+        choices = preferences()
+    except (VpubError, ValueError, OSError):
+        choices = None
+        preference_issue = {'code': 'invalid_preferences',
+                            'message': 'Saved preferences could not be read or validated.',
+                            'fix': 'Inspect config.json in the runtime directory. show_first must be true, false or null. No settings were changed.'}
+    try:
+        stop = stop_state()
+    except (ValueError, OSError, AttributeError):
+        stop = {'active': None}
+        preference_issue = preference_issue or {'code': 'invalid_preferences',
+                            'message': 'Local configuration could not be read.',
+                            'fix': 'Inspect config.json in the runtime directory. No settings were changed.'}
     issues = [{"code": "dependency_missing", "message": f"Python package missing: {name}", "fix": "Reinstall CrossCast in this Python environment."}
               for name, found in modules.items() if not found]
+    if preference_issue:
+        issues.insert(0, preference_issue)
     if not chrome:
         issues.append({"code": "chrome_missing", "message": "Google Chrome was not found.", "fix": "vpub setup --install-browser"})
     older = separate_bili_agent()
@@ -381,7 +402,7 @@ def doctor():
     return {"version": __version__, "python": sys.version.split()[0], "dependencies": modules,
             "bili_cli_version": included_bili_version(), "google_chrome": chrome, "paid_api_addon": addon, "ready": not issues, "issues": issues,
             "next": issues[0]["fix"] if issues else "Use the saved preferences below; ask only for unknown choices. Sign in only to selected platforms: vpub onboard --platforms PLATFORMS. Then prepare: vpub prepare VIDEO --platforms PLATFORMS --language LANGUAGE --visibility VISIBILITY --ai-generated AI_STATUS. Replace placeholders with the user's choices: VISIBILITY is public or private; AI_STATUS is yes or no. Omit --platforms only when platforms are saved.",
-            "preferences": preferences(),
+            "preferences": choices,
             "skill": skill_file(),
             "local_stop": (home() / "STOP.json").exists(), "runtime_directory": str(home()),
             "credentials_configured": {
@@ -714,6 +735,7 @@ def parser():
         q.add_argument("--platforms", help="Comma-separated subset; default: platforms in the manifest.")
         if cmd == "publish":
             q.add_argument("--confirm")
+            q.add_argument('--reviewed', action='store_true', help='Attest the user reviewed and approved this exact plan. Required for first publication or saved show-first; use with its current --confirm code.')
             q.add_argument("--dry-run", action="store_true")
             q.add_argument("--workers", type=int, choices=(1, 2), default=1,
                            help="Concurrent browser publications (default: 1); other routes remain serial barriers.")
@@ -1080,8 +1102,9 @@ def run_command(args):
             checks = dry_run(plan, media) if args.command == "publish" else {
                 "mode": "LOCAL_DRY_RUN", "platform_writes": 0, "media_check": media,
                 "note": "Plan only; use publish --dry-run to check saved sign-in records. No live readiness checks were made."}
-            return {**plan, **plan_flags(plan), **checks}
-        return publish_plan(plan, args.confirm, workers=args.workers)
+            from .publication_review import requirements
+            return {**plan, **plan_flags(plan), **checks, **requirements(plan)}
+        return publish_plan(plan, args.confirm, workers=args.workers, reviewed=args.reviewed)
     if args.command == "safety":
         from . import safety
         if args.action == "status":

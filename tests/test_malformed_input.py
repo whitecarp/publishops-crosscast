@@ -125,7 +125,7 @@ class MalformedInputTests(unittest.TestCase):
 
     def test_browser_and_deletion_evidence(self):
         plan = load_plan(self.manifest, ["youtube"])
-        key = cli.publish_plan(plan, plan["confirmation"])["results"]["youtube"]["key"]
+        key = cli.publish_plan(plan, plan["confirmation"], reviewed=True)["results"]["youtube"]["key"]
         identity = "UC" + "a" * 22
         native_browser.begin(key, identity)
         options = plan["platforms"]["youtube"]

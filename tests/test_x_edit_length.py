@@ -140,6 +140,30 @@ class XEditLengthTests(unittest.IsolatedAsyncioTestCase):
         self.assert_no_edit()
         self.assertEqual(original, self.receipt_path.read_bytes())
 
+    async def test_fresh_mismatching_check_does_not_suggest_a_previous_edit(self):
+        result = await self.execute(self.adopted_patch(12), verify_only=True)
+        self.assertEqual(('EDIT_SUBMITTED_UNVERIFIED', 0), (result['state'], result['platform_writes']))
+        self.assertIn('This call made no edit', result['message'])
+        self.assertNotIn('may have succeeded', result['message'])
+        self.assertNotIn('final_submit_attempted', result)
+        self.assert_no_edit()
+        self.assertFalse(self.receipt_path.exists())
+
+    async def test_foreign_receipt_cannot_turn_a_check_into_an_uncertain_attempt(self):
+        for changed in ({'platform': 'instagram'}, {'identity': 'other'}, {'id': '456'}):
+            with self.subTest(changed=changed):
+                atomic_json(self.receipt_path, {'platform': 'x', 'identity': 'owner', 'id': '123', **changed,
+                                               'state': 'EDIT_SUBMITTING', 'final_submit_attempted': True,
+                                               'expected_text': self.current_text})
+                before = self.receipt_path.read_bytes()
+                result = await self.execute(self.adopted_patch(12), verify_only=True)
+                self.assertEqual('EDIT_SUBMITTED_UNVERIFIED', result['state'])
+                self.assertIn('This call made no edit', result['message'])
+                self.assertNotIn('final_submit_attempted', result)
+                self.assertNotEqual(self.current_text, result['expected_text'])
+                self.assertEqual(before, self.receipt_path.read_bytes())
+                self.assert_no_edit()
+
     async def test_existing_hashtags_and_bilingual_ai_survive_a_replacement(self):
         self.current_text = 'Old title\n\nOld text\n\n#Game #游戏\n\nAI 生成内容 / AI-generated'
         proposed = self.adopted_patch(12)
@@ -209,6 +233,9 @@ class XEditLengthTests(unittest.IsolatedAsyncioTestCase):
                          (result['state'], result['reason'], result['platform_writes']))
         self.update.click.assert_awaited_once()
         self.assertEqual('123', read_json(self.receipt_path)['id'])
+        self.assertIn('may have succeeded', result['message'])
+        self.assertIn('Do not retry', result['hint'])
+        self.assertNotIn('--person-approved', str(result))
 
     async def test_unchanged_old_version_after_update_remains_unverified(self):
         self.update.click.side_effect = None
@@ -216,6 +243,33 @@ class XEditLengthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(('EDIT_SUBMITTED_UNVERIFIED', 'post_text_mismatch'), (result['state'], result['reason']))
         self.update.click.assert_awaited_once()
         self.assertEqual(browser_edits.READ_BACKS, self.page.reload.await_count)
+
+    async def test_old_post_after_one_update_warns_against_retrying(self):
+        # A stale read and a rejected edit look identical to this parser. Neither
+        # the same ID nor these old words prove that the one Update failed.
+        self.update.click.side_effect = None
+        result = await self.execute(self.adopted_patch(12))
+        self.assertEqual(('EDIT_SUBMITTED_UNVERIFIED', 'post_text_mismatch', 1),
+                         (result['state'], result['reason'], result['platform_writes']))
+        self.assertIn('may have succeeded', result.get('message', ''))
+        self.assertIn('Do not retry', result.get('hint', ''))
+        self.assertIn('Open the post on X', result['hint'])
+        self.assertIn('not been verified on a live account', result['hint'])
+        self.assertNotIn('--person-approved', str(result))
+        self.assertEqual(result, read_json(self.receipt_path))
+        self.update.click.assert_awaited_once()
+
+    async def test_timeout_after_update_keeps_inspection_guidance_in_pending_receipt(self):
+        self.editor.wait_for.side_effect = TimeoutError('Fake editor close timeout')
+        with self.assertRaises(TimeoutError):
+            await self.execute(self.adopted_patch(12))
+        saved = read_json(self.receipt_path)
+        self.assertEqual('EDIT_SUBMITTING', saved['state'])
+        self.assertEqual('https://x.com/owner/status/123', saved['url'])
+        self.assertIn('may have succeeded', saved.get('message', ''))
+        self.assertIn('Do not retry', saved.get('hint', ''))
+        self.assertNotIn('--person-approved', str(saved))
+        self.update.click.assert_awaited_once()
 
     async def test_missing_post_parser_evidence_after_update_remains_unverified(self):
         async def fields(post):
@@ -281,6 +335,7 @@ class XEditLengthTests(unittest.IsolatedAsyncioTestCase):
         self.update.click.assert_awaited_once()
         self.assertEqual('EDIT_SUBMITTING', read_json(self.receipt_path)['state'])
         self.assertTrue((home() / 'STOP.json').exists())
+        self.assertIn('Do not retry', read_json(self.receipt_path)['hint'])
 
     async def test_verify_uses_frozen_attempt_instead_of_changed_hashtag_block(self):
         proposed = self.adopted_patch(12)

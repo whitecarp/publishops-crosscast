@@ -15,7 +15,7 @@ For publishing setup after doctor, use its `preferences` and the conversation. I
 
 Save the user's choices with `vpub preferences --platforms youtube,instagram --show-first yes` (example platforms only). `--show-first no` disables later per-plan review; omitted options stay unchanged. Unset choices are null, not consent. Store no account names, location or access details. Then use `vpub onboard --platforms PLATFORMS` for chosen usable platforms only. These questions belong in the host conversation; never add interactive prompts inside a running CLI command.
 
-For a first-time publisher, show `vpub go FOLDER --dry-run` before their first actual publication: copy, cover arrangements, platform/account, visibility and AI declaration. Wait for their instruction to publish. Apply this once, not to every later task or recovery. Later, require review only when saved `show_first` is true or the user asks. A `review_required` result supplies the current plan and confirmation; show that plan, then follow its exact `next` command after approval. A changed plan needs a new confirmation. Saved preferences are not standing publishing authorization.
+The first actual publication in this local home stops for review, as does saved show-first. Show its exact text, audience, accounts, AI labels and covers; wait for the user's instruction. Then use the returned `go --confirm CODE`, or `publish PLAN --confirm CODE --reviewed`. These attest approval; never supply them automatically at this stop. Changed plans need a new code. After one verified publication, later plans without show-first follow the user's existing publishing request. Preferences are not standing authorization. Recovery uses the original receipt.
 
 ## Publish a video
 

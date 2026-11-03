@@ -627,6 +627,37 @@ def youtube_schedule_passed(schedule):
         return None
 
 
+def youtube_schedule_zone_agrees(shown, schedule):
+    """Explicit read-back zones must agree with the approved target, not today's offset."""
+    # An IANA key such as Etc/GMT+5 is a name, not a GMT+5 display.
+    names = set(re.findall(r'(?<![\w/])(?:UTC|[A-Za-z][A-Za-z0-9_+\-]*(?:/[A-Za-z0-9_+\-]+)+)(?![\w/])', shown))
+    offsets_text = shown
+    for name in names:
+        if name != 'UTC':
+            offsets_text = offsets_text.replace(name, '')
+    offsets = studio_offsets(re.sub(r'\bUTC(?=\s*[+\-−])', 'GMT', offsets_text))
+    if not names and not offsets:
+        return True  # Older wall-clock-only readback remains bounded by the pre-Save check.
+    try:
+        local = datetime.fromisoformat(schedule['local'])
+        intended = datetime.fromisoformat(schedule['at'])
+        if local.utcoffset() is None or intended.utcoffset() is None or local != intended:
+            return False
+        if offsets and offsets != {local.utcoffset().total_seconds() / 60}:
+            return False
+        if names:
+            from zoneinfo import ZoneInfo
+            if names != {schedule.get('timezone')}:
+                return False
+            name = next(iter(names))
+            zone = timezone.utc if name == 'UTC' else ZoneInfo(name)
+            if intended.astimezone(zone).isoformat() != local.isoformat():
+                return False
+        return True
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
 async def verify_youtube(page, receipt):
     # Studio opens this page only for the signed-in channel's own videos, so reading it also proves ownership.
     url = work_url("youtube", None, receipt["id"])
@@ -656,6 +687,7 @@ async def verify_youtube(page, receipt):
         seen["visibility"] = studio_visibility(shown)
         if schedule:
             dates, times = studio_moments(shown)
+            seen['schedule_timezone'] = youtube_schedule_zone_agrees(shown, schedule)
             if seen["visibility"] != "public" and tuple(schedule["date"]) in dates and tuple(schedule["time"]) in times:
                 seen["visibility"] = "scheduled"
         if receipt.get("playlists"):
@@ -678,6 +710,8 @@ async def verify_youtube(page, receipt):
         differs.append("video_id")
     if schedule and passed is None:
         differs.append("schedule_time")
+    if schedule and seen.get('schedule_timezone') is False:
+        differs.append('schedule_timezone')
     present = bool(seen.get("title")) and not differs
     note = ("Current title, description and public visibility read back after the intended schedule; actual publication time and on-time release were not established." if present and passed else
             "Title, description, visibility or schedule, and playlists read back from the channel's own Studio page; cover pixels and playback are separate." if present else

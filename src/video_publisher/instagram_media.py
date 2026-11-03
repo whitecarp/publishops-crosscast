@@ -22,6 +22,8 @@ def prepare(manifest, output, mobile_cover=None):
     if not web_cover:
         web_cover = str(portrait) if portrait else None
     value = deepcopy(source)
+    from .publication_review import carry_choice
+    carry_choice(manifest, output, value)
     value["platforms"] = {"instagram": deepcopy(source["platforms"]["instagram"])}
     value["video"] = str(video)
     # The mobile image is a handoff asset, not evidence of a saved website setting.

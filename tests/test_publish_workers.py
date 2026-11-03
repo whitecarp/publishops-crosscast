@@ -52,7 +52,7 @@ class PublishWorkersTests(unittest.TestCase):
                                   "content_language": "und", **changes} for p in platforms}}
 
     def run_plan(self, plan, workers=2):
-        return cli.publish_plan(plan, plan["confirmation"], workers=workers)
+        return cli.publish_plan(plan, plan["confirmation"], workers=workers, reviewed=True)
 
     def rows(self):
         ledger = core.Ledger()
@@ -117,8 +117,8 @@ class PublishWorkersTests(unittest.TestCase):
                 self.publish.side_effect = publish
                 plan = self.plan(("x", "instagram", "douyin", "youtube"))
                 started = time.perf_counter()
-                # The legacy two-argument call must still be serial.
-                answer = cli.publish_plan(plan, plan["confirmation"]) if workers == 1 else self.run_plan(plan)
+                # Omitting workers must still be serial after explicit review.
+                answer = cli.publish_plan(plan, plan["confirmation"], reviewed=True) if workers == 1 else self.run_plan(plan)
                 timings[workers] = time.perf_counter() - started
                 self.assertTrue(answer["all_submissions_verified"])
                 self.assertEqual(list(answer["results"]), list(plan["platforms"]))
@@ -129,10 +129,10 @@ class PublishWorkersTests(unittest.TestCase):
     def test_cli_choices_dispatch_and_dry_run(self):
         parser = cli.parser()
         self.assertEqual(parser.parse_args(["publish", "fixture"]).workers, 1)
-        args = parser.parse_args(["publish", "fixture", "--confirm", "fixture", "--workers", "2"])
+        args = parser.parse_args(["publish", "fixture", "--confirm", "fixture", "--workers", "2", "--reviewed"])
         with patch.object(cli, "load_plan", return_value=self.plan()), patch.object(cli, "publish_plan", return_value={}) as publish:
             cli.run_command(args)
-            publish.assert_called_once_with(self.plan(), "fixture", workers=2)
+            publish.assert_called_once_with(self.plan(), "fixture", workers=2, reviewed=True)
             args.dry_run = True
             self.assertEqual(cli.run_command(args)["platform_writes"], 0)
             self.assertEqual(publish.call_count, 1)
@@ -637,7 +637,7 @@ class PublishWorkersTests(unittest.TestCase):
         self.publish.side_effect = KeyboardInterrupt()
         plan = self.plan()
         with self.assertRaises(KeyboardInterrupt):
-            cli.publish_plan(plan, plan["confirmation"])
+            cli.publish_plan(plan, plan["confirmation"], reviewed=True)
         self.assertFalse((core.home() / "STOP.json").exists())
         self.assertEqual(list(self.rows()), ["x"])
         self.assertEqual(self.rows()["x"]["state"], "IN_PROGRESS")

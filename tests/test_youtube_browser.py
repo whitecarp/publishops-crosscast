@@ -563,36 +563,33 @@ class ScheduleTests(FormCase):
     WHEN = "2030-01-01T00:00:00+00:00"
 
     def test_the_time_is_typed_in_studios_own_zone_and_style(self):
-        page = FakeStudio(scheduler_text="Time zone GMT+08:00 China Standard Time", visibility_text="已安排\n2030年1月1日 08:00")
+        page = FakeStudio(scheduler_text="Time zone GMT+08:00 Asia/Shanghai", visibility_text="已安排\n2030年1月1日 08:00")
         _, result = self.run_form(page, self.plan(schedule=self.WHEN))
         self.assertIn(("fill", "ytcp-date-picker tp-yt-paper-input input", "2030年1月1日"), page.log)
         self.assertIn(("type", "#time-of-day-container input", "08:00"), page.log)
-        self.assertEqual({"at": self.WHEN, "local": "2030-01-01T08:00:00+08:00", "date": [2030, 1, 1], "time": [8, 0], "timezone_basis": "studio",
+        self.assertEqual({"at": self.WHEN, "local": "2030-01-01T08:00:00+08:00", "date": [2030, 1, 1], "time": [8, 0], "timezone_basis": "studio", "timezone": "Asia/Shanghai",
                           "time_entry": {"typed": "08:00", "after_leaving": "08:00"}}, result["schedule"])
         self.assertIsNone(page.chosen_visibility())
         self.assertEqual(1, len(page.clicks("#done-button")))
         self.assertEqual("SUBMISSION_VERIFIED", result["state"])
 
     def test_an_english_studio_gets_its_own_date_and_twelve_hour_time(self):
-        page = FakeStudio(date_text="Oct 31, 2026", time_text="6:00 PM", scheduler_text="GMT-05:00", visibility_text="Scheduled\nDec 31, 2029, 7:00 PM")
+        page = FakeStudio(date_text="Oct 31, 2026", time_text="6:00 PM", scheduler_text="GMT-05:00 Etc/GMT+5", visibility_text="Scheduled\nDec 31, 2029, 7:00 PM")
         _, result = self.run_form(page, self.plan(schedule=self.WHEN))
         self.assertEqual(("Dec 31, 2029", "7:00 PM"), (page.date_text, page.time_text))
         self.assertEqual("SUBMISSION_VERIFIED", result["state"])
 
-    def test_without_a_zone_on_screen_this_computers_zone_is_used(self):
-        local = __import__("datetime").datetime.fromisoformat(self.WHEN).astimezone()
-        page = FakeStudio()
-        _, result = self.run_form(page, self.plan(schedule=self.WHEN, submission_mode="draft_only"))
-        self.assertEqual(("computer", [local.hour, local.minute]), (result["schedule"]["timezone_basis"], result["schedule"]["time"]))
+    def test_without_a_named_zone_the_computers_zone_is_not_assumed(self):
+        self.fails_before_saving(FakeStudio(), self.plan(schedule=self.WHEN), "schedule_unverified")
 
     def test_an_older_studio_layout_still_opens_the_schedule(self):
-        page = FakeStudio(missing={"#second-container-expand-button"})
+        page = FakeStudio(missing={"#second-container-expand-button"}, scheduler_text="UTC")
         self.run_form(page, self.plan(schedule=self.WHEN, submission_mode="draft_only"))
         self.assertEqual(1, len(page.clicks("#schedule-radio-button")))
 
     def test_a_time_that_will_not_hold_says_what_the_box_showed_and_how_to_get_past_it(self):
         with self.assertRaises(VpubError) as caught:
-            self.run_form(FakeStudio(refuse_schedule=True), self.plan(schedule=self.WHEN))
+            self.run_form(FakeStudio(refuse_schedule=True, scheduler_text="UTC"), self.plan(schedule=self.WHEN))
         self.assertIn("held 18:00 before", caught.exception.message)
         self.assertIn("after_leaving", caught.exception.message)
         self.assertIn("quarter hour", caught.exception.hint)
@@ -604,7 +601,7 @@ class ScheduleTests(FormCase):
             with self.subTest(options=options):
                 plan = self.plan(schedule=self.WHEN)
                 plan["confirmation"] = code * 64
-                self.fails_before_saving(FakeStudio(**options), plan, "schedule_unverified")
+                self.fails_before_saving(FakeStudio(**({"scheduler_text": "UTC"} | options)), plan, "schedule_unverified")
 
 
 class ResumeTests(Temporary):

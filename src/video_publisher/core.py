@@ -337,7 +337,7 @@ def load_plan(path, selected=None):
         raise VpubError("invalid_manifest", "A manifest must be a JSON object.")
     if m.get("schema_version") != 1:
         raise VpubError("invalid_manifest", "schema_version must be 1.")
-    allowed = {"schema_version", "video", "cover", "covers", "title", "description", "tags", "platforms", "content_language"}
+    allowed = {"schema_version", "video", "cover", "covers", "title", "description", "tags", "platforms", "content_language", "review_before_publish"}
     if set(m) - allowed:
         raise VpubError("invalid_manifest", "Unknown top-level fields: " + ", ".join(sorted(set(m) - allowed)))
     vp = manifest_file(path, m.get("video"), "invalid_video", "Select a complete, nonempty video file.")
@@ -544,6 +544,9 @@ def load_plan(path, selected=None):
                "cover_sha256": file_sha(cover) if cover else None, "platforms": plans}
     if covers:
         payload["covers"] = covers
+    from .publication_review import manifest_choice
+    if manifest_choice(path, m):
+        payload['review_before_publish'] = True
     return {**payload, "confirmation": digest(payload)}
 
 
