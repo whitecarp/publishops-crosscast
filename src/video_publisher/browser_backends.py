@@ -862,6 +862,14 @@ async def verify(page, platform, identity, receipt):
             receipt = {**receipt, 'id':matches[0]['id'], 'url':matches[0]['url']}
             if platform == 'x':
                 receipt['discovery_source'] = matches[0]['discovery_source']
+    if platform == "youtube" and not receipt.get("id") and receipt.get("draft_id"):
+        # A final Save that outlasted its wait left only the upload's own ID, which is the video's ID,
+        # and the video may have been saved since. Only a full read-back gives the receipt that ID.
+        checked = await verify_youtube(page, {**receipt, "id": receipt["draft_id"]})
+        if checked["state"] == "SUBMISSION_VERIFIED":
+            return checked
+        return {**{key: value for key, value in checked.items() if key not in ("id", "url")},
+                **{key: receipt[key] for key in ("id", "url") if key in receipt}}
     if not receipt.get("id"):
         if platform == 'douyin' and await douyin_scheduled_card(page, receipt):
             return {**receipt, **DOUYIN_SCHEDULED, 'verified_at': now()}

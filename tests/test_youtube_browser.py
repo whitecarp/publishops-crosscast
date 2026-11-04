@@ -792,6 +792,20 @@ class ReadBackTests(Temporary):
         self.assertEqual("SUBMISSION_VERIFIED", result["state"])
         self.assertEqual([], result["readback_differs"])
 
+    def test_a_save_that_outlasted_its_wait_is_verified_from_the_draft_id(self):
+        # A field run's final Save timed out, leaving only draft_id, though Studio later showed the video saved.
+        receipt = {key: value for key, value in self.receipt.items() if key != "id"} | {"draft_id": VIDEO}
+        result = self.verify(self.studio(), receipt)
+        self.assertEqual(("SUBMISSION_VERIFIED", VIDEO), (result["state"], result["id"]))
+
+    def test_a_draft_id_that_does_not_read_back_keeps_no_work_id(self):
+        receipt = {key: value for key, value in self.receipt.items() if key != "id"} | {"draft_id": VIDEO}
+        page = FakeStudio(text={"#title-textarea #textbox": "clip.mp4", "#description-textarea #textbox": ""}, visibility_text="Private")
+        result = self.verify(page, receipt)
+        self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
+        self.assertNotIn("id", result)
+        self.assertEqual(VIDEO, result["draft_id"])
+
     def test_a_visibility_that_fills_in_after_the_title_is_waited_for(self):
         page = self.studio()
         page.visibility_blank_reads = 2
