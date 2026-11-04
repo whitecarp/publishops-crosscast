@@ -30,6 +30,9 @@ class TwoCommandTests(unittest.TestCase):
         tool = patch("video_publisher.rehearsal.shutil.which", return_value="ffmpeg.exe")
         tool.start()
         self.addCleanup(tool.stop)
+        runs = patch("video_publisher.rehearsal.ffmpeg_problem", return_value=None)
+        runs.start()
+        self.addCleanup(runs.stop)
         # These workflows belong to a returning customer; first-run review has
         # separate coverage. This prior publication is unrelated to final.mp4.
         ledger = Ledger()

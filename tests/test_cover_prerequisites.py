@@ -51,7 +51,7 @@ class CoverPrerequisiteTests(unittest.TestCase):
     def test_prepare_supplied_cover_and_detected_tool_each_work(self):
         with patch.object(rehearsal.shutil, "which", return_value=None):
             self.assertEqual("NEEDS_COPY", self.prepare("--cover", self.cover)["state"])
-        with patch.object(rehearsal.shutil, "which", return_value="ffmpeg.exe"):
+        with patch.object(rehearsal.shutil, "which", return_value="ffmpeg.exe"), patch.object(rehearsal, "ffmpeg_problem", return_value=None):
             result = self.run_cli("prepare", self.video, "--folder", self.root / "with-tool", "--platforms", "bilibili", "--language", "en", "--visibility", "public", "--ai-generated", "no")
         self.assertEqual("NEEDS_COPY", result["state"])
 
@@ -73,8 +73,20 @@ class CoverPrerequisiteTests(unittest.TestCase):
                     self.assertEqual([], rehearsal.local_prerequisites({**plan, **change}))
             plan["platforms"]["bilibili"]["submission_mode"] = "draft_only"
             self.assertEqual("cover_tool_missing", rehearsal.local_prerequisites(plan)[0]["code"])
-        with patch.object(rehearsal.shutil, "which", return_value="ffmpeg.exe"):
+        with patch.object(rehearsal.shutil, "which", return_value="ffmpeg.exe"), patch.object(rehearsal, "ffmpeg_problem", return_value=None):
             self.assertEqual([], rehearsal.local_prerequisites(plan))
+
+    def test_ffmpeg_that_cannot_run_is_a_local_blocker(self):
+        # A field run's copied ffmpeg.exe lacked its DLLs: found on PATH, then exited at once with an empty stderr.
+        plan = load_plan(self.manifest)
+        silent = rehearsal.subprocess.CompletedProcess(["ffmpeg.exe", "-version"], 3221225781, b"", b"")
+        for outcome in ({"return_value": silent}, {"side_effect": OSError("cannot start")}):
+            with self.subTest(outcome=outcome), patch.object(rehearsal.shutil, "which", return_value="ffmpeg.exe"), \
+                    patch.object(rehearsal.subprocess, "run", **outcome):
+                blockers = rehearsal.local_prerequisites(plan)
+                self.assertEqual(["cover_tool_broken"], [x["code"] for x in blockers])
+        with patch.object(rehearsal.subprocess, "run", return_value=silent):
+            self.assertEqual("exit code 3221225781, nothing on stderr", rehearsal.ffmpeg_problem("ffmpeg.exe"))
 
     def test_real_publish_refuses_before_preflight_claim_or_backend(self):
         plan = load_plan(self.manifest)

@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 
 from .core import VpubError, home, stop_check
@@ -96,20 +97,42 @@ def sign_in(platform, options):
             "note": "Sign in when missing. Otherwise a separate auth status is optional: publishing already checks the live account."}
 
 
+def ffmpeg_problem(path):
+    """Why the ffmpeg found on PATH can't run, or None. A copied ffmpeg.exe without the
+    files it needs beside it is found, then exits at once with nothing on stderr."""
+    try:
+        done = subprocess.run([path, "-version"], capture_output=True, timeout=20)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"{type(exc).__name__}: {exc}"
+    if done.returncode == 0:
+        return None
+    lines = (done.stderr or done.stdout or b"").decode("utf-8", "replace").strip().splitlines()
+    return f"exit code {done.returncode}, " + (lines[0][:200] if lines else "nothing on stderr")
+
+
 def local_prerequisites(plan):
     """Only requirements proved locally; never load a platform client or a credential.
 
     Bilibili's CLI (including its draft helper) needs either a supplied cover or
     ffmpeg on PATH. Other browser routes can use the site's generated thumbnail.
-    Finding ffmpeg does not prove that it can decode this particular video.
+    Finding ffmpeg does not prove that it can decode this particular video, but
+    one that cannot even print its version is caught here.
     """
     options = plan.get("platforms", {}).get("bilibili")
     if not options or options.get("method", "cli") != "cli":
         return []
     landscape = plan.get("covers", {}).get("bilibili", {}).get("landscape")
     cover = landscape.get("path") if isinstance(landscape, dict) else landscape
-    if cover or plan.get("cover") or shutil.which("ffmpeg"):
+    if cover or plan.get("cover"):
         return []
+    found = shutil.which("ffmpeg")
+    if found:
+        problem = ffmpeg_problem(found)
+        if problem is None:
+            return []
+        return [{"platform": "bilibili", "code": "cover_tool_broken",
+                 "message": f"ffmpeg was found but doesn't run ({problem}), so Bilibili can't extract a cover.",
+                 "hint": "A copied ffmpeg.exe often lacks the files it needs beside it. Install a complete ffmpeg build, or pass --cover IMAGE to vpub prepare. Nothing was uploaded."}]
     return [{"platform": "bilibili", "code": "cover_tool_missing",
              "message": "Bilibili needs a cover image or ffmpeg to extract one; neither is available.",
              "hint": "Pass --cover IMAGE to vpub prepare (or set cover in the plan), or install ffmpeg and put it on PATH. Nothing was uploaded."}]
