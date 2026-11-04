@@ -73,7 +73,9 @@ def run(key, *, dry_run=False, confirm=None, person_approved=False, verify_only=
             ledger.close()
         if target['platform'] == 'bilibili':
             raise VpubError('unsupported_delete', 'Bilibili post deletion is not implemented: its free route has no verified deletion contract. No account was contacted.',
-                            'Delete this exact video in Bilibili Creator Center if needed. Do not substitute a comment or collection delete command.')
+                            f"The person deletes this exact video ({target.get('id')}) by hand in Creator Center's 稿件管理, "
+                            'https://member.bilibili.com/platform/upload-manager/article , from its own menu. Never call Bilibili\'s delete API directly '
+                            '(it answers with a security check), and do not substitute a comment or collection delete command.')
         if prior is not None:
             old = dict(prior['target'])
             old.pop('attempt', None)
