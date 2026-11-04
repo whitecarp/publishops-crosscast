@@ -1,8 +1,10 @@
 """One durable destructive attempt per exact publication generation."""
+from contextlib import contextmanager
 from pathlib import Path
 import json
 import os
 import re
+import stat
 
 from .core import VpubError, atomic_json, home, now, read_json, receipt_turn, stop_check
 
@@ -11,13 +13,66 @@ IDENTIFIERS = {'bilibili': r'BV[A-Za-z0-9]{10}', 'youtube': r'[A-Za-z0-9_-]{11}'
                'instagram': r'[A-Za-z0-9_-]{5,32}', 'douyin': r'[0-9]{10,25}', 'x': r'[0-9]{10,25}'}
 
 
-def receipt_path(key):
+def _plain(path, *, directory=False):
+    """lstat also sees dangling links; Windows junctions are reparse points."""
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return None
+    if (stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400
+            or not (stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode))):
+        raise VpubError('invalid_deletion_receipt', 'The deletion receipt path was redirected; nothing was changed.')
+    return info.st_dev, info.st_ino
+
+
+def _location(key):
     if not isinstance(key, str) or not re.fullmatch(r'[a-f0-9]{64}', key):
         raise VpubError('invalid_receipt_key', 'Use a publication receipt key, never a platform ID or URL.')
-    path = home() / 'work-deletions' / (key + '.json')
-    if path.resolve() != path:
-        raise VpubError('invalid_deletion_receipt', 'The deletion receipt path was redirected; nothing was changed.')
-    return path
+    try:
+        root = home()
+        info = root.stat()
+        root_id = info.st_dev, info.st_ino
+        directory = root / 'work-deletions'
+        if _plain(directory, directory=True) is None:
+            directory.mkdir(mode=0o700, exist_ok=True)
+        directory_id = _plain(directory, directory=True)
+        # MSIX can reveal the physical spelling only after this child exists.
+        # Accept that spelling only for the same direct parent, never a link.
+        canonical = directory.resolve(strict=True)
+        if (canonical.name != directory.name or not canonical.parent.samefile(root)
+                or directory_id is None or _plain(canonical, directory=True) != directory_id):
+            raise OSError('Deletion directory binding changed')
+        info = root.stat()
+        if (info.st_dev, info.st_ino) != root_id:
+            raise OSError('Deletion home changed')
+        path = canonical / (key + '.json')
+        for leaf in (path, Path(str(path) + '.turn'), Path(str(path) + '.turn.guard')):
+            _plain(leaf)
+            if leaf.resolve() != leaf:
+                raise OSError('Deletion receipt or lock redirected')
+        return path, (root_id, directory_id)
+    except (OSError, RuntimeError):
+        raise VpubError('invalid_deletion_receipt', 'The deletion receipt path cannot be safely bound; nothing was changed.') from None
+
+
+def receipt_path(key):
+    return _location(key)[0]
+
+
+def _bound(path, *, key=None, expected=None):
+    path = Path(path)
+    canonical, binding = _location(path.stem if key is None else key)
+    if path.absolute() != canonical or (expected is not None and binding != expected):
+        raise VpubError('invalid_deletion_receipt', 'Deletion requires its own unchanged durable receipt.')
+    return binding
+
+
+@contextmanager
+def _receipt_lock(path):
+    before = _bound(path)
+    with receipt_turn(path):
+        _bound(path, expected=before)
+        yield before
 
 
 def same_target(saved, target):
@@ -27,8 +82,7 @@ def same_target(saved, target):
 def read_receipt(path, *, missing_ok=False):
     """Only an absent file is a fresh attempt; malformed existing records stay untouched."""
     path = Path(path)
-    if path.absolute() != receipt_path(path.stem):
-        raise VpubError('invalid_deletion_receipt', 'Deletion requires its own durable receipt.')
+    _bound(path)
     try:
         saved = read_json(path)
     except FileNotFoundError:
@@ -68,10 +122,11 @@ def cancel(path, target):
                     os.fsync(output.fileno())
             except FileExistsError:
                 pass
-            with receipt_turn(path):
+            with _receipt_lock(path) as binding:
                 saved = read_receipt(path, missing_ok=True)
                 if saved is not None and same_target(saved['target'], target) and saved['state'] != 'DELETED_VERIFIED':
                     saved.update(state='DELETE_PENDING', cancelled_at=now())
+                    _bound(path, expected=binding)
                     atomic_json(path, saved)
             return
         except (KeyboardInterrupt, SystemExit):
@@ -87,9 +142,8 @@ def refuse_other_action(key):
 
 def begin_press(path, target):
     """Called by the owning worker immediately before its first destructive control/request."""
-    if Path(path).resolve() != receipt_path(target['key']).resolve():
-        raise VpubError('invalid_deletion_receipt', 'Deletion requires its own durable receipt.')
-    with receipt_turn(path):
+    _bound(path, key=target['key'])
+    with _receipt_lock(path) as binding:
         saved = read_receipt(path)
         if (saved.get('state') != 'DELETE_READY' or saved.get('delete_attempted')
                 or not target.get('attempt') or not same_target(saved.get('target'), target)):
@@ -97,6 +151,7 @@ def begin_press(path, target):
                             f"vpub delete {target['key']} --verify-only")
         stop_check(target['platform'])
         saved.update(state='DELETE_PENDING', delete_attempted=True, attempted_at=now())
+        _bound(path, expected=binding)
         atomic_json(path, saved)
     return saved
 
@@ -110,7 +165,7 @@ def verified(evidence, target):
 
 
 def save_result(path, target, evidence=None, error=None):
-    with receipt_turn(path):
+    with _receipt_lock(path) as binding:
         saved = read_receipt(path)
         if not same_target(saved.get('target'), target):
             raise VpubError('deletion_changed', 'Another deletion check replaced this attempt; its record was preserved.')
@@ -122,5 +177,6 @@ def save_result(path, target, evidence=None, error=None):
             saved['evidence'] = evidence
         if error is not None:
             saved['error'] = error
+        _bound(path, expected=binding)
         atomic_json(path, saved)
         return saved

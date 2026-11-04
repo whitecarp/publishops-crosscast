@@ -1,4 +1,5 @@
 """One-shot free Studio deletion. DOM contracts are built, not live-certified."""
+import json
 import re
 from urllib.parse import parse_qs, urlsplit
 
@@ -14,9 +15,10 @@ MENU = 'ytcp-menu-service-item-renderer,tp-yt-paper-item,[role=menuitem]'
 SAME = '(node, retained) => node === retained && node.isConnected'
 CONTAINS = '(node, child) => node.isConnected && child.isConnected && node.contains(child)'
 GONE = re.compile(r'^(?:This video has been removed by the uploader|This video has been deleted'
-                  r'|此视频已被上传者删除|此影片已由上傳者移除)[.!。]?$')
+                  r'|此视频已被上传者(?:删除|移除)|此影片已由上傳者移除)[.!。]?$')
 # Only the player's own error, never descriptions, comments or generic unavailable text.
-GONE_PANEL = 'ytd-player-error-message-renderer #reason'
+GONE_PANEL = ('ytd-player-error-message-renderer #reason,'
+              'ytd-watch-flexy #single-column-container ytd-background-promo-renderer .promo-body-text')
 EMPTY = re.compile(r'^(?:No content available|没有可显示的内容|沒有可顯示的內容)$')
 LIST_CLEAN = """nodes => {
   const shown = e => !!e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden'
@@ -69,10 +71,27 @@ def evidence(target, **fields):
             'platform_writes': 0, 'note': 'Deletion is unconfirmed; only a fresh complete read can confirm it.', **fields}
 
 
+def unfiltered_query(query):
+    """Studio adds this default query after navigation; filters remain forbidden."""
+    if not query:
+        return True
+    try:
+        fields = parse_qs(query, keep_blank_values=True, strict_parsing=True, max_num_fields=2)
+        if set(fields) != {'filter', 'sort'} or any(len(v) != 1 for v in fields.values()):
+            return False
+        sort = json.loads(fields['sort'][0], object_pairs_hook=lambda pairs: pairs)
+        return (json.loads(fields['filter'][0]) == []
+                and isinstance(sort, list) and len(sort) == 2
+                and ('columnType', 'date') in sort and ('sortOrder', 'DESCENDING') in sort)
+    except (TypeError, ValueError):
+        return False
+
+
 async def owner(page, target, tab):
     address = urlsplit(page.url)
     if (address.scheme != 'https' or address.netloc != 'studio.youtube.com'
-            or address.path != f"/channel/{target['identity']}/videos/{tab}" or address.query or address.fragment
+            or address.path != f"/channel/{target['identity']}/videos/{tab}"
+            or not unfiltered_query(address.query) or address.fragment
             or await rt.identity(page, 'youtube') != target['identity']):
         raise VpubError('wrong_account', 'Studio did not retain the exact publishing channel list.')
 
@@ -134,14 +153,25 @@ async def own_list(page, target):
 async def exact_gone(page, target):
     await guard(page)
     await page.goto(target['url'], wait_until='domcontentloaded', timeout=60000)
-    await guard(page)
-    address = urlsplit(page.url)
-    if (address.scheme != 'https' or address.netloc != 'www.youtube.com' or address.path != '/watch'
-            or parse_qs(address.query, keep_blank_values=True) != {'v': [target['id']]} or address.fragment):
-        return False
-    panels = page.locator(GONE_PANEL)
-    visible = [node for node in await panels.all() if await node.is_visible()]
-    return len(visible) == 1 and bool(GONE.fullmatch((await visible[0].inner_text()).strip()))
+
+    def same_address():
+        address = urlsplit(page.url)
+        return (address.scheme == 'https' and address.netloc == 'www.youtube.com' and address.path == '/watch'
+                and parse_qs(address.query, keep_blank_values=True) == {'v': [target['id']]} and not address.fragment)
+
+    for elapsed in range(0, 10001, 500):
+        await guard(page)
+        if not same_address():
+            return False
+        panels = page.locator(GONE_PANEL)
+        visible = [node for node in await panels.all() if await node.is_visible()]
+        if visible:
+            gone = len(visible) == 1 and bool(GONE.fullmatch((await visible[0].inner_text()).strip()))
+            await guard(page)
+            return gone and same_address()
+        if elapsed < 10000:
+            await page.wait_for_timeout(500)
+    return False
 
 
 async def readback(page, target, writes=0):
@@ -206,12 +236,26 @@ async def execute(page, actual, target, operation, receipt_path):
         await options_control.click(timeout=10000)
         control = page.locator(MENU).filter(has_text=DELETE)
         delete_control = await retain(control, 'video delete menu', held)
+        # Studio renders its ordinary menu inside a dialog. Retain only the
+        # wrappers containing this exact Delete node; never accept a separate
+        # confirmation merely because it is also labelled as a dialog.
+        menu_dialogs = page.get_by_role('dialog').or_(page.get_by_role('alertdialog'))
+        handles = await menu_dialogs.element_handles()
+        held.extend(handles)
+        wrappers = [node for node in handles if await node.is_visible()]
+        if not all([await node.evaluate(CONTAINS, delete_control) for node in wrappers]):
+            raise VpubError('layout_changed', 'An unrelated dialog is open beside the video menu.')
 
         async def menu_bound():
             await check_row(page, target, tab, row, original_row)
             await same_node(control, delete_control, 'original video delete menu')
-            if await rt.visible(page.get_by_role('dialog')):
-                raise VpubError('layout_changed', 'An unbound confirmation appeared before Delete.')
+            current = [node for node in await menu_dialogs.all() if await node.is_visible()]
+            if len(current) != len(wrappers):
+                raise VpubError('layout_changed', 'The video menu dialog changed before Delete.')
+            for node in current:
+                if (not any([await node.evaluate(SAME, old) for old in wrappers])
+                        or not await node.evaluate(CONTAINS, delete_control)):
+                    raise VpubError('layout_changed', 'An unbound confirmation appeared before Delete.')
 
         await menu_bound()
         state.begin_press(receipt_path, target)
