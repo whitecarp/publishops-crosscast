@@ -277,7 +277,12 @@ async def execute(page, actual, target, operation, receipt_path):
                 final = shown[0]
                 wrappers = await dialogs.element_handles()
                 held.extend(wrappers)
-                confirmation = [node for node in wrappers if await node.is_visible()]
+                # X's accessible alertdialog can have no painted box of its
+                # own while containing the visible confirmation button. Keep
+                # that exact structural ancestor, as well as any visible
+                # competing wrapper; do not mistake its empty box for loading.
+                confirmation = [node for node in wrappers if await node.is_visible()
+                                or await node.evaluate(CONTAINS, final)]
                 if confirmation:
                     if not all([await node.evaluate(CONTAINS, final) for node in confirmation]):
                         raise VpubError('layout_changed', 'An unrelated dialog is open beside the delete confirmation.')
@@ -292,7 +297,8 @@ async def execute(page, actual, target, operation, receipt_path):
         await same_node(final_query, final, 'final post Delete')
         # Revalidate the retained ancestor chain, not a locator that could
         # silently follow a replacement confirmation after the safety checks.
-        current = [node for node in await dialogs.all() if await node.is_visible()]
+        current = [node for node in await dialogs.all() if await node.is_visible()
+                   or await node.evaluate(CONTAINS, final)]
         if len(current) != len(confirmation):
             raise VpubError('wrong_work', 'The deletion confirmation was replaced.')
         for node in current:

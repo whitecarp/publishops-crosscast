@@ -116,7 +116,10 @@ class XLoadingTests(fixtures.OfflineCase):
                         page.tree.children = [] if missing else [page.navigation()]
                 self.page.on_wait = change
                 await self.rejected('wrong_account')
-                self.assertEqual(2500, self.page.elapsed)
+                # A sidebar still loading may be absent until the bounded wait;
+                # a positively different account must stop immediately.
+                self.assertEqual(route.EXACT_WAIT_MILLISECONDS if missing else 2500, self.page.elapsed)
+                self.untouched()
 
     async def test_address_drift_during_wait_rejects(self):
         exact = f'https://x.com/{fixtures.OWNER}/status/{fixtures.WORK}'

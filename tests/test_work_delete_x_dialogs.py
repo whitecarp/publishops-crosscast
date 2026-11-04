@@ -180,6 +180,42 @@ class XDialogRegressions(fixtures.OfflineCase):
         self.assertTrue(state.verified(result, self.target))
         self.pending(final_presses=1)
 
+    def zero_box_wrappers(self):
+        original = fixtures.Locator.is_visible
+
+        async def visible(locator):
+            if len(locator.nodes) == 1 and getattr(locator.nodes[0], 'zero_box', False):
+                return False
+            return await original(locator)
+
+        self.page.on_render = lambda page: [setattr(node, 'zero_box', True) for node in page.wrappers]
+        return patch.object(fixtures.Locator, 'is_visible', new=visible)
+
+    async def test_zero_box_ancestors_of_visible_final_are_bound_and_pressed_once(self):
+        for roles in (('alertdialog',), ('dialog', 'alertdialog')):
+            with self.subTest(roles=roles):
+                self.reset_dialog(0, roles)
+                with self.zero_box_wrappers():
+                    result = await self.execute()
+                self.assertTrue(state.verified(result, self.target))
+                self.pending(final_presses=1)
+
+    async def test_zero_box_wrapper_replacement_still_blocks_final(self):
+        with self.zero_box_wrappers():
+            armed, fired = self.after_capture(lambda page: page.replace(page.wrappers[0], [copy(page.wrappers[0])]))
+            with armed:
+                await self.rejected()
+            self.assertEqual([500], fired)
+
+    async def test_zero_box_ancestor_does_not_allow_unrelated_visible_dialog(self):
+        with self.zero_box_wrappers():
+            prior = self.page.on_render
+            def render(page):
+                prior(page)
+                page.tree.children.append(fixtures.Node(role='dialog'))
+            self.page.on_render = render
+            await self.rejected('layout_changed')
+
     async def test_unwrapped_final_never_becomes_ready_or_clicks(self):
         self.reset_dialog(0, ())
         await self.rejected('layout_changed')
