@@ -966,12 +966,14 @@ async def yt_set_time(page, clock, wanted):
     return steps
 
 
-def yt_schedule_zone(text, when):
-    """Only an explicit zone identifies target-date rules; a GMT offset or abbreviation does not.
+# A channel left on Studio's default shows "Time zone / Default set to local time zone (GMT+0800)",
+# in a collapsed part that inner_text() leaves out. Local there means the browser's own zone.
+YT_LOCAL_ZONE = re.compile(r'(?:local time ?zone|本地时区|当地时区|本地時區|當地時區)[^()]*\(\s*(GMT\s*[+\-−]\s*\d{1,2}(?::?\d{2})?)\s*\)', re.I)
+BROWSER_ZONE = '() => Intl.DateTimeFormat().resolvedOptions().timeZone'
 
-    Named-zone lines are a conservative supported display contract, not a claim
-    that every live Studio layout exposes one. Unknown layouts stay as drafts.
-    """
+
+def studio_zone_names(text):
+    """The named zones Studio's scheduler text shows, and whether another zone expression makes it unreadable."""
     names, unreadable = set(), False
     named_zone = r'UTC|[A-Za-z][A-Za-z0-9_+\-]*(?:/[A-Za-z0-9_+\-]+)+'
     for line in text.splitlines():
@@ -981,6 +983,20 @@ def yt_schedule_zone(text, when):
             names.add(line)
         elif line and (labelled or re.search(named_zone, line)):
             unreadable = True  # Do not drop a second, ambiguous zone expression.
+    return names, unreadable
+
+
+def yt_schedule_zone(text, when, local_zone=None):
+    """Only an explicit zone identifies target-date rules; a GMT offset or abbreviation does not.
+
+    Named-zone lines are a conservative supported display contract, not a claim
+    that every live Studio layout exposes one. Unknown layouts stay as drafts.
+    local_zone is the browser's own zone, given only when Studio names no zone but says it
+    uses the local one; the offset Studio shows must still agree with that zone's rules.
+    """
+    names, unreadable = studio_zone_names(text)
+    if local_zone and not names and not unreadable:
+        names = {local_zone}
     if unreadable or len(names) != 1:
         raise VpubError('schedule_unverified', 'YouTube Studio did not identify one explicit time zone. A GMT offset alone cannot establish the target-date time. The upload is kept as a draft; nothing was published.',
                         'Inspect this retained draft and schedule it manually in Studio. Do not upload it again.')
@@ -1003,7 +1019,16 @@ def yt_schedule_zone(text, when):
 
 async def yt_schedule_local(page, when):
     scheduler = await unique_visible(page.locator(f'{YT_DIALOG} ytcp-visibility-scheduler'), 'YouTube schedule time zone')
-    return yt_schedule_zone(await scheduler.inner_text(), when)
+    shown = await scheduler.inner_text()
+    names, unreadable = studio_zone_names(shown)
+    if names or unreadable:
+        return yt_schedule_zone(shown, when)
+    hidden = await scheduler.evaluate('e => e.textContent')
+    default = set(YT_LOCAL_ZONE.findall(hidden if isinstance(hidden, str) else ''))
+    if len(default) != 1:
+        return yt_schedule_zone(shown, when)
+    zone = await page.evaluate(BROWSER_ZONE)
+    return yt_schedule_zone(f'{shown}\n({next(iter(default))})', when, zone if isinstance(zone, str) else None)
 
 
 async def yt_schedule(page, when):

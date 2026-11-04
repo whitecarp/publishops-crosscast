@@ -1,10 +1,10 @@
 """Named-zone display fixtures are synthetic; no live Studio schema is asserted."""
 from datetime import datetime
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from video_publisher import browser_backends, browser_forms
-from video_publisher.core import read_json
+from video_publisher.core import VpubError, read_json
 import test_youtube_browser as yt
 
 
@@ -222,6 +222,37 @@ class ScheduleZoneTests(yt.FormCase):
             with self.subTest(name=name):
                 moment, selected = browser_forms.yt_schedule_zone(name, datetime.fromisoformat("2030-11-04T15:00:00+00:00"))
                 self.assertEqual((local, name), (moment.isoformat(), selected))
+
+
+class DefaultLocalZoneTests(unittest.TestCase):
+    """A real channel on Studio's default zone showed "Default set to local time zone (GMT+0800)" only in a collapsed part."""
+
+    DEFAULT = "Nov 5, 2030Time zoneDefault set to local time zone (GMT+0800)"
+
+    def local(self, shown, hidden, browser):
+        scheduler = MagicMock(inner_text=AsyncMock(return_value=shown), evaluate=AsyncMock(return_value=hidden))
+        page = MagicMock(evaluate=AsyncMock(return_value=browser))
+        with patch.object(browser_forms, "unique_visible", AsyncMock(return_value=scheduler)):
+            return immediate(browser_forms.yt_schedule_local(page, datetime.fromisoformat("2030-11-04T15:00:00+00:00")))
+
+    def test_default_local_zone_uses_the_browser_zone_rules(self):
+        moment, selected = self.local("Nov 5, 2030\nTime zone", self.DEFAULT, "Asia/Shanghai")
+        self.assertEqual(("2030-11-04T23:00:00+08:00", "Asia/Shanghai"), (moment.isoformat(), selected))
+
+    def test_default_local_zone_refuses_a_browser_zone_that_disagrees_with_the_offset(self):
+        with self.assertRaises(VpubError) as caught:
+            self.local("Time zone", self.DEFAULT, "America/Chicago")
+        self.assertEqual("schedule_unverified", caught.exception.code)
+
+    def test_a_shown_named_zone_still_wins_over_the_default_line(self):
+        moment, selected = self.local("Time zone Asia/Tokyo", self.DEFAULT, "Asia/Shanghai")
+        self.assertEqual(("2030-11-05T00:00:00+09:00", "Asia/Tokyo"), (moment.isoformat(), selected))
+
+    def test_without_one_default_line_or_a_browser_zone_nothing_is_scheduled(self):
+        for hidden, browser in (("Time zone", "Asia/Shanghai"), (self.DEFAULT, None), (self.DEFAULT, ["dialog"]), (True, "Asia/Shanghai"),
+                                (self.DEFAULT + " Default set to local time zone (GMT-0500)", "Asia/Shanghai")):
+            with self.subTest(hidden=hidden, browser=browser), self.assertRaises(VpubError):
+                self.local("Time zone", hidden, browser)
 
 
 if __name__ == "__main__":
