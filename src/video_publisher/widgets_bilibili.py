@@ -3,6 +3,7 @@
 A field read found Bilibili won't list them on an approved video waiting for release, so nothing is sent until a read of the video has answered. Every send reads first, and one that may have gone is never sent again by itself.
 These bili-cli commands have run by hand on real public videos. This route has not run on a real account.
 """
+from datetime import datetime
 from pathlib import Path
 import re
 import time
@@ -18,7 +19,9 @@ QUESTION_MOST, OPTION_MOST, RATING_TITLE_MOST = 12, 6, 12
 SKINS, STYLES = {"star", "heart", "lemon"}, {"follow", "triple", "both"}
 X_RANGE, Y_RANGE = (118, 549), (82, 293)
 FIELDS = {"link": {"target", "text"}, "follow": {"style", "x", "y", "duration"},
-          "vote": {"question", "options", "allow_custom", "custom_label"}, "rating": {"title", "skin"}}
+          "vote": {"question", "options", "allow_custom", "custom_label"}, "rating": {"title", "skin"},
+          "reserve": {"title", "live"}}
+RESERVE_TITLE_LEAST = 4  # bili-cli's own minimum for a reservation's title.
 BV = re.compile(r"BV[0-9A-Za-z]{10}")
 NOT_SENT = {"PENDING", "NOT_APPLIED"}  # The only states a row is sent from without being asked.
 # Nothing more goes after one of these, and the rest wait for a later run.
@@ -46,10 +49,8 @@ def clean(widget, length=None):
     if not isinstance(widget, dict):
         raise bad("Each widget must be an object.")
     kind = widget.get("type")
-    if kind == "reserve":
-        raise bad("A reserve widget isn't available here, because removing one notifies everyone who booked it. Use bili danmaku interact reserve yourself.")
     if kind not in FIELDS:
-        raise bad("A widget's type must be link, follow, vote or rating.")
+        raise bad("A widget's type must be link, follow, vote, rating or reserve.")
     extra = set(widget) - FIELDS[kind] - {"type", "time", "page"}
     if extra:
         raise bad(f"A {kind} widget doesn't take {sorted(extra)}.")
@@ -85,6 +86,16 @@ def clean(widget, length=None):
         if len(question) > QUESTION_MOST or not 2 <= len(every) <= 4 or len(set(every)) != len(every) or any(len(answer) > OPTION_MOST or ";" in answer for answer in every):
             raise bad(f"A vote needs a question of up to {QUESTION_MOST} characters and 2 to 4 different options, counting a custom one, of up to {OPTION_MOST} characters with no semicolon.")
         result.update(question=question, options=answers, allow_custom=custom, custom_label=label)
+    elif kind == "reserve":
+        title, live = one_line(widget.get("title"), "title"), widget.get("live")
+        if len(title) < RESERVE_TITLE_LEAST:
+            raise bad(f"A reserve widget's title needs at least {RESERVE_TITLE_LEAST} characters.")
+        if live is not None:
+            try:
+                datetime.fromisoformat(one_line(live, "live"))
+            except ValueError:
+                raise bad("A reserve widget's live is the stream's start time, such as 2026-11-20T20:00 (Beijing time unless it says otherwise).") from None
+        result.update(title=title, live=live)
     else:
         title, skin = one_line(widget.get("title"), "title"), widget.get("skin", "star")
         if len(title) > RATING_TITLE_MOST or skin not in SKINS:
@@ -118,6 +129,8 @@ def command(work, widget):
             args += ["--option", option]
         if widget["allow_custom"]:
             args += ["--allow-custom", "--custom-label", widget["custom_label"]]
+    elif widget["type"] == "reserve":
+        args += ["--title", widget["title"]] + (["--live", widget["live"]] if widget.get("live") else [])
     else:
         args += ["--title", widget["title"], "--skin", widget["skin"]]
     return args + ["--time", str(widget["time"]), "--page", str(widget["page"])]
@@ -305,10 +318,16 @@ def listing(work, page=1):
     return {"work": checked_work(work), "page": page, "items": read(work, page), "platform_writes": 0}
 
 
-def add(work, file, dry_run=False, again=False):
-    """A file's widgets on a video that's already up. Running it again sends only what isn't there."""
+def add(work, file, dry_run=False, again=False, person_approved=False):
+    """A file's widgets on a video that's already up. Running it again sends only what isn't there.
+
+    A reserve widget also creates a public booking on the account, and taking one down later
+    notifies everyone who booked it, so it goes only after the person has seen the dry run and said yes."""
     checked_work(work)
     widgets = validate(read_json(Path(file)))
+    if not dry_run and not person_approved and any(widget["type"] == "reserve" for widget in widgets):
+        raise VpubError("needs_person", "A reserve widget creates a public booking on the account and can't be taken down without notifying everyone who booked it. Nothing was sent.",
+                        "Show the person this file's dry run, then run it again with --person-approved once they say yes.")
     if dry_run:
         try:
             listed = {page: read(work, page) for page in {widget["page"] for widget in widgets}}

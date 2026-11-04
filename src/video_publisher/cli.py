@@ -530,9 +530,9 @@ def parser():
     q=cl.add_parser('verify');q.add_argument('key');q.add_argument('--out')
     for action in ('add','remove'):
         q=cl.add_parser(action);q.add_argument('platform',choices=['douyin','instagram','x','bilibili']);q.add_argument('collection');q.add_argument('work');q.add_argument('--request-id',required=True);q.add_argument('--out')
-    wg=sub.add_parser('widgets',help="Add Bilibili's link, follow, vote and rating widgets to your own video.").add_subparsers(dest='action',required=True)
+    wg=sub.add_parser('widgets',help="Add Bilibili's link, follow, vote, rating and reserve widgets to your own video.").add_subparsers(dest='action',required=True)
     q=wg.add_parser('list',help="What Bilibili lists on a video.");q.add_argument('work');q.add_argument('--page',type=int,default=1);q.add_argument('--out')
-    q=wg.add_parser('add',help="A file's widgets on a video that's already public. Sends only what isn't there.");q.add_argument('work');q.add_argument('file',help='JSON list of widgets.');q.add_argument('--dry-run',action='store_true');q.add_argument('--again',action='store_true',help="Send again what may have gone, once you've seen it isn't there.");q.add_argument('--out')
+    q=wg.add_parser('add',help="A file's widgets on a video that's already public. Sends only what isn't there.");q.add_argument('work');q.add_argument('file',help='JSON list of widgets.');q.add_argument('--dry-run',action='store_true');q.add_argument('--again',action='store_true',help="Send again what may have gone, once you've seen it isn't there.");q.add_argument('--person-approved',action='store_true',help="The person saw the dry run and said yes. A reserve widget needs it.");q.add_argument('--out')
     q=wg.add_parser('verify',help="Only reads, and compares with what was asked for.");q.add_argument('work');q.add_argument('--out')
     q=wg.add_parser('remove',help="One widget off a video. Never a reserve widget.");q.add_argument('work');q.add_argument('widget');q.add_argument('--page',type=int,default=1);q.add_argument('--dry-run',action='store_true');q.add_argument('--out')
     pl=sub.add_parser('playlist',help="Manage your own YouTube playlists.").add_subparsers(dest='action',required=True)
@@ -848,7 +848,7 @@ def run_command(args):
     if args.command=='widgets':
         from . import widgets_bilibili as widgets
         if args.action=='list':return widgets.listing(args.work,args.page)
-        if args.action=='add':return widgets.add(args.work,args.file,args.dry_run,args.again)
+        if args.action=='add':return widgets.add(args.work,args.file,args.dry_run,args.again,args.person_approved)
         if args.action=='verify':return widgets.verify(args.work)
         return widgets.remove(args.work,args.widget,args.page,args.dry_run)
     if args.command=='playlist':
