@@ -27,11 +27,19 @@ TIMESTAMP = ':scope > div:has(svg[aria-label="Like"]):has(svg[aria-label="Commen
 NAV_AVATARS = 'a[href]:has(img[alt])'
 CONTROL_WAIT_MILLISECONDS = 10000
 CONTROL_POLL_MILLISECONDS = 500
-NAV_IDENTITY = r"""links => {
+NAV_IDENTITY = r"""(links, boundary = null) => {
   const content = 'main,[role="main"],article,[role="dialog"],[role="alertdialog"],[contenteditable="true"]';
+  const mask = boundary?.scope?.closest('[aria-hidden="true"]');
+  const masked = mask && boundary.navigation?.isConnected && boundary.scope.isConnected
+    && !mask.parentElement?.closest('[aria-hidden="true"]')
+    && boundary.navigation.closest('[aria-hidden="true"]') === mask
+    && !boundary.navigation.closest(content)
+    && (!boundary.dialog || !mask.contains(boundary.dialog));
   const shown = e => e.isConnected && !!e.getClientRects().length
-    && getComputedStyle(e).visibility !== 'hidden' && !e.closest('[hidden],[aria-hidden="true"]');
+    && getComputedStyle(e).visibility !== 'hidden' && !e.closest('[hidden]')
+    && (!e.closest('[aria-hidden="true"]') || masked && e.closest('[aria-hidden="true"]') === mask);
   const names = [];
+  let retainedFound = !boundary;
   for (const link of links) {
     if (!shown(link) || link.closest(content)) continue;
     const pictures = [...link.querySelectorAll('img[alt]')].filter(shown);
@@ -56,15 +64,23 @@ NAV_IDENTITY = r"""links => {
         shown(img) && /^[A-Za-z0-9_.]{1,30}'s profile picture$/.test(img.getAttribute('alt'))));
       if (avatars.length !== 1 || avatars[0] !== link) continue;
       names.push(name);
+      if (link === boundary?.navigation) retainedFound = true;
       break;
     }
   }
-  return names;
+  return retainedFound ? names : [];
 }"""
 POST_STRUCTURE = r"""(scope, bound) => {
-  const {author, more, permalink, identity} = bound;
+  const {author, more, permalink, identity, boundary} = bound;
+  const mask = scope.closest('[aria-hidden="true"]');
+  const masked = mask && boundary?.navigation?.isConnected && boundary.scope === scope
+    && !mask.parentElement?.closest('[aria-hidden="true"]')
+    && boundary.navigation.closest('[aria-hidden="true"]') === mask
+    && !boundary.navigation.closest('main,[role="main"],article,[role="dialog"],[role="alertdialog"]')
+    && (!boundary.dialog || !mask.contains(boundary.dialog));
   const shown = e => e && e.isConnected && !!e.getClientRects().length
-    && getComputedStyle(e).visibility !== 'hidden' && !e.closest('[hidden],[aria-hidden="true"]');
+    && getComputedStyle(e).visibility !== 'hidden' && !e.closest('[hidden]')
+    && (!e.closest('[aria-hidden="true"]') || masked && e.closest('[aria-hidden="true"]') === mask);
   const controls = 'textarea,[contenteditable="true"],form,ul,ol,[role="list"]';
   const visible = (root, query) => [...root.querySelectorAll(query)].filter(shown);
   const main = scope.closest('main');
@@ -107,7 +123,7 @@ async def guard(page):
     stop_check('instagram')
 
 
-async def current_identity(page):
+async def current_identity(page, boundary=None):
     current = await runtime.identity(page, 'instagram')
     # A readable different account must never be overridden by the fallback.
     if current is not None:
@@ -115,8 +131,15 @@ async def current_identity(page):
     candidates = page.locator(NAV_AVATARS)
     if not await candidates.count():
         return None
-    names = await candidates.evaluate_all(NAV_IDENTITY)
+    names = (await candidates.evaluate_all(NAV_IDENTITY, boundary) if boundary is not None
+             else await candidates.evaluate_all(NAV_IDENTITY))
     return names[0] if len(names) == 1 else None
+
+
+def navigation_selector(actual):
+    return (f'a[href="/{actual}/"]:has(img[alt])'
+            ':not(main a):not([role="main"] a):not(article a)'
+            ':not([role="dialog"] a):not([role="alertdialog"] a)')
 
 
 def exact_address(page, actual, target):
@@ -126,9 +149,9 @@ def exact_address(page, actual, target):
         raise VpubError('wrong_work', 'Instagram did not retain this exact post address.')
 
 
-async def exact_account(page, actual, target):
+async def exact_account(page, actual, target, boundary=None):
     exact_address(page, actual, target)
-    if actual != target['identity'] or await current_identity(page) != actual:
+    if actual != target['identity'] or await current_identity(page, boundary) != actual:
         raise VpubError('wrong_account', 'The current Instagram account changed or cannot be read.')
     exact_address(page, actual, target)
 
@@ -184,8 +207,10 @@ async def overlays_bound(page, dialog=None):
                 raise VpubError('layout_changed', 'An unbound menu or dialog is already open.')
 
 
-async def target_bound(page, actual, target, queries, retained, *, headerless=False):
-    await exact_account(page, actual, target)
+async def target_bound(page, actual, target, queries, retained, *, headerless=False, boundary=None):
+    await exact_account(page, actual, target, boundary)
+    if boundary is not None:
+        await same_node(page.locator(navigation_selector(actual)), boundary['navigation'], 'original navigation profile')
     scope, author, more, permalink = retained
     for query, handle, label in zip(queries, retained, ('exact post container', 'own post author', 'exact post options', 'exact post permalink')):
         await same_node(query, handle, label)
@@ -196,10 +221,10 @@ async def target_bound(page, actual, target, queries, retained, *, headerless=Fa
             or not exact_permalink(await permalink.get_attribute('href'), actual, target)):
         raise VpubError('wrong_work', 'The retained permalink no longer identifies this exact post.')
     if headerless and not await scope.evaluate(POST_STRUCTURE, {'author': author, 'more': more,
-                                                              'permalink': permalink, 'identity': actual}):
+                                                              'permalink': permalink, 'identity': actual, 'boundary': boundary}):
         raise VpubError('owner_unverified', 'The observed author, options and timestamp no longer share one post layout.')
     await scope_permalink(scope, actual, target)
-    await exact_account(page, actual, target)
+    await exact_account(page, actual, target, boundary)
 
 
 async def visible_labels(locator):
@@ -312,7 +337,7 @@ async def execute(page, actual, target, operation, receipt_path):
         await same_node(locator, handle, label)
         return handle
 
-    async def wait_controls(dialog_query, control_queries, label):
+    async def wait_controls(dialog_query, control_queries, label, *, confirmation=False):
         async def candidate(query):
             handles = await query.element_handles()
             held.extend(handles)
@@ -340,7 +365,10 @@ async def execute(page, actual, target, operation, receipt_path):
                 # to a replacement. The caller revalidates these exact handles.
                 return (observed_dialog if observed_dialog is not None else dialog, *controls)
             await guard(page)
-            await target_bound(page, actual, target, queries, retained, headerless=selection.headerless)
+            boundary = ({'navigation': navigation, 'scope': retained[0], 'dialog': observed_dialog}
+                        if confirmation and navigation is not None else None)
+            await target_bound(page, actual, target, queries, retained,
+                               headerless=selection.headerless, boundary=boundary)
             if elapsed == CONTROL_WAIT_MILLISECONDS:
                 raise VpubError('layout_changed', f'The {label} did not become ready; no click was retried.')
             await page.wait_for_timeout(CONTROL_POLL_MILLISECONDS)
@@ -348,6 +376,11 @@ async def execute(page, actual, target, operation, receipt_path):
     try:
         retained = [await retain(query, label) for query, label in zip(
             queries, ('exact post container', 'own post author', 'exact post options', 'exact post permalink'))]
+        # Pin the visible sidebar before opening anything. Only the later,
+        # already-started confirmation transition may mask this same sidebar
+        # and retained post under one common aria-hidden background root.
+        navigation = (await retain(page.locator(navigation_selector(actual)), 'original navigation profile')
+                      if selection.headerless else None)
         await guard(page)
         await target_bound(page, actual, target, queries, retained, headerless=selection.headerless)
         await overlays_bound(page)
@@ -383,9 +416,11 @@ async def execute(page, actual, target, operation, receipt_path):
         await delete.click(timeout=10000)
         confirmations = page.get_by_role('dialog').filter(has_text=CONFIRM)
         final_query = confirmations.get_by_role('button', name=DELETE)
-        dialog, final = await wait_controls(confirmations, (final_query,), 'post deletion confirmation')
+        dialog, final = await wait_controls(confirmations, (final_query,), 'post deletion confirmation', confirmation=True)
         await guard(page)
-        await target_bound(page, actual, target, queries, retained, headerless=selection.headerless)
+        boundary = ({'navigation': navigation, 'scope': retained[0], 'dialog': dialog}
+                    if navigation is not None else None)
+        await target_bound(page, actual, target, queries, retained, headerless=selection.headerless, boundary=boundary)
         await same_node(confirmations, dialog, 'post deletion confirmation')
         await same_node(final_query, final, 'final post Delete')
         await overlays_bound(page, dialog)

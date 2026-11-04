@@ -25,10 +25,11 @@ class Element {
   constructor(spec, parent = null) {
     this.id = spec.id; this.tagName = (spec.tag || 'div').toUpperCase();
     this.attrs = spec.attrs || {}; this.parentElement = parent;
-    this.text = spec.text || ''; this.isConnected = spec.connected !== false;
+    this.text = spec.text || ''; this.connected = spec.connected !== false;
     this.children = (spec.children || []).map(child => new Element(child, this));
   }
   get innerText() { return [this.text, ...this.children.map(child => child.innerText)].join(''); }
+  get isConnected() { return this.connected && (!this.parentElement || this.parentElement.isConnected); }
   getAttribute(name) { return Object.hasOwn(this.attrs, name) ? this.attrs[name] : null; }
   matches(selector) {
     const match = /^([a-z]+)?(?:\[([\w-]+)(?:="([^"]*)")?\])?$/i.exec(selector);
@@ -44,8 +45,8 @@ class Element {
   querySelectorAll(selector) {
     return descendants(this).filter(node => selector.split(',').some(part => node.matches(part.trim())));
   }
-  contains(other) { return descendants(this).includes(other); }
-  getClientRects() { return this.closest('[hidden]') || !this.isConnected ? [] : [{}]; }
+  contains(other) { return this === other || descendants(this).includes(other); }
+  getClientRects() { return this.closest('[hidden],[display="none"]') || !this.isConnected ? [] : [{}]; }
 }
 function descendants(root) { return root.children.flatMap(child => [child, ...descendants(child)]); }
 const result = input.fixtures.map(spec => {
@@ -55,10 +56,12 @@ const result = input.fixtures.map(spec => {
   const context = vm.createContext({document, URL, getComputedStyle: node => ({visibility:
     node.closest('[visibility="hidden"]') ? 'hidden' : 'visible'})});
   const predicate = vm.runInContext('(' + input.source + ')', context, {timeout: 1000});
-  if (input.mode === 'nav') return predicate(document.querySelectorAll('a[href]'));
   const find = id => all.find(node => node.id === id);
+  const boundary = spec.boundary ? Object.fromEntries(Object.entries(spec.boundary).map(
+    ([name, id]) => [name, id === null ? null : find(id)])) : null;
+  if (input.mode === 'nav') return predicate(document.querySelectorAll('a[href]'), boundary);
   return predicate(find('panel'), {author: find('author'), more: find('more'),
-    permalink: find('permalink'), identity: 'test_owner'});
+    permalink: find('permalink'), identity: 'test_owner', boundary});
 });
 process.stdout.write(JSON.stringify(result));
 """
@@ -93,6 +96,17 @@ def headerless_spec():
                             dom('a', id='permalink', attrs={'href': f'/p/{instagram.WORK}/'}, children=[dom('time')])])
     panel = dom(id='panel', children=[bar, dom('hr'), caption, actions, dom(children=[dom('form'), dom('textarea')])])
     return dom('body', children=[sidebar(), dom('main', children=[panel])])
+
+
+def masked_spec():
+    spec = headerless_spec()
+    spec['children'][0]['children'][-1]['id'] = 'navigation'
+    background = dom(id='background', attrs={'aria-hidden': 'true'}, children=spec['children'])
+    confirmation = dom(id='confirmation', attrs={'role': 'dialog'}, children=[
+        dom('h2', text='Delete post?'), dom('button', text='Delete')])
+    spec['children'] = [background, confirmation]
+    spec['boundary'] = {'navigation': 'navigation', 'scope': 'panel', 'dialog': 'confirmation'}
+    return spec
 
 
 def find(spec, id):
@@ -212,6 +226,74 @@ class LayoutScriptTests(unittest.TestCase):
         self.assertEqual([False] * len(specs), self.evaluate(specs, 'post'))
 
 
+class MaskedLayoutScriptTests(unittest.TestCase):
+    setUp = LayoutScriptTests.setUp
+    evaluate = LayoutScriptTests.evaluate
+
+    def test_actual_shared_mask_needs_explicit_boundary(self):
+        strict, bound = masked_spec(), masked_spec()
+        strict.pop('boundary')
+        self.assertEqual([[], [fixtures.OWNER]], self.evaluate([strict, bound], 'nav'))
+        self.assertEqual([False, True], self.evaluate([strict, bound], 'post'))
+
+    def test_actual_boundary_rejects_wrong_root_disconnected_nav_and_dialog_inside_mask(self):
+        for change in ('different-root', 'disconnected-navigation', 'dialog-in-background',
+                       'wrong-scope', 'hidden-background', 'css-hidden-background', 'display-none-background'):
+            with self.subTest(change=change):
+                spec = masked_spec()
+                background = find(spec, 'background')
+                if change == 'different-root':
+                    nav = background['children'].pop(0)
+                    spec['children'].append(dom(attrs={'aria-hidden': 'true'}, children=[nav]))
+                elif change == 'disconnected-navigation':
+                    original = find(spec, 'navigation')
+                    replacement = deepcopy(original)
+                    replacement['id'] = 'replacement-navigation'
+                    background['children'][0]['children'][-1] = replacement
+                    original['connected'] = False
+                    spec['children'].append(original)
+                elif change == 'dialog-in-background':
+                    background['children'].append(spec['children'].pop(1))
+                elif change == 'wrong-scope':
+                    spec['children'].append(dom(id='other-panel'))
+                    spec['boundary']['scope'] = 'other-panel'
+                else:
+                    key = {'hidden-background': 'hidden', 'css-hidden-background': 'visibility',
+                           'display-none-background': 'display'}[change]
+                    background['attrs'][key] = {'hidden': '', 'visibility': 'hidden', 'display': 'none'}[key]
+                self.assertEqual([[]], self.evaluate([spec], 'nav'))
+                self.assertEqual([False], self.evaluate([spec], 'post'))
+
+    def test_actual_masked_navigation_preserves_fresh_identity_and_ambiguity(self):
+        changed, duplicate, comment = masked_spec(), masked_spec(), masked_spec()
+        nav = find(changed, 'navigation')
+        nav['attrs']['href'] = '/someone_else/'
+        nav['children'][0]['attrs']['alt'] = "someone_else's profile picture"
+        find(duplicate, 'background')['children'].insert(0, sidebar())
+        original = find(comment, 'navigation')
+        original['id'] = 'old-navigation'
+        caption = find(comment, 'panel')['children'][2]
+        caption['children'][0]['id'] = 'navigation'
+        self.assertEqual([['someone_else'], [fixtures.OWNER, fixtures.OWNER], []],
+                         self.evaluate([changed, duplicate, comment], 'nav'))
+
+    def test_actual_nested_masks_do_not_gain_the_shared_mask_exception(self):
+        for change in ('navigation', 'author', 'outer-background', 'outer-content-only'):
+            with self.subTest(change=change):
+                spec = masked_spec()
+                if change == 'outer-background':
+                    # The closest common mask must not conceal a second mask
+                    # that also encloses the confirmation itself.
+                    spec['children'] = [dom(attrs={'aria-hidden': 'true'}, children=spec['children'])]
+                elif change == 'outer-content-only':
+                    spec['children'][0] = dom(attrs={'aria-hidden': 'true'}, children=[spec['children'][0]])
+                else:
+                    find(spec, change)['attrs']['aria-hidden'] = 'true'
+                self.assertEqual([False], self.evaluate([spec], 'post'))
+                if change != 'author':
+                    self.assertEqual([[]], self.evaluate([spec], 'nav'))
+
+
 class LayoutPage(instagram.InstagramPage):
     def __init__(self, marked):
         super().__init__(marked)
@@ -219,15 +301,20 @@ class LayoutPage(instagram.InstagramPage):
         self.nav_identity = fixtures.OWNER
         self.structural_match = True
         self.on_layout = None
+        self.background_masked = False
+        self.boundary_reads = []
 
     async def goto(self, url, **kwargs):
+        self.background_masked = False
         await super().goto(url, **kwargs)
         if self.normal_identity is None:
             self.tree.children.pop(0)
         else:
             self.tree.children[0].href = f'/{self.normal_identity}/'
-        nav = fixtures.Node(href=f'/{self.nav_identity}/', selectors={route.NAV_AVATARS})
+        nav = fixtures.Node(href=f'/{self.nav_identity}/', selectors={
+            route.NAV_AVATARS, route.navigation_selector(self.nav_identity)})
         nav.navigation_identity = self.nav_identity
+        self.navigation_node = nav
         self.tree.children.insert(0, nav)
         if '/p/' in url and self.present and not self.deleted:
             main = next(node for node in self.tree.descendants() if 'main' in node.selectors)
@@ -254,12 +341,33 @@ class LayoutCase(fixtures.OfflineCase):
         super().setUp()
         self.reset_layout()
         original_all, original_one = fixtures.Locator.evaluate_all, fixtures.Locator.evaluate
+        original_locator = fixtures.Locator.locator
 
-        async def evaluate_all(locator, script):
+        def locate(locator, selector):
+            if selector == route.navigation_selector(fixtures.OWNER):
+                # The generic fixture parser only compares hrefs. This selector
+                # must exclude the identical author/comment hrefs in main.
+                return fixtures.Locator(locator.page, lambda: [node for node in locator._below()
+                    if selector in node.selectors and node.href == f'/{fixtures.OWNER}/'])
+            return original_locator(locator, selector)
+
+        def boundary_supplied(page, kind, boundary):
+            if not page.background_masked:
+                return True
+            # This fake models only the temporal gate. Geometry and visibility
+            # are exercised by the unchanged JS predicates above.
+            page.boundary_reads.append((kind, boundary, tuple(page.events)))
+            return boundary is not None
+
+        async def evaluate_all(locator, script, *args):
             if script != route.NAV_IDENTITY:
-                return await original_all(locator, script)
+                return await original_all(locator, script, *args)
+            boundary = args[0] if args else None
             names = [node.navigation_identity for node in locator.nodes
                      if getattr(node, 'navigation_identity', None) is not None and node.visible]
+            if (not boundary_supplied(locator.page, 'navigation', boundary)
+                    or boundary is not None and boundary['navigation'].nodes[0] not in locator.nodes):
+                names = []
             locator.page.read_complete('navigation', locator.nodes)
             return names
 
@@ -268,14 +376,15 @@ class LayoutCase(fixtures.OfflineCase):
                 return await original_one(locator, script, *args)
             page, scope = locator.page, locator.nodes[0]
             supplied = args[0]
-            valid = (page.structural_match and len(scope.children) == 5
+            valid = (boundary_supplied(page, 'layout', supplied.get('boundary'))
+                     and page.structural_match and len(scope.children) == 5
                      and supplied['author'].nodes[0] in list(scope.children[0].descendants())
                      and supplied['more'].nodes[0] in list(scope.children[0].descendants())
                      and supplied['permalink'].nodes[0] in list(scope.children[3].descendants()))
             page.read_complete('layout', [scope])
             return valid
 
-        for method, replacement in (('evaluate_all', evaluate_all), ('evaluate', evaluate)):
+        for method, replacement in (('locator', locate), ('evaluate_all', evaluate_all), ('evaluate', evaluate)):
             patched = patch.object(fixtures.Locator, method, replacement)
             patched.start()
             self.addCleanup(patched.stop)
@@ -724,6 +833,204 @@ class InstagramReadinessTests(LayoutCase):
         self.marked()
         state.save_result(self.path, self.target, error={'code': 'TimeoutError'})
         await self.cannot_retry()
+
+
+class MaskedLayoutPage(DelayedLayoutPage):
+    def __init__(self, marked, *, delay=1500, mask_stage='confirmation'):
+        super().__init__(marked, menu_delay=0, confirmation_delay=delay)
+        self.mask_stage = mask_stage
+
+    async def goto(self, url, **kwargs):
+        await super().goto(url, **kwargs)
+        if self.mask_stage == 'initial' and '/p/' in url:
+            self.background_masked = True
+
+    def menu(self):
+        super().menu()
+        if self.mask_stage == 'menu':
+            self.background_masked = True
+
+    def ask(self):
+        self.marked()
+        if self.mask_stage == 'confirmation':
+            self.background_masked = True
+        super().ask()
+
+
+class InstagramMaskedConfirmationTests(LayoutCase):
+    def reset_masked(self, *, delay=1500, mask_stage='confirmation'):
+        self.ready('instagram', instagram.WORK)
+        self.page = MaskedLayoutPage(self.marked, delay=delay, mask_stage=mask_stage)
+        self.before = self.path.read_bytes()
+
+    def assert_pending_without_final(self):
+        self.assertEqual(['target-options', 'menu-delete'], self.page.events)
+        self.marked()
+        self.assertTrue(all(handle.disposed for handle in self.page.handles))
+
+    async def assert_cannot_retry(self):
+        before = self.path.read_bytes()
+        self.page = MaskedLayoutPage(self.marked, delay=0)
+        with self.assertRaises(VpubError) as error:
+            await self.execute()
+        self.assertEqual('deletion_already_attempted', error.exception.code)
+        self.assertEqual(before, self.path.read_bytes())
+        self.no_destructive()
+
+    async def test_shared_mask_is_allowed_only_after_mark_and_menu_delete(self):
+        for delay in (0, 1500, 10000):
+            with self.subTest(delay=delay):
+                self.reset_masked(delay=delay)
+                captured_before_options = []
+                def before_click(handle):
+                    if handle.nodes[0] is self.page.options:
+                        captured_before_options.extend(h for h in self.page.handles
+                                                       if h.nodes[0] is self.page.navigation_node)
+                        self.assertEqual(1, len(captured_before_options))
+                        self.assertFalse(self.page.background_masked)
+                        self.assertEqual(self.before, self.path.read_bytes())
+                self.page.before_handle_click = before_click
+                result = await self.execute()
+                self.assertTrue(state.verified(result, self.target))
+                self.assertEqual(['target-options', 'menu-delete', 'final-delete'], self.page.events)
+                reads = self.page.boundary_reads
+                self.assertTrue(reads)
+                navigation = reads[0][1]['navigation']
+                self.assertIs(captured_before_options[0], navigation)
+                scope = reads[0][1]['scope']
+                for kind, boundary, events in reads:
+                    self.assertIn(kind, ('navigation', 'layout'))
+                    self.assertEqual(('target-options', 'menu-delete'), events)
+                    self.assertIs(boundary['navigation'], navigation)
+                    self.assertIs(boundary['scope'], scope)
+                self.marked()
+                self.assertTrue(all(handle.disposed for handle in self.page.handles))
+
+    async def test_masking_before_menu_delete_refuses_without_a_marker(self):
+        for stage in ('initial', 'menu'):
+            for operation in ('inspect', 'verify', 'delete'):
+                with self.subTest(stage=stage, operation=operation):
+                    self.reset_masked(mask_stage=stage)
+                    with self.assertRaises(VpubError) as error:
+                        await self.execute(operation)
+                    self.assertEqual('wrong_account', error.exception.code)
+                    self.assertEqual([] if stage == 'initial' else ['target-options'], self.page.events)
+                    self.assertEqual(self.before, self.path.read_bytes())
+                    self.assertTrue(all(boundary is None for _, boundary, _ in self.page.boundary_reads))
+                    self.no_destructive()
+
+    async def test_changed_identity_while_masked_is_not_overridden(self):
+        original = runtime.identity
+        for reader in ('fallback', 'primary'):
+            with self.subTest(reader=reader):
+                self.reset_masked()
+                def change(page):
+                    if reader == 'fallback' and page.stage == 'confirmation':
+                        page.navigation_node.navigation_identity = 'someone_else'
+                        page.navigation_node.href = '/someone_else/'
+                async def identity(page, platform):
+                    if reader == 'primary' and page.background_masked:
+                        return 'someone_else'
+                    return await original(page, platform)
+                self.page.on_render = change
+                with patch.object(runtime, 'identity', side_effect=identity), self.assertRaises(VpubError) as error:
+                    await self.execute()
+                self.assertEqual('wrong_account', error.exception.code)
+                self.assert_pending_without_final()
+                await self.assert_cannot_retry()
+
+    async def test_changed_url_while_masked_is_rejected_during_wait_and_at_readiness(self):
+        for when in (500, 1500):
+            with self.subTest(when=when):
+                self.reset_masked()
+                def change(page):
+                    if page.stage == 'confirmation' and page.elapsed['confirmation'] == when:
+                        page.url += '?different-work=1'
+                self.page.on_wait = change
+                with self.assertRaises(VpubError) as error:
+                    await self.execute()
+                self.assertEqual('wrong_work', error.exception.code)
+                self.assert_pending_without_final()
+
+    async def test_original_navigation_and_post_nodes_cannot_be_replaced_while_masked(self):
+        for name in ('navigation_node', 'panel', 'author', 'options', 'stamp'):
+            with self.subTest(node=name):
+                self.reset_masked()
+                def replace(page):
+                    if page.stage == 'confirmation':
+                        old = getattr(page, name)
+                        self.replace_node(old, copy(old))
+                self.page.on_render = replace
+                with self.assertRaises(VpubError) as error:
+                    await self.execute()
+                self.assertEqual('wrong_account' if name == 'navigation_node' else 'wrong_work',
+                                 error.exception.code)
+                self.assert_pending_without_final()
+
+    async def test_first_visible_confirmation_replacement_remains_blocked_while_masked(self):
+        self.reset_masked()
+        original = fixtures.Handle.is_visible
+        fired = []
+        async def replace(handle):
+            visible = await original(handle)
+            page = self.page
+            if (visible and not fired and page.stage == 'confirmation'
+                    and 'confirmation' in page.rendered
+                    and handle.nodes[0] is page.stage_nodes['confirmation'][0]):
+                old = handle.nodes[0]
+                self.replace_node(old, copy(old))
+                fired.append(True)
+            return visible
+        with patch.object(fixtures.Handle, 'is_visible', replace), self.assertRaises(VpubError) as error:
+            await self.execute()
+        self.assertEqual([True], fired)
+        self.assertEqual('wrong_work', error.exception.code)
+        self.assert_pending_without_final()
+
+    async def test_final_handle_replacement_at_masked_guard_is_rejected(self):
+        self.reset_masked()
+        original = runtime.risk_check
+        fired = []
+        async def risk(page):
+            await original(page)
+            if page is self.page and 'confirmation' in page.rendered and not fired:
+                final = page.stage_nodes['confirmation'][1]
+                self.assertTrue(page.background_masked)
+                self.assertTrue(any(handle.nodes[0] is final for handle in page.handles))
+                self.replace_node(final, copy(final))
+                fired.append(True)
+        with patch.object(runtime, 'risk_check', side_effect=risk), self.assertRaises(VpubError) as error:
+            await self.execute()
+        self.assertEqual([True], fired)
+        self.assertEqual('wrong_work', error.exception.code)
+        self.assert_pending_without_final()
+
+    async def test_stop_during_masked_transition_prevents_final_and_preserves_no_retry(self):
+        for when in (500, 10000):
+            with self.subTest(when=when):
+                self.reset_masked(delay=10000)
+                def stop(page):
+                    if page.stage == 'confirmation' and page.elapsed['confirmation'] == when:
+                        atomic_json(home() / 'STOP.json', {'reason': 'Synthetic masked-confirmation STOP'})
+                self.page.on_wait = stop
+                try:
+                    with self.assertRaises(VpubError) as error:
+                        await self.execute()
+                    self.assertEqual('stopped', error.exception.code)
+                    self.assert_pending_without_final()
+                finally:
+                    (home() / 'STOP.json').unlink(missing_ok=True)
+                await self.assert_cannot_retry()
+
+    async def test_masked_final_acknowledgement_loss_stays_pending_without_retry(self):
+        self.reset_masked()
+        self.page.fail_final = True
+        with self.assertRaises(TimeoutError):
+            await self.execute()
+        self.assertEqual(['target-options', 'menu-delete', 'final-delete'], self.page.events)
+        self.marked()
+        self.assertTrue(all(handle.disposed for handle in self.page.handles))
+        await self.assert_cannot_retry()
 
 
 if __name__ == '__main__':
