@@ -145,6 +145,27 @@ def require_local_prerequisites(plan):
         raise VpubError(issue["code"], issue["message"], issue["hint"])
 
 
+def will_skip(plan):
+    """Platforms where this exact file already has a record. The real run skips them rather than upload again,
+    which a field test's dry run never said. A dry run never creates the record file."""
+    path = home() / "publications.sqlite3"
+    if not path.exists() or not plan.get("video_sha256"):
+        return []
+    from .cli import only_a_preview
+    from .core import Ledger
+    ledger, found = Ledger(path), []
+    try:
+        for platform, options in plan["platforms"].items():
+            key = Ledger.key(platform, options.get("account"), plan["video_sha256"])
+            old = ledger.get(key)
+            if old and not only_a_preview(old, options):
+                found.append({"platform": platform, "previous_state": old["state"], "key": key,
+                              "hint": "The real run skips this platform and uploads nothing. Check it with vpub verify on this key."})
+    finally:
+        ledger.close()
+    return found
+
+
 def dry_run(plan, media=None):
     if media is None:
         media = inspect_video(plan["video"])
@@ -160,6 +181,6 @@ def dry_run(plan, media=None):
     return {"mode": "LOCAL_REHEARSAL", "ready": False if blockers else None,
             "ready_to_publish": False if blockers else None,
             "state": "LOCAL_BLOCKERS" if blockers else "LIVE_CHECK_REQUIRED",
-            "sign_ins": accounts, "blockers": blockers, "media_check": media,
+            "sign_ins": accounts, "blockers": blockers, "will_skip": will_skip(plan), "media_check": media,
             "platform_requests": 0, "platform_writes": 0,
             "note": "No login, account identity, permissions or playback were verified. Saved sign-in files may be stale. Publishing checks the live account; separate auth status calls are optional."}
