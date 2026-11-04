@@ -26,6 +26,9 @@ YT_CHECKS_WARNING = 'ytcp-prechecks-warning-dialog'
 YT_CHECKS_DONE = re.compile('检查完毕|檢查完畢|Checks complete', re.I)
 YT_CHECKS_SECONDS = 600
 YT_PRESS_ANSWER_SECONDS = 60
+# The final Save lights up only once Studio has finished processing in the background;
+# a 75-second clip on a real channel was still grey after two minutes.
+YT_SAVE_SECONDS = 600
 # What's open on the page after Publish, for a press that neither closed the form nor brought the warning.
 YT_OPEN_DIALOGS = """() => [...document.querySelectorAll('tp-yt-paper-dialog, [role="dialog"]')].filter(e => e.getClientRects().length).map(e => ({
     tag: e.tagName, parent: e.parentElement?.tagName, text: (e.innerText || '').slice(0, 300),
@@ -1219,7 +1222,13 @@ async def yt_final_steps(page, tx, video_id, reopened):
     if options.get('submission_mode') == 'draft_only':
         return tx.save(state='PREVIEW_READY', note='Uploaded as an unpublished draft in YouTube Studio; nothing was published.')
     done = await unique_visible(page.locator(f'{YT_DIALOG} #done-button'), 'YouTube final Save')
-    await wait_until(page, lambda: yt_button_ready(done), seconds=120, label='YouTube final Save enabled')
+    try:
+        await wait_until(page, lambda: yt_button_ready(done), seconds=YT_SAVE_SECONDS, label='YouTube final Save enabled')
+    except VpubError as failure:
+        if failure.code != 'processing_timeout':
+            raise
+        raise VpubError(failure.code, f'{failure.message} The upload is an unsaved Studio draft ({video_id}) that Studio was still processing; nothing was saved or published.',
+                        'Open that draft in YouTube Studio and finish or delete it there. Never upload this video again for this attempt.') from None
     tx.save(id=video_id, url=work_url('youtube', tx.identity, video_id))
     # On a real channel Studio greyed a Save out at once and sent the change about six seconds later, and leaving before it ended cancelled it. The read-back below leaves this page.
     await yt_press_publish(page, tx, done)
