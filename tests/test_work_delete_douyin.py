@@ -47,9 +47,38 @@ class Detail:
         self.closed = True
 
 
+class HomeTab:
+    """Creator Center's home page in a second tab of the same browser."""
+    def __init__(self, page):
+        self.page, self.live_owner, self.on_identity, self.url = page, page.home_owner, None, ''
+
+    async def goto(self, url, **kwargs):
+        self.url = url
+        self.page.home_reads.append(url)
+
+    async def wait_for_timeout(self, ms):
+        pass
+
+    async def close(self):
+        pass
+
+
+class HomeContext:
+    def __init__(self, page):
+        self.page = page
+
+    async def new_page(self):
+        return HomeTab(self.page)
+
+
 class FakeDouyin(FakeYouTube):
+    @property
+    def context(self):
+        return HomeContext(self)
+
     def __init__(self, target):
         super().__init__(target)
+        self.home_owner, self.home_reads = target['identity'], []
         self.cards = [(WORK, 'Approved')]
         self.complete, self.show_terminal, self.private = True, True, set()
         self.detail_override, self.after_detail = None, None
@@ -201,6 +230,26 @@ class DouyinDeletionTests(OfflineCase):
         with self.assertRaises(VpubError):
             await self.run_route()
         self.assert_unpressed()
+
+    async def test_a_work_list_without_its_account_number_is_confirmed_on_the_home_page(self):
+        # A real run found Creator Center's work list no longer prints 抖音号, though its home page still does.
+        route.HOME_CONFIRMED.clear()
+        self.page.live_owner = None
+        answer = await self.run_route()
+        self.assertTrue(state.verified(answer, self.target))
+        self.assertEqual((1, 1), (self.page.menu_count, self.page.final_count))
+        self.assertEqual([route.rt.URLS['douyin']], self.page.home_reads)
+
+    async def test_a_home_page_showing_another_account_or_none_refuses(self):
+        for shown in ('someone_else', None):
+            with self.subTest(shown=shown):
+                route.HOME_CONFIRMED.clear()
+                self.page = FakeDouyin(self.target)
+                self.page.live_owner, self.page.home_owner = None, shown
+                with self.assertRaises(VpubError) as caught:
+                    await self.run_route()
+                self.assertEqual('wrong_account', caught.exception.code)
+                self.assertEqual([], self.page.deleted_ids)
 
     async def test_duplicate_title_with_different_ids_binds_original_card(self):
         self.page.cards = [(OTHER, 'Approved'), (WORK, 'Approved')]

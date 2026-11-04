@@ -1,5 +1,6 @@
 """Free Creator Center deletion of one exact owned card, with no write retries."""
 import re
+import time
 from urllib.parse import urlsplit
 
 from . import browser_backends as bb, browser_runtime as rt, work_delete_state as state
@@ -28,6 +29,8 @@ TERMINAL = """nodes => {
   return !cards.length || ends[0].innerText.trim() === '没有更多作品';
 }"""
 PLATFORM_ALERT = """node => !node.closest('[class^="video-card-content-"],article,[role="dialog"],.semi-modal-content')"""
+HOME_CONFIRM_SECONDS = 120
+HOME_CONFIRMED = {}  # id(page) -> (account, when, page): the dedicated browser is locked to this run meanwhile.
 
 
 async def guard(page):
@@ -70,12 +73,33 @@ def evidence(target, **fields):
             'platform_writes': 0, 'note': 'Deletion is unconfirmed; incomplete Creator Center lists remain pending.', **fields}
 
 
+async def home_owner(page):
+    """The account Creator Center's home page shows, read in a second tab of the same signed-in browser."""
+    home = await page.context.new_page()
+    try:
+        await home.goto(rt.URLS['douyin'], wait_until='domcontentloaded', timeout=60000)
+        return await rt.look_until(home, lambda: rt.identity(home, 'douyin'), 15000)
+    finally:
+        await home.close()
+
+
 async def owner(page, target):
     address = urlsplit(page.url)
     if (address.scheme != 'https' or address.netloc != 'creator.douyin.com'
-            or address.path != urlsplit(bb.MANAGE).path or address.query or address.fragment
-            or await rt.identity(page, 'douyin') != target['identity']):
-        raise VpubError('wrong_account', 'Creator Center did not retain the exact publishing account list.')
+            or address.path != urlsplit(bb.MANAGE).path or address.query or address.fragment):
+        raise VpubError('wrong_account', 'Creator Center did not stay on the publishing account\'s own work list.')
+    shown = await rt.identity(page, 'douyin')
+    if shown is None:
+        # A real run found the work list no longer prints 抖音号, though its home page still does.
+        # Every card is checked here, so one home-page read serves this browser for a short while.
+        held = HOME_CONFIRMED.get(id(page))
+        if held and held[2] is page and time.monotonic() - held[1] < HOME_CONFIRM_SECONDS:
+            shown = held[0]
+        else:
+            shown = await home_owner(page)
+            HOME_CONFIRMED[id(page)] = (shown, time.monotonic(), page)
+    if shown != target['identity']:
+        raise VpubError('wrong_account', 'Creator Center did not show the publishing account\'s 抖音号, on its work list or its home page.')
 
 
 async def same_card(page, target, card, handle, words):
