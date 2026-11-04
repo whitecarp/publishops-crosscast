@@ -242,6 +242,13 @@ class FakePage:
     async def wait_for_timeout(self, milliseconds):
         pass
 
+    def on(self, event, callback):
+        # This DOM-only fixture emits no transport events or completion proof.
+        pass
+
+    def remove_listener(self, event, callback):
+        pass
+
     async def press(self, key):
         if key != "Escape":
             raise AssertionError(key)

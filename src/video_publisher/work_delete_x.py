@@ -5,10 +5,13 @@ from urllib.parse import urlsplit
 from . import browser_runtime as runtime, x_pages
 from .core import VpubError, stop_check
 from .work_delete_state import begin_press
+from .work_delete_x_readback import TimelineCapture
 
 
 EMPTY = re.compile(r"^(?:No posts yet|You haven[’']t posted yet|你还没有发帖|你還沒有發文|尚无帖子|尚無貼文)$", re.I)
 GONE = re.compile(r"^(?:This (?:Post|post|Tweet|tweet) (?:was deleted|doesn[’']t exist)|此(?:帖子|推文)不存在|这条(?:帖子|推文)已被删除|這則(?:貼文|推文)已被刪除)[.!。]?$", re.I)
+GONE_DETAIL = re.compile(r"^Hmm\.\.\.this page doesn[’']t exist\. Try searching for something else\.$")
+ERROR_DETAIL = 'main [data-testid="error-detail"]:not(article [data-testid="error-detail"]):not([data-testid="tweet"] [data-testid="error-detail"])'
 FINAL = '[data-testid="confirmationSheetConfirm"]'
 SAME = '(node, retained) => node === retained && node.isConnected'
 CONTAINS = '(node, child) => node.isConnected && child.isConnected && node.contains(child)'
@@ -87,6 +90,20 @@ async def visible_label_matches(locator, pattern):
     return False
 
 
+async def platform_gone(page):
+    if await visible_label_matches(page.locator('main [data-testid="emptyState"]'), GONE):
+        return True
+    # Observed on the original deleted test's exact URL. This platform error
+    # container is outside post/reply content; generic body words never count.
+    panels = [node for node in await page.locator(ERROR_DETAIL).all() if await node.is_visible()]
+    if len(panels) != 1:
+        return False
+    for label in await panels[0].locator('span').all():
+        if await label.is_visible() and GONE_DETAIL.fullmatch(' '.join((await label.inner_text()).split())):
+            return True
+    return False
+
+
 async def exact(page, target):
     url = f"https://x.com/{target['identity']}/status/{target['id']}"
     await page.goto(url, wait_until='domcontentloaded', timeout=60000)
@@ -97,6 +114,16 @@ async def exact(page, target):
     # time spent loading never establishes that a post was deleted.
     for elapsed in range(2000, EXACT_WAIT_MILLISECONDS + 1, POLL_MILLISECONDS):
         await guard(page)
+        exact_address(page, target)
+        current = await runtime.identity(page, 'x')
+        exact_address(page, target)
+        if current and current != target['identity']:
+            raise VpubError('wrong_account', 'The current X account changed.')
+        if not current and elapsed < EXACT_WAIT_MILLISECONDS:
+            # Navigation may replace the sidebar before its account link loads.
+            # No post/error control is read until the live account is available.
+            await page.wait_for_timeout(POLL_MILLISECONDS)
+            continue
         await exact_account(page, target['identity'], target)
         rows = x_pages.post_row(page, target['id'])
         visible = [row for row in await rows.all() if await row.is_visible()]
@@ -110,8 +137,7 @@ async def exact(page, target):
             await exact_account(page, target['identity'], target)
             return visible[0], False
         # Only platform error controls; never search post/reply words for "deleted".
-        labels = page.locator('main [data-testid="emptyState"]')
-        gone = await visible_label_matches(labels, GONE)
+        gone = await platform_gone(page)
         await guard(page)
         await exact_account(page, target['identity'], target)
         if gone:
@@ -123,22 +149,56 @@ async def exact(page, target):
 
 async def absence(page, actual, target, gone, writes):
     url = f'https://x.com/{actual}'
-    await page.goto(url, wait_until='domcontentloaded', timeout=60000)
-    await page.wait_for_timeout(2500)
-    correct, posts, empty = await profile_current(page, actual, target), [], False
+    capture = TimelineCapture(page, actual)
+    capture.start()
+    correct, complete, empty, observed = False, False, False, set()
+    try:
+        await page.goto(url, wait_until='domcontentloaded', timeout=60000)
+        await page.wait_for_timeout(2500)
+        for _ in range(32):
+            await guard(page)
+            if not profile_address(page, actual):
+                correct = False
+                break
+            current = await runtime.identity(page, 'x')
+            if current and current != actual:
+                correct = False
+                break
+            if not current:
+                correct, complete = False, False
+                await page.wait_for_timeout(1500)
+                continue
+            correct = await profile_current(page, actual, target)
+            if not correct:
+                break
+            posts = await x_pages.own_posts(page, actual)
+            observed.update(post['id'] for post in posts)
+            labels = page.locator('main [data-testid="emptyState"]')
+            empty = not observed and await visible_label_matches(labels, EMPTY)
+            network_ids, end = capture.snapshot()
+            observed.update(network_ids)
+            complete = (empty and not observed) or end
+            correct = await profile_current(page, actual, target)
+            if not correct or complete or target['id'] in observed or not gone:
+                break
+            # Scroll only this verified own profile. No HTTP requests are replayed.
+            await page.mouse.wheel(0, 1000)
+            await page.wait_for_timeout(1500)
+        # Re-read after the last awaited identity check, including requests that
+        # began meanwhile. An unfinished/failed request cannot seal the list.
+        network_ids, end = capture.snapshot()
+        observed.update(network_ids)
+        complete = complete and ((empty and not observed) or end)
+    finally:
+        await capture.close()
+    # Closing outstanding response readers yields control; do not retain an
+    # earlier identity/URL/STOP verdict across that asynchronous boundary.
     if correct:
-        posts = await x_pages.own_posts(page, actual)
         correct = await profile_current(page, actual, target)
-    if correct:
-        labels = page.locator('main [data-testid="emptyState"]')
-        empty = not posts and await visible_label_matches(labels, EMPTY)
-        correct = await profile_current(page, actual, target)
-    # A finite timeline with other posts needs a proven end signal. No-new-rows,
-    # scroll height and a missing target are deliberately insufficient.
     return {'id': target['id'], 'identity': actual, 'present': False, 'owned': False, 'page_gone': gone,
-            'list_absent': correct and all(post['id'] != target['id'] for post in posts),
-            'list_complete': correct and empty, 'fresh': correct, 'platform_writes': writes,
-            'note': 'Fresh own profile; explicit empty state only proves completion. A nonempty or unrecognized timeline remains pending.'}
+            'list_absent': correct and target['id'] not in observed,
+            'list_complete': correct and complete, 'fresh': correct, 'platform_writes': writes,
+            'note': 'Fresh own profile; completion requires an explicit empty state or an owner-bound uninterrupted originals timeline ending in the platform Bottom termination.'}
 
 
 async def execute(page, actual, target, operation, receipt_path):
