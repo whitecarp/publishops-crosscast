@@ -44,6 +44,10 @@ def bili(args, timeout=210, program=BILI_MAIN, signing_in=False):
         if re.search(r"(?<!\d)62003(?!\d)", str(e.get("message", ""))):
             raise VpubError("not_public_yet", "Bilibili approved this video and is holding it for its scheduled release (62003), so it can't be read or changed until then. Nothing is wrong.",
                             "Try again after its release time.")
+        # Right after an upload Bilibili still reports the length as 0 seconds, so chapters and widgets look out of range.
+        if e.get("code") == "invalid_argument" and re.search(r"超出视频时长\s*0\s*秒", str(e.get("message", ""))):
+            e = {**e, "message": f"{e['message']} Bilibili hasn't finished processing this video, so it still reports its length as 0 seconds. Nothing was changed.",
+                 "hint": "Try again in a few minutes; a real run set the same chapters about four minutes later."}
         safety.pushed_back("bilibili", e.get("code"))
         raise VpubError(e.get("code", "backend_error"), e.get("message", "bili-cli failed"), e.get("hint", ""))
     return result.get("data", {})

@@ -26,6 +26,15 @@ class NotPublicYetTests(unittest.TestCase):
         self.assertIn("Nothing is wrong", failure.message)
         pushed.assert_not_called()
 
+    def test_a_length_still_read_as_zero_says_to_wait_and_keeps_its_code(self):
+        # A field run set chapters right after upload and was told they were past a 0-second video; four minutes later they went through.
+        failure, pushed = self.call({"code": "invalid_argument", "message": "章节 '第一章' 的时间超出视频时长 0 秒。"})
+        self.assertEqual("invalid_argument", failure.code)
+        self.assertIn("hasn't finished processing", failure.message)
+        self.assertIn("few minutes", failure.hint)
+        failure, pushed = self.call({"code": "invalid_argument", "message": "章节 '第一章' 的时间超出视频时长 60 秒。"})
+        self.assertNotIn("hasn't finished processing", failure.message)
+
     def test_other_errors_and_lookalike_numbers_keep_their_code(self):
         for message in ("62002：稿件不可见", "code 620031", "请求错误"):
             with self.subTest(message=message):
