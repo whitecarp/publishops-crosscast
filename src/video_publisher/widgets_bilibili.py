@@ -104,10 +104,14 @@ def clean(widget, length=None):
     return result
 
 
-def validate(widgets, length=None):
+def validate(widgets, length=None, reserve=False):
+    """reserve is True only for vpub widgets add, which asks for the person's yes; a plan's widgets go up on their own once the video is public."""
     if not isinstance(widgets, list) or not widgets:
         raise bad("Widgets must be a list with at least one in it.")
     result = [clean(widget, length) for widget in widgets]
+    if not reserve and any(widget["type"] == "reserve" for widget in result):
+        raise bad("A reserve widget can't go in a plan. It creates a public booking, and taking one down notifies everyone who booked it, so it needs its own yes: "
+                  "once the video is public, use vpub widgets add with --dry-run, then --person-approved.")
     check_public_text(result)
     if len({(widget["page"], widget["time"]) for widget in result}) != len(result):
         raise bad("Two widgets at one moment would clash on Bilibili, so give each its own time.")
@@ -324,7 +328,7 @@ def add(work, file, dry_run=False, again=False, person_approved=False):
     A reserve widget also creates a public booking on the account, and taking one down later
     notifies everyone who booked it, so it goes only after the person has seen the dry run and said yes."""
     checked_work(work)
-    widgets = validate(read_json(Path(file)))
+    widgets = validate(read_json(Path(file)), reserve=True)
     if not dry_run and not person_approved and any(widget["type"] == "reserve" for widget in widgets):
         raise VpubError("needs_person", "A reserve widget creates a public booking on the account and can't be taken down without notifying everyone who booked it. Nothing was sent.",
                         "Show the person this file's dry run, then run it again with --person-approved once they say yes.")
