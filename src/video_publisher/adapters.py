@@ -6,6 +6,7 @@ import importlib
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -39,6 +40,10 @@ def bili(args, timeout=210, program=BILI_MAIN, signing_in=False):
         # bili-cli's own spacing between writes says when to try again. Bilibili never saw the request, so it has not objected.
         if e.get("code") == "rate_limited" and (e.get("detail") or {}).get("limit"):
             raise VpubError(HELD_BACK, e.get("message", "bili-cli held this write back."), e.get("hint", ""))
+        # 62003 is good news: approved and held for its scheduled release, not an objection.
+        if re.search(r"(?<!\d)62003(?!\d)", str(e.get("message", ""))):
+            raise VpubError("not_public_yet", "Bilibili approved this video and is holding it for its scheduled release (62003), so it can't be read or changed until then. Nothing is wrong.",
+                            "Try again after its release time.")
         safety.pushed_back("bilibili", e.get("code"))
         raise VpubError(e.get("code", "backend_error"), e.get("message", "bili-cli failed"), e.get("hint", ""))
     return result.get("data", {})
