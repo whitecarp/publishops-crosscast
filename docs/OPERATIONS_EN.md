@@ -91,7 +91,8 @@ vpub collection remove instagram COLLECTION_ID WORK_CODE --request-id remove-01
 vpub collection create douyin --title "Series" --cover collection.jpg --description "Series description" --request-id create-01
 vpub collection add douyin COLLECTION_ID WORK_ID --request-id add-02
 vpub collection remove douyin COLLECTION_ID WORK_ID --request-id remove-02
-vpub collection delete douyin COLLECTION_ID --request-id delete-01
+vpub collection delete douyin COLLECTION_ID --request-id delete-01 --dry-run
+vpub collection delete douyin COLLECTION_ID --request-id delete-01 --confirm CODE --person-approved
 vpub collection add x FOLDER_ID POST_ID --request-id add-03
 vpub collection remove x FOLDER_ID POST_ID --request-id remove-03
 vpub collection rename bilibili COLLECTION_ID --title "Series" --request-id rename-02
@@ -139,7 +140,7 @@ vpub playlist remove PLAYLIST_ID ITEM_ID --request-id series-remove-01
 vpub playlist verify RECEIPT_KEY
 ```
 
-Delete a playlist with `vpub playlist delete PLAYLIST_ID --request-id series-delete-01`; this does not delete its videos. Use a new request ID for each intended new change and reuse the original after interruptions. The CLI never resubmits an existing request. For `UNVERIFIED`, use `playlist verify`, not another write. A lost creation response without a playlist ID remains unresolved; a matching title is not enough to adopt a result. Post-write checks retry reads within a short bound, never writes.
+Delete a playlist with `vpub playlist delete PLAYLIST_ID --request-id series-delete-01 --dry-run`, show the person what it holds, and only after their yes run it again with `--confirm CODE --person-approved`; this does not delete its videos. Collection deletes take the same three steps. Use a new request ID for each intended new change and reuse the original after interruptions. The CLI never resubmits an existing request. For `UNVERIFIED`, use `playlist verify`, not another write. A lost creation response without a playlist ID remains unresolved; a matching title is not enough to adopt a result. Post-write checks retry reads within a short bound, never writes.
 
 These commands require `youtube.force-ssl`, included in the default first-login authorization. If the API returns `manualSortRequired`, set that playlist's ordering to Manual in YouTube; the CLI does not change the sorting mode. Official references: [playlist updates](https://developers.google.com/youtube/v3/docs/playlists/update), [item ordering](https://developers.google.com/youtube/v3/docs/playlistItems/update).
 

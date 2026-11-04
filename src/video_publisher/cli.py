@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 from copy import deepcopy
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -26,6 +27,25 @@ UNFINISHED_STATES = {"WAITING_FOR_PUBLIC", "REMOVE_UNVERIFIED", "INCOMPLETE", "I
 UNSAFE_OUTPUT = re.compile("[\x7f-\x9f؜​‎‏ -‮⁠-⁩\ud800-\udfff﻿]")
 # Commands whose --out saves the JSON result. For the others, --out names the file the command produces.
 SAVES_RESULT = {"dm", "read-all", "collection", "playlist", "messages", "engage", "ops", "comments", "stats", "report", "works", "status", "cleanup", "widgets"}
+
+
+def delete_guard_options(q):
+    q.add_argument('--dry-run',action='store_true',help="Show the exact target and its confirmation code; nothing is deleted.")
+    q.add_argument('--confirm',help="The code from this exact delete's --dry-run.")
+    q.add_argument('--person-approved',action='store_true',help="The person saw the dry run and said yes.")
+
+
+def guarded_delete(args, kind, *target):
+    """Deleting a collection or playlist asks for what vpub delete does: a dry run, its code and the person's yes.
+    Returns the dry run's answer, or None once the code and the yes are both there."""
+    code = hashlib.sha256('\0'.join(map(str, (kind, *target, args.request_id))).encode()).hexdigest()[:12]
+    if args.dry_run:
+        return {'state': 'DRY_RUN', 'deletes': kind, 'target': list(target), 'request_id': args.request_id, 'confirm': code, 'platform_writes': 0,
+                'next': f'Show the person what this {kind} holds; only after their yes, run it again with --confirm {code} --person-approved.'}
+    if args.confirm != code or not args.person_approved:
+        raise VpubError('needs_person', f"Deleting a {kind} needs this exact delete's code from --dry-run and the person's yes. Nothing was deleted.",
+                        'Run it with --dry-run, show the person, then add --confirm CODE --person-approved.')
+    return None
 
 
 def only_a_preview(old, opts):
@@ -526,6 +546,7 @@ def parser():
         if action in ('create','rename'):q.add_argument('--title',required=True)
         if action=='create':q.add_argument('--cover');q.add_argument('--description')
         if action in ('create','rename','delete'):q.add_argument('--request-id',required=True)
+        if action=='delete':delete_guard_options(q)
         q.add_argument('--out')
     q=cl.add_parser('verify');q.add_argument('key');q.add_argument('--out')
     for action in ('add','remove'):
@@ -549,6 +570,7 @@ def parser():
         if action=='add':q.add_argument('video')
         if action in ('remove','move'):q.add_argument('item')
         if action=='move':q.add_argument('--position',type=int,required=True)
+        if action=='delete':delete_guard_options(q)
         q.add_argument('--request-id',required=True);q.add_argument('--out')
     o=sub.add_parser('ops',help='Watch your works and scan several platforms; read-only.').add_subparsers(dest='action',required=True)
     m=sub.add_parser('messages',help='Comments, mentions and message previews in one list; no automatic replies.').add_subparsers(dest='action',required=True)
@@ -843,6 +865,7 @@ def run_command(args):
         if args.action in {'list','items'}:result=collections.listing(args.platform,getattr(args,'collection',None))
         elif args.action=='verify':result=collections.verify(args.key)
         elif args.action in {'add','remove'}:result=collections.membership(args.platform,args.action,args.collection,args.work,args.request_id)
+        elif args.action=='delete' and (preview:=guarded_delete(args,'collection',args.platform,args.collection)):result=preview
         else:result=collections.change(args.platform,args.action,getattr(args,'collection',None),getattr(args,'title',None),args.request_id,getattr(args,'cover',None),getattr(args,'description',None))
         return result
     if args.command=='widgets':
@@ -855,6 +878,7 @@ def run_command(args):
         playlists = adapters.youtube_playlists()
         if args.action in {'list','items'}:result=playlists.listing(getattr(args,'playlist',None),args.cursor,args.limit)
         elif args.action=='verify':result=playlists.verify(args.key)
+        elif args.action=='delete' and (preview:=guarded_delete(args,'playlist',args.playlist)):result=preview
         else:result=playlists.change(args.action,**{k:getattr(args,k,None) for k in ('playlist','title','description','privacy','video','item','position','request_id')})
         return result
     if args.command=='messages':
