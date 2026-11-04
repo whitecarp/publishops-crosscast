@@ -218,7 +218,8 @@ def run(key, patch_path, dry_run=False, verify_only=False, person_approved=False
             row=ledger.get(key)
             if not row: raise VpubError('receipt_required','Use the key of an existing recorded publication.')
             record=row['data'];receipt=record.get('receipt',{});work_id=receipt.get('id')
-            if not work_id: raise VpubError('work_id_required','Verify the existing work ID first; never infer an ID from a title or upload again.')
+            if not work_id: raise VpubError('work_id_required','Verify the existing work ID first; never infer an ID from a title or upload again.',
+                                            'Run vpub verify on this receipt key: a full read-back records the ID. For a work you adopted with vpub ops adopt, use vpub edit-work PLATFORM WORK_ID instead.')
             patch=validate_patch(row['platform'],read_json(patch_path),verify_only,record.get('options',{}).get('ai_generated',True))
             actual=record.get('identity',{}).get('identity') or receipt.get('identity')
             result=send(row['platform'],row['account'],actual,receipt,key,patch,dry_run,verify_only,person_approved)
