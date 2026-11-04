@@ -35,6 +35,12 @@ class NotPublicYetTests(unittest.TestCase):
         failure, pushed = self.call({"code": "invalid_argument", "message": "章节 '第一章' 的时间超出视频时长 60 秒。"})
         self.assertNotIn("hasn't finished processing", failure.message)
 
+    def test_the_collection_limit_says_so_and_keeps_its_code(self):
+        # A field run's account answered 20082 您创建的合集个数太多了, which read like a CrossCast fault.
+        failure, pushed = self.call({"code": "api_error", "message": "20082：您创建的合集个数太多了"})
+        self.assertEqual("api_error", failure.code)
+        self.assertIn("as many collections as Bilibili allows", failure.message)
+
     def test_other_errors_and_lookalike_numbers_keep_their_code(self):
         for message in ("62002：稿件不可见", "code 620031", "请求错误"):
             with self.subTest(message=message):

@@ -48,6 +48,9 @@ def bili(args, timeout=210, program=BILI_MAIN, signing_in=False):
         if e.get("code") == "invalid_argument" and re.search(r"超出视频时长\s*0\s*秒", str(e.get("message", ""))):
             e = {**e, "message": f"{e['message']} Bilibili hasn't finished processing this video, so it still reports its length as 0 seconds. Nothing was changed.",
                  "hint": "Try again in a few minutes; a real run set the same chapters about four minutes later."}
+        if re.search(r"(?<!\d)20082(?!\d)", str(e.get("message", ""))):
+            e = {**e, "message": f"{e['message']} This account has as many collections as Bilibili allows. Nothing was created.",
+                 "hint": "Reuse or delete one of its collections first."}
         safety.pushed_back("bilibili", e.get("code"))
         raise VpubError(e.get("code", "backend_error"), e.get("message", "bili-cli failed"), e.get("hint", ""))
     return result.get("data", {})
