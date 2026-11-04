@@ -15,6 +15,9 @@ OPTIONS = re.compile(r'^(More options|更多选项|更多選項)$')
 CONFIRM = re.compile(r'(?:Delete (?:post|reel|video)\?|删除(?:帖子|视频|短视频)[？?]|刪除(?:貼文|影片|連續短片)[？?])', re.I)
 GONE = re.compile(r'^(?:This (?:post|reel|video) has been deleted|此(?:帖子|视频)已删除|此(?:貼文|影片)已刪除)[.!。]?$', re.I)
 EMPTY = re.compile(r'^(?:No Posts Yet|还没有帖子|尚無貼文)$', re.I)
+# Your own empty profile offers "Share your first photo" instead of saying "No Posts Yet".
+OWN_EMPTY = re.compile(r'^(?:Share your first photo|分享你的第一张照片|分享你的第一張相片)$', re.I)
+OWN_EMPTY_CONTROLS = 'main a, main button, main [role="button"]'
 COUNT = re.compile(r'^([0-9][0-9,]*)\s*(?:posts?|篇帖子|篇貼文|帖子|貼文)$', re.I)
 SAME = '(node, retained) => node === retained && node.isConnected'
 CONTAINS = '(node, child) => node.isConnected && child.isConnected && node.contains(child)'
@@ -292,6 +295,8 @@ async def listing(page, actual, target):
             return False, False, False
         totals = [int(match[1].replace(',', '')) for match in counts if match]
         explicit_empty = any(EMPTY.fullmatch(text) for text in await visible_labels(page.locator('main h1, main h2')))
+        if not explicit_empty and not seen and totals == [0]:
+            explicit_empty = any(OWN_EMPTY.fullmatch(text) for text in await visible_labels(page.locator(OWN_EMPTY_CONTROLS)))
         if not await profile_current(page, actual, target):
             return False, False, False
         # A profile count alone cannot bind every link to the own grid: recommendations
