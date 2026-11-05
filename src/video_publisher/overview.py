@@ -8,7 +8,7 @@ import shutil
 import sys
 
 from . import adapters
-from .core import PLATFORMS, Ledger, VpubError, digest, file_sha, home, how_to_clear_a_stop, part_left_undone, publication_lock, read_json, stop_check
+from .core import PLATFORMS, Ledger, VpubError, digest, file_sha, home, how_to_clear_a_stop, now, part_left_undone, publication_lock, read_json, stop_check
 from .process_lock import alive, released
 
 FINISHED = {"SUBMISSION_VERIFIED", "EXISTING_VERIFIED", "AGENT_REPORTED_VERIFIED", "AGENT_REPORTED_DELETED"}
@@ -234,6 +234,25 @@ def read_rows():
         ledger.close()
 
 
+def dismiss(key, person_checked=False):
+    """Take one attempt off needs_attention once the person has looked at the platform themselves. A field test's failed
+    attempts stayed there for good with no way out. The record stays, and the same file still isn't uploaded there again."""
+    if not person_checked:
+        raise VpubError("needs_person", "Dismiss an attempt only after the person has checked the platform by hand. Nothing changed.",
+                        "Run it again with --person-checked once they have.")
+    with publication_lock():
+        ledger = Ledger()
+        try:
+            old = ledger.get(key)
+            if not old:
+                raise VpubError("not_found", "No attempt has this key. Nothing changed.", "Copy the key from vpub status.")
+            ledger.save(key, old["state"], {**old["data"], "dismissed": {"at": now(), "by": "person_checked"}})
+        finally:
+            ledger.close()
+    return {"key": key, "state": old["state"], "dismissed": True,
+            "note": "Off needs_attention. The record stays, and this file still isn't uploaded to this platform again."}
+
+
 def human_size(count):
     for unit in ("B", "KB", "MB"):
         if count < 1024:
@@ -335,7 +354,8 @@ def status(limit=20):
     rows = read_rows()
     busy = workspace_busy()
     drafts = [row for row in rows if row["state"] in DRAFTS]
-    attention = [row for row in rows if row["state"] not in FINISHED | DRAFTS or part_left_undone(row["data"].get("receipt") or {})]
+    attention = [row for row in rows if (row["state"] not in FINISHED | DRAFTS or part_left_undone(row["data"].get("receipt") or {}))
+                 and not row["data"].get("dismissed")]
     folders = snapshot_folders(rows, check_hash=False)
     reclaimable = sum(item["bytes"] for item in folders if "kept_because" not in item)
     stop = stop_state()
@@ -350,7 +370,8 @@ def status(limit=20):
             "platforms": {p: {"default_method": adapters.default_method(p), "sign_in": sign_in(p)} for p in PLATFORMS},
             "publications": {"total": len(rows), "by_state": dict(Counter(row["state"] for row in rows)),
                              "needs_attention_total": len(attention),
-                             "needs_attention": [attempt(row, busy) for row in attention[:limit]],
+                             "needs_attention": [{**attempt(row, busy), "after_checking_by_hand": f"vpub dismiss {row['key']} --person-checked"}
+                                                 for row in attention[:limit]],
                              "drafts": [attempt(row, busy) for row in drafts[:limit]]},
             "actions": {"unconfirmed_total": len(actions), "unconfirmed": actions[:limit]},
             "deletions": {"total": len(deletions), "items": deletions[:limit]},

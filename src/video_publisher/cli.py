@@ -475,7 +475,7 @@ def template(video, content_language="und", ai_generated=True):
 # The order a newcomer needs them in. A new command goes here too, and a test holds that to it.
 HELP_GROUPS = (
     ("Start here", ("doctor", "onboard", "auth", "setup")),
-    ("Publish a video", ("prepare", "go", "init", "metadata", "covers", "plan", "publish", "status", "verify", "resume", "receipts")),
+    ("Publish a video", ("prepare", "go", "init", "metadata", "covers", "plan", "publish", "status", "verify", "resume", "dismiss", "receipts")),
     ("After posting", ("works", "stats", "edit", "edit-work", "delete", "comments", "messages", "engage", "dm", "collection", "playlist", "widgets", "ops", "adopt")),
     ("Safety and housekeeping", ("safety", "stop", "cleanup", "preferences", "capabilities")),
     ("Special cases", ("instagram", "browser")),
@@ -795,6 +795,10 @@ def parser():
     q.add_argument('--person-approved', action='store_true', help='Attest the person approved deletion of this exact post, once.')
     q = sub.add_parser("status", help="What needs attention now, with the exact next command; local only.")
     q.add_argument("--limit", type=int, default=20, help="Most attempts to list, 1-200.")
+    q.add_argument("--out")
+    q = sub.add_parser("dismiss", help="Take one attempt off needs_attention after the person checked the platform; it stays on record and the file isn't uploaded there again.")
+    q.add_argument("key")
+    q.add_argument("--person-checked", action="store_true", help="The person looked at the platform themselves.")
     q.add_argument("--out")
     q = sub.add_parser("cleanup", help="See which finished videos' private copies can go; local only.")
     q.add_argument("--apply", action="store_true", help="Delete what the preview lists.")
@@ -1184,6 +1188,9 @@ def run_command(args):
     if args.command == "status":
         from .overview import status
         return status(args.limit)
+    if args.command == "dismiss":
+        from .overview import dismiss
+        return dismiss(args.key, args.person_checked)
     if args.command == "cleanup":
         from .overview import cleanup
         return cleanup(args.apply)
