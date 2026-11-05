@@ -165,7 +165,7 @@ def reply(platform, work, comment_id, text, language='auto', dry_run=False, _tes
             'name':target.get('author'),'allow_contact':allow_contact,'person_approved':person_approved}
     if dry_run:
         if not _test_key: safety.admit(**limits,reserve=False)
-        return {'state':'DRY_RUN','platform_writes':0,'platform':platform,'work_id':work,**request}
+        return {'state':'DRY_RUN','platform_writes':0,'platform':platform,'work_id':work,**request,**({} if _test_key else safety.label_note(text,sent,written_by))}
     key=digest([platform,snapshot['identity'],work,comment_id])
     path=home()/'operations/replies'/(key+'.json')
     with publication_lock():

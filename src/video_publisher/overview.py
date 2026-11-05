@@ -120,6 +120,10 @@ def attempt(row, busy):
             "updated_at": row["updated_at"], "next_command": command, "note": note}
     if part_left_undone(receipt):
         item.update({name: receipt[name] for name in ("chapters_state", "widgets_state", "season") if name in receipt})
+        # The receipt's own reason a part is waiting, such as chapters on a Douyin work still in review, says when to run it. A field run saw only the general note.
+        reason = receipt.get("next") or receipt.get("widgets_next")
+        if isinstance(reason, str) and reason.strip():
+            item["note"] = reason
     done = progress(row)
     return {**item, "progress": done} if done else item
 

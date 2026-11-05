@@ -331,6 +331,26 @@ def _publish_browser_batch(plan, platforms, snapshot_lock):
     return results
 
 
+def left_to_finish(results):
+    """Works that are up and verified with part of their plan still to land, such as chapters on a video the platform is still processing.
+    A field run read ok: false beside all_submissions_verified: true as a failed publish, so this says which is which. ok itself keeps its meaning."""
+    left = {}
+    for platform, result in results.items():
+        if not isinstance(result, dict) or result.get("state") != "SUBMISSION_VERIFIED" or not part_left_undone(result):
+            continue
+        season = result.get("season")
+        parts = [name for name, field in (("chapters", "chapters_state"), ("widgets", "widgets_state")) if result.get(field) not in {None, "VERIFIED"}]
+        if isinstance(season, dict) and season.get("added") is False:
+            parts.append("collection")
+        reason = result.get("next") or result.get("widgets_next")
+        left[platform] = {"published": True, "parts": parts,
+                          "note": reason if isinstance(reason, str) and reason.strip() else
+                          "The work itself is published and verified. Only these parts aren't on it yet; vpub verify adds them once the platform is ready. Never upload it again."}
+        if result.get("key"):
+            left[platform]["next_command"] = f"vpub verify {result['key']}"
+    return left
+
+
 def publish_plan(plan, confirm, workers=1, *, reviewed=False):
     from .overview import DRAFTS
     from threading import Lock
@@ -368,6 +388,9 @@ def publish_plan(plan, confirm, workers=1, *, reviewed=False):
                    for p, v in results.items() if p not in drafts)
     # Stopping before publishing is where a draft plan finishes: null, not true, when no platform was meant to publish.
     answer = {"all_submissions_verified": verified if len(drafts) < len(results) else None, "results": results}
+    left = left_to_finish(results)
+    if left:
+        answer["left_to_finish"] = left
     if drafts:
         ended = {p: results[p].get("previous_state") if results[p]["state"] == "SKIPPED_EXISTING" else results[p]["state"] for p in drafts}
         answer["all_drafts_ready"] = all(state in DRAFTS for state in ended.values())
