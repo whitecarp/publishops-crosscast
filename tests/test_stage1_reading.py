@@ -359,6 +359,18 @@ class BilibiliReadTests(unittest.TestCase):
         self.assertEqual([self.WORK], [row["id"] for row in result["items"]])
         self.assertEqual((0, "42"), (result["platform_writes"], result["identity"]))
 
+    def test_every_free_works_list_says_what_it_can_show(self):
+        # A field test got three kinds of answer from three platforms, none saying what it could see.
+        result = operations_sync.works("bilibili", limit=1)
+        self.assertEqual({"published": True, "scheduled": False, "in_review": False}, result["includes"])
+        self.assertIn("vpub status", result["scope_hint"])
+        for platform, scheduled in (("douyin", None), ("youtube", True), ("instagram", False), ("x", False)):
+            with self.subTest(platform=platform), patch.object(operations_sync.adapters, "browser_call", return_value={"items": []}), \
+                    patch.object(operations_sync.adapters, "addon_installed", return_value=False):
+                found = operations_sync.works(platform)
+                self.assertEqual(scheduled, found["includes"]["scheduled"])
+                self.assertTrue(found["scope"])
+
 
 if __name__ == "__main__":
     unittest.main()

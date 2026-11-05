@@ -11,9 +11,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .categories import STUDIO_CATEGORIES
 from .core import VpubError, douyin_caption, stop_check
-from .browser_runtime import look_until, risk_check, unique_visible, visible
+from .browser_runtime import failure_message, look_until, risk_check, unique_visible, visible
 from .progress import stage
-from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, X_CHOSEN_TIME, YT_EDIT_DRAFT, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style, studio_zone_offsets_agree,
+from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, X_CHOSEN_TIME, YT_DONE_WINDOW, YT_EDIT_DRAFT, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style, studio_zone_offsets_agree,
                                upload_file, wait_until, work_url, works, verify, verify_scheduled_x, x_chosen_time_says, x_new_works, x_new_posts, x_schedule_baseline, x_schedule_moment, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
 
 X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
@@ -26,10 +26,18 @@ YT_CHECKS_WARNING = 'ytcp-prechecks-warning-dialog'
 YT_CHECKS_DONE = re.compile('检查完毕|檢查完畢|Checks complete', re.I)
 YT_CHECKS_SECONDS = 600
 YT_PRESS_ANSWER_SECONDS = 60
+YT_DONE_LOCATOR = 'ytcp-dialog > tp-yt-paper-dialog'  # Studio's own window after a Save, which a field run found outside the upload window.
+# The final Save lights up only once Studio has finished processing in the background;
+# a 75-second clip on a real channel was still grey after two minutes.
+YT_SAVE_SECONDS = 600
 # What's open on the page after Publish, for a press that neither closed the form nor brought the warning.
 YT_OPEN_DIALOGS = """() => [...document.querySelectorAll('tp-yt-paper-dialog, [role="dialog"]')].filter(e => e.getClientRects().length).map(e => ({
     tag: e.tagName, parent: e.parentElement?.tagName, text: (e.innerText || '').slice(0, 300),
     buttons: [...e.querySelectorAll('button')].filter(b => b.getClientRects().length).map(b => b.getAttribute('aria-label') || b.innerText).slice(0, 8)}))"""
+# What's open when something covers the final button: windows, menus and lists, each by kind and its first few words.
+YT_ON_TOP = """() => [...document.querySelectorAll('tp-yt-iron-dropdown, tp-yt-paper-dialog, ytcp-dialog, [role="dialog"], [role="alertdialog"], [role="listbox"]')]
+    .filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden')
+    .map(e => ({tag: e.tagName.toLowerCase(), id: e.id || null, opened: e.hasAttribute('opened'), text: (e.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 80)}))"""
 # Each playlist row's checkbox, its own lines of text and whether it is ticked.
 YT_PLAYLIST_ROWS = """boxes => boxes.map(box => {
     const row = box.closest('li, label, ytcp-ve') || box.parentElement;
@@ -477,13 +485,49 @@ async def publish_x(page, tx):
     return await finish(page, tx, before)
 
 
+# Instagram's own words for its controls. A field run's account showed its pages in zh-hk, where a read of the real page found one
+# control labelled 新帖子 (the English page's svg is New post) and a composer whose button said 從電腦選擇. The other Chinese words are
+# Instagram's usual ones and haven't been seen on a real page yet. Each is the whole name, so a longer one that holds it isn't taken for
+# it, and a step that finds none of its words stops before anything is shared and says which step it was.
+IG_NEW_POST = 'svg[aria-label="New post"], [aria-label="新帖子"], [aria-label="新貼文"]'
+IG_FROM_COMPUTER = re.compile(r'^\s*(Select from computer|從電腦選擇|从电脑选择)\s*$')
+IG_NEXT = re.compile(r'^\s*(Next|下一步)\s*$')
+IG_OK = re.compile(r'^\s*(OK|確定|确定|好)\s*$')
+# The zh-hk crop control is none of these: a field run found the file chosen and then no crop control to press. Every Chinese word
+# for crop holds 裁, and the composer's step has no other icon that does, so one in the composer window holding it counts too.
+IG_CROP = ', '.join([*(f'svg[aria-label="{word}"]' for word in ('Select crop', '選取裁剪', '選擇裁剪', '选择裁剪', '選取裁切', '選擇裁切')),
+                     '[role="dialog"] svg[aria-label*="裁"]'])
+IG_ORIGINAL = re.compile(r'^\s*(Original|原始|原圖|原图)\s*$')
+# Its Chinese word isn't known either: every guess starts with 原 and is short, and in the composer window only that choice is.
+IG_ORIGINAL_LIKE = re.compile(r'^\s*原\S{0,4}\s*$')
+IG_AI_LABEL = re.compile(r'^\s*(Add AI label|(加上|新增|添加|加入)\s*AI\s*(標籤|标签))\s*$')
+IG_ADVANCED = re.compile(r'^\s*(Advanced settings|進階設定|高級設定|高级设置)\s*$')
+IG_SHARE = re.compile(r'^\s*(Share|分享)\s*$')
+IG_SHARE_TO = re.compile(r'^\s*(Share to|分享至|分享到)\s*$')
+IG_SHARED = re.compile(r'(Your (post|reel) has been shared|Post shared|已分享|已發佈|已发布)', re.I)
+IG_LANGUAGE_HINT = ("CrossCast knows Instagram's English words for each step, and its usual Chinese ones. If Instagram shows its pages in another "
+                    "language, or a Chinese word has changed, switching Instagram to English avoids this. Then vpub resume starts this attempt's "
+                    "steps over; nothing was shared.")
+
+
+async def instagram_language(page):
+    """The language Instagram's page says it's in, for an error to name. It names nobody."""
+    try:
+        return await page.evaluate("document.documentElement.lang || ''") or 'unknown'
+    except Exception:
+        return 'unknown'
+
+
 async def instagram_shares_elsewhere(page):
     """Whether the step's own Share to row has a switch on, which would post this somewhere the plan doesn't say. A field read found that row's words and its one switch under the same grandparent, and the word Threads only in the page's footer, so words elsewhere on the page say nothing."""
-    heading = await visible(page.get_by_text('Share to', exact=True))
+    heading = await visible(page.get_by_text(IG_SHARE_TO))
     if heading is None:
         return False
     switches = heading.locator('../..').locator('[role=switch],input[type=checkbox]')
     return any([await box.is_checked() for box in await switches.all() if await box.is_visible()])
+
+
+INSTAGRAM_NEW_POST_SECONDS = 15
 
 
 async def publish_instagram(page, tx):
@@ -493,35 +537,56 @@ async def publish_instagram(page, tx):
     if len(caption) > 2200:
         raise VpubError('description_too_long', 'Instagram caption exceeds 2200 characters; no upload started.')
     tx.save(before_ids=list(before), expected_text=caption)
-    # Sidebar New post; account remains the one verified before navigation.
-    await page.locator('svg[aria-label="New post"]').click()
-    await page.get_by_role('button', name='Select from computer', exact=True).wait_for(timeout=20000)
-    await upload_file(page, tx.media(), accept='video/')
-    tx.save(phase='uploading')
-    async def crop_ready():
-        notice = await visible(page.get_by_text('Video posts are now shared as reels', exact=True))
-        if notice:
-            await page.get_by_role('button', name='OK', exact=True).click()
-        return await visible(page.get_by_role('button', name='Next', exact=True))
-    await wait_until(page, crop_ready, seconds=600, label='Instagram crop step')
-    tx.save(phase='crop')
-    crop = page.locator('svg[aria-label="Select crop"]')
-    await crop.click()
-    await page.get_by_text('Original', exact=True).click()
-    tx.save(crop='original', video_modified=False)
-    await page.get_by_role('button', name='Next', exact=True).click()
-    tx.save(phase='cover')
-    cover_button = page.get_by_text('Select from computer', exact=True)
-    if tx.cover():
-        await cover_button.wait_for(state='visible', timeout=60000)
-        await choose_in_picker(page, cover_button, tx.cover())
-        await page.wait_for_timeout(2000)
-        tx.save(cover={'state':'UI_ACCEPTED', 'source':'production_artwork', 'remote_pixels_verified':False})
-    else:
-        # A field look found this step shows that button. With no cover to wait for, a press straight after the last could land before the step has come, and a review showed pressing on without it would press the last step's Next again.
-        if not await look_until(page, lambda: visible(cover_button), 60000):
-            raise VpubError('layout_changed', "Instagram's next step did not come, so nothing was shared.")
-    await page.get_by_role('button', name='Next', exact=True).click()
+    # Sidebar New post; account remains the one verified before navigation. A field run found none in 10 seconds after a sign-in
+    # made elsewhere, and its error could only say waiting for locator(…), so this one names the control.
+    new_post = await look_until(page, lambda: visible(page.locator(IG_NEW_POST)), INSTAGRAM_NEW_POST_SECONDS * 1000)
+    if new_post is None:
+        raise VpubError('layout_changed', f"Instagram's New post button didn't show on the profile page, so nothing was uploaded. The page gives its language as {await instagram_language(page)}.",
+                        "Open Instagram with vpub auth login instagram and look at what it shows: after a sign-in made elsewhere it can ask something first. " + IG_LANGUAGE_HINT)
+    from patchright.async_api import Error as BrowserError
+    step = "opening the composer's file picker"
+    try:
+        await new_post.click()
+        await page.get_by_role('button', name=IG_FROM_COMPUTER).wait_for(timeout=20000)
+        step = 'choosing the video'
+        await upload_file(page, tx.media(), accept='video/')
+        tx.save(phase='uploading')
+        async def crop_ready():
+            notice = await visible(page.get_by_text('Video posts are now shared as reels', exact=True))
+            if notice:
+                await page.get_by_role('button', name=IG_OK).click()
+            else:
+                # The same notice in a language whose words haven't been seen: a window that names Reels and has an OK button. The composer's own steps have none.
+                ok = await visible(page.get_by_role('dialog').filter(has_text=re.compile('reels', re.I)).get_by_role('button', name=IG_OK))
+                if ok:
+                    await ok.click()
+            return await visible(page.get_by_role('button', name=IG_NEXT))
+        step = 'waiting for the crop step'
+        await wait_until(page, crop_ready, seconds=600, label='Instagram crop step')
+        tx.save(phase='crop')
+        step = 'choosing the original crop'
+        await page.locator(IG_CROP).click()
+        # One choice only: the same one found both ways counts once, and two different ones stop here.
+        await page.get_by_text(IG_ORIGINAL).or_(page.locator('[role="dialog"]').get_by_text(IG_ORIGINAL_LIKE)).click()
+        tx.save(crop='original', video_modified=False)
+        step = 'going on to the cover step'
+        await page.get_by_role('button', name=IG_NEXT).click()
+        tx.save(phase='cover')
+        cover_button = page.get_by_text(IG_FROM_COMPUTER)
+        if tx.cover():
+            await cover_button.wait_for(state='visible', timeout=60000)
+            await choose_in_picker(page, cover_button, tx.cover())
+            await page.wait_for_timeout(2000)
+            tx.save(cover={'state':'UI_ACCEPTED', 'source':'production_artwork', 'remote_pixels_verified':False})
+        else:
+            # A field look found this step shows that button. With no cover to wait for, a press straight after the last could land before the step has come, and a review showed pressing on without it would press the last step's Next again.
+            if not await look_until(page, lambda: visible(cover_button), 60000):
+                raise VpubError('layout_changed', "Instagram's next step did not come, so nothing was shared.")
+        step = 'going on to the caption step'
+        await page.get_by_role('button', name=IG_NEXT).click()
+    except BrowserError as exc:
+        raise VpubError('layout_changed', f"Instagram's composer stopped while {step}, so nothing was shared. The page gives its language as {await instagram_language(page)}. {failure_message(exc)}",
+                        IG_LANGUAGE_HINT) from None
     tx.save(phase='caption')
     boxes = page.locator('textarea,[contenteditable=true]')
     # Field runs found Instagram's menus and buttons come a moment after a press, and finding no box here would stop an upload that was going fine.
@@ -535,7 +600,7 @@ async def publish_instagram(page, tx):
             raise VpubError('metadata_mismatch', 'Instagram caption differs from the manifest.')
     await words_are_kept()
     # The native AI control is required when requested; never silently omit it.
-    label = page.get_by_text('Add AI label', exact=True)
+    label = page.get_by_text(IG_AI_LABEL)
 
     async def ai_switch():
         """The AI label's switch. A field look found several switches in this step, each an input of its own, so the nearest one to the words has to be the only one that near, or it could be another setting."""
@@ -550,12 +615,13 @@ async def publish_instagram(page, tx):
     if tx.options['ai_generated']:
         ai = await visible(label)
         if ai is None:
-            advanced = await visible(page.get_by_text('Advanced settings', exact=True))
+            advanced = await visible(page.get_by_text(IG_ADVANCED))
             if advanced:
                 await advanced.click()
             ai = await look_until(page, lambda: visible(label), 5000)
         if ai is None:
-            raise VpubError('declaration_unverified', 'Instagram AI-label control is unavailable; upload retained, Share not clicked.')
+            raise VpubError('declaration_unverified', f'Instagram AI-label control is unavailable; upload retained, Share not clicked. The page gives its language as {await instagram_language(page)}.',
+                            IG_LANGUAGE_HINT)
         switch = await ai_switch()
         if switch is None:
             raise VpubError('declaration_unverified', 'Instagram AI-label switch could not be identified.')
@@ -566,7 +632,7 @@ async def publish_instagram(page, tx):
     tx.save(phase='preview', metadata_readback=True, ai_disclosure='native_control', shares_elsewhere=await instagram_shares_elsewhere(page))
     if tx.options.get('submission_mode') == 'draft_only':
         return tx.save(state='PREVIEW_READY', note='Reached unpublished preview; this web composer may not persist after the browser closes.')
-    post = await unique_visible(page.get_by_role('button', name='Share', exact=True), 'Instagram final Share')
+    post = await unique_visible(page.get_by_role('button', name=IG_SHARE), 'Instagram final Share')
 
     async def still_says_it():
         await words_are_kept()
@@ -579,7 +645,7 @@ async def publish_instagram(page, tx):
                 raise VpubError('declaration_unverified', 'Instagram AI label was not confirmed.')
     await tx.submit(page, post, still_holds=still_says_it)
     # Its window may say this more than once, and an error about that here would read as a failed post after it has gone out.
-    await page.get_by_text(re.compile(r'(Your (post|reel) has been shared|Post shared)', re.I)).filter(visible=True).first.wait_for(timeout=600000)
+    await page.get_by_text(IG_SHARED).filter(visible=True).first.wait_for(timeout=600000)
     return await finish(page, tx, before)
 
 
@@ -963,12 +1029,14 @@ async def yt_set_time(page, clock, wanted):
     return steps
 
 
-def yt_schedule_zone(text, when):
-    """Only an explicit zone identifies target-date rules; a GMT offset or abbreviation does not.
+# A channel left on Studio's default shows "Time zone / Default set to local time zone (GMT+0800)",
+# in a collapsed part that inner_text() leaves out. Local there means the browser's own zone.
+YT_LOCAL_ZONE = re.compile(r'(?:local time ?zone|本地时区|当地时区|本地時區|當地時區)[^()]*\(\s*(GMT\s*[+\-−]\s*\d{1,2}(?::?\d{2})?)\s*\)', re.I)
+BROWSER_ZONE = '() => Intl.DateTimeFormat().resolvedOptions().timeZone'
 
-    Named-zone lines are a conservative supported display contract, not a claim
-    that every live Studio layout exposes one. Unknown layouts stay as drafts.
-    """
+
+def studio_zone_names(text):
+    """The named zones Studio's scheduler text shows, and whether another zone expression makes it unreadable."""
     names, unreadable = set(), False
     named_zone = r'UTC|[A-Za-z][A-Za-z0-9_+\-]*(?:/[A-Za-z0-9_+\-]+)+'
     for line in text.splitlines():
@@ -978,6 +1046,20 @@ def yt_schedule_zone(text, when):
             names.add(line)
         elif line and (labelled or re.search(named_zone, line)):
             unreadable = True  # Do not drop a second, ambiguous zone expression.
+    return names, unreadable
+
+
+def yt_schedule_zone(text, when, local_zone=None):
+    """Only an explicit zone identifies target-date rules; a GMT offset or abbreviation does not.
+
+    Named-zone lines are a conservative supported display contract, not a claim
+    that every live Studio layout exposes one. Unknown layouts stay as drafts.
+    local_zone is the browser's own zone, given only when Studio names no zone but says it
+    uses the local one; the offset Studio shows must still agree with that zone's rules.
+    """
+    names, unreadable = studio_zone_names(text)
+    if local_zone and not names and not unreadable:
+        names = {local_zone}
     if unreadable or len(names) != 1:
         raise VpubError('schedule_unverified', 'YouTube Studio did not identify one explicit time zone. A GMT offset alone cannot establish the target-date time. The upload is kept as a draft; nothing was published.',
                         'Inspect this retained draft and schedule it manually in Studio. Do not upload it again.')
@@ -1000,7 +1082,16 @@ def yt_schedule_zone(text, when):
 
 async def yt_schedule_local(page, when):
     scheduler = await unique_visible(page.locator(f'{YT_DIALOG} ytcp-visibility-scheduler'), 'YouTube schedule time zone')
-    return yt_schedule_zone(await scheduler.inner_text(), when)
+    shown = await scheduler.inner_text()
+    names, unreadable = studio_zone_names(shown)
+    if names or unreadable:
+        return yt_schedule_zone(shown, when)
+    hidden = await scheduler.evaluate('e => e.textContent')
+    default = set(YT_LOCAL_ZONE.findall(hidden if isinstance(hidden, str) else ''))
+    if len(default) != 1:
+        return yt_schedule_zone(shown, when)
+    zone = await page.evaluate(BROWSER_ZONE)
+    return yt_schedule_zone(f'{shown}\n({next(iter(default))})', when, zone if isinstance(zone, str) else None)
 
 
 async def yt_schedule(page, when):
@@ -1036,10 +1127,17 @@ async def yt_schedule(page, when):
             'time': [local.hour, local.minute], 'timezone_basis': 'studio', 'timezone': zone, 'time_entry': entered}
 
 
+async def yt_done_window(page):
+    return await visible(page.locator(YT_DONE_LOCATOR).filter(has_text=YT_DONE_WINDOW))
+
+
 async def yt_press_answer(page, done):
-    """What Studio did with Publish: 'warned', 'closed', or nothing yet."""
+    """What Studio did with Publish: 'warned', 'closed', 'confirmed', or nothing yet. A field run's Schedule button stayed on
+    screen behind Studio's own Video scheduled window for the whole wait, so that window is an answer too."""
     if await visible(page.locator(f'{YT_CHECKS_WARNING} button')):
         return 'warned'
+    if await yt_done_window(page):
+        return 'confirmed'
     return None if await done.is_visible() else 'closed'
 
 
@@ -1065,6 +1163,22 @@ async def yt_back_from_warning(page):
     return words
 
 
+async def yt_uncover(page, refused):
+    """What lay over the final button, then one press on Studio's backdrop where nothing else is, which closes the window on top
+    the way a person's click beside it would. A field run's Schedule button was covered by that backdrop three times running.
+    Only a backdrop named as what refused the press is pressed: under the upload window alone, a press there would close the upload window."""
+    from patchright.async_api import Error as BrowserError
+    if 'in the way: tp-yt-iron-overlay-backdrop' not in refused:
+        return None
+    on_top = await page.evaluate(YT_ON_TOP)
+    try:
+        await page.locator('tp-yt-iron-overlay-backdrop.opened').first.click(position={'x': 2, 'y': 2}, timeout=5000)
+    except BrowserError:
+        return {'on_top': on_top, 'pressed_backdrop': False}
+    await page.wait_for_timeout(1000)
+    return {'on_top': on_top, 'pressed_backdrop': True}
+
+
 async def yt_press_publish(page, tx, done):
     """Press once, let Studio settle, then read this video's own page.
 
@@ -1088,7 +1202,7 @@ async def yt_press_publish(page, tx, done):
                 or studio_read(STUDIO_TIMES, await clock.input_value()) != (local.hour, local.minute)):
             raise VpubError('schedule_unverified', 'The Studio schedule or time zone changed before Save. The upload is kept as a draft; nothing was published.')
 
-    await act_and_settle(page, lambda: tx.submit(page, done, again=again,
+    await act_and_settle(page, lambda: tx.submit(page, done, again=again, uncover=lambda refused: yt_uncover(page, refused),
                                                still_holds=schedule_still_holds if tx.options.get('schedule') else None), PIN_TICKS)
     answer = None
     for tick in range(YT_PRESS_ANSWER_SECONDS * 2 + 1):
@@ -1105,6 +1219,11 @@ async def yt_press_publish(page, tx, done):
     stop_check('youtube')
     if answer == 'warned':
         tx.save(checks_warning='Studio showed a checks warning after Save. No second final press was made; read back the recorded video.')
+    elif answer == 'confirmed':
+        # Its first two lines, such as Video scheduled and when it goes public, which a read-back can compare with the plan.
+        window = await yt_done_window(page)
+        lines = [line.strip() for line in (await window.inner_text()).splitlines() if line.strip()][:2] if window else []
+        tx.save(studio_confirmation=' '.join(lines)[:200])
     elif not answer:
         tx.save(after_press=await page.evaluate(YT_OPEN_DIALOGS))
 
@@ -1219,7 +1338,13 @@ async def yt_final_steps(page, tx, video_id, reopened):
     if options.get('submission_mode') == 'draft_only':
         return tx.save(state='PREVIEW_READY', note='Uploaded as an unpublished draft in YouTube Studio; nothing was published.')
     done = await unique_visible(page.locator(f'{YT_DIALOG} #done-button'), 'YouTube final Save')
-    await wait_until(page, lambda: yt_button_ready(done), seconds=120, label='YouTube final Save enabled')
+    try:
+        await wait_until(page, lambda: yt_button_ready(done), seconds=YT_SAVE_SECONDS, label='YouTube final Save enabled')
+    except VpubError as failure:
+        if failure.code != 'processing_timeout':
+            raise
+        raise VpubError(failure.code, f'{failure.message} The upload is an unsaved Studio draft ({video_id}) that Studio was still processing; nothing was saved or published.',
+                        'Open that draft in YouTube Studio and finish or delete it there. Never upload this video again for this attempt.') from None
     tx.save(id=video_id, url=work_url('youtube', tx.identity, video_id))
     # On a real channel Studio greyed a Save out at once and sent the change about six seconds later, and leaving before it ended cancelled it. The read-back below leaves this page.
     await yt_press_publish(page, tx, done)

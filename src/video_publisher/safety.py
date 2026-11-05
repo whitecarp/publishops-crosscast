@@ -140,6 +140,15 @@ def labelled(text, language, written_by="ai"):
     return text.rstrip() + ("" if label.startswith("（") else " ") + label
 
 
+def label_note(words, sent, written_by="ai"):
+    """What a dry run says about a label this added, so a person's own words aren't sent marked as an AI's. A field run found the label without knowing why."""
+    if written_by != "ai" or sent == words:
+        return {}
+    return {"label_added": sent[len(words.rstrip()):].strip(),
+            "label_note": "CrossCast adds this because --written-by is ai, the default for words an AI wrote. "
+                          "If these are the person's own words, run it again with --written-by person."}
+
+
 def label_language(text):
     """Which language's AI label these words already end with, if any."""
     ending = text.rstrip() if isinstance(text, str) else ""

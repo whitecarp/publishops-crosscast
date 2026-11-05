@@ -267,6 +267,9 @@ class UploadTests(Spaced):
         tool = patch("video_publisher.rehearsal.shutil.which", return_value="ffmpeg.exe")
         tool.start()
         self.addCleanup(tool.stop)
+        runs = patch("video_publisher.rehearsal.ffmpeg_problem", return_value=None)
+        runs.start()
+        self.addCleanup(runs.stop)
 
     def plan(self):
         return {"confirmation": "hash", "video_sha256": "a" * 64, "platforms": {"bilibili": {"account": "default", "title": "T", "description": "D", "tags": ["a"], "visibility": "public", "ai_generated": True, "method": "cli"}}, "video": "v.mp4"}

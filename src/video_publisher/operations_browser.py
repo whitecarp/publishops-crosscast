@@ -34,6 +34,10 @@ def douyin_metrics(text):
     return result
 
 
+INSTAGRAM_POST_MS=45000
+INSTAGRAM_UNAVAILABLE=re.compile(r"^\s*Sorry, this page isn't available\.?\s*$")
+
+
 async def open_work(page, platform, identity, work, public_comments=False, reuse_page=False):
     urls={'instagram':f'https://www.instagram.com/p/{work}/',
           'x':f'https://x.com/{identity}/status/{work}',
@@ -43,7 +47,16 @@ async def open_work(page, platform, identity, work, public_comments=False, reuse
     if not (reuse_page and same):
         await page.goto(urls[platform],wait_until='domcontentloaded',timeout=60000)
     if platform=='instagram':
-        await page.locator('svg[aria-label="More options"]').wait_for(state='visible',timeout=45000)
+        from patchright.async_api import Error as BrowserError
+        try:
+            await page.locator('svg[aria-label="More options"]').wait_for(state='visible',timeout=INSTAGRAM_POST_MS)
+        except BrowserError:
+            # A field run read the comments of a post deleted the day before and got only a 45-second timeout. This says what the page showed,
+            # which proves nothing about the post: a deletion is settled only by vpub delete --verify-only.
+            if await page.get_by_text(INSTAGRAM_UNAVAILABLE).locator('visible=true').count():
+                raise VpubError('work_unavailable',"Instagram shows this post's page as not available, so nothing on it could be read.",
+                                'It may have been deleted, or be private. vpub works instagram lists the posts on the profile now.') from None
+            raise
     elif platform=='x':
         await page.locator(f'article a[href="/{identity}/status/{work}"]').first.wait_for(timeout=45000)
     elif public_comments:

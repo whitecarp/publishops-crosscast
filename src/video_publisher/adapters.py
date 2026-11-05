@@ -6,6 +6,7 @@ import importlib
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -39,6 +40,22 @@ def bili(args, timeout=210, program=BILI_MAIN, signing_in=False):
         # bili-cli's own spacing between writes says when to try again. Bilibili never saw the request, so it has not objected.
         if e.get("code") == "rate_limited" and (e.get("detail") or {}).get("limit"):
             raise VpubError(HELD_BACK, e.get("message", "bili-cli held this write back."), e.get("hint", ""))
+        # 62003 is good news: approved and held for its scheduled release, not an objection.
+        if re.search(r"(?<!\d)62003(?!\d)", str(e.get("message", ""))):
+            raise VpubError("not_public_yet", "Bilibili approved this video and is holding it for its scheduled release (62003), so it can't be read or changed until then. Nothing is wrong.",
+                            "Try again after its release time.")
+        # Right after an upload Bilibili still reports the length as 0 seconds, so chapters and widgets look out of range.
+        if e.get("code") == "invalid_argument" and re.search(r"超出视频时长\s*0\s*秒", str(e.get("message", ""))):
+            e = {**e, "message": f"{e['message']} Bilibili hasn't finished processing this video, so it still reports its length as 0 seconds. Nothing was changed.",
+                 "hint": "Try again in a few minutes; a real run set the same chapters about four minutes later."}
+        # 79025 暂不支持跳转他人稿件 reads as an ownership problem. A field run's link pointed at a video Bilibili wouldn't show (62002).
+        if re.search(r"(?<!\d)79025(?!\d)", str(e.get("message", ""))):
+            e = {**e, "message": f"{e['message']} Bilibili links a widget only to this account's own videos that it can show. It gives this answer for another account's video, "
+                                 "and also for one that isn't visible, such as a deleted or private one. Nothing was added.",
+                 "hint": "Open the target video on Bilibili. If it doesn't play, or isn't this account's own, choose another."}
+        if re.search(r"(?<!\d)20082(?!\d)", str(e.get("message", ""))):
+            e = {**e, "message": f"{e['message']} This account has as many collections as Bilibili allows. Nothing was created.",
+                 "hint": "Reuse or delete one of its collections first."}
         safety.pushed_back("bilibili", e.get("code"))
         raise VpubError(e.get("code", "backend_error"), e.get("message", "bili-cli failed"), e.get("hint", ""))
     return result.get("data", {})

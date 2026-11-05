@@ -28,6 +28,11 @@ def receipt_path(key):
     return home() / 'operations/collections' / (key + '.json')
 
 
+def verify_command(platform):
+    """A YouTube playlist answers to vpub playlist verify. A field run was sent to vpub collection verify for one."""
+    return 'vpub playlist verify ' if platform == 'youtube' else 'vpub collection verify '
+
+
 def call(platform, operation, owner, **kw):
     if platform == 'bilibili':
         from .collections_bilibili import call as bilibili
@@ -153,7 +158,7 @@ def change(platform, action, collection=None, title=None, request_id=None, cover
             raise VpubError('duplicate_title','A collection with this title already exists on the visible page.')
         r=dict(key=key,request_id=request_id,platform=platform,identity=owner,intent=intent,action=action,
                collection_id=collection,title=title,before_ids=[x['id'] for x in before['items']],
-               state='READY',started_at=now(),platform_writes=0,next_command='vpub collection verify '+key,**extra)
+               state='READY',started_at=now(),platform_writes=0,next_command=verify_command(platform)+key,**extra)
         atomic_json(path,r)
         try:
             if action=='rename' and matches[0]['title']==title and all(v is None for v in extra.values()):
@@ -210,7 +215,7 @@ def membership(platform, action, collection, work, request_id):
         if before.get('complete') is not True:raise VpubError('read_incomplete','Complete membership is required before editing; no write attempted.')
         ids=[x['id'] for x in before['items']]
         r={'key':key,'request_id':request_id,'platform':platform,'identity':owner,'intent':intent,'action':action,'collection_id':collection,
-           'work_id':work,'title':None,'before_members':ids,'state':'READY','platform_writes':0,'started_at':now(),'next_command':'vpub collection verify '+key}
+           'work_id':work,'title':None,'before_members':ids,'state':'READY','platform_writes':0,'started_at':now(),'next_command':verify_command(platform)+key}
         atomic_json(path,r)
         try:
             if (work in ids)==(action=='add'):r=checked_result(r,before)

@@ -91,7 +91,8 @@ vpub collection remove instagram COLLECTION_ID WORK_CODE --request-id remove-01
 vpub collection create douyin --title "系列" --cover collection.jpg --description "系列簡介" --request-id create-01
 vpub collection add douyin COLLECTION_ID WORK_ID --request-id add-02
 vpub collection remove douyin COLLECTION_ID WORK_ID --request-id remove-02
-vpub collection delete douyin COLLECTION_ID --request-id delete-01
+vpub collection delete douyin COLLECTION_ID --request-id delete-01 --dry-run
+vpub collection delete douyin COLLECTION_ID --request-id delete-01 --confirm CODE --person-approved
 vpub collection add x FOLDER_ID POST_ID --request-id add-03
 vpub collection remove x FOLDER_ID POST_ID --request-id remove-03
 vpub collection rename bilibili COLLECTION_ID --title "系列" --request-id rename-02
@@ -139,7 +140,7 @@ vpub playlist remove PLAYLIST_ID ITEM_ID --request-id series-remove-01
 vpub playlist verify RECEIPT_KEY
 ```
 
-刪除列表使用 `vpub playlist delete PLAYLIST_ID --request-id series-delete-01`；不刪除列表中的影片。每次有意的新變更使用新的 request ID，中斷或不確定時沿用原 ID，CLI 不會重送。`UNVERIFIED` 使用 `playlist verify` 讀回，不靠再次提交補救；若建立回應遺失且未取得列表 ID，保留待核驗，不依同名猜測歸屬。寫入後只有限時重讀，沒有寫入重試。
+刪除列表先用 `vpub playlist delete PLAYLIST_ID --request-id series-delete-01 --dry-run`，讓本人看過列表內容，本人同意後再加 `--confirm CODE --person-approved` 執行；不刪除列表中的影片。刪除合集也是同樣三步。每次有意的新變更使用新的 request ID，中斷或不確定時沿用原 ID，CLI 不會重送。`UNVERIFIED` 使用 `playlist verify` 讀回，不靠再次提交補救；若建立回應遺失且未取得列表 ID，保留待核驗，不依同名猜測歸屬。寫入後只有限時重讀，沒有寫入重試。
 
 這組命令需要首次登入授權包含 `youtube.force-ssl`；目前預設已列入。若 API 回報 `manualSortRequired`，需先在 YouTube 將該列表排序設成手動；CLI 不改排序模式。官方文件：[列表修改](https://developers.google.com/youtube/v3/docs/playlists/update)、[項目排序](https://developers.google.com/youtube/v3/docs/playlistItems/update)。
 

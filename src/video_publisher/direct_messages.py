@@ -93,7 +93,7 @@ def send(platform, who, text, language, dry_run=False, test_id=None, written_by=
                   'incoming': last_incoming(before), 'recent': from_them(before), 'allow_contact': allow_contact, 'person_approved': person_approved}
         if dry_run:
             safety.admit(**limits, reserve=False)
-            return {'state': 'DRY_RUN', 'request': request, 'observed': before, 'platform_writes': 0}
+            return {'state': 'DRY_RUN', 'request': request, 'observed': before, 'platform_writes': 0, **safety.label_note(words, text, written_by)}
         if not before.get('can_send'): raise VpubError('dm_send_unavailable', 'This recipient or platform currently has no verified send control.')
         ticket = safety.admit(**limits)
         key = uuid.uuid4().hex; path = home() / 'operations/dm-actions' / (key + '.json')

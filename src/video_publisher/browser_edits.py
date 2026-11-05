@@ -1,10 +1,11 @@
 """Official-page edits using the existing CLI-owned session, not the host browser."""
 from pathlib import Path
 import re
+import time
 from urllib.parse import urlsplit
 from . import x_pages
 from .core import VpubError, X_AI_LINE, X_POST_LIMIT, atomic_json, file_sha, now, read_json, stop_check, x_post_text, x_weighted_length
-from .browser_runtime import failure_record, look_until, risk_check, unique_visible, visible
+from .browser_runtime import failure_message, failure_record, look_until, risk_check, unique_visible, visible
 from .browser_backends import choose_file, douyin_card_words, douyin_editor_address, douyin_editor_boxes, douyin_type_caption, normalize, work_url
 from .progress import stage
 from .edits import x_edit_readback_note, x_edit_was_attempted
@@ -414,52 +415,121 @@ async def capture_cover(page,control,output,patch,save,url):
                 note='Inspect the saved preview visually. A loaded thumbnail or local source hash does not establish image equality. Never repeat Save merely because verification is pending.')
 
 
+DOUYIN_CHAPTER_MENU_SECONDS=45
+DOUYIN_CHAPTER_MENU_LOOK=5000  # How long each pointing waits for the menu, in milliseconds.
+DOUYIN_CONFIRM=re.compile(r'^\s*(确定|確定|确认|確認|confirm)\s*$',re.I)  # The 清空 window's own button, when it shows one.
+DOUYIN_CLEAR_LOOK=3000  # How long 清空 gets to show that window, in milliseconds.
+# The words on the buttons of whatever window is open: Douyin's own, never the work's.
+DOUYIN_WINDOW_BUTTONS="""() => [...document.querySelectorAll('.semi-modal, .semi-popover, .semi-popconfirm, [role="dialog"], [role="alertdialog"]')]
+    .filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden')
+    .flatMap(e => [...e.querySelectorAll('button')].filter(b => b.getClientRects().length).map(b => (b.innerText || '').trim().slice(0, 12)))
+    .filter(Boolean).slice(0, 8)"""
+
+
+def douyin_after_clear(buttons):
+    """What 清空 left open, for an error to say: None when it wasn't needed or its window was confirmed."""
+    if buttons is None: return ''
+    return f" After 清空, the open window's buttons said: {', '.join(buttons)}." if buttons else " 清空 opened no window with buttons."
+
+
+async def douyin_chapter_menu(page,card):
+    """编辑作品's 添加章节 or 编辑章节, or None if it never shows. A field run found the item there after a 15-second wait had
+    given up with a bare TimeoutError, so this points at 编辑作品 again, from off the card, until the item shows."""
+    from patchright.async_api import Error as BrowserError
+    item=page.get_by_text(re.compile('^(添加章节|编辑章节)$'))
+    give_up=time.monotonic()+DOUYIN_CHAPTER_MENU_SECONDS
+    while True:
+        await card.get_by_text('编辑作品',exact=True).hover()
+        try:
+            await item.first.wait_for(state='visible',timeout=DOUYIN_CHAPTER_MENU_LOOK)
+            return await unique_visible(item,'chapter menu')
+        except BrowserError:
+            if time.monotonic()>=give_up: return None
+            await page.mouse.move(0,0)
+
+
+def douyin_chapters_closed():
+    return VpubError('edit_not_ready',"Douyin's chapter editor didn't open, so nothing was typed or saved.",
+                     'Try again in a few minutes. Douyin can be slow to offer 添加章节 on a work it is still processing or reviewing.')
+
+
 async def douyin_chapters(page, receipt, patch, save, submit, verify_only=False):
-    from .browser_backends import MANAGE, works
+    from patchright.async_api import Error as BrowserError
+    from .browser_backends import MANAGE, douyin_card_under_review, works
     chapters=patch['chapters']
-    found=await works(page,'douyin',receipt.get('identity',''))
+    try:
+        found=await works(page,'douyin',receipt.get('identity',''))
+    except BrowserError:
+        raise VpubError('page_not_ready',"Douyin's Creator Center didn't load in time, so nothing was typed or saved.",'Try again in a few minutes.') from None
     if normalize(receipt['title']) not in normalize(found.get(str(receipt['id']),{}).get('text','')):
+        # A field run's chapters waited on a video still under review, and only ever said TimeoutError.
+        if await douyin_card_under_review(page,receipt['title']):
+            raise VpubError('not_public_yet',"Douyin is still reviewing this video, so its chapters can't be set yet. Nothing was typed or saved.",
+                            'Run vpub verify for it again once Douyin has published it.')
         raise VpubError('wrong_work','The intended chapter work ID and title could not be read from the account management page.')
-    await page.goto(MANAGE,wait_until='domcontentloaded',timeout=60000)
-    card=page.locator('[class^="video-card-content-"]').filter(has_text=receipt['title'])
-    await card.wait_for(state='visible',timeout=30000)
-    await card.get_by_text('编辑作品',exact=True).hover()
-    await page.get_by_text(re.compile('^(添加章节|编辑章节)$')).first.wait_for(state='visible',timeout=15000)
-    menu=await unique_visible(page.get_by_text(re.compile('^(添加章节|编辑章节)$')),'chapter menu')
-    await menu.click()
-    await page.get_by_role('button',name='手动添加',exact=True).wait_for(timeout=30000)
+    # Nothing is typed or pressed before the editor opens, so a page that is slow to offer it says so in words, not as a bare TimeoutError.
+    try:
+        await page.goto(MANAGE,wait_until='domcontentloaded',timeout=60000)
+        card=page.locator('[class^="video-card-content-"]').filter(has_text=receipt['title'])
+        await card.wait_for(state='visible',timeout=30000)
+        menu=await douyin_chapter_menu(page,card)
+        if menu is None: raise douyin_chapters_closed()
+        await menu.click()
+        await page.get_by_role('button',name='手动添加',exact=True).wait_for(timeout=30000)
+    except BrowserError:
+        raise douyin_chapters_closed() from None
     if verify_only:
         text=await page.locator('body').inner_text()
         toggle=await unique_visible(page.locator('input[type=checkbox]'),'external chapter progress bar')
         matched=chapter_text_matches(text,chapters) and await toggle.is_checked()
         return save(state='EDIT_VERIFIED' if matched else 'EDIT_SUBMITTED_UNVERIFIED',chapters=chapters,
                     timing_readback=matched,platform_writes=0)
-    if await visible(page.get_by_text('清空',exact=True)):
-        # Clear only the local editor; the original work is unchanged until Save.
-        await page.get_by_text('清空',exact=True).click()
-        await page.get_by_role('button',name='confirm',exact=True).click()
-    for chapter in chapters:
-        player=await unique_visible(page.locator('video'),'chapter video preview')
-        await player.evaluate('(v,t)=>{v.pause();v.currentTime=t;}',chapter['start_seconds'])
-        await page.wait_for_timeout(400)
-        await page.get_by_role('button',name='手动添加',exact=True).click()
-        name=page.get_by_placeholder('输入章节名',exact=True)
-        await name.fill(chapter['title'])
-        confirm=await unique_visible(page.get_by_text('确定',exact=True),'local chapter confirmation')
-        await confirm.click()
-        await name.wait_for(state='hidden',timeout=10000)
+    # Each step is named if it stops: a field run stopped here with only a bare TimeoutError. Nothing reaches the work until Save.
+    step='clearing the chapters already in the editor'
+    left_open=None
+    try:
+        if await visible(page.get_by_text('清空',exact=True)):
+            # Clear only the local editor; the original work is unchanged until Save. Two field runs' 清空, on new works with
+            # no chapters yet, showed no button named 确定 or confirm in ten seconds, so a 清空 that shows none goes on. The
+            # chapter count and each title and time are checked before Save, so a chapter it left behind still stops there.
+            await page.get_by_text('清空',exact=True).click()
+            confirm=await look_until(page,lambda: visible(page.get_by_role('button',name=DOUYIN_CONFIRM)),DOUYIN_CLEAR_LOOK)
+            if confirm:
+                await confirm.click()
+            else:
+                left_open=await page.evaluate(DOUYIN_WINDOW_BUTTONS)
+        for number,chapter in enumerate(chapters,1):
+            step=f"adding chapter {number} ('{chapter['title']}' at {int(chapter['start_seconds'])}s)"
+            player=await unique_visible(page.locator('video'),'chapter video preview')
+            await player.evaluate('(v,t)=>{v.pause();v.currentTime=t;}',chapter['start_seconds'])
+            await page.wait_for_timeout(400)
+            await page.get_by_role('button',name='手动添加',exact=True).click()
+            name=page.get_by_placeholder('输入章节名',exact=True)
+            await name.fill(chapter['title'])
+            confirm=await unique_visible(page.get_by_text('确定',exact=True),'local chapter confirmation')
+            await confirm.click()
+            await name.wait_for(state='hidden',timeout=10000)
+    except BrowserError as exc:
+        raise VpubError('edit_not_ready',f"Douyin's chapter editor stopped while {step}, so nothing was saved. {failure_message(exc)}{douyin_after_clear(left_open)}",
+                        'Try again later. If it stops at the same step, the editor has changed there.') from None
     toggle=await unique_visible(page.locator('input[type=checkbox]'),'external chapter progress bar')
     await toggle.check()
     text=await page.locator('body').inner_text()
-    if not chapter_text_matches(text,chapters): raise VpubError('chapters_mismatch','Chapter titles or their paired times do not match before saving.')
+    if not chapter_text_matches(text,chapters):
+        shown=re.search(r'章节数：(\d+)',text)
+        listed=f" The editor lists {shown[1]} chapters, and this edit has {len(chapters)}." if shown else ''
+        raise VpubError('chapters_mismatch',f'Chapter titles or their paired times do not match before saving, so nothing was saved.{listed}{douyin_after_clear(left_open)}',
+                        "Look at the work's chapters on Douyin. If old ones are still there, clear them there, then run this again.")
     save(state='EDIT_PREPARED',chapters=chapters)
     await submit(page.get_by_role('button',name='保存',exact=True))
     await page.get_by_role('button',name='保存',exact=True).wait_for(state='hidden',timeout=45000)
     await page.reload(wait_until='domcontentloaded')
     await card.wait_for(state='visible',timeout=30000)
-    await card.get_by_text('编辑作品',exact=True).hover()
-    await page.get_by_text(re.compile('^(添加章节|编辑章节)$')).first.wait_for(state='visible',timeout=15000)
-    await (await unique_visible(page.get_by_text(re.compile('^(添加章节|编辑章节)$')),'chapter menu')).click()
+    menu=await douyin_chapter_menu(page,card)
+    if menu is None:
+        raise VpubError('readback_unavailable',"Save was pressed once, and Douyin's chapter editor didn't open again to read it back.",
+                        'Check it later with the same edit and --verify-only. Never press Save again for it.')
+    await menu.click()
     await page.get_by_role('button',name='手动添加',exact=True).wait_for(timeout=30000)
     text=await page.locator('body').inner_text()
     matched=chapter_text_matches(text,chapters) and await toggle.is_checked()

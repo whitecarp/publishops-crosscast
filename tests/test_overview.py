@@ -578,5 +578,50 @@ class OperatorCommandTests(OverviewFixture):
         self.assertEqual({"items": [], "matching_total": 0}, {k: v for k, v in cli.execute(arguments).items() if k in {"items", "matching_total"}})
 
 
+class DismissTests(OverviewFixture):
+    """A field test's failed attempts stayed in needs_attention for good, with no way to say they had been checked."""
+
+    def test_a_checked_attempt_leaves_needs_attention_but_stays_on_record(self):
+        key = self.row("UNKNOWN", sha="dismiss-me")
+        before = overview.status()["publications"]
+        listed = {item["key"]: item for item in before["needs_attention"]}
+        self.assertEqual(f"vpub dismiss {key} --person-checked", listed[key]["after_checking_by_hand"])
+        with self.assertRaises(VpubError) as caught:
+            cli.execute(cli.parser().parse_args(["dismiss", key]))
+        self.assertEqual("needs_person", caught.exception.code)
+        self.assertTrue(cli.execute(cli.parser().parse_args(["dismiss", key, "--person-checked"]))["dismissed"])
+        after = overview.status()["publications"]
+        self.assertNotIn(key, [item["key"] for item in after["needs_attention"]])
+        self.assertEqual(before["total"], after["total"])
+        ledger = Ledger()
+        try:
+            self.assertEqual("UNKNOWN", ledger.get(key)["state"])
+        finally:
+            ledger.close()
+
+    def test_an_unknown_key_changes_nothing(self):
+        with self.assertRaises(VpubError) as caught:
+            overview.dismiss("0" * 64, person_checked=True)
+        self.assertEqual("not_found", caught.exception.code)
+
+    def test_a_dismiss_that_worked_says_ok(self):
+        """From a field run: ok: false beside dismissed: true, because the answer's state was the record's own unfinished one."""
+        key = self.row("UNKNOWN", sha="dismiss-ok")
+        result = overview.dismiss(key, person_checked=True)
+        self.assertEqual(("DISMISSED", "UNKNOWN", True), (result["state"], result["record_state"], cli.finished(result)))
+
+
+class InterruptedSignInTests(OverviewFixture):
+    """A field test was told login_interrupted for Douyin 27 minutes after that same account had published, and read it as broken."""
+
+    def test_an_interrupted_sign_in_says_the_saved_one_may_still_work_without_opening_a_browser(self):
+        atomic_json(home() / "auth-jobs" / "douyin.json", {"state": "LOGIN_PENDING", "platform": "douyin", "expires_epoch": 1})
+        with patch.object(adapters, "auth_status", side_effect=AssertionError("Browser fallback")), self.assertRaises(VpubError) as caught:
+            cli.execute(cli.parser().parse_args(["auth", "status", "douyin", "--method", "browser"]))
+        self.assertEqual("login_interrupted", caught.exception.code)
+        self.assertIn("may well still work", caught.exception.message)
+        self.assertIn("vpub auth login douyin", caught.exception.hint)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -83,8 +83,15 @@ def apply(manifest, request_path, response_path, output):
         if expected_chapters:
             required.add("chapters")
         if set(text) != required:
+            # Which file and which fields: a field run's first plan hit this twice, and the hint said only what the whole set should be.
+            missing, extra = sorted(required - set(text)), sorted(set(text) - required)
+            says = "; ".join(part for part in (f"missing: {', '.join(missing)}" if missing else "", f"not allowed: {', '.join(extra)}" if extra else "") if part)
+            why = (" The plan gives this platform chapters, so its text needs them too: the same start times, with titles in its language."
+                   if "chapters" in missing else
+                   " Chapters come from the plan's own entry for this platform, so put them there as well, with the same start times."
+                   if "chapters" in extra else "")
             raise VpubError("invalid_metadata", "Model output may change text only, never accounts, visibility, media or declarations.",
-                            f"{platform} needs exactly these fields: {', '.join(sorted(required))}.")
+                            f"In {Path(response_path).name}, {platform} needs exactly these fields: {', '.join(sorted(required))} ({says}).{why}")
         if selection:
             from .categories import validate_youtube
             validate_youtube(text["category_id"])

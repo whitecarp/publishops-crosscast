@@ -687,9 +687,49 @@ class ReadBackTests(unittest.IsolatedAsyncioTestCase):
     def receipt(self, at):
         return {"identity": OWNER, "id": "7", "title": TITLE, "expected_text": TITLE, "schedule": {"at": at.isoformat(), "stamp": "2030-03-04 15:07"}}
 
-    async def read(self, receipt, text):
-        with patch.object(browser_backends, "works", new=AsyncMock(return_value={"7": {"id": "7", "text": text}})):
+    async def read(self, receipt, text, reviewing=False):
+        with patch.object(browser_backends, "works", new=AsyncMock(return_value={"7": {"id": "7", "text": text}})), \
+                patch.object(browser_backends, "douyin_card_under_review", new=AsyncMock(return_value=reviewing)):
             return await browser_backends.verify(self.page(), "douyin", OWNER, receipt)
+
+    async def test_a_review_mark_from_submission_is_read_again_from_the_works_card(self):
+        """From a field run: UNDER_REVIEW written when it was submitted stayed four hours after the work was public."""
+        receipt = {"identity": OWNER, "id": "7", "title": TITLE, "expected_text": TITLE, "platform_status": "UNDER_REVIEW"}
+        published = await self.read(receipt, TITLE)
+        self.assertEqual("SUBMISSION_VERIFIED", published["state"])
+        self.assertNotIn("platform_status", published)
+        reviewing = await self.read(receipt, TITLE, reviewing=True)
+        self.assertEqual(("SUBMISSION_VERIFIED", "UNDER_REVIEW"), (reviewing["state"], reviewing["platform_status"]))
+        self.assertIn("under review", reviewing["note"])
+
+    async def test_a_work_that_is_gone_keeps_no_review_mark_from_before(self):
+        """From a field run: a record whose work had been deleted by hand still said UNDER_REVIEW, from when it was submitted."""
+        receipt = {"identity": OWNER, "id": "7", "title": TITLE, "expected_text": TITLE, "platform_status": "UNDER_REVIEW"}
+        gone = await self.read(receipt, "another work")
+        self.assertEqual("SUBMITTED_UNVERIFIED", gone["state"])
+        self.assertNotIn("platform_status", gone)
+        still = await self.read(receipt, "another work", reviewing=True)
+        self.assertEqual(("SUBMITTED_UNVERIFIED", "UNDER_REVIEW"), (still["state"], still["platform_status"]))
+        self.assertIn("can't be checked yet", still["note"])
+
+    async def test_a_chapter_error_from_an_earlier_run_is_not_reported_again(self):
+        """From a field run: a last run's TimeoutError sat beside PENDING_WORK_ID and was read as a new one."""
+        receipt = {"identity": OWNER, "id": "7", "state": "SUBMITTED_UNVERIFIED", "pending_chapters": {"chapters": []},
+                   "chapters_error": "TimeoutError", "chapters_error_message": "Locator.click: Timeout"}
+        result = await browser_backends.complete_pending_chapters(self.page(), "douyin", OWNER, receipt)
+        self.assertEqual("PENDING_WORK_ID", result["chapters_state"])
+        self.assertNotIn("chapters_error", result)
+        self.assertNotIn("chapters_error_message", result)
+
+    async def test_a_record_with_no_title_reads_no_card_for_its_review_mark(self):
+        """With no title any lone card would match, and it may be another work's."""
+        receipt = {"identity": OWNER, "id": "7", "expected_text": TITLE}
+        with patch.object(browser_backends, "douyin_card_under_review", new=AsyncMock(return_value=True)) as looked:
+            with patch.object(browser_backends, "works", new=AsyncMock(return_value={"7": {"id": "7", "text": TITLE}})):
+                result = await browser_backends.verify(self.page(), "douyin", OWNER, receipt)
+        self.assertEqual("SUBMISSION_VERIFIED", result["state"])
+        self.assertNotIn("platform_status", result)
+        looked.assert_not_called()
 
     async def test_before_its_time_the_work_must_show_that_time(self):
         later = datetime.now(timezone.utc) + timedelta(days=1)

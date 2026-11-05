@@ -57,6 +57,16 @@ class EmptyChannelPlaylists(Browser):
         self.assertEqual([], self.site.writes)
         self.assertEqual([], list((home() / "youtube-auto-playlists").glob("*.json")))
 
+    async def test_an_empty_list_that_does_not_count_says_which_check_refused_it(self):
+        """A field run's channel with its last playlist deleted read as incomplete twice, and nothing said why."""
+        listing = lambda: yt.playlists(self.page, CHANNEL, {"platform": "youtube", "operation": "list"})
+        self.assertNotIn("empty_check", await listing())
+        self.empty_body = section('<div class="no-content"><div class="no-content-header">No playlists yet</div></div>')
+        result = await listing()
+        self.assertEqual((False, "panel says: No playlists yet"), (result["complete"], result["empty_check"]))
+        self.empty_body = section(EMPTY) + '<div role="progressbar" style="width:10px;height:10px"></div>'
+        self.assertEqual("blocked: progressbar", (await listing())["empty_check"])
+
     async def test_explicit_empty_list_allows_first_private_create_and_retains_marker(self):
         self.assertEqual(([], True), await yt.read_playlists(self.page, CHANNEL))
         made = await yt.ensure_playlists(self.page, CHANNEL, ["Wanted"])

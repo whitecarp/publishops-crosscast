@@ -27,6 +27,9 @@ class RehearsalTests(unittest.TestCase):
         tool = patch("video_publisher.rehearsal.shutil.which", return_value="ffmpeg.exe")
         tool.start()
         self.addCleanup(tool.stop)
+        runs = patch("video_publisher.rehearsal.ffmpeg_problem", return_value=None)
+        runs.start()
+        self.addCleanup(runs.stop)
         self.video = self.root / "film.mp4"
         self.video.write_bytes(MP4_HEADER)
         self.manifest = self.root / "plan.json"

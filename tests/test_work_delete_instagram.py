@@ -20,7 +20,7 @@ class InstagramPage(FakePage):
         self.present, self.deleted, self.owner = True, False, OWNER
         self.exact_redirect, self.profile_redirect = None, None
         self.exact_message = 'This post has been deleted.'
-        self.profile_message, self.counts = 'No Posts Yet', ['0 posts']
+        self.profile_message, self.counts, self.own_empty_button = 'No Posts Yet', ['0 posts'], ''
         self.exact_message_visible, self.profile_message_visible, self.count_visible = True, True, True
         self.profile_links = []
         self.permalink = f'/p/{WORK}/'
@@ -74,6 +74,8 @@ class InstagramPage(FakePage):
             nodes.extend(Node(href=href, selectors={'main a[href]'}) for href in self.profile_links)
             nodes.extend(Node(text, selectors={'main header li'}, visible=self.count_visible) for text in self.counts)
             nodes.append(Node(self.profile_message, selectors={EMPTY_HEADINGS}, visible=self.profile_message_visible))
+            if self.own_empty_button:
+                nodes.append(Node(self.own_empty_button, role='button', selectors={route.OWN_EMPTY_CONTROLS}))
         if self.hostile_comment:
             nodes.append(Node(self.hostile_comment, user_words=True))
         self.tree = Node(children=[self.navigation()] + nodes)
@@ -388,6 +390,25 @@ class InstagramDeletionTests(BindingRegressions, OfflineCase):
         self.assertTrue(result['present'] and result['owned'])
         self.assertFalse(state.verified(result, self.target))
         self.assertEqual(1, self.page.events.count('final-delete'))
+
+    async def test_own_empty_profile_offering_first_photo_counts_as_complete(self):
+        # A real own profile with nothing left showed "0 posts" and "Share your first photo", never "No Posts Yet".
+        self.page.present = False
+        self.page.profile_message, self.page.own_empty_button = 'Getting Started', 'Share your first photo'
+        result = await self.execute()
+        self.assertTrue(state.verified(result, self.target))
+        self.assertEqual(0, result['platform_writes'])
+        self.unpressed(self.page)
+
+    async def test_first_photo_offer_without_exact_zero_or_with_grid_links_stays_pending(self):
+        for counts, links in [(['1 post'], []), ([], []), (['0 posts'], ['/p/OTHER123/'])]:
+            with self.subTest(counts=counts, links=links):
+                self.page = InstagramPage(self.marked)
+                self.page.present = False
+                self.page.profile_message, self.page.own_empty_button = '', 'Share your first photo'
+                self.page.counts, self.page.profile_links = counts, links
+                self.assertFalse(state.verified(await self.execute(), self.target))
+                self.unpressed(self.page)
 
     async def test_empty_words_without_exact_zero_count_or_on_wrong_profile_stay_pending(self):
         for counts, redirect in [([], None), (['1 post'], None), (['0 posts', '0 posts'], None), (['0 posts'], 'https://www.instagram.com/other/')]:

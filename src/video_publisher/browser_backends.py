@@ -15,6 +15,8 @@ from .progress import stage
 from .x_pages import own_posts, post_fields, post_row, post_time
 
 MANAGE = "https://creator.douyin.com/creator-micro/content/manage"
+PRESS_TRIAL_MS = 20000  # As long as the press itself may wait for its button.
+PRESS_RETRIAL_MS = 10000  # After whatever covered it was closed.
 STUDIO_VISIBILITY = {"public": {"Public", "公开", "公開"}, "unlisted": {"Unlisted", "不公开列出", "不公開"}, "private": {"Private", "私享", "私人"}}
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
@@ -204,14 +206,16 @@ class Transaction:
             asset = self.plan.get('covers', {}).get('instagram', {}).get('portrait')
         return asset["path"] if asset else shared
 
-    async def submit(self, page, button, still_holds=None, again=False):
-        """`again` is only for a press the page has shown did not publish anything."""
+    async def submit(self, page, button, still_holds=None, again=False, uncover=None):
+        """`again` is only for a press the page has shown did not publish anything. `uncover`, given what refused a trial press,
+        may close what covers the button, once, and says what it was."""
         if self.options.get("submission_mode") == "draft_only":
             raise VpubError("draft_only", "Final submission is forbidden in draft-only mode.")
         if self.receipt["final_submit_attempted"] and not again:
             raise VpubError("already_submitted", "A final submission was already attempted.")
         await risk_check(page)
         stop_check(self.platform)
+        await self.can_press(button, uncover)
         if still_holds:
             await still_holds()  # What was read before that wait may not be true after it.
         stop_check(self.platform)
@@ -221,6 +225,28 @@ class Transaction:
         stop_check(self.platform)  # Saving the receipt can wait on its own lock.
         await button.click(timeout=20000)
         stage("waiting for platform confirmation")
+
+    async def can_press(self, button, uncover=None):
+        """A trial press, which clicks nothing. A field run's Schedule button was covered three times running, and each attempt was recorded
+        as pressed though Chrome had refused the click, which left the draft with no way out. A refusal here records nothing as pressed."""
+        import patchright.async_api as driver
+        controls = tuple(kind for kind in (getattr(driver, "Locator", None), getattr(driver, "ElementHandle", None)) if isinstance(kind, type))
+        if not controls or not isinstance(button, controls):
+            return None  # Only a page's own control has a trial press; a stand-in for one presses as it is.
+        BrowserError = driver.Error
+        try:
+            return await button.click(trial=True, timeout=PRESS_TRIAL_MS)
+        except BrowserError as exc:
+            refused = failure_message(exc)
+        covered = await uncover(refused) if uncover else None
+        if covered:
+            self.save(press_covered=covered)
+            try:
+                return await button.click(trial=True, timeout=PRESS_RETRIAL_MS)
+            except BrowserError as exc:
+                refused = failure_message(exc)
+        raise VpubError("press_blocked", f"The final button couldn't be pressed, so nothing was sent and nothing is recorded as pressed. {refused}",
+                        "vpub status gives the command that picks this attempt up again. It never presses twice.")
 
 
 async def links(page, platform, identity):
@@ -270,6 +296,12 @@ def douyin_card_is_waiting(text):
 async def douyin_card_status(card):
     """A card's words apart from its title node, which a field check found goes on to hold the caption. A person's words can mention any date or state; only the platform's count."""
     return normalize(await card.evaluate("""card => { const title = card.querySelector('[class^="info-title-text-"]'); return title ? card.innerText.replace(title.innerText, '') : card.innerText; }"""))
+
+
+async def douyin_card_under_review(page, title):
+    """Whether the one card with this title says Douyin is still reviewing it. A field run's chapters waited on such a card and only ever said TimeoutError."""
+    cards = page.locator(DOUYIN_CARD).filter(has_text=title)
+    return await cards.count() == 1 and '审核中' in await douyin_card_status(cards)
 
 
 def douyin_card_words(text):
@@ -538,6 +570,8 @@ async def douyin_card_id(page, name, card):
                 await detail.wait_for_url(re.compile(r'/work-detail/\d+'), timeout=15000, wait_until='commit')
                 match = re.fullmatch(r'/creator-micro/work-management/work-detail/(\d+)', urlsplit(detail.url).path)
                 return match[1] if match and urlsplit(detail.url).hostname == 'creator.douyin.com' else None
+            except BrowserError:
+                return None  # A page that never says which work it is can't tell this card's ID, which says nothing about the others.
             finally:
                 await detail.close()
         # From a review: a click that opens no new tab could move this one, and the rest would then be read from the wrong page. Never seen on a real account.
@@ -572,7 +606,8 @@ async def works(page, platform, identity, must_answer=False):
                 for title in (await titles.all())[:10]:
                     text = await title.inner_text()
                     card = title.locator('xpath=ancestor::div[starts-with(@class,"video-card-content-")]')
-                    if douyin_card_is_waiting(await douyin_card_status(card)):
+                    # A title outside any card says nothing CrossCast can read, and asking its card for words would wait out the whole timeout.
+                    if not await card.count() or douyin_card_is_waiting(await douyin_card_status(card)):
                         continue
                     k = await douyin_card_id(page, title, card)
                     if k:
@@ -671,6 +706,29 @@ def youtube_schedule_zone_agrees(shown, schedule):
         return False
 
 
+# How long Studio's visibility box gets to fill in. The one field read on a real channel came three seconds after the title, and a box read
+# before it fills in makes the video's visibility look different, so a slower connection gets longer.
+YT_VISIBILITY_LOOK = 10000
+YT_VISIBILITY_WANTED = {"public": "Public", "scheduled": "Scheduled, with this attempt's date and time", "private": "Private", "unlisted": "Unlisted"}
+# Studio's own window once a Save has gone through. A field run's said "Video scheduled" and "Your video will be set to public on
+# November 6, 2026 at 12:00 PM", while the video's page said only Scheduled, with no date or time to compare.
+YT_DONE_WINDOW = re.compile(r'\bVideo (scheduled|published)\b')
+YT_SET_PUBLIC = re.compile(r'will be set to public on ([A-Z][a-z]+) (\d{1,2}), (\d{4}) at (1[0-2]|[1-9]):([0-5]\d) ?([AP]M)')
+YT_SCHEDULED_WORD = re.compile(r'\s*Scheduled\s*')
+MONTH_NAMES = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
+
+
+def youtube_window_schedule(receipt):
+    """The date and time Studio's own window gave, after the press, for the video going public: ((year, month, day), (hour, minute)), or None."""
+    kept = [receipt.get('studio_confirmation')] + [part.get('text') for part in receipt.get('after_press') or [] if isinstance(part, dict)]
+    for words in kept:
+        found = YT_SET_PUBLIC.search(normalize(words)) if isinstance(words, str) else None
+        if found and found[1] in MONTH_NAMES:
+            return ((int(found[3]), MONTH_NAMES.index(found[1]) + 1, int(found[2])),
+                    (int(found[4]) % 12 + (12 if found[6] == 'PM' else 0), int(found[5])))
+    return None
+
+
 async def verify_youtube(page, receipt):
     # Studio opens this page only for the signed-in channel's own videos, so reading it also proves ownership.
     url = work_url("youtube", None, receipt["id"])
@@ -683,6 +741,8 @@ async def verify_youtube(page, receipt):
     await page.goto(f"https://studio.youtube.com/video/{receipt['id']}/edit", wait_until="domcontentloaded", timeout=60000)
     title = page.locator("#title-textarea #textbox").first
     seen = {}
+    shown = None
+    from_window = False
     schedule = receipt.get("schedule")
     passed = youtube_schedule_passed(schedule) if schedule else None
     try:
@@ -695,14 +755,18 @@ async def verify_youtube(page, receipt):
                 break
             await page.wait_for_timeout(1000)
         seen["description"] = normalize(await page.locator("#description-textarea #textbox").first.inner_text())
-        # The one field read on a real channel came three seconds after the title, so it gets that long to fill in here too.
-        shown = await look_until(page, lambda: page.locator("ytcp-video-metadata-visibility #visibility-text").first.inner_text(timeout=1000), 3000)
+        shown = await look_until(page, lambda: page.locator("ytcp-video-metadata-visibility #visibility-text").first.inner_text(timeout=1000), YT_VISIBILITY_LOOK)
         seen["visibility"] = studio_visibility(shown)
         if schedule:
             dates, times = studio_moments(shown)
             seen['schedule_timezone'] = youtube_schedule_zone_agrees(shown, schedule)
             if seen["visibility"] != "public" and tuple(schedule["date"]) in dates and tuple(schedule["time"]) in times:
                 seen["visibility"] = "scheduled"
+            elif isinstance(shown, str) and YT_SCHEDULED_WORD.fullmatch(shown):
+                # A field run's box said only Scheduled. Before its time, the date and time it doesn't show are the ones Studio's own
+                # window gave at the press. Either way it isn't a draft, which has no visibility setting at all.
+                from_window = not passed and youtube_window_schedule(receipt) == (tuple(schedule["date"]), tuple(schedule["time"]))
+                seen["visibility"] = "scheduled" if from_window else "scheduled_without_its_time"
         if receipt.get("playlists"):
             listed = normalize(await page.locator("ytcp-video-metadata-playlists").first.inner_text())
             seen["playlists"] = all(normalize(title) in listed for title in receipt["playlists"])
@@ -726,13 +790,33 @@ async def verify_youtube(page, receipt):
     if schedule and seen.get('schedule_timezone') is False:
         differs.append('schedule_timezone')
     present = bool(seen.get("title")) and not differs
+    # Studio's own words, kept when they didn't match: a field run's record named the difference and not what the page showed.
+    words = normalize(shown)[:200] if "visibility" in differs and isinstance(shown, str) and shown.strip() else None
+    visibility_note = ("" if "visibility" not in differs else
+                       (" Studio's visibility box says only 'Scheduled', with no date or time, and "
+                        + ("no window from Studio at the press gave them." if youtube_window_schedule(receipt) is None else
+                           "the time Studio's own window gave at the press isn't this attempt's.")) if schedule and not passed and words and YT_SCHEDULED_WORD.fullmatch(words) else
+                       f" Studio's visibility box says '{words}', and this attempt expected {YT_VISIBILITY_WANTED.get(expected['visibility'], expected['visibility'])}." if words else
+                       " Studio's visibility box didn't fill in, so its setting couldn't be read.")
+    # A video taken down since (a field run's was deleted by hand in Studio) leaves no title to read, so YouTube's own page is asked.
+    removed = False
+    if bound and not seen.get("title") and not still_a_draft:
+        from .work_delete_youtube import exact_gone
+        try:
+            removed = await exact_gone(page, {"url": url, "id": receipt["id"]})
+        except Exception:
+            removed = False  # Unknown stays unknown.
     note = ("Current title, description and public visibility read back after the intended schedule; actual publication time and on-time release were not established." if present and passed else
-            "Title, description, visibility or schedule, and playlists read back from the channel's own Studio page; cover pixels and playback are separate." if present else
+            "Title, description, visibility or schedule, and playlists read back from the channel's own Studio page; cover pixels and playback are separate."
+            + (" Studio's page says Scheduled; its date and time are the ones Studio's own window gave when it was saved." if from_window else "") if present else
             "Studio still shows this as a draft, so viewers can't see it. Press Publish on this same draft with vpub resume; do not upload again." if still_a_draft else
-            "Expected work/text not yet verified; do not upload again.")
+            f"YouTube's own page says this video has been removed by its uploader, so there's nothing left to verify. If that was you, take it off the list with vpub dismiss {receipt.get('key') or 'KEY'} --person-checked." if removed else
+            "Expected work/text not yet verified; do not upload again." + visibility_note)
     return {**receipt, "url": url, "state": "SUBMISSION_VERIFIED" if present else "SUBMITTED_UNVERIFIED",
             "phase": "complete" if present else "readback_pending", "error": None if present else receipt.get("error"),
             "verification_source": "independent_browser_dom", "verified_at": now(), "readback_differs": differs, "note": note, "still_a_draft": still_a_draft,
+            **({"visibility_seen": words} if "visibility" in differs else {}),
+            **({"removed_by_uploader": True} if removed else {}),
             **({"schedule_evidence": {"intended_at": schedule.get("at"), "scheduled_time_elapsed": passed, "on_time_publication_verified": False}} if schedule else {})}
 
 
@@ -862,15 +946,27 @@ async def verify(page, platform, identity, receipt):
             receipt = {**receipt, 'id':matches[0]['id'], 'url':matches[0]['url']}
             if platform == 'x':
                 receipt['discovery_source'] = matches[0]['discovery_source']
+    if platform == "youtube" and not receipt.get("id") and receipt.get("draft_id"):
+        # A final Save that outlasted its wait left only the upload's own ID, which is the video's ID,
+        # and the video may have been saved since. Only a full read-back gives the receipt that ID.
+        checked = await verify_youtube(page, {**receipt, "id": receipt["draft_id"]})
+        if checked["state"] == "SUBMISSION_VERIFIED":
+            return checked
+        return {**{key: value for key, value in checked.items() if key not in ("id", "url")},
+                **{key: receipt[key] for key in ("id", "url") if key in receipt}}
     if not receipt.get("id"):
+        if receipt.get("final_submit_attempted") is False and not receipt.get("final_presses"):
+            # Nothing was pressed, so there is nothing of it to find. A field run's verify called such an attempt SUBMITTED_UNVERIFIED,
+            # after which every way forward refused it: run again skipped it, delete needed a verified post, and verify could never find one.
+            # Only a receipt that says so counts: one with no word on it at all proves nothing, and stays unconfirmed below.
+            return {**receipt, "state": "PREPARATION_INCOMPLETE", "platform_writes": 0,
+                    "note": "This attempt stopped before its final press, so nothing was submitted. vpub resume picks it up again and never presses twice."}
         if platform == 'douyin' and await douyin_scheduled_card(page, receipt):
             return {**receipt, **DOUYIN_SCHEDULED, 'verified_at': now()}
-        if platform == 'douyin' and receipt.get('title'):
-            cards = page.locator('[class^="video-card-content-"]').filter(has_text=receipt['title'])
-            if await cards.count() == 1 and '审核中' in await douyin_card_status(cards):
-                return {**receipt, 'state':'SUBMITTED_UNVERIFIED', 'phase':'platform_review',
-                        'platform_status':'UNDER_REVIEW', 'review_url':MANAGE, 'error':None,
-                        'note':'Matching submitted card is under platform review; verify later, never reupload.'}
+        if platform == 'douyin' and receipt.get('title') and await douyin_card_under_review(page, receipt['title']):
+            return {**receipt, 'state':'SUBMITTED_UNVERIFIED', 'phase':'platform_review',
+                    'platform_status':'UNDER_REVIEW', 'review_url':MANAGE, 'error':None,
+                    'note':'Matching submitted card is under platform review; verify later, never reupload.'}
         return {**receipt, "state": "SUBMITTED_UNVERIFIED", "note": "No durable work ID; inspect the original work, never reupload automatically."}
     if platform == "youtube":
         return await verify_youtube(page, receipt)
@@ -923,10 +1019,25 @@ async def verify(page, platform, identity, receipt):
     if platform == 'x' and receipt.get('discovery_source') == X_DISCOVERY_SOURCE:
         note = ("One fresh own video post matches the bound native attempt and exact text. This is correlation, not independent verification of posted video bytes; "
                 "an identical external concurrent post cannot be excluded. Cover pixels and anonymous playback are separate.")
-    return {**receipt, "url": url, "state": "SUBMISSION_VERIFIED" if present else "SUBMITTED_UNVERIFIED",
-            'phase':'complete' if present else 'readback_pending', 'error':None if present else receipt.get('error'),
-            "verification_source": "independent_browser_dom", "verified_at": now(),
-            "note": note if present else "Expected work/text not yet verified; do not upload again."}
+    result = {**receipt, "url": url, "state": "SUBMISSION_VERIFIED" if present else "SUBMITTED_UNVERIFIED",
+              'phase':'complete' if present else 'readback_pending', 'error':None if present else receipt.get('error'),
+              "verification_source": "independent_browser_dom", "verified_at": now(),
+              "note": note if present else "Expected work/text not yet verified; do not upload again."}
+    if platform == 'douyin':
+        # Read again each time from the work's own card. A field run's UNDER_REVIEW, written when it was submitted, stayed for
+        # four hours after the work was public, and on a record whose work had been deleted by hand, because nothing rewrote it.
+        # With no title there's no card to tell it by, and a card that can't be read says nothing either way.
+        result.pop('platform_status', None)
+        from patchright.async_api import Error as BrowserError
+        try:
+            reviewing = bool(receipt.get('title')) and await douyin_card_under_review(page, receipt['title'])
+        except BrowserError:
+            reviewing = False
+        if reviewing:
+            result['platform_status'] = 'UNDER_REVIEW'
+            result['note'] = ("The work is there with its expected text, and Douyin still marks it as under review (审核中)." if present else
+                              "Douyin still marks this work as under review (审核中), so it can't be checked yet. Run vpub verify again later; do not upload again.")
+    return result
 
 
 async def execute(page, platform, identity, payload):
@@ -977,6 +1088,8 @@ async def execute(page, platform, identity, payload):
 async def complete_pending_chapters(page,platform,identity,receipt):
     pending=receipt.get('pending_chapters')
     if platform!='douyin' or not pending or receipt.get('chapters_state')=='VERIFIED': return receipt
+    # An error is only this run's: a field run read a last run's TimeoutError, kept beside PENDING_WORK_ID, as a new one.
+    receipt={key:value for key,value in receipt.items() if key not in {'chapters_error','chapters_error_message'}}
     if not receipt.get('id') or receipt.get('state')!='SUBMISSION_VERIFIED':
         return {**receipt,'chapters_state':'PENDING_WORK_ID','next':'Run vpub verify for this receipt after platform review; chapters are not yet applied.'}
     from .browser_edits import execute as edit
@@ -990,5 +1103,9 @@ async def complete_pending_chapters(page,platform,identity,receipt):
             'patch':{**pending,'expected_identity':identity},'edit_receipt_path':str(path)})
         return {**receipt,'chapters_state':'VERIFIED' if result['state']=='EDIT_VERIFIED' else 'SAVE_UNVERIFIED','chapters_receipt':result}
     except Exception as exc:
+        # The words go with the code: a field run's three tries each left only TimeoutError, which says nothing about where it stopped.
+        waiting=isinstance(exc,VpubError) and exc.code=='not_public_yet'
         return {**receipt,'chapters_state':'INCOMPLETE','chapters_error':exc.code if isinstance(exc,VpubError) else type(exc).__name__,
-                'next':'The video exists. Fix/retry only the chapter step; do not upload the video again.'}
+                'chapters_error_message':exc.message if isinstance(exc,VpubError) else failure_message(exc),
+                'next':'Douyin is still reviewing this video. Run vpub verify for this receipt once it is public, and its chapters go on then. Never upload it again.' if waiting
+                       else 'The video exists. Fix/retry only the chapter step; do not upload the video again.'}

@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 
 from .core import VpubError, home, stop_check
@@ -96,20 +97,42 @@ def sign_in(platform, options):
             "note": "Sign in when missing. Otherwise a separate auth status is optional: publishing already checks the live account."}
 
 
+def ffmpeg_problem(path):
+    """Why the ffmpeg found on PATH can't run, or None. A copied ffmpeg.exe without the
+    files it needs beside it is found, then exits at once with nothing on stderr."""
+    try:
+        done = subprocess.run([path, "-version"], capture_output=True, timeout=20)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"{type(exc).__name__}: {exc}"
+    if done.returncode == 0:
+        return None
+    lines = (done.stderr or done.stdout or b"").decode("utf-8", "replace").strip().splitlines()
+    return f"exit code {done.returncode}, " + (lines[0][:200] if lines else "nothing on stderr")
+
+
 def local_prerequisites(plan):
     """Only requirements proved locally; never load a platform client or a credential.
 
     Bilibili's CLI (including its draft helper) needs either a supplied cover or
     ffmpeg on PATH. Other browser routes can use the site's generated thumbnail.
-    Finding ffmpeg does not prove that it can decode this particular video.
+    Finding ffmpeg does not prove that it can decode this particular video, but
+    one that cannot even print its version is caught here.
     """
     options = plan.get("platforms", {}).get("bilibili")
     if not options or options.get("method", "cli") != "cli":
         return []
     landscape = plan.get("covers", {}).get("bilibili", {}).get("landscape")
     cover = landscape.get("path") if isinstance(landscape, dict) else landscape
-    if cover or plan.get("cover") or shutil.which("ffmpeg"):
+    if cover or plan.get("cover"):
         return []
+    found = shutil.which("ffmpeg")
+    if found:
+        problem = ffmpeg_problem(found)
+        if problem is None:
+            return []
+        return [{"platform": "bilibili", "code": "cover_tool_broken",
+                 "message": f"ffmpeg was found but doesn't run ({problem}), so Bilibili can't extract a cover.",
+                 "hint": "A copied ffmpeg.exe often lacks the files it needs beside it. Install a complete ffmpeg build, or pass --cover IMAGE to vpub prepare. Nothing was uploaded."}]
     return [{"platform": "bilibili", "code": "cover_tool_missing",
              "message": "Bilibili needs a cover image or ffmpeg to extract one; neither is available.",
              "hint": "Pass --cover IMAGE to vpub prepare (or set cover in the plan), or install ffmpeg and put it on PATH. Nothing was uploaded."}]
@@ -120,6 +143,27 @@ def require_local_prerequisites(plan):
     if issues:
         issue = issues[0]
         raise VpubError(issue["code"], issue["message"], issue["hint"])
+
+
+def will_skip(plan):
+    """Platforms where this exact file already has a record. The real run skips them rather than upload again,
+    which a field test's dry run never said. A dry run never creates the record file."""
+    path = home() / "publications.sqlite3"
+    if not path.exists() or not plan.get("video_sha256"):
+        return []
+    from .cli import only_a_preview
+    from .core import Ledger
+    ledger, found = Ledger(path), []
+    try:
+        for platform, options in plan["platforms"].items():
+            key = Ledger.key(platform, options.get("account"), plan["video_sha256"])
+            old = ledger.get(key)
+            if old and not only_a_preview(old, options):
+                found.append({"platform": platform, "previous_state": old["state"], "key": key,
+                              "hint": "The real run skips this platform and uploads nothing. Check it with vpub verify on this key."})
+    finally:
+        ledger.close()
+    return found
 
 
 def dry_run(plan, media=None):
@@ -137,6 +181,6 @@ def dry_run(plan, media=None):
     return {"mode": "LOCAL_REHEARSAL", "ready": False if blockers else None,
             "ready_to_publish": False if blockers else None,
             "state": "LOCAL_BLOCKERS" if blockers else "LIVE_CHECK_REQUIRED",
-            "sign_ins": accounts, "blockers": blockers, "media_check": media,
+            "sign_ins": accounts, "blockers": blockers, "will_skip": will_skip(plan), "media_check": media,
             "platform_requests": 0, "platform_writes": 0,
             "note": "No login, account identity, permissions or playback were verified. Saved sign-in files may be stale. Publishing checks the live account; separate auth status calls are optional."}

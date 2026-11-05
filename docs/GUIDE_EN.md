@@ -151,7 +151,7 @@ Each platform's progress keeps its real name: Queued → Publishing → Submitte
 
 X edits have not passed real-account validation. `EDIT_SUBMITTED_UNVERIFIED` can mean the edit succeeded; old text at the original address does not prove failure. Open the post on X and inspect its current text and edit history. Do not submit another edit based on that read-back.
 
-`vpub widgets` puts Bilibili's interactive widgets on your own video: a link to another video, a follow or triple button, a vote and a rating. Choose them in the plan, or add them to a video that's already up. Bilibili doesn't list them before a video is public, so a plan's wait until then, and `vpub verify` sends them. `vpub verify` and a Bilibili edit also report what's on the video. Reserve widgets are left out, since removing one notifies everyone who booked it. This hasn't run on a real account through `vpub` yet.
+`vpub widgets` puts Bilibili's interactive widgets on your own video: a link to another video, a follow or triple button, a vote, a rating and a reservation. Choose them in the plan, or add them to a video that's already up. Bilibili doesn't list them before a video is public, so a plan's wait until then, and `vpub verify` sends them. `vpub verify` and a Bilibili edit also report what's on the video. A reservation books a live stream on your account, so it needs a `live` start time and goes only through `vpub widgets add`, after you've seen its dry run and said yes. It never goes in a plan, and CrossCast never removes one, because removing it notifies everyone who booked it. Follow, vote, rating and reservation widgets have gone onto a real video through `vpub`; a link hasn't yet.
 
 </details>
 
@@ -378,6 +378,8 @@ For the first publication on each platform in this local data folder, or saved s
 For the explicit native-browser handoff, first run `vpub browser authorize-publish KEY --identity ID` to get the changed draft-to-publish plan. Show it and wait for the user's explicit yes, then run `vpub browser authorize-publish KEY --identity ID --confirm CODE --person-approved`. This authorizes continuation of the same draft without reuploading; its old draft code cannot approve the changed publication plan.
 
 `--dry-run` checks local files without contacting a platform. Missing sign-in records produce a login command and exit code 4. Saved records do not prove a live sign-in; publishing checks the account, so separate status calls are optional. The media check recognises a container header, not playback or platform acceptance.
+
+Every vpub command prints one line of JSON. Exit code 0 means the command finished and its work is done. 4 means it ran and answered, but something isn't finished yet, such as a check that hasn't confirmed the work, or a missing sign-in: read `data` for the state, the note and the next command. 2 means CrossCast refused or stopped and says why under `error`. 3 means the command was interrupted or hit an unexpected error, so read the receipt before running anything again.
 
 `--dry-run` does not upload. Your AI assistant writes `response.json` following the template inside `request.json`. After an interruption, continue with `vpub resume RECEIPT_KEY`; `vpub receipts` lists every receipt.
 
