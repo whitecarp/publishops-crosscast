@@ -28,22 +28,9 @@ MOST_PARTS = 3
 SMALLEST_SIDE = 100
 # Below this the parts would float in a band of background, which is a letterboxed landscape in all but name.
 LEAST_FILL = 0.6
-# What a plan says before its words are written: vpub init leaves every title empty and YouTube's category unset, and metadata apply fills them.
-WORDS_UNWRITTEN = {"category_required", "invalid_title", "invalid_description", "invalid_tags"}
-
-
-def words_first(manifest, value, error):
-    """Covers are fitted to a plan whose words are written. A field run's skill listed covers before metadata, and on a new YouTube plan
-    covers prepare stopped on the category; with that set, the empty title would have stopped it next. Only a plan that never went through
-    metadata apply gets this answer, so a mistake in words someone did write still names itself."""
-    platforms = value.get("platforms") if isinstance(value, dict) else None
-    if error.code not in WORDS_UNWRITTEN or not isinstance(platforms, dict) or any(isinstance(o, dict) and "metadata_mode" in o for o in platforms.values()):
-        return error
-    request = Path(manifest).with_name("request.json")
-    return VpubError("copy_not_written", f"Covers come after the words, and this plan has none from vpub metadata apply yet, so nothing was fitted. {error.message}",
-                     f'Run vpub metadata request "{manifest}" --source SCRIPT_OR_SUMMARY.txt --out "{request}", write the answer, run vpub metadata apply, '
-                     "then run vpub covers prepare on the manifest metadata apply writes.")
 SOFT_ABOVE = 2.5
+# What load_plan says first of a plan with no words at all: vpub init leaves every title empty and YouTube's category unset.
+WORDS_UNWRITTEN = {"category_required", "invalid_title"}
 
 
 def parse_box(value, width, height):
@@ -135,6 +122,29 @@ def check_supplied(cover, portrait, platforms):
             raise VpubError("invalid_cover", f"Not a JPG or PNG file: {portrait}")
         if not tall:
             raise VpubError('portrait_required', 'The shared portrait must have a portrait aspect ratio.')
+
+
+def words_first(manifest, value, error):
+    """Covers are fitted to a plan whose words are written. A field run's skill listed covers before metadata, and on a new YouTube plan
+    covers prepare stopped on the category; with that set, the empty title would have stopped it next.
+    From a review: only a plan with no words at all gets this answer. One whose words a person wrote keeps its own error and hint, because
+    metadata request would rewrite those words from the root title alone. A folder from vpub prepare gets its words through copy.json and vpub go."""
+    platforms = value.get("platforms") if isinstance(value, dict) else None
+    if error.code not in WORDS_UNWRITTEN or not isinstance(platforms, dict) or not all(isinstance(o, dict) for o in platforms.values()):
+        return error
+    titles = [value.get("title"), *(options.get("title") for options in platforms.values())]
+    if any(isinstance(title, str) and title.strip() for title in titles) or any("metadata_mode" in options for options in platforms.values()):
+        return error
+    plan = Path(manifest)
+    message = f"Covers come after the words, and this plan has none yet, so nothing was fitted. {error.message}"
+    if (plan.parent / "copy.json").is_file():
+        return VpubError("copy_not_written", message, f'Write the words in "{plan.parent / "copy.json"}", then run vpub go "{plan.parent}". It fits the covers once the words are in. {error.hint}'.strip())
+    request, localized = plan.with_name("request.json"), plan.with_name("localized.json")
+    ask = (f'Use the request already at "{request}"' if request.exists()
+           else f'Run vpub metadata request "{plan}" --source SCRIPT_OR_SUMMARY.txt --out "{request}"')
+    return VpubError("copy_not_written", message,
+                     f'{ask}, write the answer in its template as RESPONSE.json, run vpub metadata apply "{plan}" --request "{request}" --response RESPONSE.json --out "{localized}", '
+                     f'then run vpub covers prepare on "{localized}". {error.hint}'.strip())
 
 
 def prepare(manifest, source, out_dir, output, portrait=None):

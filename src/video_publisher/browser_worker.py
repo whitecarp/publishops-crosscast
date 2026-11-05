@@ -6,6 +6,7 @@ import contextlib
 import json
 from pathlib import Path
 import sys
+import time
 
 from .core import VpubError, atomic_json, home, now, read_json, stop_check, real_window
 from . import browser_runtime as runtime, progress
@@ -92,8 +93,14 @@ def main():
     payload = {}
     try:
         payload = read_json(sys.argv[2]) if len(sys.argv) == 3 and sys.argv[1] == "--job" else json.loads(sys.stdin.read())
-        with contextlib.redirect_stdout(sys.stderr):
-            result = asyncio.run(asyncio.wait_for(run(payload), timeout=1800))
+        limit = 1800
+        # From a review: a cut-off here closes the browser with nothing recorded, so a wait that could reach it ends first, with its own answer.
+        runtime.command_deadline = time.monotonic() + limit
+        try:
+            with contextlib.redirect_stdout(sys.stderr):
+                result = asyncio.run(asyncio.wait_for(run(payload), timeout=limit))
+        finally:
+            runtime.command_deadline = None
         out = {"ok": True, "data": result}
         if payload.get("job_path"):
             atomic_json(payload["job_path"], {"state": "LOGGED_IN", "completed_at": now(), **result})

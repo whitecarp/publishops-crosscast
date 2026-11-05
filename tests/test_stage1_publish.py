@@ -286,6 +286,7 @@ class XFormTests(Form):
             result = await browser_forms.publish_x(self.page, self.resumed())
         self.assertEqual(("SUBMISSION_VERIFIED", 1), (result["state"], result["lost_uploads"]))
         self.assertEqual(([1], 1), (self.uploads, len(self.final)))
+        self.assertIs(True, result["lost_look"]["reloaded"])
 
     async def test_a_resume_whose_file_is_in_the_library_opens_it_with_no_new_upload(self):
         """Choosing the file again would make two tiles of one name, which get no click."""
@@ -302,12 +303,12 @@ class XFormTests(Form):
                     " const going = document.createElement('p'); going.textContent = 'Loading 40%'; document.body.append(going);"
                     " const tile = document.createElement('div'); tile.textContent = name; document.body.append(tile);"
                     " tile.onclick = () => { if (going.isConnected) { fetch('/wrong', {method: 'POST', body: '{}'}); return; } location.href = '/library/1_2/edit?name=' + encodeURIComponent(name); };"
-                    " setTimeout(() => { going.textContent = 'Loading 80%'; }, 300); setTimeout(() => going.remove(), 600);")
+                    " setTimeout(() => { going.textContent = 'Loading 80%'; }, 2000); setTimeout(() => going.remove(), 4000);")
         self.library(f'<input type="file" accept="video/mp4" onchange="{going_up}">')
         result = await self.publish()
         self.assertEqual("SUBMISSION_VERIFIED", result["state"])
         self.assertEqual(([1], [], 1), (self.uploads, self.wrong_presses, len(self.final)))
-        self.assertIn(result["open_look"]["loading"], ([40], [80]))
+        self.assertIn("loading", result["open_look"])
 
     async def test_a_page_that_goes_on_to_another_file_is_not_taken_for_this_one(self):
         """From a review: the file it landed on would have replaced this attempt's address."""

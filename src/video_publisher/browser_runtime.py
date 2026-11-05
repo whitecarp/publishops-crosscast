@@ -15,6 +15,8 @@ from .core import VpubError, account_name, atomic_json, config, home, how_to_cle
 from .progress import stage, watch
 
 BROWSER_PLATFORMS = {"douyin", "instagram", "x", "youtube"}
+# When the running browser command will be cut off (time.monotonic()), set by the worker, so a long wait can end with its own answer first.
+command_deadline = None
 URLS = {"douyin": "https://creator.douyin.com/creator-micro/home",
         "instagram": "https://www.instagram.com/accounts/edit/", "x": "https://x.com/home",
         "youtube": "https://studio.youtube.com/"}

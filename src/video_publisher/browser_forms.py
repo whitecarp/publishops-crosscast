@@ -47,9 +47,14 @@ X_DONE_SECONDS = 60
 X_VIDEO_SECONDS = 30
 X_CHANGE_THUMBNAIL = re.compile(r'^\s*Change thumbnail\s*$')
 # What Library's tile says while its file is still going up. A field run saw "Loading 73%" thirty seconds into a 61 MB upload.
-X_LOADING = re.compile(r'Loading\s*(\d{1,3})\s*%')
-X_LOADING_STALL_SECONDS = 300
-X_LIBRARY_LOOK_SECONDS = 15
+X_LOADING = re.compile(r'Loading\s*(\d{1,3})(?:[.,]\d+)?\s*%', re.I)
+# A number that hasn't moved for this long is not taken for an upload under way, so it no longer holds a click back.
+X_LOADING_STALL_SECONDS = 120
+# How long no moving number must have shown before the first click: one look that missed it isn't enough.
+X_LOADING_CLEAR_SECONDS = 3
+X_LIBRARY_LOOK_SECONDS = 60
+# What a wait leaves of its command's time, so it ends with its own answer rather than being cut off with the browser.
+X_COMMAND_MARGIN_SECONDS = 120
 
 
 async def enabled(locator):
@@ -296,45 +301,60 @@ def x_first_click_hold(size):
 
 
 async def x_files_going_up(page):
-    """The percentages Library's tiles show for files still going up, lowest first, or none. A field run's new tile said "Loading 73%" thirty seconds into a 61 MB upload: the file got a page of its own only at 100%, and the browser closing before then lost the upload."""
+    """The percentages below 100 that Library's tiles show for files still going up, lowest first: none, or None when the page couldn't be read.
+    A field run's new tile said "Loading 73%" thirty seconds into a 61 MB upload: the file got a page of its own only at 100%, and the browser closing before then lost the upload.
+    The text is what the match was made on, and a review found a label shown in capitals or with a decimal would otherwise be missed."""
     from patchright.async_api import Error as BrowserError
     try:
-        said = [await item.inner_text() for item in await page.get_by_text(X_LOADING).all() if await item.is_visible()]
+        said = [await item.text_content(timeout=5000) or '' for item in await page.get_by_text(X_LOADING).all() if await item.is_visible()]
     except BrowserError:
-        return []  # The page is still changing, and the next look says what it became.
-    return sorted(int(found[1]) for text in said if (found := X_LOADING.search(text)))
+        return None  # The page is still changing, and the next look says what it became.
+    return sorted(number for text in said if (found := X_LOADING.search(text)) and (number := int(found[1])) < 100)
 
 
 async def x_upload_was_lost(page, tx):
-    """Whether a resumed attempt's own file never reached Library, so choosing it again is the only way on.
+    """What a look found when a resumed attempt's own file never reached Library, so choosing it again is the only way on; None when it is there or can't have been lost.
     A field run's browser closed at "Loading 73%" on a 61 MB file. Its receipt said a file was chosen, but Media Studio had given the file no page of its own and Library held no file of its name, so every resume looked for that name and never found it.
-    Only an attempt that chose its own file and never got its form open can have lost it. A reused clip, or a file whose form has shown, is in Library, and choosing that again would make two tiles of one name, which get no click. So a file of this name showing in Library within X_LIBRARY_LOOK_SECONDS is taken to be the one this attempt chose."""
+    Only an attempt that chose its own file and never got its form open can have lost it. A reused clip, or a file whose form has shown, is in Library, and choosing that again would make two tiles of one name, which get no click.
+    From a review: Library has been seen not to load its list while its Upload Media button worked, so one short look could take a slow list for a lost file. The look lasts X_LIBRARY_LOOK_SECONDS, and Library is loaded afresh once and looked at again before the file is called lost."""
     if tx.receipt.get('reused_media') or tx.options.get('existing_media_url') or 'open_look' in tx.receipt:
-        return False
+        return None
     name = page.get_by_text(tx.receipt['upload_filename'], exact=True)
 
     async def shows():
         return bool(await x_names_showing(name))
+    for again in (False, True):
+        if again:
+            await page.reload(wait_until='domcontentloaded', timeout=60000)
+            await page.locator('button').filter(has_text=re.compile(r'^\s*Upload Media\s*$')).wait_for(timeout=30000)
+        try:
+            await wait_until(page, shows, seconds=X_LIBRARY_LOOK_SECONDS, label="this attempt's file in Library")
+            return None
+        except VpubError as failure:
+            if failure.code != 'processing_timeout':
+                raise
+    # A count only, for whoever reads the receipt: other files of CrossCast's showing would say Library's list did load.
+    from patchright.async_api import Error as BrowserError
     try:
-        await wait_until(page, shows, seconds=X_LIBRARY_LOOK_SECONDS, label="this attempt's file in Library")
-        return False
-    except VpubError as failure:
-        if failure.code != 'processing_timeout':
-            raise
-    tx.save(lost_uploads=tx.receipt.get('lost_uploads', 0) + 1)
-    return True
+        others = len([item for item in await page.get_by_text(re.compile(r'^crosscast-[0-9a-f]{16}\.\w+$')).all() if await item.is_visible()])
+    except BrowserError:
+        others = None
+    return {'looked_seconds': 2 * X_LIBRARY_LOOK_SECONDS, 'reloaded': True, 'other_crosscast_files_showing': others}
 
 
-async def x_open_media(page, name, form, filename, hold=0):
+async def x_open_media(page, name, form, filename, hold=0, may_upload_again=True):
     """Field runs clicked the uploaded file's name as soon as it showed, and the address didn't change in 30 seconds, while 15 seconds on the name showed twice. A click two minutes after an upload opened the form at once.
     So the file is open once its own form shows, and the address is not waited for. A click changes nothing, and comes again only while no form has come.
     Two field runs in a row clicked five seconds in and got the file's details instead: this file's link and its title box, still on /library, with no Change thumbnail anywhere for ten minutes, while a fresh page's click reached the form. So once those details show, the click comes again on the name out among the tiles. A click can't cut off an upload the way leaving the page could.
     The next field run clicked 36 times on a 113 MB file's tile and got no further than those details. So a new upload's first click waits as well, which is the `hold`: a guess at when the upload ends.
-    A later field run saw the tile say it: "Loading 73%" thirty seconds into a 61 MB upload, with the file's page given only at 100%. So no click comes while a tile says a file is still going up, and while that number keeps moving the wait goes on past its usual end, X_LOADING_STALL_SECONDS at a time."""
+    A later field run saw the tile say it: "Loading 73%" thirty seconds into a 61 MB upload, with the file's page given only at 100%. So no click comes while a tile's number keeps moving, nor for X_LOADING_CLEAR_SECONDS after, and while it moves the wait goes on past its usual end, X_LOADING_STALL_SECONDS at a time.
+    From a review: a number that stays put, at 100 or anywhere, may not be this upload at all, so after X_LOADING_STALL_SECONDS it no longer holds the click back. Nor can the wait run on into the command's own cut-off, which would close the browser mid-upload with nothing recorded."""
     from patchright.async_api import Error as BrowserError
+    from . import browser_runtime
     clicked = None
     began = time.monotonic()
     seen = {'clicks': 0}
+    loading = {'last': None, 'moved_at': None, 'fresh_at': None}
     change = page.locator('button').filter(has_text=X_CHANGE_THUMBNAIL)
     link = page.locator(x_file_link(filename) + ':visible')
 
@@ -351,11 +371,21 @@ async def x_open_media(page, name, form, filename, hold=0):
         if seen['links_showing']:
             seen.setdefault('link_first_at', round(time.monotonic() - began))
         going = await x_files_going_up(page)
+        now = time.monotonic()
         if going:
-            if going != seen.get('loading'):
+            if loading['last'] is None:
+                loading['moved_at'] = now  # A number just seen is taken to be moving until it shows otherwise.
+            elif going != loading['last']:
+                loading['moved_at'] = now
                 seen['loading_moves'] = seen.get('loading_moves', 0) + 1
+            loading['last'] = going
+            if now - loading['moved_at'] < X_LOADING_STALL_SECONDS:
+                loading['fresh_at'] = now
+        if going is not None and loading['last'] is not None:
             seen['loading'] = going
-        due = not going and time.monotonic() - began >= hold and (clicked is None or time.monotonic() - clicked >= X_OPEN_SECONDS)
+        # A look that couldn't read the page says nothing, so it doesn't click either.
+        held = going is None or (loading['fresh_at'] is not None and now - loading['fresh_at'] < X_LOADING_CLEAR_SECONDS)
+        due = not held and now - began >= hold and (clicked is None or now - clicked >= X_OPEN_SECONDS)
         target = showing if len(showing) == 1 else await x_names_among_tiles(showing, link) if due else []
         if due and len(target) == 1:
             clicked = time.monotonic()
@@ -366,8 +396,14 @@ async def x_open_media(page, name, form, filename, hold=0):
             except BrowserError:
                 pass  # The next look says what happened.
         return False
+    after = ("vpub resume looks again on a fresh page, and uploads the file again only if Library shows no file of its name." if may_upload_again
+             else "This file's form has shown before, so vpub resume looks again on a fresh page but never uploads it again: look for it in Media Studio.")
     seconds = hold + 600
     while True:
+        end = browser_runtime.command_deadline
+        cut = end is not None and time.monotonic() + seconds > end - X_COMMAND_MARGIN_SECONDS
+        if cut:
+            seconds = max(1, end - X_COMMAND_MARGIN_SECONDS - time.monotonic())
         moves = seen.get('loading_moves', 0)
         try:
             await wait_until(page, opened, seconds=seconds, label="the uploaded file's form in Media Studio")
@@ -375,10 +411,17 @@ async def x_open_media(page, name, form, filename, hold=0):
         except VpubError as failure:
             if failure.code != 'processing_timeout':
                 raise
-            if seen.get('loading_moves', 0) == moves:
+            # Only a number that moved during this wait and still showed at its last look is an upload still under way.
+            going_on = seen.get('loading_moves', 0) != moves and bool(seen.get('loading'))
+            if going_on and cut:
+                raise VpubError('upload_too_slow', f"Media Studio was still taking the file when this command's time ran out, so the browser closes and the upload is lost. Last look: {seen}.",
+                                "The file goes up too slowly here for one command. Upload it in Media Studio yourself and put the address of its own page in the plan as existing_media_url, "
+                                "or try again on a faster connection: vpub resume would upload it again from the start.") from None
+            if not going_on:
                 # A field run ended here with nothing to say which of several things had happened. These are counts, with no words from the page.
                 # A fresh page then opened the same file with one click, which is what a resume does.
-                raise VpubError(failure.code, f"{failure.message} Last look: {seen}. vpub resume looks again on a fresh page, and uploads the file again only if Library shows no file of its name.", failure.hint) from None
+                raise VpubError(failure.code, f"{failure.message} Last look: {seen}. {after}", failure.hint) from None
+        stop_check('x')
         seconds = X_LOADING_STALL_SECONDS  # The file was still going up and getting further, and leaving now would lose it.
 
 
@@ -410,23 +453,24 @@ async def publish_x(page, tx):
         if retained_media_url and x_media_address(page.url).get('media_url') != retained_media_url:
             raise VpubError('wrong_work', "Media Studio is no longer on this attempt's file, so no further changes were sent.", 'Look at the original file in Media Studio. Do not upload it again.')
 
-    hold = 0
+    hold, lost = 0, None
     if tx.receipt.get('media_url'):
         if not re.fullmatch(r'https://studio\.x\.com/library/\d+_\d+/edit', tx.receipt['media_url']):
             raise VpubError('invalid_media_url', 'Resume requires the original Media Studio asset URL.')
         await page.goto(tx.receipt['media_url'], wait_until='domcontentloaded', timeout=60000)
         # From a review: a page that went on to another file would have overwritten this attempt's address.
         still_same_media()
-    elif not tx.receipt['media_selected'] or await x_upload_was_lost(page, tx):
+    elif not tx.receipt['media_selected'] or (lost := await x_upload_was_lost(page, tx)):
         media = tx.media()
         await upload_file(page, media, accept='video/')
-        tx.save(phase='uploading')
+        # Counted once the file has gone up again: a stop or a check before then sends nothing.
+        tx.save(phase='uploading', **({'lost_uploads': tx.receipt.get('lost_uploads', 0) + 1, 'lost_look': lost} if lost else {}))
         hold = x_first_click_hold(Path(media).stat().st_size)
     filename = tx.receipt['upload_filename']
     form = x_media_form(page, filename)
     change = form.locator('button:visible').filter(has_text=X_CHANGE_THUMBNAIL)
     if not tx.receipt.get('media_url'):
-        look = await x_open_media(page, page.get_by_text(filename, exact=True), form, filename, hold)
+        look = await x_open_media(page, page.get_by_text(filename, exact=True), form, filename, hold, may_upload_again='open_look' not in tx.receipt)
         tx.save(phase='opening_media', open_look=look, **x_media_address(page.url))
         retained_media_url = tx.receipt.get('media_url')
     await change.wait_for(state='visible', timeout=X_FORM_SECONDS * 1000)

@@ -52,6 +52,7 @@ class CoverTests(unittest.TestCase):
                 self.assertFalse((self.root/'early').exists() or (self.root/'early.json').exists())
 
     def test_a_mistake_in_words_already_written_keeps_its_own_answer(self):
+        """From a review: words a person wrote would be rewritten by metadata request, so their own mistake keeps its own error and hint."""
         from video_publisher.language_policy import route
         policy=route('zh-Hans','youtube')
         self.value['platforms']['youtube'].update(metadata_language=policy['language'],metadata_mode=policy['mode'],category_id='none')
@@ -59,6 +60,25 @@ class CoverTests(unittest.TestCase):
         with self.assertRaises(VpubError) as caught:
             self.prepare()
         self.assertEqual('category_required',caught.exception.code)
+        self.value['platforms']['youtube'].pop('metadata_mode');self.value['platforms']['youtube'].pop('metadata_language')
+        self.value['platforms']['youtube']['category_id']='1'
+        self.value['title']='长'*81
+        atomic_json(self.manifest,self.value)
+        with self.assertRaises(VpubError) as caught:
+            self.prepare()
+        self.assertEqual('invalid_title',caught.exception.code)
+        self.assertIn('metadata request',caught.exception.hint)
+
+    def test_covers_before_the_words_in_a_prepared_folder_point_to_copy_json_and_go(self):
+        """From a review: vpub prepare's folder already holds request.json, and its words go in copy.json for vpub go."""
+        folder=self.root/'final-crosscast';folder.mkdir()
+        value=cli.template(self.root/'test.mp4','zh-Hans')
+        atomic_json(folder/'publish.json',value);atomic_json(folder/'copy.json',{});atomic_json(folder/'request.json',{})
+        with self.assertRaises(VpubError) as caught:
+            covers.prepare(folder/'publish.json',self.source,folder/'covers',folder/'ready.json',self.portrait)
+        self.assertEqual('copy_not_written',caught.exception.code)
+        self.assertIn('copy.json',caught.exception.hint)
+        self.assertIn('vpub go',caught.exception.hint)
 
     def wide_cover(self):
         """A 16:9 cover: a green subject on the left, a white title panel on the right."""
