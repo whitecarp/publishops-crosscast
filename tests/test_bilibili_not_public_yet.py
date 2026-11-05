@@ -41,6 +41,14 @@ class NotPublicYetTests(unittest.TestCase):
         self.assertEqual("api_error", failure.code)
         self.assertIn("as many collections as Bilibili allows", failure.message)
 
+    def test_a_link_bilibili_wont_make_says_what_it_links_to_and_keeps_its_code(self):
+        # A field run's link widget got 79025 暂不支持跳转他人稿件, and its target answered 62002: not visible.
+        failure, pushed = self.call({"code": "api_error", "message": "79025：发送失败，暂不支持跳转他人稿件"})
+        self.assertEqual("api_error", failure.code)
+        self.assertIn("this account's own videos", failure.message)
+        self.assertIn("isn't visible", failure.message)
+        self.assertIn("Open the target video", failure.hint)
+
     def test_other_errors_and_lookalike_numbers_keep_their_code(self):
         for message in ("62002：稿件不可见", "code 620031", "请求错误"):
             with self.subTest(message=message):

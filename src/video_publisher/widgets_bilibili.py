@@ -339,7 +339,14 @@ def add(work, file, dry_run=False, again=False, person_approved=False):
             return {"work": work, "state": "WAITING_FOR_PUBLIC", "error": exc.code, "reason": exc.message, "platform_writes": 0}
         missing = [widget for widget in widgets if not any(shows(widget, item) for item in listed[widget["page"]])]
         checks = [adapters.bili(command(work, widget) + ["--dry-run"]) for widget in missing]
-        return {"work": work, "state": "DRY_RUN", "already_there": len(widgets) - len(missing), "would_send": checks, "platform_writes": 0}
+        answer = {"work": work, "state": "DRY_RUN", "already_there": len(widgets) - len(missing), "would_send": checks, "platform_writes": 0}
+        if len(missing) > 1:
+            # A field run's four took 82 seconds with nothing saying why, which read as slow.
+            wait = GAP_SECONDS * (len(missing) - 1)
+            answer.update(takes_at_least_seconds=wait,
+                          pacing=f"Bilibili gets them one at a time, {GAP_SECONDS} seconds apart, so these {len(missing)} take at least {wait} seconds. "
+                                 "That spacing went through on real videos; sending faster risks Bilibili's rate limit.")
+        return answer
     path = record_path(work)
     path.parent.mkdir(parents=True, exist_ok=True)
     with publication_lock(), receipt_turn(path):

@@ -417,6 +417,13 @@ class CommandTests(Base):
         self.assertEqual(("DRY_RUN", 1, 3, 0), (result["state"], result["already_there"], len(result["would_send"]), result["platform_writes"]))
         self.assertEqual([], self.bili.sent)
 
+    def test_a_dry_run_says_how_long_several_widgets_take_and_why(self):
+        # A field run's four took 82 seconds with nothing saying why.
+        result = self.run_cli("add", WORK, self.file(), "--dry-run")
+        self.assertEqual(3 * widgets.GAP_SECONDS, result["takes_at_least_seconds"])
+        self.assertIn(f"{widgets.GAP_SECONDS} seconds apart", result["pacing"])
+        self.assertNotIn("pacing", self.run_cli("add", WORK, self.file(RATING), "--dry-run"))
+
     def test_add_sends_whats_missing_and_a_second_run_sends_nothing(self):
         first = self.run_cli("add", WORK, self.file())
         self.assertEqual(("VERIFIED", 4), (first["state"], first["platform_writes"]))
