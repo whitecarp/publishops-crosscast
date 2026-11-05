@@ -906,9 +906,10 @@ async def verify(page, platform, identity, receipt):
         return {**{key: value for key, value in checked.items() if key not in ("id", "url")},
                 **{key: receipt[key] for key in ("id", "url") if key in receipt}}
     if not receipt.get("id"):
-        if not receipt.get("final_submit_attempted"):
+        if receipt.get("final_submit_attempted") is False and not receipt.get("final_presses"):
             # Nothing was pressed, so there is nothing of it to find. A field run's verify called such an attempt SUBMITTED_UNVERIFIED,
             # after which every way forward refused it: run again skipped it, delete needed a verified post, and verify could never find one.
+            # Only a receipt that says so counts: one with no word on it at all proves nothing, and stays unconfirmed below.
             return {**receipt, "state": "PREPARATION_INCOMPLETE", "platform_writes": 0,
                     "note": "This attempt stopped before its final press, so nothing was submitted. vpub resume picks it up again and never presses twice."}
         if platform == 'douyin' and await douyin_scheduled_card(page, receipt):

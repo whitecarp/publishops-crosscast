@@ -60,6 +60,12 @@ class NeverPressedTests(Home):
         receipt = {"identity": "owner", "state": "UNKNOWN", "final_submit_attempted": True}
         self.assertEqual("SUBMITTED_UNVERIFIED", asyncio.run(browser_backends.verify(AsyncMock(), "instagram", "owner", receipt))["state"])
 
+    def test_a_receipt_with_no_word_on_its_press_is_never_called_unpressed(self):
+        # Missing evidence proves nothing, and neither does a count of presses beside a marker that says none.
+        for receipt in ({"identity": "owner", "state": "UNKNOWN"}, {"identity": "owner", "final_submit_attempted": False, "final_presses": 1}):
+            with self.subTest(receipt=receipt):
+                self.assertEqual("SUBMITTED_UNVERIFIED", asyncio.run(browser_backends.verify(AsyncMock(), "instagram", "owner", receipt))["state"])
+
     def test_a_press_the_workers_own_copy_records_is_never_called_unpressed(self):
         ledger = core.Ledger()
         try:
