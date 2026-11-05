@@ -35,7 +35,8 @@ def _hint(platform, account="default"):
             "Close any leftover CrossCast sign-in window, then run "
             f"vpub auth login {platform} --account {account} --method browser once to resume. "
             f"Check with vpub auth status {platform} --account {account} --method browser --wait 5. "
-            "If the host keeps stopping it, run these commands in your own terminal; do not keep retrying in the host.")
+            "If no CrossCast window appeared at all, or the host keeps stopping it, the app running these commands may be closing the windows they open: "
+            "run them in your own terminal, such as PowerShell, and do not keep retrying in the host.")
 
 
 def _interrupted(path, saved, persist=True):

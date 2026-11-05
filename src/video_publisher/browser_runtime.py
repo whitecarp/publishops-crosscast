@@ -348,6 +348,11 @@ async def failure_record(page, exc, path, picture=None, **fields):
     if not wanted:
         controls = [{key: value for key, value in control.items() if key not in {"label", "placeholder"}} for control in controls]
     record = {"at": now(), **fields, "error": exc.message if isinstance(exc, VpubError) else failure_message(exc), "url": plain_address(page.url), "controls": controls}
+    # The language a page says it's in, which names nobody: a field run's Instagram may have changed language after a sign-in made elsewhere.
+    try:
+        record["page_language"] = await page.evaluate("document.documentElement.lang || null")
+    except Exception:
+        pass  # A page that can't say is no reason to lose the rest.
     if wanted:
         record["text"] = (await page.evaluate(PAGE_WORDS))[:18000]
     # First, because a picture waits for a page's fonts: a field run's ran out of time on them, and what the page said matters more than how it looked.

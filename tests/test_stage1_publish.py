@@ -510,6 +510,7 @@ class InstagramFormTests(Form):
     def prepare(self):
         super().prepare()
         self.offers_label = True
+        self.offers_new_post = True
         self.label_turns_on = True
         self.never_shows = False
         self.label_presses = 0
@@ -550,7 +551,8 @@ class InstagramFormTests(Form):
         label = self.label_row if self.label_row is not None else label
         to_edit = "window.editComes = true" if self.edit_late else "showPart(2)"
         to_caption = "setTimeout(() => showPart(3), 300)" if self.caption_late else "showPart(3)"
-        return f"""<svg aria-label="New post" width="10" height="10" onclick="showPart(0)"></svg>
+        new_post = '<svg aria-label="New post" width="10" height="10" onclick="showPart(0)"></svg>' if self.offers_new_post else ""
+        return f"""{new_post}
           <div class="step" hidden><button>Select from computer</button><input type="file" accept="video/mp4" onchange="fetch('/upload', {{method: 'POST', body: '{{}}'}}); showPart(1)"></div>
           <div class="step" hidden><svg aria-label="Select crop" width="10" height="10"></svg><span>Original</span><button onclick="{to_edit}">Next</button></div>
           <div class="step" hidden><div role="button">Select from computer</div><button onclick="{to_caption}">Next</button></div>
@@ -572,6 +574,13 @@ class InstagramFormTests(Form):
     async def test_no_label_control_stops_before_sharing(self):
         self.offers_label = False
         await self.refused("declaration_unverified")
+
+    async def test_no_new_post_button_says_which_control_and_uploads_nothing(self):
+        """From a field run: after a sign-in made elsewhere, its error could only say waiting for locator(…)."""
+        self.offers_new_post = False
+        with patch.object(browser_forms, "INSTAGRAM_NEW_POST_SECONDS", 1):
+            await self.refused("layout_changed")
+        self.assertEqual([], self.uploads)
 
     async def test_a_label_that_will_not_turn_on_stops_before_sharing(self):
         self.label_turns_on = False

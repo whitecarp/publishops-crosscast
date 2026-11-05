@@ -493,6 +493,9 @@ async def instagram_shares_elsewhere(page):
     return any([await box.is_checked() for box in await switches.all() if await box.is_visible()])
 
 
+INSTAGRAM_NEW_POST_SECONDS = 15
+
+
 async def publish_instagram(page, tx):
     """One upload through Instagram's own steps. A resume starts them over, because the composer keeps nothing until Share: a field run's preview closed with the account's posts unchanged, and its form said it may not outlast the browser."""
     before = await works(page, 'instagram', tx.identity)
@@ -500,8 +503,14 @@ async def publish_instagram(page, tx):
     if len(caption) > 2200:
         raise VpubError('description_too_long', 'Instagram caption exceeds 2200 characters; no upload started.')
     tx.save(before_ids=list(before), expected_text=caption)
-    # Sidebar New post; account remains the one verified before navigation.
-    await page.locator('svg[aria-label="New post"]').click()
+    # Sidebar New post; account remains the one verified before navigation. A field run found none in 10 seconds after a sign-in
+    # made elsewhere, and its error could only say waiting for locator(…), so this one names the control.
+    new_post = await look_until(page, lambda: visible(page.locator('svg[aria-label="New post"]')), INSTAGRAM_NEW_POST_SECONDS * 1000)
+    if new_post is None:
+        raise VpubError('layout_changed', "Instagram's New post button didn't show on the profile page, so nothing was uploaded.",
+                        "Open Instagram with vpub auth login instagram and look at what it shows: after a sign-in made elsewhere it can ask something first, "
+                        "or show another language. Then vpub resume picks this attempt up.")
+    await new_post.click()
     await page.get_by_role('button', name='Select from computer', exact=True).wait_for(timeout=20000)
     await upload_file(page, tx.media(), accept='video/')
     tx.save(phase='uploading')
