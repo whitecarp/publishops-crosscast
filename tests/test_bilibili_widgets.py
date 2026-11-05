@@ -210,6 +210,13 @@ class FinishTests(Base):
         self.assertEqual(4, len(self.bili.sent))
         self.assertEqual("PARTIAL", again["widgets_state"])
 
+    def test_bilibilis_own_send_failed_answer_is_a_refusal_not_an_unknown(self):
+        """A field run's 79025 and 79049 came back as api_error with 发送失败 and were filed as UNVERIFIED, as if they might be on the video."""
+        self.bili.write_errors["link"] = VpubError("api_error", "B 站返回错误 79025：发送失败，暂不支持跳转他人稿件")
+        self.bili.write_errors["follow"] = VpubError("api_error", "请求超时")
+        result = widgets.finish(self.receipt(), self.checkpoint)
+        self.assertEqual(("REFUSED", "UNVERIFIED"), (result["widgets"][0]["state"], result["widgets"][1]["state"]))
+
     def test_bilibili_saying_slow_down_stops_the_rest_and_a_later_run_finishes(self):
         """36703 within a minute, by bili-cli's own note."""
         self.bili.write_errors["follow"] = VpubError("rate_limited", "发送弹幕的频率过快")

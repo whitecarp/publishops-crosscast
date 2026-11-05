@@ -90,11 +90,13 @@ def clean(widget, length=None):
         title, live = one_line(widget.get("title"), "title"), widget.get("live")
         if len(title) < RESERVE_TITLE_LEAST:
             raise bad(f"A reserve widget's title needs at least {RESERVE_TITLE_LEAST} characters.")
-        if live is not None:
-            try:
-                datetime.fromisoformat(one_line(live, "live"))
-            except ValueError:
-                raise bad("A reserve widget's live is the stream's start time, such as 2026-11-20T20:00 (Beijing time unless it says otherwise).") from None
+        # A field run's reservation without one was refused with 79049, 无此预约权限; the same video took one with it.
+        if live is None:
+            raise bad("A reserve widget needs live, the stream's start time, such as 2026-11-20T20:00 (Beijing time unless it says otherwise).")
+        try:
+            datetime.fromisoformat(one_line(live, "live"))
+        except ValueError:
+            raise bad("A reserve widget's live is the stream's start time, such as 2026-11-20T20:00 (Beijing time unless it says otherwise).") from None
         result.update(title=title, live=live)
     else:
         title, skin = one_line(widget.get("title"), "title"), widget.get("skin", "star")
@@ -108,10 +110,11 @@ def validate(widgets, length=None, reserve=False):
     """reserve is True only for vpub widgets add, which asks for the person's yes; a plan's widgets go up on their own once the video is public."""
     if not isinstance(widgets, list) or not widgets:
         raise bad("Widgets must be a list with at least one in it.")
-    result = [clean(widget, length) for widget in widgets]
-    if not reserve and any(widget["type"] == "reserve" for widget in result):
+    # Said before anything else about a reserve, because no change to one would let it into a plan.
+    if not reserve and any(isinstance(widget, dict) and widget.get("type") == "reserve" for widget in widgets):
         raise bad("A reserve widget can't go in a plan. It creates a public booking, and taking one down notifies everyone who booked it, so it needs its own yes: "
                   "once the video is public, use vpub widgets add with --dry-run, then --person-approved.")
+    result = [clean(widget, length) for widget in widgets]
     check_public_text(result)
     if len({(widget["page"], widget["time"]) for widget in result}) != len(result):
         raise bad("Two widgets at one moment would clash on Bilibili, so give each its own time.")
@@ -210,8 +213,9 @@ def send(work, rows, save, again=False, sent_count=None):
             if exc.code in STOPS_THE_REST:
                 row["state"] = "PENDING" if exc.code in {"write_spacing", "stopped"} else "NOT_APPLIED"
                 break
-            if exc.code == "invalid_argument":
+            if exc.code == "invalid_argument" or (exc.code == "api_error" and "发送失败" in (exc.message or "")):
                 # It answered with what's wrong, such as 79046 for a clash with another widget's time, and the same words would get the same answer.
+                # 发送失败 is Bilibili saying it didn't send it: a field run's 79025 and 79049 were filed as UNVERIFIED, as if they might be on the video.
                 row["state"] = "REFUSED"
             elif exc.code in REFUSED:
                 row["state"] = "NOT_APPLIED"

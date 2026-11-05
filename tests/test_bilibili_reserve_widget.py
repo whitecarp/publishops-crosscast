@@ -10,7 +10,7 @@ from video_publisher import widgets_bilibili as widgets
 from video_publisher.core import VpubError
 
 WORK = "BV1xx411c7mD"
-NEXT = {"type": "reserve", "title": "下期更精彩敬请期待", "time": 12}
+NEXT = {"type": "reserve", "title": "下期更精彩敬请期待", "time": 12, "live": "2026-11-20T20:00"}
 
 
 class ReserveWidgetTests(unittest.TestCase):
@@ -28,10 +28,15 @@ class ReserveWidgetTests(unittest.TestCase):
         return path
 
     def test_reserve_is_checked_and_built_as_bili_cli_expects(self):
-        self.assertEqual(["danmaku", "interact", "reserve", WORK, "--title", "下期更精彩敬请期待", "--time", "12", "--page", "1"],
+        self.assertEqual(["danmaku", "interact", "reserve", WORK, "--title", "下期更精彩敬请期待", "--live", "2026-11-20T20:00", "--time", "12", "--page", "1"],
                          widgets.command(WORK, widgets.clean(NEXT)))
-        live = widgets.clean({"type": "reserve", "title": "周五晚上直播", "time": 3, "live": "2026-11-20T20:00"})
-        self.assertEqual(["--live", "2026-11-20T20:00"], widgets.command(WORK, live)[6:8])
+
+    def test_a_reserve_without_its_live_time_is_refused_before_anything_is_sent(self):
+        """A field run's reservation without one was refused with 79049, and the same video took one with it."""
+        without = {key: value for key, value in NEXT.items() if key != "live"}
+        with self.assertRaises(VpubError) as caught:
+            widgets.clean(without)
+        self.assertIn("needs live", caught.exception.message)
 
     def test_short_titles_bad_live_times_and_other_fields_are_refused(self):
         for widget in ({**NEXT, "title": "下期"}, {**NEXT, "live": "Friday night"}, {**NEXT, "skin": "star"}):
