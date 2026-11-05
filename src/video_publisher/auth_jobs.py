@@ -218,8 +218,10 @@ def wait(platform, seconds=0, account="default"):
     while True:
         result = status(platform, account)
         if result and result.get("state") == "LOGIN_INTERRUPTED":
-            # Show the next step instead of falling through to a new browser status call.
-            raise VpubError("login_interrupted", "Sign-in was interrupted; completion is not verified.", result["hint"])
+            # Show the next step instead of falling through to a new browser status call. A field test read this as a
+            # broken sign-in 27 minutes after the same account had published, so say that it may well still work.
+            raise VpubError("login_interrupted", "An earlier sign-in was interrupted, so this check can't confirm the account without opening its browser. "
+                            "The saved sign-in may well still work: vpub auth login returns at once when it does.", result["hint"])
         if result and result.get("state") == "FAILED" and isinstance(result.get("error"), dict):
             error = result["error"]
             raise VpubError(error["code"], error["message"], error.get("hint", ""))
