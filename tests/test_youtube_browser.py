@@ -814,7 +814,16 @@ class ReadBackTests(Temporary):
     def test_a_visibility_that_never_fills_in_stays_unverified(self):
         page = self.studio()
         page.visibility_text = ""
-        self.assertEqual(["visibility"], self.verify(page)["readback_differs"])
+        result = self.verify(page)
+        self.assertEqual(["visibility"], result["readback_differs"])
+        self.assertIsNone(result["visibility_seen"])
+        self.assertIn("didn't fill in", result["note"])
+
+    def test_a_visibility_that_fills_in_late_is_still_read(self):
+        """From a field run: a box read too soon makes the visibility look different, and a slower connection can take longer than the three seconds one channel took."""
+        page = self.studio()
+        page.visibility_blank_reads = 12
+        self.assertEqual("SUBMISSION_VERIFIED", self.verify(page)["state"])
 
     def test_a_difference_stays_unverified_and_names_the_field(self):
         for key, value, field in [("#title-textarea #textbox", "Another", "title"), ("#description-textarea #textbox", "Another", "description")]:

@@ -212,6 +212,15 @@ class ScheduledPublicationRegression(unittest.TestCase):
         result = verify_video(self.receipt(True), visibility='Scheduled\nJan 3, 2030\n12:00 PM')
         self.assertEqual('SUBMISSION_VERIFIED',result['state'])
         self.assertIs(False,result['schedule_evidence']['scheduled_time_elapsed'])
+        self.assertNotIn('visibility_seen',result)
+
+    def test_a_schedule_studio_shows_otherwise_says_what_studio_shows(self):
+        """From a field run: its record named visibility as different, and not what Studio's box said, so nobody could tell which was wrong."""
+        result = verify_video(self.receipt(True), visibility='Private')
+        self.assertEqual('SUBMITTED_UNVERIFIED',result['state'])
+        self.assertEqual('Private',result['visibility_seen'])
+        self.assertIn("Studio's visibility box says 'Private'",result['note'])
+        self.assertIn("Scheduled, with this attempt's date and time",result['note'])
 
     def test_premature_public_even_with_matching_date_is_unverified(self):
         result = verify_video(self.receipt(True), visibility='Public\nJan 3, 2030\n12:00 PM')

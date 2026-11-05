@@ -379,6 +379,8 @@ vpub verify RECEIPT_KEY
 
 `--dry-run` 只做本地检查，不联系平台。缺少登录记录会给出登录命令并以退出码 4 结束；有记录也不等于登录仍有效，真正发布时会核对账号，无需先逐个平台运行状态查询。文件检查只识别容器头，不证明能播放或平台会接受。
 
+每条 vpub 命令都输出一行 JSON。退出码 0 表示命令做完了，事情也办完了；4 表示命令正常运行并给出了结果，但还有事没完成，比如核验还没确认作品，或者缺少登录，这时看 `data` 里的状态、说明和下一条命令；2 表示 CrossCast 拒绝或中止了，原因写在 `error` 里；3 表示命令被中断或遇到意外错误，再运行任何命令前先看回执。
+
 `--dry-run` 不会上传。`response.json` 由 AI 助手按 `request.json` 中的模板撰写。中断后用 `vpub resume RECEIPT_KEY` 接着做，用 `vpub receipts` 查看所有回执。
 
 可选：`vpub go final-crosscast --workers 2`（或 `vpub publish ready.json --confirm <confirmation-code> --workers 2`） 会把 YouTube、抖音、Instagram 和 X 两个两个一起发，不再一个接一个。B站，以及走付费插件或你的助手自带浏览器的平台，仍然一个接一个发。任何平台发出警告，仍会停下所有平台。按 Ctrl+C 会等正在上传的平台安全停下，已经发出的记录照样保留，之后 CrossCast 保持停止，直到你用 `vpub stop --clear` 解除。目前只做过离线测试：能快多少、两个隐藏浏览器占多少内存，还没在真实账号上测过。

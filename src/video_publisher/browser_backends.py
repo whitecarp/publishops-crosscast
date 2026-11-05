@@ -706,6 +706,12 @@ def youtube_schedule_zone_agrees(shown, schedule):
         return False
 
 
+# How long Studio's visibility box gets to fill in. The one field read on a real channel came three seconds after the title, and a box read
+# before it fills in makes the video's visibility look different, so a slower connection gets longer.
+YT_VISIBILITY_LOOK = 10000
+YT_VISIBILITY_WANTED = {"public": "Public", "scheduled": "Scheduled, with this attempt's date and time", "private": "Private", "unlisted": "Unlisted"}
+
+
 async def verify_youtube(page, receipt):
     # Studio opens this page only for the signed-in channel's own videos, so reading it also proves ownership.
     url = work_url("youtube", None, receipt["id"])
@@ -718,6 +724,7 @@ async def verify_youtube(page, receipt):
     await page.goto(f"https://studio.youtube.com/video/{receipt['id']}/edit", wait_until="domcontentloaded", timeout=60000)
     title = page.locator("#title-textarea #textbox").first
     seen = {}
+    shown = None
     schedule = receipt.get("schedule")
     passed = youtube_schedule_passed(schedule) if schedule else None
     try:
@@ -730,8 +737,7 @@ async def verify_youtube(page, receipt):
                 break
             await page.wait_for_timeout(1000)
         seen["description"] = normalize(await page.locator("#description-textarea #textbox").first.inner_text())
-        # The one field read on a real channel came three seconds after the title, so it gets that long to fill in here too.
-        shown = await look_until(page, lambda: page.locator("ytcp-video-metadata-visibility #visibility-text").first.inner_text(timeout=1000), 3000)
+        shown = await look_until(page, lambda: page.locator("ytcp-video-metadata-visibility #visibility-text").first.inner_text(timeout=1000), YT_VISIBILITY_LOOK)
         seen["visibility"] = studio_visibility(shown)
         if schedule:
             dates, times = studio_moments(shown)
@@ -761,13 +767,19 @@ async def verify_youtube(page, receipt):
     if schedule and seen.get('schedule_timezone') is False:
         differs.append('schedule_timezone')
     present = bool(seen.get("title")) and not differs
+    # Studio's own words, kept when they didn't match: a field run's record named the difference and not what the page showed.
+    words = normalize(shown)[:200] if "visibility" in differs and isinstance(shown, str) and shown.strip() else None
+    visibility_note = ("" if "visibility" not in differs else
+                       f" Studio's visibility box says '{words}', and this attempt expected {YT_VISIBILITY_WANTED.get(expected['visibility'], expected['visibility'])}." if words else
+                       " Studio's visibility box didn't fill in, so its setting couldn't be read.")
     note = ("Current title, description and public visibility read back after the intended schedule; actual publication time and on-time release were not established." if present and passed else
             "Title, description, visibility or schedule, and playlists read back from the channel's own Studio page; cover pixels and playback are separate." if present else
             "Studio still shows this as a draft, so viewers can't see it. Press Publish on this same draft with vpub resume; do not upload again." if still_a_draft else
-            "Expected work/text not yet verified; do not upload again.")
+            "Expected work/text not yet verified; do not upload again." + visibility_note)
     return {**receipt, "url": url, "state": "SUBMISSION_VERIFIED" if present else "SUBMITTED_UNVERIFIED",
             "phase": "complete" if present else "readback_pending", "error": None if present else receipt.get("error"),
             "verification_source": "independent_browser_dom", "verified_at": now(), "readback_differs": differs, "note": note, "still_a_draft": still_a_draft,
+            **({"visibility_seen": words} if "visibility" in differs else {}),
             **({"schedule_evidence": {"intended_at": schedule.get("at"), "scheduled_time_elapsed": passed, "on_time_publication_verified": False}} if schedule else {})}
 
 
@@ -970,10 +982,24 @@ async def verify(page, platform, identity, receipt):
     if platform == 'x' and receipt.get('discovery_source') == X_DISCOVERY_SOURCE:
         note = ("One fresh own video post matches the bound native attempt and exact text. This is correlation, not independent verification of posted video bytes; "
                 "an identical external concurrent post cannot be excluded. Cover pixels and anonymous playback are separate.")
-    return {**receipt, "url": url, "state": "SUBMISSION_VERIFIED" if present else "SUBMITTED_UNVERIFIED",
-            'phase':'complete' if present else 'readback_pending', 'error':None if present else receipt.get('error'),
-            "verification_source": "independent_browser_dom", "verified_at": now(),
-            "note": note if present else "Expected work/text not yet verified; do not upload again."}
+    result = {**receipt, "url": url, "state": "SUBMISSION_VERIFIED" if present else "SUBMITTED_UNVERIFIED",
+              'phase':'complete' if present else 'readback_pending', 'error':None if present else receipt.get('error'),
+              "verification_source": "independent_browser_dom", "verified_at": now(),
+              "note": note if present else "Expected work/text not yet verified; do not upload again."}
+    if platform == 'douyin' and present:
+        # Read again each time from the work's own card. A field run's UNDER_REVIEW, written when it was submitted, stayed for
+        # four hours after the work was public, because nothing rewrote it, and that read as verify contradicting the works list.
+        # With no title there's no card to tell it by, and a card that can't be read says nothing either way.
+        result.pop('platform_status', None)
+        from patchright.async_api import Error as BrowserError
+        try:
+            reviewing = bool(receipt.get('title')) and await douyin_card_under_review(page, receipt['title'])
+        except BrowserError:
+            reviewing = False
+        if reviewing:
+            result['platform_status'] = 'UNDER_REVIEW'
+            result['note'] = "The work is there with its expected text, and Douyin still marks it as under review (审核中)."
+    return result
 
 
 async def execute(page, platform, identity, payload):

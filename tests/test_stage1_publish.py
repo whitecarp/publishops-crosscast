@@ -522,6 +522,17 @@ class InstagramFormTests(Form):
         self.share_row = '<div><div><span>Share to</span></div><div><span>Facebook</span><input type="checkbox" role="switch" style="width:10px;height:10px"></div></div>'
         self.caption_head = f'<a href="/{OWNER}/">{OWNER}</a> <time>3d</time>'
         self.comments = ""
+        self.words = dict(self.ENGLISH)
+        self.notice = None
+
+    ENGLISH = {"new_post": "New post", "picker": "Select from computer", "crop": "Select crop", "original": "Original", "next": "Next", "label": "Add AI label", "share": "Share"}
+    # The first two are what a field run's zh-hk page showed; the rest are Instagram's usual words there.
+    CHINESE = {"new_post": "新帖子", "picker": "從電腦選擇", "crop": "選取裁剪", "original": "原始", "next": "下一步", "label": "加上 AI 標籤", "share": "分享"}
+
+    def in_chinese(self):
+        self.words = dict(self.CHINESE)
+        self.share_row = self.share_row.replace("Share to", "分享至")
+        self.shared_words = "<p>已分享你的 Reels。</p>"
 
     async def handle(self, route):
         url = urlsplit(route.request.url)
@@ -545,19 +556,75 @@ class InstagramFormTests(Form):
         await self.page_at(route, f"""{self.check}<main>{grid}</main>{self.composer()}""")
 
     def composer(self):
+        w = self.words
         keep = "" if self.keeps_text else "this.value = '';"
         turn = "this.setAttribute('aria-checked', 'true');" if self.label_turns_on else ""
-        label = f"""<div><span>Add AI label</span><div role="switch" aria-checked="false" style="width:10px;height:10px" onclick="fetch('/label', {{method: 'POST', body: '{{}}'}}); {turn}"></div></div>""" if self.offers_label else ""
+        label = f"""<div><span>{w['label']}</span><div role="switch" aria-checked="false" style="width:10px;height:10px" onclick="fetch('/label', {{method: 'POST', body: '{{}}'}}); {turn}"></div></div>""" if self.offers_label else ""
         label = self.label_row if self.label_row is not None else label
         to_edit = "window.editComes = true" if self.edit_late else "showPart(2)"
         to_caption = "setTimeout(() => showPart(3), 300)" if self.caption_late else "showPart(3)"
-        new_post = '<svg aria-label="New post" width="10" height="10" onclick="showPart(0)"></svg>' if self.offers_new_post else ""
-        return f"""{new_post}
-          <div class="step" hidden><button>Select from computer</button><input type="file" accept="video/mp4" onchange="fetch('/upload', {{method: 'POST', body: '{{}}'}}); showPart(1)"></div>
-          <div class="step" hidden><svg aria-label="Select crop" width="10" height="10"></svg><span>Original</span><button onclick="{to_edit}">Next</button></div>
-          <div class="step" hidden><div role="button">Select from computer</div><button onclick="{to_caption}">Next</button></div>
-          <div class="step" hidden><textarea oninput="{keep}"></textarea>{label}{self.share_row}<footer><a href="https://www.threads.net/">Threads</a></footer><button onclick="fetch('/share', {{method: 'POST', body: JSON.stringify({{text: document.querySelector('textarea').value}})}}).then(() => document.getElementById('done').hidden = false)">Share</button><div id="done" hidden>{self.shared_words}</div></div>
+        new_post = f'<svg aria-label="{w["new_post"]}" width="10" height="10" onclick="showPart(0)"></svg>' if self.offers_new_post else ""
+        # A notice over the crop step, which has to be closed with its own button first.
+        to_crop = "document.getElementById('notice').hidden = false" if self.notice else "showPart(1)"
+        notice = f"""<div id="notice" role="dialog" hidden><p>{self.notice[0]}</p><button onclick="this.parentElement.hidden = true; showPart(1)">{self.notice[1]}</button></div>""" if self.notice else ""
+        return f"""{new_post}{notice}
+          <div class="step" hidden><button>{w['picker']}</button><input type="file" accept="video/mp4" onchange="fetch('/upload', {{method: 'POST', body: '{{}}'}}); {to_crop}"></div>
+          <div class="step" hidden><svg aria-label="{w['crop']}" width="10" height="10"></svg><span>{w['original']}</span><button onclick="{to_edit}">{w['next']}</button></div>
+          <div class="step" hidden><div role="button">{w['picker']}</div><button onclick="{to_caption}">{w['next']}</button></div>
+          <div class="step" hidden><textarea oninput="{keep}"></textarea>{label}{self.share_row}<footer><a href="https://www.threads.net/">Threads</a></footer><button onclick="fetch('/share', {{method: 'POST', body: JSON.stringify({{text: document.querySelector('textarea').value}})}}).then(() => document.getElementById('done').hidden = false)">{w['share']}</button><div id="done" hidden>{self.shared_words}</div></div>
           <script>function showPart(number) {{ document.querySelectorAll('.step').forEach((part, index) => part.hidden = index !== number); }}</script>"""
+
+    async def test_a_composer_in_chinese_shares_through_its_own_words(self):
+        """From a field run: the account showed Instagram in zh-hk, and only the English words were looked for, so its first step was never found."""
+        self.in_chinese()
+        result = await self.publish()
+        await self.page.evaluate("1")
+        self.assertEqual("SUBMISSION_VERIFIED", result["state"])
+        self.assertEqual(1, self.label_presses)
+        self.assertEqual(1, len(self.final))
+
+    async def test_a_chinese_share_to_switch_that_is_on_shares_nothing(self):
+        self.in_chinese()
+        self.share_row = self.share_row.replace('role="switch"', 'role="switch" checked')
+        await self.refused("shares_elsewhere")
+
+    async def test_a_longer_name_that_holds_a_known_word_is_not_taken_for_it(self):
+        """下一步驟 holds 下一步, and a press on the wrong control could skip a step."""
+        self.in_chinese()
+        self.words["next"] = "下一步驟"
+        real = browser_forms.wait_until
+
+        async def briefly(page, predicate, *, seconds=120, label="page state"):
+            return await real(page, predicate, seconds=2, label=label)
+        with patch.object(browser_forms, "wait_until", briefly):
+            await self.refused("processing_timeout")
+
+    async def test_a_step_whose_words_are_not_known_says_which_and_shares_nothing(self):
+        self.in_chinese()
+        self.words["original"] = "原尺寸"
+        with self.assertRaises(VpubError) as caught:
+            await self.publish()
+        self.assertEqual("layout_changed", caught.exception.code)
+        self.assertIn("while choosing the original crop", caught.exception.message)
+        self.assertIn("gives its language as", caught.exception.message)
+        self.assertIn("English", caught.exception.hint)
+        self.assertNotIn("原尺寸", caught.exception.message)
+        self.assertEqual([], self.final)
+
+    async def test_the_reels_notice_in_another_language_is_closed_with_its_own_button(self):
+        self.in_chinese()
+        self.notice = ("影片帖子現在會以 Reels 形式分享", "確定")
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
+
+    async def test_an_unknown_ai_label_says_the_language_and_how_to_avoid_it(self):
+        self.in_chinese()
+        self.words["label"] = "AI 資訊"
+        with self.assertRaises(VpubError) as caught:
+            await self.publish()
+        self.assertEqual("declaration_unverified", caught.exception.code)
+        self.assertIn("gives its language as", caught.exception.message)
+        self.assertIn("English", caught.exception.hint)
+        self.assertEqual([], self.final)
 
     async def test_an_ai_video_turns_the_platforms_own_label_on_before_sharing(self):
         await self.publish()

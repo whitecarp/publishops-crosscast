@@ -354,6 +354,22 @@ class DouyinDeletionTests(OfflineCase):
             await self.run_route()
         self.assert_unpressed()
 
+    async def test_each_refused_detail_page_says_which_check_refused_it(self):
+        """A field run's delete stopped here every time with one message that couldn't say why. Only a part's name is given, never its value."""
+        for address, says in ((f'https://evil.invalid{route.DETAIL}{WORK}', 'somewhere other than Creator Center'),
+                              (f'https://creator.douyin.com{route.DETAIL}{WORK}?enter_from=secret-value', 'carries more than the work (enter_from)')):
+            self.page.detail_override = address
+            with self.subTest(address=address), self.assertRaises(VpubError) as caught:
+                await self.run_route()
+            self.assertIn(says, caught.exception.message)
+            self.assertNotIn('secret-value', caught.exception.message)
+        self.page.detail_override = None
+        self.page.foreign_popup = True
+        with self.assertRaises(VpubError) as caught:
+            await self.run_route()
+        self.assertIn("wasn't opened by the works list itself", caught.exception.message)
+        self.assert_unpressed()
+
     async def test_inspect_and_verify_present_have_no_mutating_controls(self):
         for op in ('inspect', 'verify'):
             answer = await self.run_route(op)

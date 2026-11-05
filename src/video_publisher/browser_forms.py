@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .categories import STUDIO_CATEGORIES
 from .core import VpubError, douyin_caption, stop_check
-from .browser_runtime import look_until, risk_check, unique_visible, visible
+from .browser_runtime import failure_message, look_until, risk_check, unique_visible, visible
 from .progress import stage
 from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, X_CHOSEN_TIME, YT_EDIT_DRAFT, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style, studio_zone_offsets_agree,
                                upload_file, wait_until, work_url, works, verify, verify_scheduled_x, x_chosen_time_says, x_new_works, x_new_posts, x_schedule_baseline, x_schedule_moment, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
@@ -484,9 +484,37 @@ async def publish_x(page, tx):
     return await finish(page, tx, before)
 
 
+# Instagram's own words for its controls. A field run's account showed its pages in zh-hk, where a read of the real page found one
+# control labelled 新帖子 (the English page's svg is New post) and a composer whose button said 從電腦選擇. The other Chinese words are
+# Instagram's usual ones and haven't been seen on a real page yet. Each is the whole name, so a longer one that holds it isn't taken for
+# it, and a step that finds none of its words stops before anything is shared and says which step it was.
+IG_NEW_POST = 'svg[aria-label="New post"], [aria-label="新帖子"], [aria-label="新貼文"]'
+IG_FROM_COMPUTER = re.compile(r'^\s*(Select from computer|從電腦選擇|从电脑选择)\s*$')
+IG_NEXT = re.compile(r'^\s*(Next|下一步)\s*$')
+IG_OK = re.compile(r'^\s*(OK|確定|确定|好)\s*$')
+IG_CROP = ', '.join(f'svg[aria-label="{word}"]' for word in ('Select crop', '選取裁剪', '選擇裁剪', '选择裁剪', '選取裁切', '選擇裁切'))
+IG_ORIGINAL = re.compile(r'^\s*(Original|原始|原圖|原图)\s*$')
+IG_AI_LABEL = re.compile(r'^\s*(Add AI label|(加上|新增|添加|加入)\s*AI\s*(標籤|标签))\s*$')
+IG_ADVANCED = re.compile(r'^\s*(Advanced settings|進階設定|高級設定|高级设置)\s*$')
+IG_SHARE = re.compile(r'^\s*(Share|分享)\s*$')
+IG_SHARE_TO = re.compile(r'^\s*(Share to|分享至|分享到)\s*$')
+IG_SHARED = re.compile(r'(Your (post|reel) has been shared|Post shared|已分享|已發佈|已发布)', re.I)
+IG_LANGUAGE_HINT = ("CrossCast knows Instagram's English words for each step, and its usual Chinese ones. If Instagram shows its pages in another "
+                    "language, or a Chinese word has changed, switching Instagram to English avoids this. Then vpub resume starts this attempt's "
+                    "steps over; nothing was shared.")
+
+
+async def instagram_language(page):
+    """The language Instagram's page says it's in, for an error to name. It names nobody."""
+    try:
+        return await page.evaluate("document.documentElement.lang || ''") or 'unknown'
+    except Exception:
+        return 'unknown'
+
+
 async def instagram_shares_elsewhere(page):
     """Whether the step's own Share to row has a switch on, which would post this somewhere the plan doesn't say. A field read found that row's words and its one switch under the same grandparent, and the word Threads only in the page's footer, so words elsewhere on the page say nothing."""
-    heading = await visible(page.get_by_text('Share to', exact=True))
+    heading = await visible(page.get_by_text(IG_SHARE_TO))
     if heading is None:
         return False
     switches = heading.locator('../..').locator('[role=switch],input[type=checkbox]')
@@ -505,40 +533,53 @@ async def publish_instagram(page, tx):
     tx.save(before_ids=list(before), expected_text=caption)
     # Sidebar New post; account remains the one verified before navigation. A field run found none in 10 seconds after a sign-in
     # made elsewhere, and its error could only say waiting for locator(…), so this one names the control.
-    new_post = await look_until(page, lambda: visible(page.locator('svg[aria-label="New post"]')), INSTAGRAM_NEW_POST_SECONDS * 1000)
+    new_post = await look_until(page, lambda: visible(page.locator(IG_NEW_POST)), INSTAGRAM_NEW_POST_SECONDS * 1000)
     if new_post is None:
-        language = await page.evaluate("document.documentElement.lang || ''")
-        raise VpubError('layout_changed', f"Instagram's New post button didn't show on the profile page, so nothing was uploaded. The page gives its language as {language or 'unknown'}.",
-                        "Open Instagram with vpub auth login instagram and look at what it shows: after a sign-in made elsewhere it can ask something first, "
-                        "or show another language. Then vpub resume picks this attempt up.")
-    await new_post.click()
-    await page.get_by_role('button', name='Select from computer', exact=True).wait_for(timeout=20000)
-    await upload_file(page, tx.media(), accept='video/')
-    tx.save(phase='uploading')
-    async def crop_ready():
-        notice = await visible(page.get_by_text('Video posts are now shared as reels', exact=True))
-        if notice:
-            await page.get_by_role('button', name='OK', exact=True).click()
-        return await visible(page.get_by_role('button', name='Next', exact=True))
-    await wait_until(page, crop_ready, seconds=600, label='Instagram crop step')
-    tx.save(phase='crop')
-    crop = page.locator('svg[aria-label="Select crop"]')
-    await crop.click()
-    await page.get_by_text('Original', exact=True).click()
-    tx.save(crop='original', video_modified=False)
-    await page.get_by_role('button', name='Next', exact=True).click()
-    tx.save(phase='cover')
-    cover_button = page.get_by_text('Select from computer', exact=True)
-    if tx.cover():
-        await cover_button.wait_for(state='visible', timeout=60000)
-        await choose_in_picker(page, cover_button, tx.cover())
-        await page.wait_for_timeout(2000)
-        tx.save(cover={'state':'UI_ACCEPTED', 'source':'production_artwork', 'remote_pixels_verified':False})
-    else:
-        # A field look found this step shows that button. With no cover to wait for, a press straight after the last could land before the step has come, and a review showed pressing on without it would press the last step's Next again.
-        if not await look_until(page, lambda: visible(cover_button), 60000):
-            raise VpubError('layout_changed', "Instagram's next step did not come, so nothing was shared.")
-    await page.get_by_role('button', name='Next', exact=True).click()
+        raise VpubError('layout_changed', f"Instagram's New post button didn't show on the profile page, so nothing was uploaded. The page gives its language as {await instagram_language(page)}.",
+                        "Open Instagram with vpub auth login instagram and look at what it shows: after a sign-in made elsewhere it can ask something first. " + IG_LANGUAGE_HINT)
+    from patchright.async_api import Error as BrowserError
+    step = "opening the composer's file picker"
+    try:
+        await new_post.click()
+        await page.get_by_role('button', name=IG_FROM_COMPUTER).wait_for(timeout=20000)
+        step = 'choosing the video'
+        await upload_file(page, tx.media(), accept='video/')
+        tx.save(phase='uploading')
+        async def crop_ready():
+            notice = await visible(page.get_by_text('Video posts are now shared as reels', exact=True))
+            if notice:
+                await page.get_by_role('button', name=IG_OK).click()
+            else:
+                # The same notice in a language whose words haven't been seen: a window that names Reels and has an OK button. The composer's own steps have none.
+                ok = await visible(page.get_by_role('dialog').filter(has_text=re.compile('reels', re.I)).get_by_role('button', name=IG_OK))
+                if ok:
+                    await ok.click()
+            return await visible(page.get_by_role('button', name=IG_NEXT))
+        step = 'waiting for the crop step'
+        await wait_until(page, crop_ready, seconds=600, label='Instagram crop step')
+        tx.save(phase='crop')
+        step = 'choosing the original crop'
+        await page.locator(IG_CROP).click()
+        await page.get_by_text(IG_ORIGINAL).click()
+        tx.save(crop='original', video_modified=False)
+        step = 'going on to the cover step'
+        await page.get_by_role('button', name=IG_NEXT).click()
+        tx.save(phase='cover')
+        cover_button = page.get_by_text(IG_FROM_COMPUTER)
+        if tx.cover():
+            await cover_button.wait_for(state='visible', timeout=60000)
+            await choose_in_picker(page, cover_button, tx.cover())
+            await page.wait_for_timeout(2000)
+            tx.save(cover={'state':'UI_ACCEPTED', 'source':'production_artwork', 'remote_pixels_verified':False})
+        else:
+            # A field look found this step shows that button. With no cover to wait for, a press straight after the last could land before the step has come, and a review showed pressing on without it would press the last step's Next again.
+            if not await look_until(page, lambda: visible(cover_button), 60000):
+                raise VpubError('layout_changed', "Instagram's next step did not come, so nothing was shared.")
+        step = 'going on to the caption step'
+        await page.get_by_role('button', name=IG_NEXT).click()
+    except BrowserError as exc:
+        raise VpubError('layout_changed', f"Instagram's composer stopped while {step}, so nothing was shared. The page gives its language as {await instagram_language(page)}. {failure_message(exc)}",
+                        IG_LANGUAGE_HINT) from None
     tx.save(phase='caption')
     boxes = page.locator('textarea,[contenteditable=true]')
     # Field runs found Instagram's menus and buttons come a moment after a press, and finding no box here would stop an upload that was going fine.
@@ -552,7 +593,7 @@ async def publish_instagram(page, tx):
             raise VpubError('metadata_mismatch', 'Instagram caption differs from the manifest.')
     await words_are_kept()
     # The native AI control is required when requested; never silently omit it.
-    label = page.get_by_text('Add AI label', exact=True)
+    label = page.get_by_text(IG_AI_LABEL)
 
     async def ai_switch():
         """The AI label's switch. A field look found several switches in this step, each an input of its own, so the nearest one to the words has to be the only one that near, or it could be another setting."""
@@ -567,12 +608,13 @@ async def publish_instagram(page, tx):
     if tx.options['ai_generated']:
         ai = await visible(label)
         if ai is None:
-            advanced = await visible(page.get_by_text('Advanced settings', exact=True))
+            advanced = await visible(page.get_by_text(IG_ADVANCED))
             if advanced:
                 await advanced.click()
             ai = await look_until(page, lambda: visible(label), 5000)
         if ai is None:
-            raise VpubError('declaration_unverified', 'Instagram AI-label control is unavailable; upload retained, Share not clicked.')
+            raise VpubError('declaration_unverified', f'Instagram AI-label control is unavailable; upload retained, Share not clicked. The page gives its language as {await instagram_language(page)}.',
+                            IG_LANGUAGE_HINT)
         switch = await ai_switch()
         if switch is None:
             raise VpubError('declaration_unverified', 'Instagram AI-label switch could not be identified.')
@@ -583,7 +625,7 @@ async def publish_instagram(page, tx):
     tx.save(phase='preview', metadata_readback=True, ai_disclosure='native_control', shares_elsewhere=await instagram_shares_elsewhere(page))
     if tx.options.get('submission_mode') == 'draft_only':
         return tx.save(state='PREVIEW_READY', note='Reached unpublished preview; this web composer may not persist after the browser closes.')
-    post = await unique_visible(page.get_by_role('button', name='Share', exact=True), 'Instagram final Share')
+    post = await unique_visible(page.get_by_role('button', name=IG_SHARE), 'Instagram final Share')
 
     async def still_says_it():
         await words_are_kept()
@@ -596,7 +638,7 @@ async def publish_instagram(page, tx):
                 raise VpubError('declaration_unverified', 'Instagram AI label was not confirmed.')
     await tx.submit(page, post, still_holds=still_says_it)
     # Its window may say this more than once, and an error about that here would read as a failed post after it has gone out.
-    await page.get_by_text(re.compile(r'(Your (post|reel) has been shared|Post shared)', re.I)).filter(visible=True).first.wait_for(timeout=600000)
+    await page.get_by_text(IG_SHARED).filter(visible=True).first.wait_for(timeout=600000)
     return await finish(page, tx, before)
 
 

@@ -1,7 +1,7 @@
 """Free Creator Center deletion of one exact owned card, with no write retries."""
 import re
 import time
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 from . import browser_backends as bb, browser_runtime as rt, work_delete_state as state
 from .core import VpubError, stop_check
@@ -127,9 +127,19 @@ async def card_id(page, target, card, handle, words):
         await guard(detail)
         address = urlsplit(detail.url)
         match = re.fullmatch(re.escape(DETAIL) + r'([0-9]{10,25})', address.path)
-        if (address.scheme != 'https' or address.netloc != 'creator.douyin.com' or address.query
-                or address.fragment or not match or await detail.opener() is not page):
-            raise VpubError('wrong_work', 'The card did not open its own exact work detail.')
+        # A field run's delete stopped here every time, while its works list read the same card's ID from the page's path,
+        # and the one message couldn't say which check refused it. The checks are as strict as before; each now says which it was.
+        if address.scheme != 'https' or address.netloc != 'creator.douyin.com':
+            raise VpubError('wrong_work', "The card's detail page opened somewhere other than Creator Center, so nothing is deleted.")
+        if not match:
+            raise VpubError('wrong_work', "The card's detail page didn't name one exact work in its address, so nothing is deleted.")
+        if address.query or address.fragment:
+            # The names of its parts only, never what they hold.
+            parts = sorted({name for name, _ in parse_qsl(address.query, keep_blank_values=True)})[:6] or (['an unnamed part'] if address.query else [])
+            parts += ['a fragment'] if address.fragment else []
+            raise VpubError('wrong_work', f"The card's detail page address carries more than the work ({', '.join(parts)}), so nothing is deleted.")
+        if await detail.opener() is not page:
+            raise VpubError('wrong_work', "The card's detail page wasn't opened by the works list itself, so nothing is deleted.")
         return match[1]
     finally:
         await detail.close()

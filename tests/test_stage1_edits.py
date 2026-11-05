@@ -210,6 +210,8 @@ class DouyinPageTests(SharedBrowser):
         self.keeps_chapter_titles = True
         self.chapter_menu = "first"  # Which pointing at 编辑作品 opens its menu: first, second or never.
         self.under_review = False
+        self.prefilled = False
+        self.clear_never_confirms = False
         self.portrait = self.root / "portrait.jpg"
         self.portrait.write_bytes(b"synthetic")
         self.path = self.root / "edit.json"
@@ -250,9 +252,13 @@ class DouyinPageTests(SharedBrowser):
         # A card under review has no link to its work, and says 审核中 beside its title.
         link = "" if self.under_review else f'<a href="https://creator.douyin.com/creator-micro/content/post/video?mid={self.WORK}">Old title</a>'
         name = '<div class="info-title-text-a">Old title</div><span>审核中</span>' if self.under_review else "Old title"
+        # An editor that already holds chapters offers 清空, whose window confirms with its own 确定 (or, here, only 取消).
+        answer = "取消" if self.clear_never_confirms else "确定"
+        clear = (f"""<span onclick="document.getElementById('clear').hidden = false">清空</span><div id="clear" hidden><button onclick="chosen = []; document.getElementById('list').innerHTML = ''; document.getElementById('clear').hidden = true">{answer}</button></div>"""
+                 if self.prefilled else "")
         await self.page_at(route, f"""{link}
           <div class="video-card-content-a">{name}<span onmouseenter="{opens}">编辑作品</span><div id="menu" hidden><span onclick="document.getElementById('editor').hidden = false">添加章节</span></div></div>
-          <div id="editor" hidden><video width="10" height="10"></video><button onclick="document.getElementById('name').hidden = false; document.getElementById('name').focus()">手动添加</button>
+          <div id="editor" hidden>{clear}<video width="10" height="10"></video><button onclick="document.getElementById('name').hidden = false; document.getElementById('name').focus()">手动添加</button>
             <input id="name" placeholder="输入章节名" hidden><span onclick="addChapter()">确定</span><input type="checkbox" id="bar" {'checked' if self.saved_chapters else ''}>
             <div id="list">{rows}</div><p id="count">章节数：{len(self.saved_chapters)}</p><button id="save" onclick="sendChapters()">保存</button></div>
           <script>let chosen = [], times = {json.dumps([row['start_seconds'] for row in self.CHAPTERS])};
@@ -438,6 +444,22 @@ class DouyinPageTests(SharedBrowser):
             result = await self.chapters()
         self.assertEqual(("EDIT_VERIFIED", True), (result["state"], result["timing_readback"]))
         self.assertEqual([("/chapters", "EDIT_SUBMITTING")], self.saves)
+
+    async def test_chapters_already_in_the_editor_are_cleared_through_its_own_window(self):
+        """From a field run: the 清空 window says 确定, and a button looked for by the English name confirm never matched."""
+        self.prefilled = True
+        result = await self.chapters()
+        self.assertEqual(("EDIT_VERIFIED", True), (result["state"], result["timing_readback"]))
+        self.assertEqual([("/chapters", "EDIT_SUBMITTING")], self.saves)
+
+    async def test_a_chapter_step_that_stops_says_which_and_saves_nothing(self):
+        self.prefilled = True
+        self.clear_never_confirms = True
+        with self.assertRaises(VpubError) as caught:
+            await self.chapters()
+        self.assertEqual("edit_not_ready", caught.exception.code)
+        self.assertIn("clearing the chapters already in the editor", caught.exception.message)
+        self.assertEqual([], self.saves)
 
     async def test_chapters_on_a_video_douyin_is_still_reviewing_say_so_and_save_nothing(self):
         """From a field run: three tries on a video under review each left only TimeoutError."""
