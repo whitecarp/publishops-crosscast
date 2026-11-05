@@ -110,8 +110,10 @@ class DocsTests(unittest.TestCase):
         self.assertEqual([], problems)
 
     def test_the_skill_stays_short_enough_to_read_every_time(self):
-        """An assistant reads it in every fresh conversation, on its user's own quota. The detail belongs in references/details.md."""
-        self.assertLess(len((ROOT / "skills/publishops-crosscast/SKILL.md").read_bytes()), 8000)
+        """An assistant reads it in every fresh conversation, on its user's own quota. The detail belongs in references/details.md.
+        It's counted with Windows line endings, as the Windows checks check it out: a skill that passed here at 7977 bytes failed there at 8036."""
+        data = (ROOT / "skills/publishops-crosscast/SKILL.md").read_bytes().replace(b"\r\n", b"\n")
+        self.assertLess(len(data) + data.count(b"\n"), 8000)
 
     def test_feedback_excludes_both_data_homes_and_sign_in_files(self):
         paths = [ROOT / "skills/publishops-crosscast/SKILL.md", *sorted((ROOT / "docs").glob("GUIDE*.md"))]
