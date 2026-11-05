@@ -19,7 +19,7 @@ vpub verify RECEIPT_KEY
 vpub works x
 ```
 
-用 `expected_identity` 綁定目標帳號。上傳前檢查 Studio 權限及其管理中的帳號。處理或選擇器在 Post 前失敗時，`resume KEY` 可接續既有素材；Post 後只驗證。方案也可以用 `existing_media_url` 指定 Media Studio 裡某個素材自己的頁面，這樣就不上傳，直接發布該素材，前提是頁面上的檔名是這部影片的 `crosscast-<雜湊>`。既有回執阻止重傳。`--draft-only` 停在預覽，不保證關閉瀏覽器後仍是持久草稿。此路徑沿用帳號受眾，不修改受保護帳號設定。
+用 `expected_identity` 綁定目標帳號。上傳前檢查 Studio 權限及其管理中的帳號。處理或選擇器在 Post 前失敗時，`resume KEY` 可接續既有素材；Post 後只驗證。媒體庫方塊顯示 `Loading N%` 時不會點開檔案，只要百分比還在前進就繼續等。若瀏覽器在 Media Studio 收完整個檔案前就關閉，媒體庫裡不會有這個檔名，`resume` 會再上傳一次；媒體庫裡已顯示同名檔案時絕不重傳。這項恢復依據一次 61 MB 上傳中斷的實際紀錄，本身尚未在真實帳號上跑過。方案也可以用 `existing_media_url` 指定 Media Studio 裡某個素材自己的頁面，這樣就不上傳，直接發布該素材，前提是頁面上的檔名是這部影片的 `crosscast-<雜湊>`。既有回執阻止重傳。`--draft-only` 停在預覽，不保證關閉瀏覽器後仍是持久草稿。此路徑沿用帳號受眾，不修改受保護帳號設定。
 
 製作封面與第二期發布已實測，修復及限制見[驗證記錄](VALIDATION.md)。自訂縮圖需要真正可用的 Media Studio，訂閱本身不是成功保證。Studio 未觀察到原生 AI 標示控制，因此保留明確的 AI-generated 文字聲明。
 

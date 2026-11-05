@@ -199,6 +199,40 @@ class OpeningMediaTests(ChromeCase):
         with patch.object(browser_forms, "X_FIRST_CLICK_SECONDS", 1000):
             self.assertEqual("PREVIEW_READY", (await browser_forms.publish_x(self.page, self.Tx()))["state"])
 
+    async def test_a_file_still_going_up_is_waited_for_while_its_number_moves(self):
+        """From a field run: a 61 MB file's tile said Loading 73% thirty seconds in, and leaving before 100% lost the upload. Clicks on this tile do nothing until it is up."""
+        self.LIBRARY = self.LIBRARY.replace("<p onclick=\"", "<p onclick=\"if (document.getElementById('going')) return; ") + """<p id="going">Loading 10%</p>
+          <script>let done = 10; const timer = setInterval(() => { done += 10; const going = document.getElementById('going');
+            if (done > 100) { going.remove(); clearInterval(timer); } else { going.textContent = 'Loading ' + done + '%'; } }, 500);</script>"""
+        tx = self.Tx()
+        real = browser_forms.wait_until
+        asked = []
+
+        async def soon(page, predicate, *, seconds=120, label="page state"):
+            # The usual wait for the form is cut to a second, which the five seconds of loading outlast; a wait while the number moves is kept as asked.
+            asked.append(seconds)
+            return await real(page, predicate, seconds=1 if seconds >= 600 else seconds, label=label)
+        with patch.object(browser_forms, "wait_until", soon), patch.object(browser_forms, "X_LOADING_STALL_SECONDS", 30):
+            self.assertEqual("PREVIEW_READY", (await browser_forms.publish_x(self.page, tx))["state"])
+        self.assertIn(30, asked)
+        self.assertGreaterEqual(tx.receipt["open_look"]["loading_moves"], 1)
+        self.assertEqual(1, tx.receipt["open_look"]["clicks"])
+
+    async def test_a_file_whose_form_once_showed_is_not_chosen_again(self):
+        """Only a file never opened can have been lost: one whose form showed is in Library, and choosing it again would make two tiles of one name. This Tx has no file to choose."""
+        self.LIBRARY = self.LIBRARY.replace(">clip.mp4</p>", "></p>")
+        tx = self.Tx()
+        tx.receipt["open_look"] = {"clicks": 1}
+        real = browser_forms.wait_until
+
+        async def soon(page, predicate, *, seconds=120, label="page state"):
+            return await real(page, predicate, seconds=1, label=label)
+        with patch.object(browser_forms, "wait_until", soon), self.assertRaises(VpubError) as caught:
+            await browser_forms.publish_x(self.page, tx)
+        self.assertEqual("processing_timeout", caught.exception.code)
+        self.assertIn("uploads the file again only if Library shows no file of its name", caught.exception.message)
+        self.assertNotIn("lost_uploads", tx.receipt)
+
     def test_a_bigger_file_is_left_alone_for_longer(self):
         self.assertEqual(browser_forms.X_FIRST_CLICK_SECONDS + 56.5, browser_forms.x_first_click_hold(113_000_000))
 

@@ -28,6 +28,21 @@ MOST_PARTS = 3
 SMALLEST_SIDE = 100
 # Below this the parts would float in a band of background, which is a letterboxed landscape in all but name.
 LEAST_FILL = 0.6
+# What a plan says before its words are written: vpub init leaves every title empty and YouTube's category unset, and metadata apply fills them.
+WORDS_UNWRITTEN = {"category_required", "invalid_title", "invalid_description", "invalid_tags"}
+
+
+def words_first(manifest, value, error):
+    """Covers are fitted to a plan whose words are written. A field run's skill listed covers before metadata, and on a new YouTube plan
+    covers prepare stopped on the category; with that set, the empty title would have stopped it next. Only a plan that never went through
+    metadata apply gets this answer, so a mistake in words someone did write still names itself."""
+    platforms = value.get("platforms") if isinstance(value, dict) else None
+    if error.code not in WORDS_UNWRITTEN or not isinstance(platforms, dict) or any(isinstance(o, dict) and "metadata_mode" in o for o in platforms.values()):
+        return error
+    request = Path(manifest).with_name("request.json")
+    return VpubError("copy_not_written", f"Covers come after the words, and this plan has none from vpub metadata apply yet, so nothing was fitted. {error.message}",
+                     f'Run vpub metadata request "{manifest}" --source SCRIPT_OR_SUMMARY.txt --out "{request}", write the answer, run vpub metadata apply, '
+                     "then run vpub covers prepare on the manifest metadata apply writes.")
 SOFT_ABOVE = 2.5
 
 
@@ -126,7 +141,13 @@ def prepare(manifest, source, out_dir, output, portrait=None):
     path, source = Path(manifest).resolve(), Path(source).resolve()
     directory, output = Path(out_dir).resolve(), Path(output).resolve()
     original = read_json(path)
-    load_plan(path)
+    try:
+        load_plan(path)
+    except VpubError as error:
+        answer = words_first(path, original, error)
+        if answer is error:
+            raise
+        raise answer from None
     from .publication_review import carry_choice
     carry_choice(path, output, original)
     portrait = Path(portrait).resolve() if portrait else None

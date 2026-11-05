@@ -36,6 +36,30 @@ class CoverTests(unittest.TestCase):
     def prepare(self):
         return covers.prepare(self.manifest,self.source,self.root/'assets',self.root/'ready.json',self.portrait)
 
+    def test_covers_before_the_words_say_to_write_the_words_first(self):
+        """From a field run: its skill listed covers before metadata, and covers prepare stopped on a new YouTube plan's category. With that set, the empty title would have stopped it next."""
+        for platforms in (['youtube'], ['bilibili','youtube','douyin']):
+            with self.subTest(platforms=platforms):
+                value=cli.template(self.root/'test.mp4','zh-Hans')
+                value['platforms']={name:value['platforms'][name] for name in platforms}
+                fresh=self.root/('fresh-'+'-'.join(platforms)+'.json')
+                atomic_json(fresh,value)
+                with self.assertRaises(VpubError) as caught:
+                    covers.prepare(fresh,self.source,self.root/'early',self.root/'early.json',self.portrait)
+                self.assertEqual('copy_not_written',caught.exception.code)
+                self.assertIn('vpub metadata request',caught.exception.hint)
+                self.assertIn('vpub metadata apply',caught.exception.hint)
+                self.assertFalse((self.root/'early').exists() or (self.root/'early.json').exists())
+
+    def test_a_mistake_in_words_already_written_keeps_its_own_answer(self):
+        from video_publisher.language_policy import route
+        policy=route('zh-Hans','youtube')
+        self.value['platforms']['youtube'].update(metadata_language=policy['language'],metadata_mode=policy['mode'],category_id='none')
+        atomic_json(self.manifest,self.value)
+        with self.assertRaises(VpubError) as caught:
+            self.prepare()
+        self.assertEqual('category_required',caught.exception.code)
+
     def wide_cover(self):
         """A 16:9 cover: a green subject on the left, a white title panel on the right."""
         path=self.root/'wide.png'
