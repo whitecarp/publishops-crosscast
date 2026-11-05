@@ -33,6 +33,10 @@ YT_SAVE_SECONDS = 600
 YT_OPEN_DIALOGS = """() => [...document.querySelectorAll('tp-yt-paper-dialog, [role="dialog"]')].filter(e => e.getClientRects().length).map(e => ({
     tag: e.tagName, parent: e.parentElement?.tagName, text: (e.innerText || '').slice(0, 300),
     buttons: [...e.querySelectorAll('button')].filter(b => b.getClientRects().length).map(b => b.getAttribute('aria-label') || b.innerText).slice(0, 8)}))"""
+# What's open when something covers the final button: windows, menus and lists, each by kind and its first few words.
+YT_ON_TOP = """() => [...document.querySelectorAll('tp-yt-iron-dropdown, tp-yt-paper-dialog, ytcp-dialog, [role="dialog"], [role="alertdialog"], [role="listbox"]')]
+    .filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden')
+    .map(e => ({tag: e.tagName.toLowerCase(), id: e.id || null, opened: e.hasAttribute('opened'), text: (e.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 80)}))"""
 # Each playlist row's checkbox, its own lines of text and whether it is ticked.
 YT_PLAYLIST_ROWS = """boxes => boxes.map(box => {
     const row = box.closest('li, label, ytcp-ve') || box.parentElement;
@@ -1093,6 +1097,22 @@ async def yt_back_from_warning(page):
     return words
 
 
+async def yt_uncover(page, refused):
+    """What lay over the final button, then one press on Studio's backdrop where nothing else is, which closes the window on top
+    the way a person's click beside it would. A field run's Schedule button was covered by that backdrop three times running.
+    Only a backdrop named as what refused the press is pressed: under the upload window alone, a press there would close the upload window."""
+    from patchright.async_api import Error as BrowserError
+    if 'in the way: tp-yt-iron-overlay-backdrop' not in refused:
+        return None
+    on_top = await page.evaluate(YT_ON_TOP)
+    try:
+        await page.locator('tp-yt-iron-overlay-backdrop.opened').first.click(position={'x': 2, 'y': 2}, timeout=5000)
+    except BrowserError:
+        return {'on_top': on_top, 'pressed_backdrop': False}
+    await page.wait_for_timeout(1000)
+    return {'on_top': on_top, 'pressed_backdrop': True}
+
+
 async def yt_press_publish(page, tx, done):
     """Press once, let Studio settle, then read this video's own page.
 
@@ -1116,7 +1136,7 @@ async def yt_press_publish(page, tx, done):
                 or studio_read(STUDIO_TIMES, await clock.input_value()) != (local.hour, local.minute)):
             raise VpubError('schedule_unverified', 'The Studio schedule or time zone changed before Save. The upload is kept as a draft; nothing was published.')
 
-    await act_and_settle(page, lambda: tx.submit(page, done, again=again,
+    await act_and_settle(page, lambda: tx.submit(page, done, again=again, uncover=lambda refused: yt_uncover(page, refused),
                                                still_holds=schedule_still_holds if tx.options.get('schedule') else None), PIN_TICKS)
     answer = None
     for tick in range(YT_PRESS_ANSWER_SECONDS * 2 + 1):

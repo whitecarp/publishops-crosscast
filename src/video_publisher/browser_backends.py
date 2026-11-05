@@ -15,6 +15,8 @@ from .progress import stage
 from .x_pages import own_posts, post_fields, post_row, post_time
 
 MANAGE = "https://creator.douyin.com/creator-micro/content/manage"
+PRESS_TRIAL_MS = 20000  # As long as the press itself may wait for its button.
+PRESS_RETRIAL_MS = 10000  # After whatever covered it was closed.
 STUDIO_VISIBILITY = {"public": {"Public", "公开", "公開"}, "unlisted": {"Unlisted", "不公开列出", "不公開"}, "private": {"Private", "私享", "私人"}}
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
@@ -204,14 +206,16 @@ class Transaction:
             asset = self.plan.get('covers', {}).get('instagram', {}).get('portrait')
         return asset["path"] if asset else shared
 
-    async def submit(self, page, button, still_holds=None, again=False):
-        """`again` is only for a press the page has shown did not publish anything."""
+    async def submit(self, page, button, still_holds=None, again=False, uncover=None):
+        """`again` is only for a press the page has shown did not publish anything. `uncover`, given what refused a trial press,
+        may close what covers the button, once, and says what it was."""
         if self.options.get("submission_mode") == "draft_only":
             raise VpubError("draft_only", "Final submission is forbidden in draft-only mode.")
         if self.receipt["final_submit_attempted"] and not again:
             raise VpubError("already_submitted", "A final submission was already attempted.")
         await risk_check(page)
         stop_check(self.platform)
+        await self.can_press(button, uncover)
         if still_holds:
             await still_holds()  # What was read before that wait may not be true after it.
         stop_check(self.platform)
@@ -221,6 +225,28 @@ class Transaction:
         stop_check(self.platform)  # Saving the receipt can wait on its own lock.
         await button.click(timeout=20000)
         stage("waiting for platform confirmation")
+
+    async def can_press(self, button, uncover=None):
+        """A trial press, which clicks nothing. A field run's Schedule button was covered three times running, and each attempt was recorded
+        as pressed though Chrome had refused the click, which left the draft with no way out. A refusal here records nothing as pressed."""
+        import patchright.async_api as driver
+        controls = tuple(kind for kind in (getattr(driver, "Locator", None), getattr(driver, "ElementHandle", None)) if isinstance(kind, type))
+        if not controls or not isinstance(button, controls):
+            return None  # Only a page's own control has a trial press; a stand-in for one presses as it is.
+        BrowserError = driver.Error
+        try:
+            return await button.click(trial=True, timeout=PRESS_TRIAL_MS)
+        except BrowserError as exc:
+            refused = failure_message(exc)
+        covered = await uncover(refused) if uncover else None
+        if covered:
+            self.save(press_covered=covered)
+            try:
+                return await button.click(trial=True, timeout=PRESS_RETRIAL_MS)
+            except BrowserError as exc:
+                refused = failure_message(exc)
+        raise VpubError("press_blocked", f"The final button couldn't be pressed, so nothing was sent and nothing is recorded as pressed. {refused}",
+                        "vpub status gives the command that picks this attempt up again. It never presses twice.")
 
 
 async def links(page, platform, identity):
