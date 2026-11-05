@@ -133,6 +133,19 @@ class DeleteTests(Base):
         with patch("video_publisher.comment_actions_browser.DELETE_TYPES", frozenset()):
             self.assertIs(False, (await self.run_it())["acknowledged"])
 
+    async def test_a_delete_that_left_the_page_unconfirmed_says_why_and_not_to_press_again(self):
+        # How a field run's delete ended, with nothing saying why it stayed unconfirmed.
+        with patch("video_publisher.comment_actions_browser.DELETE_TYPES", frozenset()):
+            result = await self.run_it()
+        self.assertEqual((True, False), (result["gone_from_page"], result["acknowledged"]))
+        self.assertIn("never press Delete again", result["note"])
+        self.assertIn("write_answers", result["note"])
+
+    async def test_a_confirmed_delete_has_no_such_note(self):
+        result = await self.run_it()
+        self.assertIs(True, result["acknowledged"])
+        self.assertNotIn("note", result)
+
     async def test_another_comment_with_the_same_words_does_not_keep_it_from_counting_as_gone(self):
         self.html = PAGE % (row(0, "Mine") + row(1, "Mine"))
         result = await self.run_it(shown=[self.comment(), self.comment(1, "Mine")])
