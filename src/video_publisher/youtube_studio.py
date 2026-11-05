@@ -529,6 +529,31 @@ async def playlist_list_empty(page, identity):
     }""")
 
 
+async def playlist_empty_reason(page, identity):
+    """Which check kept a list with no rows from counting as empty. A field run's channel with its last playlist deleted read as
+    incomplete, twice, and nothing said why. Only Studio's own words on its empty panel are given, never anyone's titles."""
+    address = urlsplit(page.url)
+    if address.scheme != "https" or address.netloc != "studio.youtube.com" or address.path != f"/channel/{identity}/content/playlists" or address.query:
+        return "address"
+    return await page.evaluate("""() => {
+        const shown = e => !!e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden' && !e.closest('[hidden],[aria-hidden="true"]');
+        const active = [...document.querySelectorAll('ytcp-playlist-section-content')].filter(shown);
+        if (active.length !== 1) return 'sections: ' + active.length;
+        if (document.querySelector('ytcp-playlist-row')) return 'rows';
+        const after = document.querySelector('#navigate-after');
+        if (after && after.getAttribute('aria-disabled') !== 'true') return 'next page offered';
+        const blocked = '[role="dialog"],[role="alertdialog"],[role="alert"],[role="progressbar"],[aria-busy="true"],ytcp-dialog,ytcp-playlist-creation-dialog,ytcp-filter-chip';
+        const block = [...document.querySelectorAll(blocked)].find(shown);
+        if (block) return 'blocked: ' + (block.getAttribute('role') || block.tagName.toLowerCase());
+        if ([...document.querySelectorAll('input')].some(e => ['text', 'search'].includes(e.type) && shown(e) && e.value.trim())) return 'filter text';
+        const panels = [...active[0].querySelectorAll('.no-content')].filter(shown);
+        if (panels.length !== 1) return 'panels: ' + panels.length;
+        const header = panels[0].querySelector('.no-content-header') || panels[0];
+        if (!shown(header)) return 'panel header hidden';
+        return 'panel says: ' + header.innerText.replace(/\\s+/g, ' ').trim().slice(0, 60);
+    }""")
+
+
 async def playlist_title(page, identity, playlist):
     """YouTube's Save window names playlists only by title, so an ID becomes the title Studio shows for it."""
     found = [row for row in (await read_playlists(page, identity))[0] if row["id"] == playlist]
@@ -730,8 +755,11 @@ async def playlists(page, identity, payload):
     operation, playlist, work = payload["operation"], payload.get("collection_id"), payload.get("work_id")
     if operation == "list":
         items, complete = await read_playlists(page, identity)
-        return {"platform": "youtube", "identity": identity, "items": items, "complete": complete, "scope": "owned_playlists", "coverage": "studio_playlist_list",
-                "platform_writes": 0, "observed_at": now()}
+        result = {"platform": "youtube", "identity": identity, "items": items, "complete": complete, "scope": "owned_playlists", "coverage": "studio_playlist_list",
+                  "platform_writes": 0, "observed_at": now()}
+        if not items and not complete:
+            result["empty_check"] = await playlist_empty_reason(page, identity)
+        return result
     if operation == "items" and not work:
         await page.goto(f"{STUDIO}/playlist/{playlist}/videos", wait_until="domcontentloaded", timeout=60000)
         rows = page.locator("ytcp-video-row")
