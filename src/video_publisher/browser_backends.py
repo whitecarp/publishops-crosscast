@@ -710,6 +710,23 @@ def youtube_schedule_zone_agrees(shown, schedule):
 # before it fills in makes the video's visibility look different, so a slower connection gets longer.
 YT_VISIBILITY_LOOK = 10000
 YT_VISIBILITY_WANTED = {"public": "Public", "scheduled": "Scheduled, with this attempt's date and time", "private": "Private", "unlisted": "Unlisted"}
+# Studio's own window once a Save has gone through. A field run's said "Video scheduled" and "Your video will be set to public on
+# November 6, 2026 at 12:00 PM", while the video's page said only Scheduled, with no date or time to compare.
+YT_DONE_WINDOW = re.compile(r'\bVideo (scheduled|published)\b')
+YT_SET_PUBLIC = re.compile(r'will be set to public on ([A-Z][a-z]+) (\d{1,2}), (\d{4}) at (1[0-2]|[1-9]):([0-5]\d) ?([AP]M)')
+YT_SCHEDULED_WORD = re.compile(r'\s*Scheduled\s*')
+MONTH_NAMES = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
+
+
+def youtube_window_schedule(receipt):
+    """The date and time Studio's own window gave, after the press, for the video going public: ((year, month, day), (hour, minute)), or None."""
+    kept = [receipt.get('studio_confirmation')] + [part.get('text') for part in receipt.get('after_press') or [] if isinstance(part, dict)]
+    for words in kept:
+        found = YT_SET_PUBLIC.search(normalize(words)) if isinstance(words, str) else None
+        if found and found[1] in MONTH_NAMES:
+            return ((int(found[3]), MONTH_NAMES.index(found[1]) + 1, int(found[2])),
+                    (int(found[4]) % 12 + (12 if found[6] == 'PM' else 0), int(found[5])))
+    return None
 
 
 async def verify_youtube(page, receipt):
@@ -725,6 +742,7 @@ async def verify_youtube(page, receipt):
     title = page.locator("#title-textarea #textbox").first
     seen = {}
     shown = None
+    from_window = False
     schedule = receipt.get("schedule")
     passed = youtube_schedule_passed(schedule) if schedule else None
     try:
@@ -744,6 +762,11 @@ async def verify_youtube(page, receipt):
             seen['schedule_timezone'] = youtube_schedule_zone_agrees(shown, schedule)
             if seen["visibility"] != "public" and tuple(schedule["date"]) in dates and tuple(schedule["time"]) in times:
                 seen["visibility"] = "scheduled"
+            elif isinstance(shown, str) and YT_SCHEDULED_WORD.fullmatch(shown):
+                # A field run's box said only Scheduled. Before its time, the date and time it doesn't show are the ones Studio's own
+                # window gave at the press. Either way it isn't a draft, which has no visibility setting at all.
+                from_window = not passed and youtube_window_schedule(receipt) == (tuple(schedule["date"]), tuple(schedule["time"]))
+                seen["visibility"] = "scheduled" if from_window else "scheduled_without_its_time"
         if receipt.get("playlists"):
             listed = normalize(await page.locator("ytcp-video-metadata-playlists").first.inner_text())
             seen["playlists"] = all(normalize(title) in listed for title in receipt["playlists"])
@@ -770,16 +793,30 @@ async def verify_youtube(page, receipt):
     # Studio's own words, kept when they didn't match: a field run's record named the difference and not what the page showed.
     words = normalize(shown)[:200] if "visibility" in differs and isinstance(shown, str) and shown.strip() else None
     visibility_note = ("" if "visibility" not in differs else
+                       (" Studio's visibility box says only 'Scheduled', with no date or time, and "
+                        + ("no window from Studio at the press gave them." if youtube_window_schedule(receipt) is None else
+                           "the time Studio's own window gave at the press isn't this attempt's.")) if schedule and not passed and words and YT_SCHEDULED_WORD.fullmatch(words) else
                        f" Studio's visibility box says '{words}', and this attempt expected {YT_VISIBILITY_WANTED.get(expected['visibility'], expected['visibility'])}." if words else
                        " Studio's visibility box didn't fill in, so its setting couldn't be read.")
+    # A video taken down since (a field run's was deleted by hand in Studio) leaves no title to read, so YouTube's own page is asked.
+    removed = False
+    if bound and not seen.get("title") and not still_a_draft:
+        from .work_delete_youtube import exact_gone
+        try:
+            removed = await exact_gone(page, {"url": url, "id": receipt["id"]})
+        except Exception:
+            removed = False  # Unknown stays unknown.
     note = ("Current title, description and public visibility read back after the intended schedule; actual publication time and on-time release were not established." if present and passed else
-            "Title, description, visibility or schedule, and playlists read back from the channel's own Studio page; cover pixels and playback are separate." if present else
+            "Title, description, visibility or schedule, and playlists read back from the channel's own Studio page; cover pixels and playback are separate."
+            + (" Studio's page says Scheduled; its date and time are the ones Studio's own window gave when it was saved." if from_window else "") if present else
             "Studio still shows this as a draft, so viewers can't see it. Press Publish on this same draft with vpub resume; do not upload again." if still_a_draft else
+            f"YouTube's own page says this video has been removed by its uploader, so there's nothing left to verify. If that was you, take it off the list with vpub dismiss {receipt.get('key') or 'KEY'} --person-checked." if removed else
             "Expected work/text not yet verified; do not upload again." + visibility_note)
     return {**receipt, "url": url, "state": "SUBMISSION_VERIFIED" if present else "SUBMITTED_UNVERIFIED",
             "phase": "complete" if present else "readback_pending", "error": None if present else receipt.get("error"),
             "verification_source": "independent_browser_dom", "verified_at": now(), "readback_differs": differs, "note": note, "still_a_draft": still_a_draft,
             **({"visibility_seen": words} if "visibility" in differs else {}),
+            **({"removed_by_uploader": True} if removed else {}),
             **({"schedule_evidence": {"intended_at": schedule.get("at"), "scheduled_time_elapsed": passed, "on_time_publication_verified": False}} if schedule else {})}
 
 
@@ -986,9 +1023,9 @@ async def verify(page, platform, identity, receipt):
               'phase':'complete' if present else 'readback_pending', 'error':None if present else receipt.get('error'),
               "verification_source": "independent_browser_dom", "verified_at": now(),
               "note": note if present else "Expected work/text not yet verified; do not upload again."}
-    if platform == 'douyin' and present:
+    if platform == 'douyin':
         # Read again each time from the work's own card. A field run's UNDER_REVIEW, written when it was submitted, stayed for
-        # four hours after the work was public, because nothing rewrote it, and that read as verify contradicting the works list.
+        # four hours after the work was public, and on a record whose work had been deleted by hand, because nothing rewrote it.
         # With no title there's no card to tell it by, and a card that can't be read says nothing either way.
         result.pop('platform_status', None)
         from patchright.async_api import Error as BrowserError
@@ -998,7 +1035,8 @@ async def verify(page, platform, identity, receipt):
             reviewing = False
         if reviewing:
             result['platform_status'] = 'UNDER_REVIEW'
-            result['note'] = "The work is there with its expected text, and Douyin still marks it as under review (审核中)."
+            result['note'] = ("The work is there with its expected text, and Douyin still marks it as under review (审核中)." if present else
+                              "Douyin still marks this work as under review (审核中), so it can't be checked yet. Run vpub verify again later; do not upload again.")
     return result
 
 
@@ -1050,6 +1088,8 @@ async def execute(page, platform, identity, payload):
 async def complete_pending_chapters(page,platform,identity,receipt):
     pending=receipt.get('pending_chapters')
     if platform!='douyin' or not pending or receipt.get('chapters_state')=='VERIFIED': return receipt
+    # An error is only this run's: a field run read a last run's TimeoutError, kept beside PENDING_WORK_ID, as a new one.
+    receipt={key:value for key,value in receipt.items() if key not in {'chapters_error','chapters_error_message'}}
     if not receipt.get('id') or receipt.get('state')!='SUBMISSION_VERIFIED':
         return {**receipt,'chapters_state':'PENDING_WORK_ID','next':'Run vpub verify for this receipt after platform review; chapters are not yet applied.'}
     from .browser_edits import execute as edit

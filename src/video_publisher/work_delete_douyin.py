@@ -8,6 +8,9 @@ from .core import VpubError, stop_check
 
 
 DETAIL = '/creator-micro/work-management/work-detail/'
+# The one part a real detail page's address was seen to carry besides the work: a field run's read named enter_from, which says
+# where the page was opened from and not which work it shows. Anything else, a second copy of it, or a fragment still refuses.
+DETAIL_ALLOWED = {'enter_from'}
 SAME = '(node, retained) => node === retained && node.isConnected'
 CONTAINS = '(node, child) => node.isConnected && child.isConnected && node.contains(child)'
 GONE = re.compile(r'^(?:该)?(?:作品|视频)已(?:被)?删除[。！]?$')
@@ -133,9 +136,13 @@ async def card_id(page, target, card, handle, words):
             raise VpubError('wrong_work', "The card's detail page opened somewhere other than Creator Center, so nothing is deleted.")
         if not match:
             raise VpubError('wrong_work', "The card's detail page didn't name one exact work in its address, so nothing is deleted.")
-        if address.query or address.fragment:
+        query = parse_qsl(address.query, keep_blank_values=True)
+        names = [name for name, _ in query]
+        allowed = bool(query) and len(names) == len(set(names)) and set(names) <= DETAIL_ALLOWED
+        if address.fragment or (address.query and not allowed):
             # The names of its parts only, never what they hold.
-            parts = sorted({name for name, _ in parse_qsl(address.query, keep_blank_values=True)})[:6] or (['an unnamed part'] if address.query else [])
+            parts = sorted(set(names) - DETAIL_ALLOWED)[:6] or (['an unnamed part'] if address.query and not query else [])
+            parts += ['enter_from twice'] if names.count('enter_from') > 1 else []
             parts += ['a fragment'] if address.fragment else []
             raise VpubError('wrong_work', f"The card's detail page address carries more than the work ({', '.join(parts)}), so nothing is deleted.")
         if await detail.opener() is not page:

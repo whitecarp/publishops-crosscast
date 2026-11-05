@@ -363,7 +363,9 @@ def under_review(results):
     found = {}
     for platform, result in results.items():
         if isinstance(result, dict) and result.get("state") == "SUBMITTED_UNVERIFIED" and result.get("platform_status") == "UNDER_REVIEW":
-            found[platform] = {"submitted": True, "note": f"{platform.capitalize()} has it and is reviewing it. Check it with vpub verify once the review is done; never upload it again."}
+            # A field run's plan had chapters, and nothing here said when they would go on.
+            then = " Its planned chapters go on then too." if result.get("pending_chapters") else ""
+            found[platform] = {"submitted": True, "note": f"{platform.capitalize()} has it and is reviewing it. Check it with vpub verify once the review is done; never upload it again.{then}"}
             if result.get("key"):
                 found[platform]["next_command"] = f"vpub verify {result['key']}"
     return found

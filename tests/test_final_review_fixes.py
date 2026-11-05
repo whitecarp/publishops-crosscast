@@ -214,6 +214,32 @@ class ScheduledPublicationRegression(unittest.TestCase):
         self.assertIs(False,result['schedule_evidence']['scheduled_time_elapsed'])
         self.assertNotIn('visibility_seen',result)
 
+    WINDOW = 'Video scheduled\nYour video will be set to public on January 3, 2030 at 12:00 PM\n1:16\nTitle\nUploaded Jan 2, 2030'
+
+    def test_a_box_that_says_only_scheduled_is_read_with_studios_own_window(self):
+        """From a field run: the video's page said only Scheduled, and Studio's window at the press gave the date and time."""
+        for kept in ({'after_press': [{'tag': 'TP-YT-PAPER-DIALOG', 'parent': 'YTCP-DIALOG', 'text': self.WINDOW, 'buttons': ['Close']}]},
+                     {'studio_confirmation': 'Video scheduled Your video will be set to public on January 3, 2030 at 12:00 PM'}):
+            with self.subTest(kept=list(kept)):
+                result = verify_video({**self.receipt(True), **kept}, visibility='Scheduled')
+                self.assertEqual('SUBMISSION_VERIFIED', result['state'])
+                self.assertIn("Studio's own window gave when it was saved", result['note'])
+
+    def test_a_box_that_says_only_scheduled_without_a_matching_window_stays_unverified(self):
+        for kept, says in (({}, 'no window from Studio at the press gave them'),
+                           ({'studio_confirmation': 'Video scheduled Your video will be set to public on January 3, 2030 at 1:00 PM'}, "isn't this attempt's"),
+                           ({'studio_confirmation': 'Video scheduled Your video will be set to public on January 4, 2030 at 12:00 PM'}, "isn't this attempt's")):
+            with self.subTest(says=says, kept=kept):
+                result = verify_video({**self.receipt(True), **kept}, visibility='Scheduled')
+                self.assertEqual('SUBMITTED_UNVERIFIED', result['state'])
+                self.assertEqual('Scheduled', result['visibility_seen'])
+                self.assertIn(says, result['note'])
+
+    def test_a_box_still_saying_scheduled_after_its_time_is_not_public(self):
+        result = verify_video({**self.receipt(), 'studio_confirmation': 'Video scheduled Your video will be set to public on January 1, 2030 at 12:00 PM'}, visibility='Scheduled')
+        self.assertEqual('SUBMITTED_UNVERIFIED', result['state'])
+        self.assertIn("expected Public", result['note'])
+
     def test_a_schedule_studio_shows_otherwise_says_what_studio_shows(self):
         """From a field run: its record named visibility as different, and not what Studio's box said, so nobody could tell which was wrong."""
         result = verify_video(self.receipt(True), visibility='Private')

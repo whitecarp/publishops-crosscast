@@ -13,7 +13,7 @@ from .categories import STUDIO_CATEGORIES
 from .core import VpubError, douyin_caption, stop_check
 from .browser_runtime import failure_message, look_until, risk_check, unique_visible, visible
 from .progress import stage
-from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, X_CHOSEN_TIME, YT_EDIT_DRAFT, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style, studio_zone_offsets_agree,
+from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, X_CHOSEN_TIME, YT_DONE_WINDOW, YT_EDIT_DRAFT, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style, studio_zone_offsets_agree,
                                upload_file, wait_until, work_url, works, verify, verify_scheduled_x, x_chosen_time_says, x_new_works, x_new_posts, x_schedule_baseline, x_schedule_moment, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
 
 X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
@@ -26,6 +26,7 @@ YT_CHECKS_WARNING = 'ytcp-prechecks-warning-dialog'
 YT_CHECKS_DONE = re.compile('检查完毕|檢查完畢|Checks complete', re.I)
 YT_CHECKS_SECONDS = 600
 YT_PRESS_ANSWER_SECONDS = 60
+YT_DONE_LOCATOR = 'ytcp-dialog > tp-yt-paper-dialog'  # Studio's own window after a Save, which a field run found outside the upload window.
 # The final Save lights up only once Studio has finished processing in the background;
 # a 75-second clip on a real channel was still grey after two minutes.
 YT_SAVE_SECONDS = 600
@@ -492,8 +493,13 @@ IG_NEW_POST = 'svg[aria-label="New post"], [aria-label="新帖子"], [aria-label
 IG_FROM_COMPUTER = re.compile(r'^\s*(Select from computer|從電腦選擇|从电脑选择)\s*$')
 IG_NEXT = re.compile(r'^\s*(Next|下一步)\s*$')
 IG_OK = re.compile(r'^\s*(OK|確定|确定|好)\s*$')
-IG_CROP = ', '.join(f'svg[aria-label="{word}"]' for word in ('Select crop', '選取裁剪', '選擇裁剪', '选择裁剪', '選取裁切', '選擇裁切'))
+# The zh-hk crop control is none of these: a field run found the file chosen and then no crop control to press. Every Chinese word
+# for crop holds 裁, and the composer's step has no other icon that does, so one in the composer window holding it counts too.
+IG_CROP = ', '.join([*(f'svg[aria-label="{word}"]' for word in ('Select crop', '選取裁剪', '選擇裁剪', '选择裁剪', '選取裁切', '選擇裁切')),
+                     '[role="dialog"] svg[aria-label*="裁"]'])
 IG_ORIGINAL = re.compile(r'^\s*(Original|原始|原圖|原图)\s*$')
+# Its Chinese word isn't known either: every guess starts with 原 and is short, and in the composer window only that choice is.
+IG_ORIGINAL_LIKE = re.compile(r'^\s*原\S{0,4}\s*$')
 IG_AI_LABEL = re.compile(r'^\s*(Add AI label|(加上|新增|添加|加入)\s*AI\s*(標籤|标签))\s*$')
 IG_ADVANCED = re.compile(r'^\s*(Advanced settings|進階設定|高級設定|高级设置)\s*$')
 IG_SHARE = re.compile(r'^\s*(Share|分享)\s*$')
@@ -560,7 +566,8 @@ async def publish_instagram(page, tx):
         tx.save(phase='crop')
         step = 'choosing the original crop'
         await page.locator(IG_CROP).click()
-        await page.get_by_text(IG_ORIGINAL).click()
+        # One choice only: the same one found both ways counts once, and two different ones stop here.
+        await page.get_by_text(IG_ORIGINAL).or_(page.locator('[role="dialog"]').get_by_text(IG_ORIGINAL_LIKE)).click()
         tx.save(crop='original', video_modified=False)
         step = 'going on to the cover step'
         await page.get_by_role('button', name=IG_NEXT).click()
@@ -1120,10 +1127,17 @@ async def yt_schedule(page, when):
             'time': [local.hour, local.minute], 'timezone_basis': 'studio', 'timezone': zone, 'time_entry': entered}
 
 
+async def yt_done_window(page):
+    return await visible(page.locator(YT_DONE_LOCATOR).filter(has_text=YT_DONE_WINDOW))
+
+
 async def yt_press_answer(page, done):
-    """What Studio did with Publish: 'warned', 'closed', or nothing yet."""
+    """What Studio did with Publish: 'warned', 'closed', 'confirmed', or nothing yet. A field run's Schedule button stayed on
+    screen behind Studio's own Video scheduled window for the whole wait, so that window is an answer too."""
     if await visible(page.locator(f'{YT_CHECKS_WARNING} button')):
         return 'warned'
+    if await yt_done_window(page):
+        return 'confirmed'
     return None if await done.is_visible() else 'closed'
 
 
@@ -1205,6 +1219,11 @@ async def yt_press_publish(page, tx, done):
     stop_check('youtube')
     if answer == 'warned':
         tx.save(checks_warning='Studio showed a checks warning after Save. No second final press was made; read back the recorded video.')
+    elif answer == 'confirmed':
+        # Its first two lines, such as Video scheduled and when it goes public, which a read-back can compare with the plan.
+        window = await yt_done_window(page)
+        lines = [line.strip() for line in (await window.inner_text()).splitlines() if line.strip()][:2] if window else []
+        tx.save(studio_confirmation=' '.join(lines)[:200])
     elif not answer:
         tx.save(after_press=await page.evaluate(YT_OPEN_DIALOGS))
 

@@ -370,7 +370,11 @@ class TwoCommandTests(unittest.TestCase):
         value = json.loads(manifest.read_text(encoding="utf-8"))
         value["platforms"]["youtube"].update(chapters=chapters, duration_seconds=300)
         manifest.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
-        self.assertIn("chapters", self.refused("invalid_metadata", self.go).hint)
+        # From a field run: the first plan hit this twice, and the hint named the whole set of fields but not the file or what was missing.
+        hint = self.refused("invalid_metadata", self.go).hint
+        self.assertIn("In copy.json, youtube needs exactly these fields", hint)
+        self.assertIn("(missing: chapters)", hint)
+        self.assertIn("the same start times", hint)
         self.write_copy(chapters=[{"start_seconds": chapter["start_seconds"], "title": "Part " + chapter["title"]} for chapter in chapters])
         self.assertTrue(self.go()["all_submissions_verified"])
 
@@ -384,6 +388,7 @@ class TwoCommandTests(unittest.TestCase):
         self.write_copy(visibility="private")
         error = self.refused("invalid_metadata", self.go)
         self.assertIn("needs exactly these fields", error.hint)
+        self.assertIn("not allowed: visibility", error.hint)
         self.assertEqual([], self.sent)
 
     def test_something_flagged_stops_until_a_person_says_so(self):

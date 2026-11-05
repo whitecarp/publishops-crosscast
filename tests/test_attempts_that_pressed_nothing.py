@@ -87,6 +87,12 @@ class UnderReviewTests(Home):
         self.assertEqual(["douyin"], list(reviewing))
         self.assertEqual((True, "vpub verify " + "k" * 64), (reviewing["douyin"]["submitted"], reviewing["douyin"]["next_command"]))
         self.assertIn("never upload it again", reviewing["douyin"]["note"])
+        self.assertNotIn("chapters", reviewing["douyin"]["note"])
+
+    def test_planned_chapters_are_said_to_go_on_after_the_review(self):
+        """From a field run: its plan had chapters, and the answer didn't say when they would go on."""
+        results = {"douyin": {"state": "SUBMITTED_UNVERIFIED", "platform_status": "UNDER_REVIEW", "pending_chapters": {"chapters": []}}}
+        self.assertIn("Its planned chapters go on then too.", cli.under_review(results)["douyin"]["note"])
 
     def test_a_publish_result_carries_it(self):
         def reviewing(*args):

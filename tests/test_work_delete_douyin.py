@@ -356,8 +356,11 @@ class DouyinDeletionTests(OfflineCase):
 
     async def test_each_refused_detail_page_says_which_check_refused_it(self):
         """A field run's delete stopped here every time with one message that couldn't say why. Only a part's name is given, never its value."""
+        detail = f'https://creator.douyin.com{route.DETAIL}{WORK}'
         for address, says in ((f'https://evil.invalid{route.DETAIL}{WORK}', 'somewhere other than Creator Center'),
-                              (f'https://creator.douyin.com{route.DETAIL}{WORK}?enter_from=secret-value', 'carries more than the work (enter_from)')):
+                              (f'{detail}?enter_from=work_manage&other=secret-value', 'carries more than the work (other)'),
+                              (f'{detail}?enter_from=secret-value&enter_from=work_manage', 'carries more than the work (enter_from twice)'),
+                              (f'{detail}?enter_from=work_manage#secret-value', 'carries more than the work (a fragment)')):
             self.page.detail_override = address
             with self.subTest(address=address), self.assertRaises(VpubError) as caught:
                 await self.run_route()
@@ -369,6 +372,13 @@ class DouyinDeletionTests(OfflineCase):
             await self.run_route()
         self.assertIn("wasn't opened by the works list itself", caught.exception.message)
         self.assert_unpressed()
+
+    async def test_a_detail_page_that_says_where_it_was_opened_from_is_still_its_own(self):
+        """From a field run: the real detail page's address carried enter_from, and every delete stopped there."""
+        self.page.detail_override = f'https://creator.douyin.com{route.DETAIL}{WORK}?enter_from=work_manage'
+        answer = await self.run_route()
+        self.assertTrue(state.verified(answer, self.target))
+        self.assertEqual((1, 1), (self.page.menu_count, self.page.final_count))
 
     async def test_inspect_and_verify_present_have_no_mutating_controls(self):
         for op in ('inspect', 'verify'):

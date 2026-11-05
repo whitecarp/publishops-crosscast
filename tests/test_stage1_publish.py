@@ -567,12 +567,13 @@ class InstagramFormTests(Form):
         # A notice over the crop step, which has to be closed with its own button first.
         to_crop = "document.getElementById('notice').hidden = false" if self.notice else "showPart(1)"
         notice = f"""<div id="notice" role="dialog" hidden><p>{self.notice[0]}</p><button onclick="this.parentElement.hidden = true; showPart(1)">{self.notice[1]}</button></div>""" if self.notice else ""
-        return f"""{new_post}{notice}
+        # The steps sit in the composer's own window, as on the real page.
+        return f"""{new_post}{notice}<div role="dialog">
           <div class="step" hidden><button>{w['picker']}</button><input type="file" accept="video/mp4" onchange="fetch('/upload', {{method: 'POST', body: '{{}}'}}); {to_crop}"></div>
           <div class="step" hidden><svg aria-label="{w['crop']}" width="10" height="10"></svg><span>{w['original']}</span><button onclick="{to_edit}">{w['next']}</button></div>
           <div class="step" hidden><div role="button">{w['picker']}</div><button onclick="{to_caption}">{w['next']}</button></div>
           <div class="step" hidden><textarea oninput="{keep}"></textarea>{label}{self.share_row}<footer><a href="https://www.threads.net/">Threads</a></footer><button onclick="fetch('/share', {{method: 'POST', body: JSON.stringify({{text: document.querySelector('textarea').value}})}}).then(() => document.getElementById('done').hidden = false)">{w['share']}</button><div id="done" hidden>{self.shared_words}</div></div>
-          <script>function showPart(number) {{ document.querySelectorAll('.step').forEach((part, index) => part.hidden = index !== number); }}</script>"""
+          </div><script>function showPart(number) {{ document.querySelectorAll('.step').forEach((part, index) => part.hidden = index !== number); }}</script>"""
 
     async def test_a_composer_in_chinese_shares_through_its_own_words(self):
         """From a field run: the account showed Instagram in zh-hk, and only the English words were looked for, so its first step was never found."""
@@ -599,17 +600,34 @@ class InstagramFormTests(Form):
         with patch.object(browser_forms, "wait_until", briefly):
             await self.refused("processing_timeout")
 
-    async def test_a_step_whose_words_are_not_known_says_which_and_shares_nothing(self):
+    async def unknown_crop_word(self, part, word):
         self.in_chinese()
-        self.words["original"] = "原尺寸"
+        self.words[part] = word
         with self.assertRaises(VpubError) as caught:
             await self.publish()
         self.assertEqual("layout_changed", caught.exception.code)
         self.assertIn("while choosing the original crop", caught.exception.message)
         self.assertIn("gives its language as", caught.exception.message)
         self.assertIn("English", caught.exception.hint)
-        self.assertNotIn("原尺寸", caught.exception.message)
+        self.assertNotIn(word, caught.exception.message)
         self.assertEqual([], self.final)
+
+    async def test_a_crop_control_whose_words_are_not_known_says_which_step_and_shares_nothing(self):
+        await self.unknown_crop_word("crop", "選擇比例")
+
+    async def test_an_original_choice_whose_words_are_not_known_says_which_step_and_shares_nothing(self):
+        await self.unknown_crop_word("original", "保留比例")
+
+    async def test_a_crop_control_not_on_the_list_is_found_by_the_character_for_crop(self):
+        """From a field run: the zh-hk composer chose the file, then found none of the listed crop words."""
+        self.in_chinese()
+        self.words["crop"] = "剪裁"
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
+
+    async def test_an_original_choice_not_on_the_list_is_found_by_its_shape(self):
+        self.in_chinese()
+        self.words["original"] = "原比例"
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
 
     async def test_the_reels_notice_in_another_language_is_closed_with_its_own_button(self):
         self.in_chinese()

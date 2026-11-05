@@ -417,7 +417,19 @@ async def capture_cover(page,control,output,patch,save,url):
 
 DOUYIN_CHAPTER_MENU_SECONDS=45
 DOUYIN_CHAPTER_MENU_LOOK=5000  # How long each pointing waits for the menu, in milliseconds.
-DOUYIN_CONFIRM=re.compile(r'^\s*(确定|確定|确认|確認|confirm)\s*$',re.I)  # The 清空 window's own button.
+DOUYIN_CONFIRM=re.compile(r'^\s*(确定|確定|确认|確認|confirm)\s*$',re.I)  # The 清空 window's own button, when it shows one.
+DOUYIN_CLEAR_LOOK=3000  # How long 清空 gets to show that window, in milliseconds.
+# The words on the buttons of whatever window is open: Douyin's own, never the work's.
+DOUYIN_WINDOW_BUTTONS="""() => [...document.querySelectorAll('.semi-modal, .semi-popover, .semi-popconfirm, [role="dialog"], [role="alertdialog"]')]
+    .filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden')
+    .flatMap(e => [...e.querySelectorAll('button')].filter(b => b.getClientRects().length).map(b => (b.innerText || '').trim().slice(0, 12)))
+    .filter(Boolean).slice(0, 8)"""
+
+
+def douyin_after_clear(buttons):
+    """What 清空 left open, for an error to say: None when it wasn't needed or its window was confirmed."""
+    if buttons is None: return ''
+    return f" After 清空, the open window's buttons said: {', '.join(buttons)}." if buttons else " 清空 opened no window with buttons."
 
 
 async def douyin_chapter_menu(page,card):
@@ -474,12 +486,18 @@ async def douyin_chapters(page, receipt, patch, save, submit, verify_only=False)
                     timing_readback=matched,platform_writes=0)
     # Each step is named if it stops: a field run stopped here with only a bare TimeoutError. Nothing reaches the work until Save.
     step='clearing the chapters already in the editor'
+    left_open=None
     try:
         if await visible(page.get_by_text('清空',exact=True)):
-            # Clear only the local editor; the original work is unchanged until Save. Its window says 确定, which a
-            # button looked for by the English name confirm never matched, and the field run's chapters stopped there.
+            # Clear only the local editor; the original work is unchanged until Save. Two field runs' 清空, on new works with
+            # no chapters yet, showed no button named 确定 or confirm in ten seconds, so a 清空 that shows none goes on. The
+            # chapter count and each title and time are checked before Save, so a chapter it left behind still stops there.
             await page.get_by_text('清空',exact=True).click()
-            await page.get_by_role('button',name=DOUYIN_CONFIRM).click()
+            confirm=await look_until(page,lambda: visible(page.get_by_role('button',name=DOUYIN_CONFIRM)),DOUYIN_CLEAR_LOOK)
+            if confirm:
+                await confirm.click()
+            else:
+                left_open=await page.evaluate(DOUYIN_WINDOW_BUTTONS)
         for number,chapter in enumerate(chapters,1):
             step=f"adding chapter {number} ('{chapter['title']}' at {int(chapter['start_seconds'])}s)"
             player=await unique_visible(page.locator('video'),'chapter video preview')
@@ -492,12 +510,16 @@ async def douyin_chapters(page, receipt, patch, save, submit, verify_only=False)
             await confirm.click()
             await name.wait_for(state='hidden',timeout=10000)
     except BrowserError as exc:
-        raise VpubError('edit_not_ready',f"Douyin's chapter editor stopped while {step}, so nothing was saved. {failure_message(exc)}",
+        raise VpubError('edit_not_ready',f"Douyin's chapter editor stopped while {step}, so nothing was saved. {failure_message(exc)}{douyin_after_clear(left_open)}",
                         'Try again later. If it stops at the same step, the editor has changed there.') from None
     toggle=await unique_visible(page.locator('input[type=checkbox]'),'external chapter progress bar')
     await toggle.check()
     text=await page.locator('body').inner_text()
-    if not chapter_text_matches(text,chapters): raise VpubError('chapters_mismatch','Chapter titles or their paired times do not match before saving.')
+    if not chapter_text_matches(text,chapters):
+        shown=re.search(r'章节数：(\d+)',text)
+        listed=f" The editor lists {shown[1]} chapters, and this edit has {len(chapters)}." if shown else ''
+        raise VpubError('chapters_mismatch',f'Chapter titles or their paired times do not match before saving, so nothing was saved.{listed}{douyin_after_clear(left_open)}',
+                        "Look at the work's chapters on Douyin. If old ones are still there, clear them there, then run this again.")
     save(state='EDIT_PREPARED',chapters=chapters)
     await submit(page.get_by_role('button',name='保存',exact=True))
     await page.get_by_role('button',name='保存',exact=True).wait_for(state='hidden',timeout=45000)
