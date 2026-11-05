@@ -350,6 +350,19 @@ class WhoIsAskingTests(Home, ChromeCase):
             with self.subTest(body=body[:60]):
                 self.assertTrue(await self.shown(body))
 
+    async def test_youtubes_upload_window_saying_custom_thumbnails_need_a_check_is_not_one(self):
+        """From a field run: a channel without a verified phone number, and Studio's own upload window saying in a check's words that custom thumbnails need it."""
+        studio = "https://studio.youtube.com/channel/abc/videos/upload"
+        for body in ('<ytcp-uploads-dialog role="dialog"><div><h3>缩略图</h3><div>要上传自定义缩略图，请验证你的身份。</div></div></ytcp-uploads-dialog>',
+                     '<ytcp-uploads-dialog role="dialog"><div>Thumbnail<p>To use custom thumbnails, <a href="#">Verify your identity</a></p></div></ytcp-uploads-dialog>'):
+            with self.subTest(body=body[:70]):
+                self.assertFalse(await self.shown(body, studio))
+        for body in ('<ytcp-uploads-dialog role="dialog"><div>验证你的身份</div></ytcp-uploads-dialog>',
+                     '<div role="dialog"><div>要上传自定义缩略图，请验证你的身份。</div></div>',
+                     '<ytcp-uploads-dialog role="dialog"><div>缩略图</div><div role="alertdialog">Verify it\'s you</div></ytcp-uploads-dialog>'):
+            with self.subTest(body=body[:70]):
+                self.assertTrue(await self.shown(body, studio))
+
     async def test_words_nobody_can_see_are_not(self):
         self.assertFalse(await self.shown("<h1 hidden>Confirm it's you</h1>"))
 

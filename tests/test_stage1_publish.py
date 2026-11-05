@@ -310,6 +310,17 @@ class XFormTests(Form):
         self.assertEqual(([1], [], 1), (self.uploads, self.wrong_presses, len(self.final)))
         self.assertIn("loading", result["open_look"])
 
+    async def test_a_handle_right_after_a_slash_still_reads_as_its_words(self):
+        """From a field run: X put its own link around @ZipZipPipe written straight after a slash, the page read a line break on each side of it, and a post that had gone out stayed SUBMITTED_UNVERIFIED."""
+        self.plan["options"]["post_text"] = "OC:@上善无形/@ZipZipPipe CC BY-NC-SA 4.0"
+        self.own_words = 'OC:@上善无形/<div><a href="/ZipZipPipe">@ZipZipPipe</a></div> CC BY-NC-SA 4.0'
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
+
+    async def test_other_words_beside_a_handle_still_do_not_read_as_its_words(self):
+        self.plan["options"]["post_text"] = "OC:@上善无形/@ZipZipPipe CC BY-NC-SA 4.0"
+        self.own_words = 'OC:@上善无形/<div><a href="/ZipZipPipe">@ZipZipPipe</a></div> CC BY-SA 4.0'
+        self.assertEqual("SUBMITTED_UNVERIFIED", (await self.publish())["state"])
+
     async def test_a_page_that_goes_on_to_another_file_is_not_taken_for_this_one(self):
         """From a review: the file it landed on would have replaced this attempt's address."""
         self.plan["options"]["existing_media_url"] = "https://studio.x.com/library/13_77/edit"

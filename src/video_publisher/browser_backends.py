@@ -67,6 +67,16 @@ def normalize(text):
     return re.sub(r"\s+", " ", text or "").strip()
 
 
+# A field run's post said "OC:@上善无形/@ZipZipPipe". X put its own link around @ZipZipPipe, and the page read a line break on each side of it,
+# so the words came back with a space the post doesn't have, and a post that had gone out stayed SUBMITTED_UNVERIFIED.
+# So on X, space next to a handle, a tag or a cashtag doesn't count, on both sides of every comparison.
+X_LINKED_WORD = re.compile(r"\s*([@#$＃]\w+)\s*")
+
+
+def x_words(text):
+    return X_LINKED_WORD.sub(r"\1", normalize(text))
+
+
 def work_url(platform, identity, work_id):
     patterns = {"x": r"\d+", "douyin": r"\d+", "instagram": r"[A-Za-z0-9_-]+", "youtube": r"[\w-]{11}"}
     if not re.fullmatch(patterns[platform], str(work_id)):
@@ -287,6 +297,10 @@ async def douyin_type_caption(page, editor, caption):
             await page.keyboard.press('Enter')
         if line:
             await page.keyboard.insert_text(line)
+    # A field run's caption ended in a #tag, and the topic suggestions Douyin opened for it stayed over the cover buttons below and took their click.
+    # Escape closes them and changes no words; every caller reads the words back afterwards.
+    if re.search(r'[#@][^\s#@]*$', caption.rstrip()):
+        await page.keyboard.press('Escape')
 
 
 def douyin_card_says(title, caption):
@@ -475,7 +489,7 @@ async def x_new_posts(page, identity, receipt):
     if (not re.fullmatch(r'[0-9a-f]{64}', source)
             or not re.fullmatch(r'crosscast-' + source[:16] + r'\.[A-Za-z0-9]+', receipt['upload_filename'])):
         return []
-    words = normalize(receipt['expected_text'])
+    words = x_words(receipt['expected_text'])
     media = re.fullmatch(r'https://studio\.x\.com/library/\d+_(\d+)/edit', receipt['media_url'])
     before = receipt.get('before_ids')
     if (not words or not media or type(before) is not list
@@ -490,7 +504,7 @@ async def x_new_posts(page, identity, receipt):
     except (ValueError, OverflowError):
         return []
     matches = [post for post in await own_posts(page, identity)
-               if post['id'] not in before and post['has_video'] and normalize(post['text']) == words
+               if post['id'] not in before and post['has_video'] and x_words(post['text']) == words
                and began <= datetime.fromisoformat(post_time(post['id'])) <= until]
     # Count before checking media: a conflicting or hidden ID must not collapse two posts into one.
     if len(matches) != 1 or (matches[0]['media_id'] is not None and matches[0]['media_id'] != media[1]):
@@ -517,7 +531,7 @@ async def x_post_reads_as_this_upload(page, receipt):
             fields = await post_fields(row)
         except BrowserError:
             return False
-        return bool(fields and fields["id"] == str(receipt["id"]) and normalize(fields["text"]) == normalize(receipt.get("expected_text") or receipt.get("title")) and fields["has_video"]
+        return bool(fields and fields["id"] == str(receipt["id"]) and x_words(fields["text"]) == x_words(receipt.get("expected_text") or receipt.get("title")) and fields["has_video"]
                     and not (media and fields["media_id"] and fields["media_id"] != media[1]))
     return bool(await look_until(page, reads_right, 6000))
 
@@ -758,7 +772,7 @@ def x_schedule_moment(when):
 
 
 def x_row_has_words(cells, words):
-    return len(cells) >= len(X_SCHEDULE_HEADINGS) and normalize(cells[2]) == words
+    return len(cells) >= len(X_SCHEDULE_HEADINGS) and x_words(cells[2]) == words
 
 
 def x_row_is_a_post(cells):
@@ -800,7 +814,7 @@ async def x_schedule_baseline(page, post_text, schedule):
     await risk_check(page)
     if not read:
         return None
-    return sum(x_row_has_words(cells, normalize(post_text)) and x_row_has_schedule(cells, schedule) for cells in read["rows"])
+    return sum(x_row_has_words(cells, x_words(post_text)) and x_row_has_schedule(cells, schedule) for cells in read["rows"])
 
 
 async def verify_scheduled_x(page, identity, receipt):
@@ -810,9 +824,9 @@ async def verify_scheduled_x(page, identity, receipt):
     After its time, one new post with exactly its words, at about that time, showing the video Media Studio numbered, settles it. Without that number it is named as a candidate for a person to check."""
     moment = datetime.fromisoformat(receipt["schedule"]["at"])
     if datetime.now(timezone.utc) >= moment:
-        words = normalize(receipt.get("expected_text") or receipt["title"])
+        words = x_words(receipt.get("expected_text") or receipt["title"])
         await works(page, "x", identity)  # Opens the account's page and waits for its posts.
-        matches = [post for post in await own_posts(page, identity) if post["id"] not in receipt.get("before_ids", []) and normalize(post["text"] or "") == words and post["has_video"] and posted_around(post, moment)]
+        matches = [post for post in await own_posts(page, identity) if post["id"] not in receipt.get("before_ids", []) and x_words(post["text"] or "") == words and post["has_video"] and posted_around(post, moment)]
         if len(matches) != 1:
             return {**receipt, "state": "SUBMITTED_UNVERIFIED", "phase": "readback_pending", "note": f"Its time has passed and {len(matches)} posts on the first page match it exactly. Inspect the account; do not post again."}
         address = work_url("x", identity, matches[0]["id"])
@@ -822,7 +836,7 @@ async def verify_scheduled_x(page, identity, receipt):
                     "note": "One new post has its exact words at about its time, but nothing here proves it carries this video. Check that post; do not post again."}
         return await verify(page, "x", identity, {**receipt, "id": matches[0]["id"], "url": address})
     await page.goto(X_SCHEDULE_PAGE, wait_until="domcontentloaded", timeout=60000)
-    words = normalize(receipt.get("expected_text") or receipt["title"])
+    words = x_words(receipt.get("expected_text") or receipt["title"])
 
     # Another post's unfinished row doesn't stop this one being read: only the read before the upload needs them all.
     async def rows_with_its_words():
@@ -907,8 +921,8 @@ async def verify(page, platform, identity, receipt):
         if expected and platform == "instagram":
             present = present and await instagram_caption_says(page, identity, expected)
         elif expected:
-            actual = normalize(await page.locator("body").inner_text())
-            present = present and normalize(expected) in actual
+            said = x_words if platform == "x" else normalize
+            present = present and said(expected) in said(await page.locator("body").inner_text())
         if platform == 'x' and present and receipt.get('final_submit_attempted'):
             present = await x_post_reads_as_this_upload(page, receipt)
     if platform == 'douyin' and receipt.get('expected_text'):

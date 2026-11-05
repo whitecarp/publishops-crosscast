@@ -130,10 +130,24 @@ def challenge_address(address):
     return any(on_site(parts.hostname or "", site) and re.match(path, parts.path) for site, path in CHALLENGE_ADDRESSES.items())
 
 
+# A field run's YouTube channel had not verified a phone number, and Studio's own upload window said in a check's words that custom thumbnails need it.
+# That is a feature the channel lacks, not a check, so words about thumbnails inside that window don't count. A check of Google's own
+# comes on its own address (CHALLENGE_ADDRESSES) or outside the window, and the same words anywhere else still stop everything.
+YOUTUBE_THUMBNAIL_HINT = """e => {
+  if (!e.closest('ytcp-uploads-dialog')) return false;
+  for (let row = e, depth = 0; row && depth < 6 && row.tagName !== 'YTCP-UPLOADS-DIALOG'; row = row.parentElement, depth++) {
+    const said = row.innerText || '';
+    if (said.length > 400) return false;
+    if (/缩略图|縮圖|縮略圖|thumbnail/i.test(said)) return true;
+  }
+  return false;
+}"""
+
+
 async def platform_words(page):
     """The first thing on the page that asks for a check in the platform's own voice."""
     for item in await page.get_by_text(HUMAN_LABELS).all():
-        if await item.is_visible() and not await item.evaluate(SOMEONES_WORDS, OTHER_PEOPLES_WORDS):
+        if await item.is_visible() and not await item.evaluate(SOMEONES_WORDS, OTHER_PEOPLES_WORDS) and not await item.evaluate(YOUTUBE_THUMBNAIL_HINT):
             return item
     return None
 

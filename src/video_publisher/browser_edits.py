@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 from . import x_pages
 from .core import VpubError, X_AI_LINE, X_POST_LIMIT, atomic_json, file_sha, now, read_json, stop_check, x_post_text, x_weighted_length
 from .browser_runtime import failure_record, look_until, risk_check, unique_visible, visible
-from .browser_backends import choose_file, douyin_card_words, douyin_editor_address, douyin_editor_boxes, douyin_type_caption, normalize, work_url
+from .browser_backends import choose_file, douyin_card_words, douyin_editor_address, douyin_editor_boxes, douyin_type_caption, normalize, work_url, x_words
 from .progress import stage
 from .edits import x_edit_readback_note, x_edit_was_attempted
 
@@ -148,7 +148,7 @@ async def execute(page, platform, identity, payload):
                 and str(prior.get('id'))==str(work_id) and isinstance(prior.get('expected_text'),str)):
             wanted=prior['expected_text']
         x_evidence={'url':url,'expected_text':wanted,'verification_source':'exact_owned_post_version'}
-        if normalize(fields['text'])==normalize(wanted):
+        if x_words(fields['text'])==x_words(wanted):
             return save(state='EDIT_VERIFIED',unchanged=True,url=url,platform_writes=0)
         if payload.get('verify_only'):
             return save(state='EDIT_SUBMITTED_UNVERIFIED',url=url,platform_writes=0)
@@ -172,7 +172,7 @@ async def execute(page, platform, identity, payload):
         async def still_same_post():
             _,current,reason=await x_edit_post(page,identity,work_id,editor_url=editor_url)
             await risk_check(page)
-            if reason or normalize(current['text'])!=normalize(fields['text']):
+            if reason or x_words(current['text'])!=x_words(fields['text']):
                 raise VpubError('wrong_work','The original owned post changed while editing; nothing was saved.')
         await submit(update,still_same_post)
         await editor.wait_for(state='hidden',timeout=30000)
@@ -183,7 +183,7 @@ async def execute(page, platform, identity, payload):
             await risk_check(page)
             _,current,reason=await x_edit_post(page,identity,work_id)
             await risk_check(page)
-            ok=not reason and normalize(current['text'])==normalize(wanted)
+            ok=not reason and x_words(current['text'])==x_words(wanted)
             if ok: break
         return save(state='EDIT_VERIFIED' if ok else 'EDIT_SUBMITTED_UNVERIFIED',url=url,platform_writes=1,
                     **({'reason':reason or 'post_text_mismatch'} if not ok else {}))

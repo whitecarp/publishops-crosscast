@@ -263,6 +263,19 @@ class CaptionTypingTests(Base):
         box, _ = await self.type_it("New.")
         self.assertEqual("New.", (await box.inner_text()).strip())
 
+    async def test_suggestions_a_last_tag_opens_are_closed_before_anything_else_is_pressed(self):
+        """From a field run: the topic suggestions Douyin opened for a caption's last #tag stayed over the cover buttons below and took their click."""
+        await self.page.set_content(self.PAGE + """<div id="topics" hidden style="position:fixed;inset:0">#Tag 话题</div>
+          <script>const box = document.getElementById('box'), topics = document.getElementById('topics');
+          box.addEventListener('input', () => { topics.hidden = !/[#@][^\\s#@]*$/.test(box.innerText.trim()); });
+          box.addEventListener('keydown', e => { if (e.key === 'Escape') topics.hidden = true; });</script>""")
+        box = self.page.locator("#box")
+        for caption in ("Words.\n\n#Tag", "Words for @someone"):
+            with self.subTest(caption=caption):
+                await browser_backends.douyin_type_caption(self.page, box, caption)
+                self.assertTrue(await self.page.locator("#topics").is_hidden())
+                self.assertEqual(browser_backends.douyin_card_words(caption), browser_backends.douyin_card_words(await box.inner_text()))
+
     async def test_the_edit_page_types_it_the_same_way(self):
         self.assertIn("douyin_type_caption(page,editor,patch['caption'])", Path(browser_edits.__file__).read_text(encoding="utf-8"))
 
