@@ -251,7 +251,8 @@ class OpeningMediaTests(ChromeCase):
         with patch.object(browser_runtime, "command_deadline", time.monotonic() + 15), patch.object(browser_forms, "X_COMMAND_MARGIN_SECONDS", 0), self.assertRaises(VpubError) as caught:
             await browser_forms.publish_x(self.page, tx)
         self.assertEqual("upload_too_slow", caught.exception.code)
-        self.assertIn("existing_media_url", caught.exception.hint)
+        # From a review: the receipt keeps the message and not the hint, so the message says what can be done.
+        self.assertIn("vpub resume uploads it again from the start", caught.exception.message)
 
     async def test_a_file_whose_form_once_showed_is_not_chosen_again(self):
         """Only a file never opened can have been lost: one whose form showed is in Library, and choosing it again would make two tiles of one name. This Tx has no file to choose."""
