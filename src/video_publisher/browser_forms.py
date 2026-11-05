@@ -507,7 +507,8 @@ async def publish_instagram(page, tx):
     # made elsewhere, and its error could only say waiting for locator(…), so this one names the control.
     new_post = await look_until(page, lambda: visible(page.locator('svg[aria-label="New post"]')), INSTAGRAM_NEW_POST_SECONDS * 1000)
     if new_post is None:
-        raise VpubError('layout_changed', "Instagram's New post button didn't show on the profile page, so nothing was uploaded.",
+        language = await page.evaluate("document.documentElement.lang || ''")
+        raise VpubError('layout_changed', f"Instagram's New post button didn't show on the profile page, so nothing was uploaded. The page gives its language as {language or 'unknown'}.",
                         "Open Instagram with vpub auth login instagram and look at what it shows: after a sign-in made elsewhere it can ask something first, "
                         "or show another language. Then vpub resume picks this attempt up.")
     await new_post.click()

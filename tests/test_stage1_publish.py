@@ -578,8 +578,11 @@ class InstagramFormTests(Form):
     async def test_no_new_post_button_says_which_control_and_uploads_nothing(self):
         """From a field run: after a sign-in made elsewhere, its error could only say waiting for locator(…)."""
         self.offers_new_post = False
-        with patch.object(browser_forms, "INSTAGRAM_NEW_POST_SECONDS", 1):
-            await self.refused("layout_changed")
+        with patch.object(browser_forms, "INSTAGRAM_NEW_POST_SECONDS", 1), self.assertRaises(VpubError) as caught:
+            await self.publish()
+        self.assertEqual("layout_changed", caught.exception.code)
+        self.assertIn("New post button", caught.exception.message)
+        self.assertIn("gives its language as", caught.exception.message)
         self.assertEqual([], self.uploads)
 
     async def test_a_label_that_will_not_turn_on_stops_before_sharing(self):
