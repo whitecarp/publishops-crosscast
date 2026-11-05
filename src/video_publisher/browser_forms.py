@@ -50,6 +50,8 @@ X_CHANGE_THUMBNAIL = re.compile(r'^\s*Change thumbnail\s*$')
 X_LOADING = re.compile(r'Loading\s*(\d{1,3})(?:[.,]\d+)?\s*%', re.I)
 # A number that hasn't moved for this long is not taken for an upload under way, so it no longer holds a click back.
 X_LOADING_STALL_SECONDS = 120
+# How much longer the wait goes on each time, while a number moved during the last wait. A pause shorter than this in a real upload doesn't end it.
+X_LOADING_WAIT_SECONDS = 300
 # How long no moving number must have shown before the first click: one look that missed it isn't enough.
 X_LOADING_CLEAR_SECONDS = 3
 X_LIBRARY_LOOK_SECONDS = 60
@@ -326,7 +328,20 @@ async def x_upload_was_lost(page, tx):
     for again in (False, True):
         if again:
             await page.reload(wait_until='domcontentloaded', timeout=60000)
-            await page.locator('button').filter(has_text=re.compile(r'^\s*Upload Media\s*$')).wait_for(timeout=30000)
+            upload = page.locator('button').filter(has_text=re.compile(r'^\s*Upload Media\s*$')).first
+
+            async def back():
+                return await upload.is_visible()
+            # From a review: a check shown by the reloaded page must stop everything as one shown before it does, and the page the file goes up from must be this account's.
+            try:
+                await wait_until(page, back, seconds=30, label="Library loaded again")
+            except VpubError as failure:
+                if failure.code != 'processing_timeout':
+                    raise
+                raise VpubError('layout_changed', "Library didn't come back after it was loaded again, so nothing was uploaded.", 'Run vpub resume again.') from None
+            hrefs = await page.locator('a[href*="analytics.twitter.com/user/"]').evaluate_all('es => es.map(e=>e.href)')
+            if not any('/user/' + tx.identity.casefold() + '/' in h.casefold() for h in hrefs):
+                raise VpubError('wrong_account', 'Media Studio account does not match the signed-in publishing account.')
         try:
             await wait_until(page, shows, seconds=X_LIBRARY_LOOK_SECONDS, label="this attempt's file in Library")
             return None
@@ -354,7 +369,7 @@ async def x_open_media(page, name, form, filename, hold=0, may_upload_again=True
     clicked = None
     began = time.monotonic()
     seen = {'clicks': 0}
-    loading = {'last': None, 'moved_at': None, 'fresh_at': None}
+    loading = {'last': None, 'moved_at': None, 'fresh_at': None, 'shown_at': None}
     change = page.locator('button').filter(has_text=X_CHANGE_THUMBNAIL)
     link = page.locator(x_file_link(filename) + ':visible')
 
@@ -378,7 +393,7 @@ async def x_open_media(page, name, form, filename, hold=0, may_upload_again=True
             elif going != loading['last']:
                 loading['moved_at'] = now
                 seen['loading_moves'] = seen.get('loading_moves', 0) + 1
-            loading['last'] = going
+            loading['last'], loading['shown_at'] = going, now
             if now - loading['moved_at'] < X_LOADING_STALL_SECONDS:
                 loading['fresh_at'] = now
         if going is not None and loading['last'] is not None:
@@ -411,18 +426,20 @@ async def x_open_media(page, name, form, filename, hold=0, may_upload_again=True
         except VpubError as failure:
             if failure.code != 'processing_timeout':
                 raise
-            # Only a number that moved during this wait and still showed at its last look is an upload still under way.
-            going_on = seen.get('loading_moves', 0) != moves and bool(seen.get('loading'))
+            # Only a number that moved during this wait, and showed at its end or just before, is an upload still under way. From a review: one that ended
+            # in the wait's last seconds had its click still held back, and stopping then closed the browser as the upload finished.
+            going_on = (seen.get('loading_moves', 0) != moves and loading['shown_at'] is not None
+                        and time.monotonic() - loading['shown_at'] < X_LOADING_CLEAR_SECONDS + X_OPEN_SECONDS)
             if going_on and cut:
-                raise VpubError('upload_too_slow', f"Media Studio was still taking the file when this command's time ran out, so the browser closes and the upload is lost. Last look: {seen}.",
-                                "The file goes up too slowly here for one command. Upload it in Media Studio yourself and put the address of its own page in the plan as existing_media_url, "
-                                "or try again on a faster connection: vpub resume would upload it again from the start.") from None
+                raise VpubError('upload_too_slow', f"Media Studio was still taking the file when this command's time ran out, so the browser closes and the upload is lost. Last look: {seen}. "
+                                "On this connection the file can't go up within one command, and vpub resume uploads it again from the start, so run it when the connection is faster.",
+                                "Run vpub resume when the connection is faster; it uploads the file again from the start.") from None
             if not going_on:
                 # A field run ended here with nothing to say which of several things had happened. These are counts, with no words from the page.
                 # A fresh page then opened the same file with one click, which is what a resume does.
                 raise VpubError(failure.code, f"{failure.message} Last look: {seen}. {after}", failure.hint) from None
         stop_check('x')
-        seconds = X_LOADING_STALL_SECONDS  # The file was still going up and getting further, and leaving now would lose it.
+        seconds = X_LOADING_WAIT_SECONDS  # The file was still going up and getting further, and leaving now would lose it.
 
 
 async def publish_x(page, tx):

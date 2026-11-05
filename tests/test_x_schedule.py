@@ -221,7 +221,7 @@ class OpeningMediaTests(ChromeCase):
                                                " if (done > 90) { going.remove(); clearInterval(timer); } else { going.textContent = 'Loading ' + done + '%'; } }, 500);")
         tx = self.Tx()
         soon, asked = self.cut(4)
-        with patch.object(browser_forms, "wait_until", soon), patch.object(browser_forms, "X_LOADING_STALL_SECONDS", 37), patch.object(browser_forms, "X_LOADING_CLEAR_SECONDS", 1):
+        with patch.object(browser_forms, "wait_until", soon), patch.object(browser_forms, "X_LOADING_WAIT_SECONDS", 37), patch.object(browser_forms, "X_LOADING_CLEAR_SECONDS", 1):
             self.assertEqual("PREVIEW_READY", (await browser_forms.publish_x(self.page, tx))["state"])
         self.assertIn(37, asked)
         self.assertGreaterEqual(tx.receipt["open_look"]["loading_moves"], 1)
