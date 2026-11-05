@@ -127,9 +127,12 @@ def _publish_platform(plan, platform, snapshot_lock):
             ledger.forget_preview(key)
             old = None
         if old:
+            # The same way forward vpub status gives. A field run that ran go again was told only to verify an attempt that had pressed nothing.
+            from .overview import next_step
+            command, note = next_step(old, False)
             return {"state": "SKIPPED_EXISTING", "key": key,
-                    "previous_state": old["state"], "receipt": old["data"].get("receipt"),
-                    "hint": "Use verify; existing/uncertain attempts are never automatically resubmitted."}
+                    "previous_state": old["state"], "receipt": old["data"].get("receipt"), "next_command": command,
+                    "hint": f"This file was already tried here, so it isn't sent again. {note}"}
         try:
             from .rehearsal import require_local_prerequisites
             require_local_prerequisites({**plan, "platforms": {platform: opts}})
@@ -196,6 +199,9 @@ def _publish_platform(plan, platform, snapshot_lock):
             record.update(error={"code": code,
                                  "message": e.message if isinstance(e, VpubError) else type(e).__name__})
             ledger.save(key, state, record)
+            if state == "PREPARATION_INCOMPLETE" and not receipt.get("final_submit_attempted"):
+                return {**receipt, "key": key, "state": state, "code": code, "next_command": f"vpub resume {key}",
+                        "hint": "It stopped before its final press, so nothing was submitted. vpub resume picks it up again and never presses twice."}
             return {**receipt, "key": key, "state": state, "code": code,
                     "hint": "Inspect/verify the original work; do not create another submission."}
     finally:
@@ -351,6 +357,18 @@ def left_to_finish(results):
     return left
 
 
+def under_review(results):
+    """Works the platform has taken and is still reviewing. A field run's Douyin post went in and was under review, and ok: false
+    beside it could read as a failed upload to someone who might then upload it again."""
+    found = {}
+    for platform, result in results.items():
+        if isinstance(result, dict) and result.get("state") == "SUBMITTED_UNVERIFIED" and result.get("platform_status") == "UNDER_REVIEW":
+            found[platform] = {"submitted": True, "note": f"{platform.capitalize()} has it and is reviewing it. Check it with vpub verify once the review is done; never upload it again."}
+            if result.get("key"):
+                found[platform]["next_command"] = f"vpub verify {result['key']}"
+    return found
+
+
 def publish_plan(plan, confirm, workers=1, *, reviewed=False):
     from .overview import DRAFTS
     from threading import Lock
@@ -391,6 +409,9 @@ def publish_plan(plan, confirm, workers=1, *, reviewed=False):
     left = left_to_finish(results)
     if left:
         answer["left_to_finish"] = left
+    reviewing = under_review(results)
+    if reviewing:
+        answer["under_review"] = reviewing
     if drafts:
         ended = {p: results[p].get("previous_state") if results[p]["state"] == "SKIPPED_EXISTING" else results[p]["state"] for p in drafts}
         answer["all_drafts_ready"] = all(state in DRAFTS for state in ended.values())
@@ -1289,6 +1310,9 @@ def keep_verified(ledger, old, read, result, seen=None):
     with receipt_turn(durable) if durable else contextlib.nullcontext():
         if durable and durable.exists():
             result = verified_over(read, result, read_json(durable))
+        if result.get("state") == "PREPARATION_INCOMPLETE" and result.get("final_submit_attempted"):
+            # The worker's own copy says it pressed after all, so this can't stand as an attempt that pressed nothing.
+            result = {**result, "state": "SUBMITTED_UNVERIFIED", "note": "No durable work ID; inspect the original work, never reupload automatically."}
         old["data"]["receipt"] = result
         if seen is None:
             ledger.save(key, result["state"], old["data"])
@@ -1417,7 +1441,7 @@ def capabilities():
             "work_deletion": WORK_DELETION_SCOPE,
             "paid_add_on": f"{NOT_ON_SALE} Anything here that needs it is unavailable until it is, so don't offer it as something to buy. Everything else works without it.",
             "email": "Paid add-on. Gmail only, disabled by default. Enable only on explicit request; no ordinary-setup prompt. Host verifies the exact account and live send tool, helps install/connect a missing plugin or leaves email off. Self-send only. Works with any assistant's connected Gmail send tool: claim with its exact name, then call it once with the returned message. No Outlook, QQ, NetEase, SMTP or SMS. A TEST does not enable ongoing alerts.",
-            "bilibili_widgets": "A Bilibili plan's widgets list, or vpub widgets add on a video already up, puts link, follow, vote and rating widgets on your own video through the included bili-cli, 35 seconds apart. Each read first and read back, so one already there isn't sent again, and one that may have gone is only read again. Bilibili doesn't list them before a video is public, so a plan's wait for vpub verify after that. A failed read is an unknown, and nothing is sent after it. vpub verify and a Bilibili edit also report what's on the video as widgets_seen. Reserve widgets are left out, since removing one notifies everyone who booked it. This route hasn't run on a real account.",
+            "bilibili_widgets": "A Bilibili plan's widgets list, or vpub widgets add on a video already up, puts link, follow, vote and rating widgets on your own video through the included bili-cli, 35 seconds apart. Each read first and read back, so one already there isn't sent again, and one that may have gone is only read again. Bilibili doesn't list them before a video is public, so a plan's wait for vpub verify after that. A failed read is an unknown, and nothing is sent after it. vpub verify and a Bilibili edit also report what's on the video as widgets_seen. A reserve widget books a live stream on the account, so it needs a live start time and goes only through vpub widgets add with --person-approved, never in a plan; CrossCast never removes one, because removing it notifies everyone who booked it. Follow, vote, rating and reserve widgets have gone onto a real video this way; a link hasn't yet.",
             "chapters": "Bilibili's CLI route sets planned chapters right after the upload and Bilibili reviews them; a refusal leaves the upload in place and vpub verify tries again. Verify reads first: an unclear ending is only read again and another person's list is never overwritten. YouTube's browser route adds them to the description as timestamped lines: at least three, each at least 10 seconds. Neither has been tried on a real account. Douyin CLI applies planned chapters after a durable published work ID is available; verify/resume completes a pending chapter step without reupload. Exact timing/title read-back; platform suggestions are not accepted automatically. Native Bilibili/Douyin/YouTube handoffs retained.",
             "youtube_studio_operations": "Without the paid add-on, YouTube works, stats, comments, replies, video and comment likes, comment pins, removing a viewer's comment, saves, playlists, edits (title, description, thumbnail, chapters), and editing or deleting the channel's own comments run on YouTube's own pages in the background browser. Comments are those Studio loaded; reordering a playlist and the held-for-review queue need the add-on. Reads, playlist create, rename, add, remove and delete, a video like and save with their undo, a reply, an edit of the channel's own comment, a private video's title and description changed and put back, and a pin and its removal were checked on a real channel. A pin is read and removed on the video's own page, because Studio's row and menu do not change. A new thumbnail is reported as unconfirmed, because Studio shows nothing to compare it with. A delete of the channel's own reply removed it, but CrossCast can't confirm one until a real delete's answer is known. Other changes have not been tried on one.",
             "existing_work_edits": "vpub edit: YouTube title, description, thumbnail and chapters (Studio in the background browser; title, description and thumbnail also through the official API with the paid add-on), Bilibili title, description, tags, cover and chapters through the included bili-cli (Bilibili reviews each edit again), Douyin title, description, portrait and chapters, Instagram captions, available X Edit action. Bilibili edits and Douyin title and description edits have not been tried on a real account. One field group per request; verify-only never saves. X edit availability is platform-controlled; no automatic repost.",

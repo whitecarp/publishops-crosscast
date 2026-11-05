@@ -253,7 +253,8 @@ def dismiss(key, person_checked=False):
             ledger.save(key, old["state"], {**old["data"], "dismissed": {"at": now(), "by": "person_checked"}})
         finally:
             ledger.close()
-    return {"key": key, "state": old["state"], "dismissed": True,
+    # The record's own state goes under its own name: as this answer's state, an unfinished one made a dismiss that worked report ok: false.
+    return {"key": key, "state": "DISMISSED", "record_state": old["state"], "dismissed": True,
             "note": "Off needs_attention. The record stays, and this file still isn't uploaded to this platform again."}
 
 

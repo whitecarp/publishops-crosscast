@@ -298,6 +298,12 @@ async def douyin_card_status(card):
     return normalize(await card.evaluate("""card => { const title = card.querySelector('[class^="info-title-text-"]'); return title ? card.innerText.replace(title.innerText, '') : card.innerText; }"""))
 
 
+async def douyin_card_under_review(page, title):
+    """Whether the one card with this title says Douyin is still reviewing it. A field run's chapters waited on such a card and only ever said TimeoutError."""
+    cards = page.locator(DOUYIN_CARD).filter(has_text=title)
+    return await cards.count() == 1 and '审核中' in await douyin_card_status(cards)
+
+
 def douyin_card_words(text):
     """What was written. Invisible marks and how much spacing there is are the page's own. Punctuation and where a space falls are part of the words: reviews showed 1.2 and 12, and now here and nowhere, must not read the same."""
     return normalize(''.join(c for c in unicodedata.normalize('NFC', text or '') if unicodedata.category(c) != 'Cf'))
@@ -564,6 +570,8 @@ async def douyin_card_id(page, name, card):
                 await detail.wait_for_url(re.compile(r'/work-detail/\d+'), timeout=15000, wait_until='commit')
                 match = re.fullmatch(r'/creator-micro/work-management/work-detail/(\d+)', urlsplit(detail.url).path)
                 return match[1] if match and urlsplit(detail.url).hostname == 'creator.douyin.com' else None
+            except BrowserError:
+                return None  # A page that never says which work it is can't tell this card's ID, which says nothing about the others.
             finally:
                 await detail.close()
         # From a review: a click that opens no new tab could move this one, and the rest would then be read from the wrong page. Never seen on a real account.
@@ -598,7 +606,8 @@ async def works(page, platform, identity, must_answer=False):
                 for title in (await titles.all())[:10]:
                     text = await title.inner_text()
                     card = title.locator('xpath=ancestor::div[starts-with(@class,"video-card-content-")]')
-                    if douyin_card_is_waiting(await douyin_card_status(card)):
+                    # A title outside any card says nothing CrossCast can read, and asking its card for words would wait out the whole timeout.
+                    if not await card.count() or douyin_card_is_waiting(await douyin_card_status(card)):
                         continue
                     k = await douyin_card_id(page, title, card)
                     if k:
@@ -897,14 +906,17 @@ async def verify(page, platform, identity, receipt):
         return {**{key: value for key, value in checked.items() if key not in ("id", "url")},
                 **{key: receipt[key] for key in ("id", "url") if key in receipt}}
     if not receipt.get("id"):
+        if not receipt.get("final_submit_attempted"):
+            # Nothing was pressed, so there is nothing of it to find. A field run's verify called such an attempt SUBMITTED_UNVERIFIED,
+            # after which every way forward refused it: run again skipped it, delete needed a verified post, and verify could never find one.
+            return {**receipt, "state": "PREPARATION_INCOMPLETE", "platform_writes": 0,
+                    "note": "This attempt stopped before its final press, so nothing was submitted. vpub resume picks it up again and never presses twice."}
         if platform == 'douyin' and await douyin_scheduled_card(page, receipt):
             return {**receipt, **DOUYIN_SCHEDULED, 'verified_at': now()}
-        if platform == 'douyin' and receipt.get('title'):
-            cards = page.locator('[class^="video-card-content-"]').filter(has_text=receipt['title'])
-            if await cards.count() == 1 and '审核中' in await douyin_card_status(cards):
-                return {**receipt, 'state':'SUBMITTED_UNVERIFIED', 'phase':'platform_review',
-                        'platform_status':'UNDER_REVIEW', 'review_url':MANAGE, 'error':None,
-                        'note':'Matching submitted card is under platform review; verify later, never reupload.'}
+        if platform == 'douyin' and receipt.get('title') and await douyin_card_under_review(page, receipt['title']):
+            return {**receipt, 'state':'SUBMITTED_UNVERIFIED', 'phase':'platform_review',
+                    'platform_status':'UNDER_REVIEW', 'review_url':MANAGE, 'error':None,
+                    'note':'Matching submitted card is under platform review; verify later, never reupload.'}
         return {**receipt, "state": "SUBMITTED_UNVERIFIED", "note": "No durable work ID; inspect the original work, never reupload automatically."}
     if platform == "youtube":
         return await verify_youtube(page, receipt)
@@ -1024,5 +1036,9 @@ async def complete_pending_chapters(page,platform,identity,receipt):
             'patch':{**pending,'expected_identity':identity},'edit_receipt_path':str(path)})
         return {**receipt,'chapters_state':'VERIFIED' if result['state']=='EDIT_VERIFIED' else 'SAVE_UNVERIFIED','chapters_receipt':result}
     except Exception as exc:
+        # The words go with the code: a field run's three tries each left only TimeoutError, which says nothing about where it stopped.
+        waiting=isinstance(exc,VpubError) and exc.code=='not_public_yet'
         return {**receipt,'chapters_state':'INCOMPLETE','chapters_error':exc.code if isinstance(exc,VpubError) else type(exc).__name__,
-                'next':'The video exists. Fix/retry only the chapter step; do not upload the video again.'}
+                'chapters_error_message':exc.message if isinstance(exc,VpubError) else failure_message(exc),
+                'next':'Douyin is still reviewing this video. Run vpub verify for this receipt once it is public, and its chapters go on then. Never upload it again.' if waiting
+                       else 'The video exists. Fix/retry only the chapter step; do not upload the video again.'}

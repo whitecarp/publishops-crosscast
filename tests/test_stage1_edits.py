@@ -209,6 +209,7 @@ class DouyinPageTests(SharedBrowser):
         self.saved_chapters = []
         self.keeps_chapter_titles = True
         self.chapter_menu = "first"  # Which pointing at 编辑作品 opens its menu: first, second or never.
+        self.under_review = False
         self.portrait = self.root / "portrait.jpg"
         self.portrait.write_bytes(b"synthetic")
         self.path = self.root / "edit.json"
@@ -246,8 +247,11 @@ class DouyinPageTests(SharedBrowser):
         opens = {"first": "document.getElementById('menu').hidden = false",
                  "second": "if (window.pointed) document.getElementById('menu').hidden = false; window.pointed = true",
                  "never": ""}[self.chapter_menu]
-        await self.page_at(route, f"""<a href="https://creator.douyin.com/creator-micro/content/post/video?mid={self.WORK}">Old title</a>
-          <div class="video-card-content-a">Old title<span onmouseenter="{opens}">编辑作品</span><div id="menu" hidden><span onclick="document.getElementById('editor').hidden = false">添加章节</span></div></div>
+        # A card under review has no link to its work, and says 审核中 beside its title.
+        link = "" if self.under_review else f'<a href="https://creator.douyin.com/creator-micro/content/post/video?mid={self.WORK}">Old title</a>'
+        name = '<div class="info-title-text-a">Old title</div><span>审核中</span>' if self.under_review else "Old title"
+        await self.page_at(route, f"""{link}
+          <div class="video-card-content-a">{name}<span onmouseenter="{opens}">编辑作品</span><div id="menu" hidden><span onclick="document.getElementById('editor').hidden = false">添加章节</span></div></div>
           <div id="editor" hidden><video width="10" height="10"></video><button onclick="document.getElementById('name').hidden = false; document.getElementById('name').focus()">手动添加</button>
             <input id="name" placeholder="输入章节名" hidden><span onclick="addChapter()">确定</span><input type="checkbox" id="bar" {'checked' if self.saved_chapters else ''}>
             <div id="list">{rows}</div><p id="count">章节数：{len(self.saved_chapters)}</p><button id="save" onclick="sendChapters()">保存</button></div>
@@ -434,6 +438,16 @@ class DouyinPageTests(SharedBrowser):
             result = await self.chapters()
         self.assertEqual(("EDIT_VERIFIED", True), (result["state"], result["timing_readback"]))
         self.assertEqual([("/chapters", "EDIT_SUBMITTING")], self.saves)
+
+    async def test_chapters_on_a_video_douyin_is_still_reviewing_say_so_and_save_nothing(self):
+        """From a field run: three tries on a video under review each left only TimeoutError."""
+        from video_publisher import browser_backends
+        self.under_review = True
+        with patch.object(browser_backends, "DOUYIN_LIST_SECONDS", 1), self.assertRaises(VpubError) as caught:
+            await self.chapters()
+        self.assertEqual("not_public_yet", caught.exception.code)
+        self.assertIn("still reviewing", caught.exception.message)
+        self.assertEqual([], self.saves)
 
     async def test_a_chapter_menu_that_never_opens_says_nothing_was_saved(self):
         self.chapter_menu = "never"

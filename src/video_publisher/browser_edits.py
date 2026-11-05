@@ -442,10 +442,17 @@ def douyin_chapters_closed():
 
 async def douyin_chapters(page, receipt, patch, save, submit, verify_only=False):
     from patchright.async_api import Error as BrowserError
-    from .browser_backends import MANAGE, works
+    from .browser_backends import MANAGE, douyin_card_under_review, works
     chapters=patch['chapters']
-    found=await works(page,'douyin',receipt.get('identity',''))
+    try:
+        found=await works(page,'douyin',receipt.get('identity',''))
+    except BrowserError:
+        raise VpubError('page_not_ready',"Douyin's Creator Center didn't load in time, so nothing was typed or saved.",'Try again in a few minutes.') from None
     if normalize(receipt['title']) not in normalize(found.get(str(receipt['id']),{}).get('text','')):
+        # A field run's chapters waited on a video still under review, and only ever said TimeoutError.
+        if await douyin_card_under_review(page,receipt['title']):
+            raise VpubError('not_public_yet',"Douyin is still reviewing this video, so its chapters can't be set yet. Nothing was typed or saved.",
+                            'Run vpub verify for it again once Douyin has published it.')
         raise VpubError('wrong_work','The intended chapter work ID and title could not be read from the account management page.')
     # Nothing is typed or pressed before the editor opens, so a page that is slow to offer it says so in words, not as a bare TimeoutError.
     try:

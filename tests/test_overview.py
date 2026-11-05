@@ -604,6 +604,12 @@ class DismissTests(OverviewFixture):
             overview.dismiss("0" * 64, person_checked=True)
         self.assertEqual("not_found", caught.exception.code)
 
+    def test_a_dismiss_that_worked_says_ok(self):
+        """From a field run: ok: false beside dismissed: true, because the answer's state was the record's own unfinished one."""
+        key = self.row("UNKNOWN", sha="dismiss-ok")
+        result = overview.dismiss(key, person_checked=True)
+        self.assertEqual(("DISMISSED", "UNKNOWN", True), (result["state"], result["record_state"], cli.finished(result)))
+
 
 class InterruptedSignInTests(OverviewFixture):
     """A field test was told login_interrupted for Douyin 27 minutes after that same account had published, and read it as broken."""
