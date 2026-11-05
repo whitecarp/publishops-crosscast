@@ -151,7 +151,7 @@ Each platform's progress keeps its real name: Queued → Publishing → Submitte
 
 X edits have not passed real-account validation. `EDIT_SUBMITTED_UNVERIFIED` can mean the edit succeeded; old text at the original address does not prove failure. Open the post on X and inspect its current text and edit history. Do not submit another edit based on that read-back.
 
-`vpub widgets` puts Bilibili's interactive widgets on your own video: a link to another video, a follow or triple button, a vote and a rating. Choose them in the plan, or add them to a video that's already up. Bilibili doesn't list them before a video is public, so a plan's wait until then, and `vpub verify` sends them. `vpub verify` and a Bilibili edit also report what's on the video. Reserve widgets are left out, since removing one notifies everyone who booked it. This hasn't run on a real account through `vpub` yet.
+`vpub widgets` puts Bilibili's interactive widgets on your own video: a link to another video, a follow or triple button, a vote, a rating and a reservation. Choose them in the plan, or add them to a video that's already up. Bilibili doesn't list them before a video is public, so a plan's wait until then, and `vpub verify` sends them. `vpub verify` and a Bilibili edit also report what's on the video. A reservation books a live stream on your account, so it needs a `live` start time and goes only through `vpub widgets add`, after you've seen its dry run and said yes. It never goes in a plan, and CrossCast never removes one, because removing it notifies everyone who booked it. Follow, vote, rating and reservation widgets have gone onto a real video through `vpub`; a link hasn't yet.
 
 </details>
 
