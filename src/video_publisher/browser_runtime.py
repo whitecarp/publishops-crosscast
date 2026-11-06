@@ -21,8 +21,10 @@ URLS = {"douyin": "https://creator.douyin.com/creator-micro/home",
         "instagram": "https://www.instagram.com/accounts/edit/", "x": "https://x.com/home",
         "youtube": "https://studio.youtube.com/"}
 INSTAGRAM_AVATAR = 'img[alt*="profile picture"], img[alt*="的头像"], img[alt*="的大頭貼"]'
-HUMAN_LABELS = re.compile(r"安全验证|請完成驗證|请完成验证|滑块验证|滑塊驗證|验证是你本人|驗證是你本人|确认是你本人|確認是你本人|验证你的身份|驗證你的身分|确认你的身份|確認你的身分"
-                          r"|Confirm it's you|Verify it's you|Verify your identity|Authenticate your account|Confirm your identity|Unusual activity"
+# The words a platform asks a person to show it's them with.
+IDENTITY_WORDS = re.compile(r"請完成驗證|请完成验证|验证是你本人|驗證是你本人|确认是你本人|確認是你本人|验证你的身份|驗證你的身分|确认你的身份|確認你的身分"
+                            r"|Confirm it's you|Verify it's you|Verify your identity|Authenticate your account|Confirm your identity", re.I)
+HUMAN_LABELS = re.compile(r"安全验证|滑块验证|滑塊驗證|" + IDENTITY_WORDS.pattern + r"|Unusual activity"
                           # A platform saying too much, too fast.
                           r"|(?:操作|评论|評論|回复|回覆|私信|发送|發送)(?:过于|過於|太)?[频頻]繁|Action Blocked|We limit how often|We restrict certain activity|Rate limit exceeded|over the daily limit|temporarily (?:blocked|restricted|limited)"
                           # A locked account's recovery page. A person answers it; CrossCast never presses anything on it.
@@ -130,18 +132,28 @@ def challenge_address(address):
     return any(on_site(parts.hostname or "", site) and re.match(path, parts.path) for site, path in CHALLENGE_ADDRESSES.items())
 
 
-# A field run's YouTube channel had not verified a phone number, and Studio's own upload window said in a check's words that custom thumbnails need it.
-# That is a feature the channel lacks, not a check, so words about thumbnails inside that window don't count. A check of Google's own
-# comes on its own address (CHALLENGE_ADDRESSES) or outside the window, and the same words anywhere else still stop everything.
-YOUTUBE_THUMBNAIL_HINT = """e => {
-  if (!e.closest('ytcp-uploads-dialog')) return false;
-  for (let row = e, depth = 0; row && depth < 6 && row.tagName !== 'YTCP-UPLOADS-DIALOG'; row = row.parentElement, depth++) {
-    const said = row.innerText || '';
-    if (said.length > 400) return false;
-    if (/缩略图|縮圖|縮略圖|thumbnail/i.test(said)) return true;
+# Whether these words are inside Studio's own upload window, and not in a window of their own within it.
+# Studio's own elements can have roots of their own, so the way up goes through them.
+YOUTUBE_UPLOAD_WINDOW = """e => {
+  for (let n = e; n; n = n.parentElement || n.getRootNode().host) {
+    if (n.getAttribute('role') === 'alertdialog') return false;
+    if (n.tagName === 'YTCP-UPLOADS-DIALOG') return true;
   }
   return false;
 }"""
+
+
+async def studio_feature_notice(item):
+    """Whether these are Studio's own upload window saying in a check's words what a feature needs.
+
+    A field run's channel had not verified a phone number, and that window said so about custom thumbnails. Looking for the word
+    thumbnail close by missed it on the next run, so inside that window, the words a check asks with are taken as Studio's notice.
+    Google asks for its own checks on its own pages (CHALLENGE_ADDRESSES) or in a window of their own. Those, words about doing
+    too much or about a locked account, and the same words anywhere else on Studio still stop everything."""
+    if not await item.evaluate(YOUTUBE_UPLOAD_WINDOW):
+        return False
+    said = [found[0] for found in HUMAN_LABELS.finditer(await item.text_content() or "")]
+    return bool(said) and all(IDENTITY_WORDS.fullmatch(words) for words in said)
 
 
 async def platform_words(page):
@@ -149,7 +161,7 @@ async def platform_words(page):
     # Only Studio has that upload window, so no other page is asked about it.
     studio = urlsplit(page.url).hostname == "studio.youtube.com"
     for item in await page.get_by_text(HUMAN_LABELS).all():
-        if await item.is_visible() and not await item.evaluate(SOMEONES_WORDS, OTHER_PEOPLES_WORDS) and not (studio and await item.evaluate(YOUTUBE_THUMBNAIL_HINT)):
+        if await item.is_visible() and not await item.evaluate(SOMEONES_WORDS, OTHER_PEOPLES_WORDS) and not (studio and await studio_feature_notice(item)):
             return item
     return None
 
@@ -170,7 +182,11 @@ async def what_asked(page):
         phrase = HUMAN_LABELS.search(await item.inner_text())
         place = await item.evaluate("""e => { const found = e.closest('[role="alert"],[role="alertdialog"],[role="dialog"],aside,nav,header,footer,main,[data-testid]');
           if (!found) return 'page'; const name = found.getAttribute('data-testid') || found.getAttribute('role') || found.tagName.toLowerCase(); return /^[A-Za-z_]{1,40}$/.test(name) ? name : 'other'; }""")
-        return {"sign": "words", "phrase": phrase[0] if phrase else None, "place": place}
+        seen = {"sign": "words", "phrase": phrase[0] if phrase else None, "place": place}
+        # A site built from elements of its own, as Studio is, also says which one held the words: only a name from the site's own code.
+        within = await item.evaluate("""e => { for (let n = e; n; n = n.parentElement || n.getRootNode().host) if (n.tagName.includes('-')) {
+          const name = n.tagName.toLowerCase(); return /^[a-z][a-z0-9-]{1,60}$/.test(name) ? name : 'other'; } return null; }""")
+        return {**seen, "within": within} if within else seen
     except Exception:
         return None
 

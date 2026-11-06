@@ -287,8 +287,32 @@ def douyin_card_words(text):
     return normalize(''.join(c for c in unicodedata.normalize('NFC', text or '') if unicodedata.category(c) != 'Cf'))
 
 
+def where_words_part(wanted, shown):
+    """For a stop's message: how far the words a form holds agree with the plan's, and the plan's own words just before they part.
+    Nothing the form holds is repeated, since a suggestion Douyin put in can be someone else's name."""
+    same = next((at for at, (one, other) in enumerate(zip(wanted, shown)) if one != other), min(len(wanted), len(shown)))
+    return f"they agree for {same} of the plan's {len(wanted)} characters, up to \"{wanted[max(0, same - 16):same]}\", and the form holds {len(shown)}"
+
+
+# Douyin opens suggestions for an #topic or @name the cursor is at the end of, and Enter there picks one instead of starting a line.
+# A field run's caption had lines ending in @names, and the words on its form came out different from the plan's.
+DOUYIN_SUGGESTS = re.compile(r'[#@＃＠]')
+DOUYIN_SUGGESTIONS_MS = 500  # For a list that opens a moment after the words go in, as one that looks names up can.
+
+
+async def douyin_close_suggestions(page, editor):
+    """Escape closes the list and changes no words. Should a page ever take it to mean leaving the box too, the cursor goes back to the end of the words."""
+    await page.wait_for_timeout(DOUYIN_SUGGESTIONS_MS)
+    await page.keyboard.press('Escape')
+    await editor.evaluate("""e => { if (e.contains(document.activeElement)) return;
+      e.focus(); const end = document.createRange(); end.selectNodeContents(e); end.collapse(false);
+      const chosen = getSelection(); chosen.removeAllRanges(); chosen.addRange(end); }""")
+
+
 async def douyin_type_caption(page, editor, caption):
-    """A caption set in one go came out with a star at each new paragraph, on the card and, for a real video, on its public page, and the person never wrote those. So it is typed as a person would, a line at a time."""
+    """A caption set in one go came out with a star at each new paragraph, on the card and, for a real video, on its public page, and the person never wrote those. So it is typed as a person would, a line at a time.
+    A line with an #topic or @name in it has any suggestions closed before the next key, the last line too: a field run's suggestions for a last #tag stayed over the cover buttons below and took their click.
+    Every caller reads the words back afterwards."""
     await editor.click()
     await editor.press('ControlOrMeta+A')
     await editor.press('Backspace')
@@ -297,10 +321,8 @@ async def douyin_type_caption(page, editor, caption):
             await page.keyboard.press('Enter')
         if line:
             await page.keyboard.insert_text(line)
-    # A field run's caption ended in a #tag, and the topic suggestions Douyin opened for it stayed over the cover buttons below and took their click.
-    # Escape closes them and changes no words; every caller reads the words back afterwards.
-    if re.search(r'[#@][^\s#@]*$', caption.rstrip()):
-        await page.keyboard.press('Escape')
+            if DOUYIN_SUGGESTS.search(line):
+                await douyin_close_suggestions(page, editor)
 
 
 def douyin_card_says(title, caption):

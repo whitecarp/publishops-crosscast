@@ -14,7 +14,7 @@ from .core import VpubError, douyin_caption, stop_check
 from .browser_runtime import look_until, risk_check, unique_visible, visible
 from .progress import stage
 from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, X_CHOSEN_TIME, YT_EDIT_DRAFT, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style, studio_zone_offsets_agree,
-                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, x_chosen_time_says, x_new_works, x_new_posts, x_schedule_baseline, x_schedule_moment, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
+                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, x_chosen_time_says, x_new_works, x_new_posts, x_schedule_baseline, x_schedule_moment, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED, where_words_part)
 
 X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
 YT_DIALOG = 'ytcp-uploads-dialog'
@@ -885,8 +885,12 @@ async def finish_douyin_form(page, tx, before):
         tx.save(collection=await douyin_collection(page, tx.options['collection_title']))
     if tx.options.get('schedule'):
         tx.save(schedule=await douyin_schedule(page, datetime.fromisoformat(tx.options['schedule'].replace('Z', '+00:00'))))
-    if await title.input_value() != tx.options['title'] or douyin_card_words(await editor.inner_text()) != douyin_card_words(caption):
-        raise VpubError('metadata_mismatch', 'Douyin title or description differs from the manifest.')
+    if await title.input_value() != tx.options['title']:
+        raise VpubError('metadata_mismatch', "Douyin's title differs from the plan, so nothing was published.")
+    shown, wanted = douyin_card_words(await editor.inner_text()), douyin_card_words(caption)
+    if shown != wanted:
+        raise VpubError('metadata_mismatch', f"Douyin's description differs from the plan, so nothing was published: {where_words_part(wanted, shown)}.",
+                        'vpub resume opens the kept draft and writes the description again.')
     tx.save(phase='preview', metadata_readback=True, ai_disclosure='native_control', visibility=tx.options['visibility'])
     if tx.options.get('submission_mode') == 'draft_only':
         return await douyin_keep_draft(page, tx)

@@ -351,17 +351,39 @@ class WhoIsAskingTests(Home, ChromeCase):
                 self.assertTrue(await self.shown(body))
 
     async def test_youtubes_upload_window_saying_custom_thumbnails_need_a_check_is_not_one(self):
-        """From a field run: a channel without a verified phone number, and Studio's own upload window saying in a check's words that custom thumbnails need it."""
+        """From two field runs: a channel without a verified phone number, and Studio's own upload window saying in a check's words that custom thumbnails need it.
+        Looking for the word thumbnail close by caught the first and missed the second, so where those words sit in the window doesn't matter."""
         studio = "https://studio.youtube.com/channel/abc/videos/upload"
         for body in ('<ytcp-uploads-dialog role="dialog"><div><h3>缩略图</h3><div>要上传自定义缩略图，请验证你的身份。</div></div></ytcp-uploads-dialog>',
-                     '<ytcp-uploads-dialog role="dialog"><div>Thumbnail<p>To use custom thumbnails, <a href="#">Verify your identity</a></p></div></ytcp-uploads-dialog>'):
+                     '<ytcp-uploads-dialog role="dialog"><div>Thumbnail<p>To use custom thumbnails, <a href="#">Verify your identity</a></p></div></ytcp-uploads-dialog>',
+                     '<ytcp-uploads-dialog role="dialog"><h1>缩略图</h1>' + '<div>' * 10 + '<span>验证是你本人</span>' + '</div>' * 10 + '<p>' + '说明' * 300 + '</p></ytcp-uploads-dialog>',
+                     '<ytcp-uploads-dialog role="dialog"><ytcp-uploads-details><div role="alert">使用此功能前，请先验证是你本人。</div></ytcp-uploads-details></ytcp-uploads-dialog>',
+                     '<ytcp-uploads-dialog role="dialog"><ytcp-notice></ytcp-notice></ytcp-uploads-dialog>'
+                     '<script>document.querySelector("ytcp-notice").attachShadow({mode: "open"}).innerHTML = "<div><span>Verify it\'s you</span> to use this feature</div>";</script>'):
             with self.subTest(body=body[:70]):
                 self.assertFalse(await self.shown(body, studio))
-        for body in ('<ytcp-uploads-dialog role="dialog"><div>验证你的身份</div></ytcp-uploads-dialog>',
-                     '<div role="dialog"><div>要上传自定义缩略图，请验证你的身份。</div></div>',
-                     '<ytcp-uploads-dialog role="dialog"><div>缩略图</div><div role="alertdialog">Verify it\'s you</div></ytcp-uploads-dialog>'):
+                await rt.risk_check(self.page)
+                self.assertFalse(self.stop_file().exists())
+
+    async def test_a_check_beside_or_over_studios_upload_window_still_stops(self):
+        studio = "https://studio.youtube.com/channel/abc/videos/upload"
+        for body in ('<div role="dialog"><div>要上传自定义缩略图，请验证你的身份。</div></div>',
+                     '<ytcp-uploads-dialog role="dialog"><div>缩略图</div><div role="alertdialog">Verify it\'s you</div></ytcp-uploads-dialog>',
+                     '<ytcp-uploads-dialog role="dialog"><div>Unusual activity</div></ytcp-uploads-dialog>',
+                     '<ytcp-uploads-dialog role="dialog"><div>你的操作过于频繁</div></ytcp-uploads-dialog>',
+                     '<ytcp-uploads-dialog role="dialog"><div>Choose a way to recover</div></ytcp-uploads-dialog>',
+                     '<ytcp-uploads-dialog role="dialog"><div>安全验证</div></ytcp-uploads-dialog>',
+                     '<ytcp-uploads-dialog role="dialog"><div>Unusual activity. Verify it\'s you</div></ytcp-uploads-dialog>'):
             with self.subTest(body=body[:70]):
                 self.assertTrue(await self.shown(body, studio))
+        self.assertTrue(await self.shown('<ytcp-uploads-dialog role="dialog"><div>验证是你本人</div></ytcp-uploads-dialog>'))
+
+    async def test_a_stop_on_studio_also_names_the_element_that_held_the_words(self):
+        self.body = '<ytcp-feature-dialog role="dialog"><div>请验证是你本人</div></ytcp-feature-dialog>'
+        await self.page.goto("https://studio.youtube.com/channel/abc/videos/upload")
+        with self.assertRaises(VpubError):
+            await rt.risk_check(self.page)
+        self.assertEqual({"sign": "words", "phrase": "验证是你本人", "place": "dialog", "within": "ytcp-feature-dialog"}, read_json(self.stop_file())["seen"])
 
     async def test_words_nobody_can_see_are_not(self):
         self.assertFalse(await self.shown("<h1 hidden>Confirm it's you</h1>"))
