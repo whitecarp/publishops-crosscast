@@ -146,8 +146,10 @@ YOUTUBE_THUMBNAIL_HINT = """e => {
 
 async def platform_words(page):
     """The first thing on the page that asks for a check in the platform's own voice."""
+    # Only Studio has that upload window, so no other page is asked about it.
+    studio = urlsplit(page.url).hostname == "studio.youtube.com"
     for item in await page.get_by_text(HUMAN_LABELS).all():
-        if await item.is_visible() and not await item.evaluate(SOMEONES_WORDS, OTHER_PEOPLES_WORDS) and not await item.evaluate(YOUTUBE_THUMBNAIL_HINT):
+        if await item.is_visible() and not await item.evaluate(SOMEONES_WORDS, OTHER_PEOPLES_WORDS) and not (studio and await item.evaluate(YOUTUBE_THUMBNAIL_HINT)):
             return item
     return None
 
