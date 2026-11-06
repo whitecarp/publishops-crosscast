@@ -465,7 +465,25 @@ def x_new_works(platform, receipt, works):
     return [work for work in works if datetime.fromisoformat(post_time(work['id'])) >= began]
 
 
-async def x_new_posts(page, identity, receipt):
+# A field run's first vpub verify on a cold browser read the account a second after its post's link showed, before X had put
+# the video player into the post, so the post read as having no video and stayed unconfirmed until a second run.
+X_PLAYER_SECONDS = 8
+
+
+async def x_own_posts_with_players(page, identity, wanted):
+    """This account's posts, read again every half second for up to X_PLAYER_SECONDS while one that `wanted` picks shows no video yet.
+    For a one-shot read: finish() reads again on its own, five seconds apart. works() has just checked this page for a platform's check on each of its looks.
+    """
+    posts = await own_posts(page, identity)
+    for _ in range(X_PLAYER_SECONDS * 2):
+        if not any(wanted(post) and not post['has_video'] for post in posts):
+            break
+        await page.wait_for_timeout(500)
+        posts = await own_posts(page, identity)
+    return posts
+
+
+async def x_new_posts(page, identity, receipt, *, wait_for_player=False):
     """Discover one new own post by its posted words, not the separate Studio title.
     The native path binds the source-named file, Studio URL, composer video and
     text before recording its final attempt. With that context, correlate one
@@ -503,9 +521,11 @@ async def x_new_posts(page, identity, receipt):
         began = started - X_CLOCK_GRACE
     except (ValueError, OverflowError):
         return []
-    matches = [post for post in await own_posts(page, identity)
-               if post['id'] not in before and post['has_video'] and x_words(post['text']) == words
-               and began <= datetime.fromisoformat(post_time(post['id'])) <= until]
+    def fresh(post):
+        return post['id'] not in before and x_words(post['text']) == words
+    posts = await x_own_posts_with_players(page, identity, fresh) if wait_for_player else await own_posts(page, identity)
+    matches = [post for post in posts
+               if fresh(post) and post['has_video'] and began <= datetime.fromisoformat(post_time(post['id'])) <= until]
     # Count before checking media: a conflicting or hidden ID must not collapse two posts into one.
     if len(matches) != 1 or (matches[0]['media_id'] is not None and matches[0]['media_id'] != media[1]):
         return []
@@ -826,7 +846,9 @@ async def verify_scheduled_x(page, identity, receipt):
     if datetime.now(timezone.utc) >= moment:
         words = x_words(receipt.get("expected_text") or receipt["title"])
         await works(page, "x", identity)  # Opens the account's page and waits for its posts.
-        matches = [post for post in await own_posts(page, identity) if post["id"] not in receipt.get("before_ids", []) and x_words(post["text"] or "") == words and post["has_video"] and posted_around(post, moment)]
+        def fresh(post):
+            return post["id"] not in receipt.get("before_ids", []) and x_words(post["text"] or "") == words
+        matches = [post for post in await x_own_posts_with_players(page, identity, fresh) if fresh(post) and post["has_video"] and posted_around(post, moment)]
         if len(matches) != 1:
             return {**receipt, "state": "SUBMITTED_UNVERIFIED", "phase": "readback_pending", "note": f"Its time has passed and {len(matches)} posts on the first page match it exactly. Inspect the account; do not post again."}
         address = work_url("x", identity, matches[0]["id"])
@@ -868,7 +890,7 @@ async def verify(page, platform, identity, receipt):
     if not receipt.get('id') and receipt.get('final_submit_attempted') and 'before_ids' in receipt:
         found = await works(page, platform, identity)
         if platform == 'x':
-            matches = await x_new_posts(page, identity, receipt)
+            matches = await x_new_posts(page, identity, receipt, wait_for_player=True)
         else:
             matches = douyin_new_works(platform, receipt, [v for k,v in found.items() if k not in receipt['before_ids'] and
                                                          receipt.get('title') and normalize(receipt['title']) in normalize(v['text'])])
