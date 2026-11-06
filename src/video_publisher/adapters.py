@@ -220,10 +220,13 @@ def auth_status(platform, account, method=None):
     raise VpubError("not_logged_in", "No verified independent browser login.", f"Run vpub auth login {platform} --method browser.")
 
 
-def auth_login(platform, account, client_json=None, method=None):
+def auth_login(platform, account, client_json=None, method=None, keep_open=False):
     platform_check(platform)
     stop_check(platform, signing_in=True)
-    method = method or default_method(platform)
+    # From a review: with the YouTube API add-on installed, YouTube's usual sign-in isn't the browser one, and --keep-open means the browser's window.
+    method = method or ("browser" if keep_open else default_method(platform))
+    if keep_open and (method != "browser" or "browser" not in ROUTES[platform]):
+        raise VpubError("invalid_option", "--keep-open is for a dedicated browser's sign-in window.")
     if method == "native":
         from .native_browser import login
         return login(platform)
@@ -236,7 +239,7 @@ def auth_login(platform, account, client_json=None, method=None):
     if method == "api":
         return paid_api().login(platform, account, client_json)
     from .auth_jobs import start
-    return start(platform, account)
+    return start(platform, account, keep_open=keep_open)
 
 
 def preflight(platform, options):

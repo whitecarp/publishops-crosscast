@@ -610,6 +610,8 @@ def parser():
         q.add_argument("--method", choices=["native", "cli", "browser", "api"], help="Default: bili-cli for Bilibili; a dedicated persistent browser for YouTube/Douyin/Instagram/X. api needs the paid add-on.")
         if action == "login":
             q.add_argument("--client-json", help="YouTube Desktop OAuth client JSON, or app credentials for the paid X/Instagram API add-on; never commit this file.")
+            q.add_argument("--keep-open", action="store_true", help="Leave the browser sign-in window open until you close it, for up to 25 minutes, to pass a "
+                                                                     "check a platform shows only once something starts there, such as YouTube asking as an upload begins.")
         else:
             q.add_argument("--wait", type=int, default=0, help="QR/panel completion wait, 0–180 seconds.")
     q = sub.add_parser("onboard", help="Get ready and start signing in to the platforms you choose.")
@@ -1065,10 +1067,12 @@ def run_command(args):
             raise VpubError("invalid_wait", "--wait must be between 0 and 180 seconds.")
         if args.platform == "all":
             if args.action == "login":
+                if args.keep_open:
+                    raise VpubError("invalid_option", "--keep-open is for one platform's sign-in window at a time.")
                 return login_selected(PLATFORMS, args.method)
             return status_selected(PLATFORMS, args.wait, args.method)
         if args.action == "login":
-            return adapters.auth_login(args.platform, args.account, args.client_json, args.method)
+            return adapters.auth_login(args.platform, args.account, args.client_json, args.method, keep_open=args.keep_open)
         method = args.method or adapters.default_method(args.platform)
         if method in {"native", "api"}:
             return adapters.auth_status(args.platform, args.account, method)

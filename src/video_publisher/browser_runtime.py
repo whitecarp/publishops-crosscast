@@ -11,7 +11,7 @@ import threading
 import time
 from urllib.parse import unquote, urlsplit
 
-from .core import VpubError, account_name, atomic_json, config, home, how_to_clear_a_stop, now, read_json
+from .core import VpubError, account_name, atomic_json, config, home, how_to_clear_a_stop, how_to_pass_a_check, now, read_json
 from .progress import stage, watch
 
 BROWSER_PLATFORMS = {"douyin", "instagram", "x", "youtube"}
@@ -132,140 +132,16 @@ def challenge_address(address):
     return any(on_site(parts.hostname or "", site) and re.match(path, parts.path) for site, path in CHALLENGE_ADDRESSES.items())
 
 
-# For words inside Studio's own upload window, and not in a window of their own within it: each piece of text that window shows, so the words
-# can be weighed against the rest of it. None for any other words. The way up follows what is drawn, so words a component slots into a window
-# of its own meet that window, and both the way up and the reading go through Studio's components' own roots. A window inside the upload window
-# is its own frame only if it holds the upload form, which CrossCast itself fills in there (its progress, title box, Next button or file picker).
-# Any other window inside it, and any alert window, is a window of its own. Text counts as shown when it is drawn and not hidden, whatever the
-# element around it is drawn as; what a person types into its boxes is theirs and isn't read. Each block is read apart, so the end of one block
-# and the start of the next can't make up words neither says, while words split across styled pieces of one line still read as one.
-YOUTUBE_UPLOAD_WINDOW = """e => {
-  const form = 'ytcp-video-upload-progress, #title-textarea, #next-button, ytcp-uploads-file-picker';
-  const holds = root => !!root.querySelector(form) || [...root.querySelectorAll('*')].some(n => n.shadowRoot && holds(n.shadowRoot));
-  let place = null;
-  for (let n = e; n; n = n.assignedSlot || n.parentElement || n.getRootNode().host) {
-    if (n.tagName === 'YTCP-UPLOADS-DIALOG') { place = n; break; }
-    const role = (n.getAttribute('role') || '').toLowerCase();
-    if (role === 'alertdialog') return null;
-    if ((role === 'dialog' || (n.getAttribute('aria-modal') || '').toLowerCase() === 'true' || ['DIALOG', 'TP-YT-PAPER-DIALOG'].includes(n.tagName))
-        && !holds(n)) return null;
-  }
-  if (!place) return null;
-  const said = [];
-  const read = n => {
-    if (n.nodeType === 3) {
-      const around = n.parentElement || (n.parentNode && n.parentNode.host);
-      const box = document.createRange();
-      box.selectNodeContents(n);
-      if (around && getComputedStyle(around).visibility === 'visible' && box.getClientRects().length) said.push(n.data);
-      return;
-    }
-    if (n.nodeType !== 1) {
-      for (const child of n.childNodes) read(child);
-      return;
-    }
-    const display = getComputedStyle(n).display;
-    if (n.matches('script, style, [contenteditable]:not([contenteditable="false"])') || display === 'none') return;
-    const block = !(display.startsWith('inline') || display === 'contents');
-    if (block) said.push('\\n');
-    if (n.shadowRoot) {
-      read(n.shadowRoot);
-      said.push('\\n');
-    }
-    for (const child of n.childNodes) read(child);
-    if (block) said.push('\\n');
-  };
-  read(place);
-  return said.join('').split('\\n');
-}"""
-
-
-def check_words_in(pieces):
-    """Every phrase a check, a pushback or a recovery page uses, in these pieces of text, each read on its own."""
-    return [found[0] for piece in pieces for found in HUMAN_LABELS.finditer(piece or "")]
-
-
-async def studio_feature_notice(item):
-    """Whether these are Studio's own upload window saying in a check's words what a feature needs.
-
-    A field run's channel had not verified a phone number, and that window said so about custom thumbnails. Looking for the word
-    thumbnail close by missed it on the next run, so inside that window, the words a check asks with are taken as Studio's notice,
-    as long as they are this element's own and nothing the window shows is any other kind of warning. From a review: words about
-    doing too much can sit beside a link that asks for a check, and only the link was looked at. Google asks for its own checks on
-    its own pages (CHALLENGE_ADDRESSES) or in a window of their own. Those, words about doing too much or about a locked account
-    anywhere in the window, and the same words anywhere else on Studio still stop everything."""
-    shown = await item.evaluate(YOUTUBE_UPLOAD_WINDOW)
-    own = check_words_in([await item.text_content() or ""])
-    return shown is not None and bool(own) and all(IDENTITY_WORDS.fullmatch(words) for words in own + check_words_in(shown))
-
-
-# Studio's own window asking for a verified phone number before a feature can be used. A field run's channel, with a custom thumbnail
-# planned, got one headed 验证是你本人 that said 若要使用这项功能，请先验证你的电话号码。此流程只需几分钟时间。 over 取消 and 验证, a window
-# of its own that doesn't hold the upload form. It is the feature asking for a phone number, not a check of the account. From a review:
-# a check can use some of the same words, so only that window word for word counts, with letters and digits compared, since a reading of a
-# screenshot can't be sure of its punctuation. Another language's window, or any other words, stop everything until one is seen.
-STUDIO_PHONE_GATES = {"验证是你本人若要使用这项功能请先验证你的电话号码此流程只需几分钟时间取消验证",
-                      "验证是你本人若要使用这项功能请先验证你的电话号码此流程只需几分钟时间验证取消"}
-# For words in a window of their own: everything that window shows, read through Studio's components' own roots, or None for words in no
-# window, or when it or a window around it, short of the upload window's own frame, holds anything to type into or pick from, or a frame.
-STUDIO_GATE_WINDOW = """e => {
-  const isWindow = n => { const role = (n.getAttribute('role') || '').toLowerCase();
-    return role === 'dialog' || role === 'alertdialog' || (n.getAttribute('aria-modal') || '').toLowerCase() === 'true' || ['DIALOG', 'TP-YT-PAPER-DIALOG'].includes(n.tagName); };
-  const finds = (root, selector) => !!root.querySelector(selector) || [...root.querySelectorAll('*')].some(n => n.shadowRoot && finds(n.shadowRoot, selector));
-  const form = 'ytcp-video-upload-progress, #title-textarea, #next-button, ytcp-uploads-file-picker';
-  const typed = 'input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]), textarea, select, iframe, '
-              + '[contenteditable]:not([contenteditable="false"]), [role=textbox], [role=combobox], [role=spinbutton], [role=searchbox]';
-  let box = null;
-  for (let n = e; n; n = n.assignedSlot || n.parentElement || n.getRootNode().host) {
-    if (n.tagName === 'YTCP-UPLOADS-DIALOG' || (box && isWindow(n) && finds(n, form))) break;
-    if (!isWindow(n)) continue;
-    if (finds(n, typed)) return null;
-    box = box || n;
-  }
-  if (!box) return null;
-  const said = [];
-  const read = n => {
-    if (n.nodeType === 3) {
-      const around = n.parentElement || (n.parentNode && n.parentNode.host);
-      const shown = document.createRange();
-      shown.selectNodeContents(n);
-      if (around && getComputedStyle(around).visibility === 'visible' && shown.getClientRects().length) said.push(n.data);
-      return;
-    }
-    if (n.nodeType === 1) {
-      if (n.matches('script, style') || getComputedStyle(n).display === 'none') return;
-      if (n.shadowRoot) read(n.shadowRoot);
-    }
-    for (const child of n.childNodes) read(child);
-  };
-  read(box);
-  return said.join(' ');
-}"""
-
-
-async def studio_phone_gate(item):
-    """Whether these words head Studio's own window asking for a verified phone number before a feature can be used, word for word.
-    Clicking 验证 there goes on to YouTube's own page for the phone number, which is the person's to do."""
-    shown = await item.evaluate(STUDIO_GATE_WINDOW)
-    return shown is not None and ''.join(c for c in shown if c.isalnum()) in STUDIO_PHONE_GATES
-
-
-async def studio_gate_shown(page):
-    """Whether Studio shows that window on this page."""
-    if urlsplit(page.url).hostname != "studio.youtube.com":
-        return False
-    for item in await page.get_by_text(HUMAN_LABELS).all():
-        if await item.is_visible() and await studio_phone_gate(item):
-            return True
-    return False
+# A field run's YouTube upload stopped on Studio's window headed 验证是你本人, which said a feature needs a verified phone number, over 取消 and
+# 验证. It was first taken for a notice about custom thumbnails, and then for a feature asking for a phone number, and passed over. The channel
+# turned out to have every feature already turned on: it was Google checking the session as an upload began, and it went away once a person
+# had used that window. So on Studio, as everywhere, a check's words stop everything; the exceptions made for them are gone.
 
 
 async def platform_words(page):
     """The first thing on the page that asks for a check in the platform's own voice."""
-    # Only Studio has that upload window, so no other page is asked about it.
-    studio = urlsplit(page.url).hostname == "studio.youtube.com"
     for item in await page.get_by_text(HUMAN_LABELS).all():
-        if await item.is_visible() and not await item.evaluate(SOMEONES_WORDS, OTHER_PEOPLES_WORDS) and not (studio and (await studio_feature_notice(item) or await studio_phone_gate(item))):
+        if await item.is_visible() and not await item.evaluate(SOMEONES_WORDS, OTHER_PEOPLES_WORDS):
             return item
     return None
 
@@ -290,16 +166,7 @@ async def what_asked(page):
         # A site built from elements of its own, as Studio is, also says which one held the words: only a name from the site's own code.
         within = await item.evaluate("""e => { for (let n = e; n; n = n.parentElement || n.getRootNode().host) if (n.tagName.includes('-')) {
           const name = n.tagName.toLowerCase(); return /^[a-z][a-z0-9-]{1,60}$/.test(name) ? name : 'other'; } return null; }""")
-        if within:
-            seen["within"] = within
-        # Inside Studio's upload window, the other warning words it showed, which kept these from passing for Studio's notice. Only phrases from
-        # CrossCast's own list, never anything else the page says.
-        if urlsplit(page.url).hostname == "studio.youtube.com":
-            shown = await item.evaluate(YOUTUBE_UPLOAD_WINDOW)
-            also = sorted({words for words in check_words_in(shown or []) if not IDENTITY_WORDS.fullmatch(words)})
-            if also:
-                seen["also"] = also
-        return seen
+        return {**seen, "within": within} if within else seen
     except Exception:
         return None
 
@@ -308,12 +175,9 @@ async def risk_check(page):
     if await challenge_shown(page):
         from .safety import pushed_back
         # Recorded where it is seen: a batch or a multi-step read catches the error below so it can report its other steps.
-        pushed_back(platform_at(page.url), "human_verification_required", await what_asked(page))
-        raise VpubError("human_verification_required", "The platform requires human verification.", f"Run auth login for this platform and complete the official verification, then {how_to_clear_a_stop()}; inspect any existing draft before retrying.")
-    # Only this command stops there, and nothing is written to the stop file: no check of the account was asked for, so nothing else needs to wait.
-    if await studio_gate_shown(page):
-        raise VpubError("phone_verification_needed", "YouTube asks for a verified phone number before this channel can use a feature, so CrossCast "
-                        "stopped there and pressed nothing more. Verify the phone number in YouTube Studio yourself.")
+        platform = platform_at(page.url)
+        pushed_back(platform, "human_verification_required", await what_asked(page))
+        raise VpubError("human_verification_required", "The platform requires human verification.", how_to_pass_a_check(platform))
 
 
 async def identity(page, platform):
@@ -365,12 +229,14 @@ async def open_context(pw, platform, account, interactive=False, window=False):
     # Studio does not run under a headless browser, so YouTube's background browser is a real Chrome window:
     # off-screen, and on Windows also on its own hidden desktop (see hidden_desktop.py), so there is no taskbar icon either. A command that asks for a window gets the same.
     off_screen = (platform == "youtube" or window) and not interactive
+    # A window a person uses fills their screen. From a field run: a fixed 1000-pixel height, on Windows with display scaling, put the bottom of
+    # Studio under the taskbar, and its menu doesn't scroll, so its 设置 couldn't be reached.
+    size = {"no_viewport": True} if interactive else {"viewport": {"width": 1440, "height": 1000}}
     try:
         context = await pw.chromium.launch_persistent_context(
             str(path), channel="chrome", headless=not interactive and not off_screen,
-            args=["--window-position=-32000,-32000"] if off_screen else [],
-            viewport={"width": 1440, "height": 1000}, locale="en-US",
-            accept_downloads=False)
+            args=["--window-position=-32000,-32000"] if off_screen else ["--start-maximized"] if interactive else [],
+            locale="en-US", accept_downloads=False, **size)
         session = path.parent / (platform + "-browser-session.json")
         if session.exists():
             # Only our own dedicated session, never cookies from the host browser.
@@ -437,6 +303,8 @@ async def login(pw, payload):
                 await keep_session(context, platform, account)
                 remember_identity(platform, account, actual)
                 result = {"logged_in": True, "platform": platform, "account": account, "identity": actual, "method": "browser"}
+                if payload.get("keep_open"):
+                    result["window"] = await stay_open(context, job, waiting, actual, platform, account)
                 if (home() / "STOP.json").exists():
                     result["next"] = f"CrossCast is still stopped because of a platform's warning. Once its check is done, run {how_to_clear_a_stop()}."
                 return result
@@ -444,6 +312,35 @@ async def login(pw, payload):
         raise VpubError("login_timeout", "Login was not completed within 15 minutes; saved profile is retained.")
     finally:
         await close_context(context)
+
+
+KEEP_OPEN_SECONDS = 1500
+KEEP_OPEN_SAVE_SECONDS = 5
+
+
+async def stay_open(context, job, waiting, actual, platform, account):
+    """After a sign-in, the CrossCast window stays open until the person closes it, for up to KEEP_OPEN_SECONDS, so they can pass a check a platform
+    shows only once something starts there, as YouTube did when an upload began. CrossCast presses and reads nothing in it meanwhile. Returns how
+    the window ended. From a review: once the last window closes, Chrome has quit on Windows and Linux and the session can't be saved any more, so
+    it is saved every few seconds while the window is open, and the next command doesn't put back cookies from before the check."""
+    ends = time.monotonic() + KEEP_OPEN_SECONDS
+    if command_deadline is not None:
+        ends = min(ends, command_deadline - 60)
+    left = max(0, int(ends - time.monotonic()))
+    atomic_json(job, {"state": "LOGIN_PENDING", **waiting, "expires_epoch": time.time() + left, "window_opened": True, "identity": actual,
+                      "waiting_for": f"You to close the CrossCast Chrome window once you're done in it, within {left // 60} minutes, when it closes by itself.",
+                      "hint": "Signed in, and the CrossCast Chrome window stays open for the person. They do what the platform asks there, then close the "
+                              "window; CrossCast presses nothing in it."})
+    saved = time.monotonic()
+    while time.monotonic() < ends:
+        if not [page for page in context.pages if not page.is_closed()]:
+            return "closed"
+        if time.monotonic() - saved >= KEEP_OPEN_SAVE_SECONDS:
+            await keep_session(context, platform, account)
+            saved = time.monotonic()
+        await asyncio.sleep(2)
+    await keep_session(context, platform, account)
+    return "timed_out"
 
 
 async def any_challenge(pages):

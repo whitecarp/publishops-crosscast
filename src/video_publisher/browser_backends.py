@@ -1055,8 +1055,8 @@ async def execute(page, platform, identity, payload):
             pass
         human = isinstance(e, VpubError) and e.code in {"human_verification_required", "auth_expired"}
         state = "WAITING_FOR_USER" if human else "UNKNOWN" if tx.receipt["final_submit_attempted"] else "PREPARATION_INCOMPLETE"
-        # These wait on a person's choice too, though no check of the account was asked for: a phone number for the feature, or going without it.
-        chooses = human or (isinstance(e, VpubError) and e.code in {"cover_unavailable", "phone_verification_needed"})
+        # This waits on a person's choice too, though no check of the account was asked for: turning the thumbnail on, or going without it.
+        chooses = human or (isinstance(e, VpubError) and e.code == "cover_unavailable")
         return tx.save(state=state, blocked_phase=tx.receipt['phase'], phase="blocked", review_url=page.url,
                        error={"code": e.code if isinstance(e, VpubError) else "browser_step_failed",
                               "message": e.message if isinstance(e, VpubError) else failure_message(e)},

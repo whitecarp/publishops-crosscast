@@ -1283,20 +1283,14 @@ async def publish_youtube(page, tx):
         raise VpubError('metadata_mismatch', 'YouTube title or description differs from the manifest.')
     if tx.cover():
         if not await look_until(page, page.locator(f'{YT_DIALOG} input#file-loader').count, 5000):
+            # Said as vpub status says it: a new plan for the same video would only find this attempt.
             raise VpubError('cover_unavailable', 'YouTube offers no custom thumbnail on this channel yet. The upload is kept as a draft; nothing was published.',
-                            'Custom thumbnails need a verified channel. Verify it in YouTube Studio, or plan without a cover.')
+                            "YouTube Studio's settings say why, under the channel's feature eligibility. The person either turns it on there and then "
+                            f"runs vpub resume {tx.plan['confirmation']}, or runs vpub resume {tx.plan['confirmation']} --no-cover to finish without it.")
         await choose_file(page, page.locator(f'{YT_DIALOG} input#file-loader').first, tx.cover())
         await page.wait_for_timeout(2000)
-        # A field run's channel without a verified phone number got Studio's window asking for one here, over the form. A check of the account
-        # still comes first and stops everything.
-        try:
-            await risk_check(page)
-        except VpubError as stopped:
-            if stopped.code != 'phone_verification_needed':
-                raise
-            raise VpubError('cover_unavailable', 'YouTube asked for a verified phone number before this channel can use a custom thumbnail, so nothing was '
-                            'published, and the upload is kept as a draft. Verify the phone number in YouTube Studio yourself and run vpub resume again, '
-                            'or run vpub resume with --no-cover to go without the thumbnail.') from None
+        # From a review: Google's check can come as the thumbnail goes in, and the presses after it would only meet its window.
+        await risk_check(page)
         tx.save(cover={'state': 'UI_ACCEPTED', 'source': 'production_artwork', 'remote_pixels_verified': False})
     await yt_radio(page, 'VIDEO_MADE_FOR_KIDS_MFK' if options['made_for_kids'] else 'VIDEO_MADE_FOR_KIDS_NOT_MFK', 'audience_unverified', 'audience')
     more = await visible(page.locator(f'{YT_DIALOG} #toggle-button'))

@@ -350,31 +350,21 @@ class WhoIsAskingTests(Home, ChromeCase):
             with self.subTest(body=body[:60]):
                 self.assertTrue(await self.shown(body))
 
-    async def test_youtubes_upload_window_saying_custom_thumbnails_need_a_check_is_not_one(self):
-        """From two field runs: a channel without a verified phone number, and Studio's own upload window saying in a check's words that custom thumbnails need it.
-        Looking for the word thumbnail close by caught the first and missed the second, so where those words sit in the window doesn't matter."""
+    # Word for word from a field run's screenshot: the window Studio showed as an upload began, on a channel with every feature turned on.
+    GATE = ('<tp-yt-paper-dialog role="dialog"><h2>验证是你本人</h2><div>若要使用这项功能，请先验证你的电话号码。此流程只需几分钟时间。</div>'
+            '<button>取消</button><button>验证</button></tp-yt-paper-dialog>')
+
+    async def test_a_checks_words_on_studio_stop_everything_wherever_they_sit(self):
+        """From three field runs: Studio's 验证是你本人 was taken for a notice about custom thumbnails, and then for a feature asking for a phone
+        number, and passed over. The channel had every feature turned on: it was Google checking the session as an upload began."""
         studio = "https://studio.youtube.com/channel/abc/videos/upload"
         for body in ('<ytcp-uploads-dialog role="dialog"><div><h3>缩略图</h3><div>要上传自定义缩略图，请验证你的身份。</div></div></ytcp-uploads-dialog>',
-                     '<ytcp-uploads-dialog role="dialog"><div>Thumbnail<p>To use custom thumbnails, <a href="#">Verify your identity</a></p></div></ytcp-uploads-dialog>',
-                     '<ytcp-uploads-dialog role="dialog"><h1>缩略图</h1>' + '<div>' * 10 + '<span>验证是你本人</span>' + '</div>' * 10 + '<p>' + '说明' * 300 + '</p></ytcp-uploads-dialog>',
-                     '<ytcp-uploads-dialog role="dialog"><ytcp-uploads-details><div role="alert">使用此功能前，请先验证是你本人。</div></ytcp-uploads-details></ytcp-uploads-dialog>',
+                     '<ytcp-uploads-dialog role="dialog"><h1>缩略图</h1>' + '<div>' * 10 + '<span>验证是你本人</span>' + '</div>' * 10 + '</ytcp-uploads-dialog>',
                      '<ytcp-uploads-dialog role="dialog"><ytcp-notice></ytcp-notice></ytcp-uploads-dialog>'
                      '<script>document.querySelector("ytcp-notice").attachShadow({mode: "open"}).innerHTML = "<div><span>Verify it\'s you</span> to use this feature</div>";</script>',
-                     # The window's own frame, a person's own words that happen to say too much, and a warning nobody can see.
-                     '<ytcp-uploads-dialog role="dialog"><tp-yt-paper-dialog role="dialog" aria-modal="true"><ytcp-video-upload-progress></ytcp-video-upload-progress>'
-                     '<div contenteditable="true">别操作频繁</div><div hidden>Rate limit exceeded</div><div><span>验证是你本人</span>后即可上传自定义缩略图</div>'
-                     '<button id="next-button">下一步</button></tp-yt-paper-dialog></ytcp-uploads-dialog>',
-                     # The same frame with its form inside an element with a root of its own.
-                     '<ytcp-uploads-dialog role="dialog"><tp-yt-paper-dialog role="dialog"><ytcp-uploads-details></ytcp-uploads-details>'
-                     '<div><span>验证是你本人</span>后即可上传自定义缩略图</div></tp-yt-paper-dialog></ytcp-uploads-dialog>'
-                     '<script>document.querySelector("ytcp-uploads-details").attachShadow({mode: "open"}).innerHTML = "<div id=\'title-textarea\'></div>";</script>',
-                     # From a second review: words nobody can see, and two blocks whose ends would run together into a captcha's words.
-                     '<ytcp-uploads-dialog role="dialog"><div style="visibility:hidden">Rate limit exceeded</div><div>为了账号安全</div>'
-                     '<div><span>验证是你本人</span>后即可上传自定义缩略图</div></ytcp-uploads-dialog>'):
+                     '<ytcp-uploads-dialog role="dialog"><tp-yt-paper-dialog role="dialog"><button id="next-button">下一步</button></tp-yt-paper-dialog>' + self.GATE + '</ytcp-uploads-dialog>'):
             with self.subTest(body=body[:70]):
-                self.assertFalse(await self.shown(body, studio))
-                await rt.risk_check(self.page)
-                self.assertFalse(self.stop_file().exists())
+                self.assertTrue(await self.shown(body, studio))
 
     async def test_a_check_beside_or_over_studios_upload_window_still_stops(self):
         studio = "https://studio.youtube.com/channel/abc/videos/upload"
@@ -405,40 +395,17 @@ class WhoIsAskingTests(Home, ChromeCase):
                 self.assertTrue(await self.shown(body, studio))
         self.assertTrue(await self.shown('<ytcp-uploads-dialog role="dialog"><div>验证是你本人</div></ytcp-uploads-dialog>'))
 
-    # Word for word from a field run's screenshot: Studio's window, once a custom thumbnail was chosen on a channel without a verified phone number.
-    GATE = ('<tp-yt-paper-dialog role="dialog"><h2>验证是你本人</h2><div>若要使用这项功能，请先验证你的电话号码。此流程只需几分钟时间。</div>'
-            '<button>取消</button><button>验证</button></tp-yt-paper-dialog>')
-
-    async def test_studios_window_asking_for_a_phone_number_for_a_feature_stops_only_this_attempt(self):
-        """From a field run: that window of Studio's own stopped every platform as a check."""
-        studio = "https://studio.youtube.com/channel/abc/videos/upload"
-        for body in (self.GATE, self.GATE.replace("，", ",").replace("<button>取消</button><button>验证</button>", "<div><button>验证</button><button>取消</button></div>"),
-                     '<ytcp-uploads-dialog role="dialog"><tp-yt-paper-dialog role="dialog"><div id="title-textarea" contenteditable="true">My title</div>'
-                     '<button id="next-button">下一步</button>' + self.GATE + '</tp-yt-paper-dialog></ytcp-uploads-dialog>'):
-            with self.subTest(body=body[:60]):
-                self.assertFalse(await self.shown(body, studio))
-                with self.assertRaises(VpubError) as caught:
-                    await rt.risk_check(self.page)
-                self.assertEqual("phone_verification_needed", caught.exception.code)
-                self.assertFalse(self.stop_file().exists())
-
-    async def test_a_check_that_only_looks_like_that_window_still_stops_everything(self):
-        """From a review: a check can use some of the same words, have its box inside a component's own root or a frame, or sit around that window."""
-        studio = "https://studio.youtube.com/channel/abc/videos/upload"
-        shadow_box = ('<script>document.querySelector("ytcp-code-box").attachShadow({mode: "open"}).innerHTML = "<input>";</script>')
-        for body in (self.GATE.replace("若要使用这项功能", "我们检测到你的账号存在异常活动。若要继续使用这项功能"),
-                     self.GATE.replace("<button>取消</button>", "<ytcp-code-box></ytcp-code-box><button>取消</button>") + shadow_box,
-                     self.GATE.replace("<button>取消</button>", '<iframe srcdoc="<input>"></iframe><button>取消</button>'),
-                     self.GATE.replace("<button>取消</button>", "<select><option>+1</option></select><button>取消</button>"),
-                     self.GATE.replace("<button>取消</button>", '<div role="textbox"></div><button>取消</button>'),
-                     '<div role="dialog"><input type="password">' + self.GATE.replace('<tp-yt-paper-dialog role="dialog">', '<tp-yt-paper-dialog aria-modal="true">') + '</div>',
-                     self.GATE.replace("<button>取消</button>", "<div>Unusual activity</div><button>取消</button>"),
-                     # Another language's window stops everything until it has been seen and written down word for word.
-                     '<div role="dialog"><h2>Verify it\'s you</h2><p>To use this feature, first verify your phone number.</p><button>Cancel</button><button>Verify</button></div>',
-                     '<tp-yt-paper-dialog role="dialog"><h2>验证是你本人</h2><div>为了保护你的账号，请输入密码。</div><button>下一步</button></tp-yt-paper-dialog>'):
-            with self.subTest(body=body[:70]):
-                self.assertTrue(await self.shown(body, studio))
-        self.assertTrue(await self.shown(self.GATE, "https://www.youtube.com/"))
+    async def test_studios_window_from_the_field_stops_everything_and_says_how_to_pass_it(self):
+        self.body = self.GATE
+        await self.page.goto("https://studio.youtube.com/channel/abc/videos/upload")
+        with self.assertRaises(VpubError) as caught:
+            await rt.risk_check(self.page)
+        self.assertEqual("human_verification_required", caught.exception.code)
+        saved = read_json(self.stop_file())
+        self.assertEqual({"sign": "words", "phrase": "验证是你本人", "place": "dialog", "within": "tp-yt-paper-dialog"}, saved["seen"])
+        for hint in (caught.exception.hint, saved["hint"]):
+            self.assertIn("vpub auth login youtube --keep-open", hint)
+            self.assertIn("start an upload of any short clip", hint)
 
     async def test_a_stop_on_studio_also_names_the_element_that_held_the_words(self):
         self.body = '<ytcp-feature-dialog role="dialog"><div>请验证是你本人</div></ytcp-feature-dialog>'
@@ -446,16 +413,6 @@ class WhoIsAskingTests(Home, ChromeCase):
         with self.assertRaises(VpubError):
             await rt.risk_check(self.page)
         self.assertEqual({"sign": "words", "phrase": "验证是你本人", "place": "dialog", "within": "ytcp-feature-dialog"}, read_json(self.stop_file())["seen"])
-
-    async def test_a_stop_in_studios_upload_window_says_which_other_warning_kept_it(self):
-        """From a second review: a real warning beside the link and the known thumbnail notice otherwise leave the same record."""
-        self.body = '<ytcp-uploads-dialog role="dialog"><div>Unusual activity on this channel, Someone. <a href="#">Verify it\'s you</a></div></ytcp-uploads-dialog>'
-        await self.page.goto("https://studio.youtube.com/channel/abc/videos/upload")
-        with self.assertRaises(VpubError):
-            await rt.risk_check(self.page)
-        seen = read_json(self.stop_file())["seen"]
-        self.assertEqual((["Unusual activity"], "dialog"), (seen["also"], seen["place"]))
-        self.assertNotIn("Someone", str(seen))
 
     async def test_words_nobody_can_see_are_not(self):
         self.assertFalse(await self.shown("<h1 hidden>Confirm it's you</h1>"))

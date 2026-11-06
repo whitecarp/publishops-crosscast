@@ -352,8 +352,10 @@ def pushed_back(platform, code, seen=None):
         return False
     path = home() / "STOP.json"
     if not path.exists():
+        from .core import how_to_pass_a_check
         atomic_json(path, {"platform": platform, "code": code, "at": now(), "source": "safety", **({"seen": seen} if seen else {}),
-                           "hint": f"Pass the platform's check (vpub auth login for this platform still opens its window), then run {how_to_clear_a_stop()}."})
+                           "hint": how_to_pass_a_check(platform) if platform == "youtube" and code == "human_verification_required" else
+                                   f"Pass the platform's check (vpub auth login for this platform still opens its window), then run {how_to_clear_a_stop()}."})
     return True
 
 

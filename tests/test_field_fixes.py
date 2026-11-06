@@ -126,7 +126,7 @@ class LoginTests(Home, unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         Home.setUp(self)
 
-    async def run_login(self, pages, steps=None):
+    async def run_login(self, pages, steps=None, **asked):
         """Each step changes the tabs before the next look, as a person signing in would."""
         context = FakeContext(pages)
         job = self.root / "job.json"
@@ -144,10 +144,50 @@ class LoginTests(Home, unittest.IsolatedAsyncioTestCase):
                 steps[looks["count"] - 1](context)
             if looks["count"] > 12:
                 raise AssertionError("the sign-in never ended")
+        context.saves = AsyncMock()
         with patch.object(rt, "open_context", new=AsyncMock(return_value=context)), patch.object(rt, "identity", identity), patch.object(rt, "challenge_shown", challenge_shown), \
-                patch.object(rt.asyncio, "sleep", tick), patch.object(rt, "save_session", new=AsyncMock()):
-            result = await rt.login(None, {"platform": "youtube", "account": "default", "job_path": str(job)})
+                patch.object(rt.asyncio, "sleep", tick), patch.object(rt, "save_session", new=context.saves):
+            result = await rt.login(None, {"platform": "youtube", "account": "default", "job_path": str(job), **asked})
         return result, context, job
+
+    async def test_a_window_asked_to_stay_open_stays_until_the_person_closes_it(self):
+        """From a field run: YouTube asked to verify it's you only as an upload began, and the sign-in window had closed a second after the account showed."""
+        page = FakePage("UC1")
+        seen = {}
+
+        def look(context):
+            seen.update(read_json(self.root / "job.json"))
+
+        def close(context):
+            page.closed = True
+        result, context, job = await self.run_login([page], [lambda context: None, lambda context: None, look, close], keep_open=True)
+        self.assertEqual(("UC1", "closed"), (result["identity"], result["window"]))
+        self.assertEqual("LOGIN_PENDING", seen["state"])
+        self.assertIn("close the CrossCast Chrome window", seen["waiting_for"])
+        page.reload.assert_awaited_once()
+
+    async def test_a_window_kept_open_saves_the_session_while_it_is_open(self):
+        """From a review: once the last window closes, Chrome has quit and the session can't be saved any more."""
+        page = FakePage("UC1")
+
+        def close(context):
+            page.closed = True
+        with patch.object(rt, "KEEP_OPEN_SAVE_SECONDS", 0):
+            result, context, _ = await self.run_login([page], [lambda context: None, lambda context: None, lambda context: None, close], keep_open=True)
+        self.assertEqual("closed", result["window"])
+        # Once on sign-in, then on each look while the window was open.
+        self.assertEqual(3, context.saves.await_count)
+
+    async def test_a_window_kept_open_past_its_time_is_saved_and_says_so(self):
+        with patch.object(rt, "KEEP_OPEN_SECONDS", 0):
+            result, context, job = await self.run_login([FakePage("UC1")], keep_open=True)
+        self.assertEqual("timed_out", result["window"])
+        self.assertEqual(2, context.saves.await_count)
+        context.close.assert_awaited()
+
+    async def test_without_asking_the_window_closes_once_the_account_shows(self):
+        result, _, _ = await self.run_login([FakePage("UC1")])
+        self.assertNotIn("window", result)
 
     async def test_a_sign_in_that_replaces_its_tab_is_not_cancelled(self):
         first, second = FakePage(), FakePage("UC1")

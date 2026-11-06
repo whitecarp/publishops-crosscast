@@ -107,23 +107,25 @@ class AuthJobLifecycleTests(unittest.TestCase):
         self.addCleanup(self.stop_children)
 
     def stop_children(self):
-        for record in home().rglob("*.fixture-pid"):
-            pid = read_json(record)["pid"]
+        pids = [read_json(record)["pid"] for record in home().rglob("*.fixture-pid")]
+        for pid in pids:
             if alive(pid):
                 os.kill(pid, signal.SIGTERM)
-            eventually(lambda: not alive(pid))
+        # A child that has ended still counts as running on Linux until it is waited for.
         for child in self.children:
             if child.poll() is None:
                 child.terminate()
             child.wait(timeout=5)
+        for pid in pids:
+            eventually(lambda: not alive(pid))
 
-    def launch(self, account="default"):
+    def launch(self, account="default", **asked):
         def spawn(command, **options):
             child = fake_popen(command, **options)
             self.children.append(child)
             return child
         with patch.object(auth_jobs.subprocess, "Popen", side_effect=spawn):
-            return auth_jobs.start("youtube", account)
+            return auth_jobs.start("youtube", account, **asked)
 
     def request(self):
         return read_json(auth_jobs.job_path("youtube").with_suffix(".request.json"))
@@ -265,6 +267,28 @@ class AuthJobLifecycleTests(unittest.TestCase):
             auth_jobs.wait("youtube")
         self.assertEqual("login_start_failed", caught.exception.code)
         self.assertIn("once to resume", caught.exception.hint)
+
+    def test_a_window_asked_to_stay_open_is_not_answered_with_one_that_closes(self):
+        """From a review: asking for a window that stays open got back a running sign-in whose window closes once the account shows."""
+        self.launch()
+        self.pending()
+        with patch.object(auth_jobs.subprocess, "Popen") as spawn:
+            with self.assertRaises(VpubError) as caught:
+                auth_jobs.start("youtube", "default", keep_open=True)
+            self.assertEqual("login_busy", caught.exception.code)
+            self.assertIn("vpub auth login youtube --keep-open", caught.exception.hint)
+            self.assertEqual("LOGIN_PENDING", auth_jobs.start("youtube", "default")["state"])
+        spawn.assert_not_called()
+        self.assertTrue(self.finish()["logged_in"])
+        self.children[0].wait(timeout=5)
+        self.launch(keep_open=True)
+        self.pending()
+        self.assertIs(True, self.request()["keep_open"])
+        with patch.object(auth_jobs.subprocess, "Popen") as spawn:
+            for asked in ({"keep_open": True}, {}):
+                with self.subTest(asked=asked):
+                    self.assertEqual("LOGIN_PENDING", auth_jobs.start("youtube", "default", **asked)["state"])
+        spawn.assert_not_called()
 
     def test_pending_job_is_not_reused_for_another_account(self):
         self.launch()
