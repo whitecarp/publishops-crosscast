@@ -282,9 +282,16 @@ async def douyin_card_status(card):
     return normalize(await card.evaluate("""card => { const title = card.querySelector('[class^="info-title-text-"]'); return title ? card.innerText.replace(title.innerText, '') : card.innerText; }"""))
 
 
+# Douyin can make an #topic or @name in a caption a link of its own, and #tags typed one after another can then sit side by side with no space.
+# A field run's caption with #tags and @names stopped as differing from the plan. So space just before an #topic or @name doesn't count, on both
+# sides of every comparison. Space after one does: where a name ends can't be told without it, as in @ZipZipPipe的.
+DOUYIN_BEFORE_LINK = re.compile(r'\s+(?=[#@＃＠][^\s#@＃＠])')
+
+
 def douyin_card_words(text):
-    """What was written. Invisible marks and how much spacing there is are the page's own. Punctuation and where a space falls are part of the words: reviews showed 1.2 and 12, and now here and nowhere, must not read the same."""
-    return normalize(''.join(c for c in unicodedata.normalize('NFC', text or '') if unicodedata.category(c) != 'Cf'))
+    """What was written. Invisible marks, how much spacing there is and space just before an #topic or @name are the page's own.
+    Otherwise punctuation and where a space falls are part of the words: reviews showed 1.2 and 12, and now here and nowhere, must not read the same."""
+    return DOUYIN_BEFORE_LINK.sub('', normalize(''.join(c for c in unicodedata.normalize('NFC', text or '') if unicodedata.category(c) != 'Cf')))
 
 
 def where_words_part(wanted, shown):

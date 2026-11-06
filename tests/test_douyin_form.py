@@ -192,6 +192,11 @@ class WholeFormTests(Base):
         await self.run_form(StubTx())
         self.assertEqual(("publish", "false"), (self.writes[0]["word"], self.writes[0]["later"]))
 
+    async def test_tags_douyin_set_side_by_side_still_read_as_the_plans(self):
+        await self.open(form().replace('>Words</div>', '>Words<div><br></div><div><span class="topic">#Tag</span><span class="topic">#Other</span></div></div>'))
+        await self.run_form(StubTx(tags=["Tag", "Other"]))
+        self.assertEqual(["publish"], [write["word"] for write in self.writes])
+
     async def test_words_that_came_out_different_say_where_and_never_publish(self):
         await self.open()
         with self.assertRaises(VpubError) as caught:
@@ -270,6 +275,15 @@ class CaptionTypingTests(Base):
         self.assertNotEqual(words("We are now here."), words("We are nowhere."))
         self.assertNotEqual(words("One. Two."), words("One. *Two."))
         self.assertNotEqual(words("Version 1.2"), words("Version 12"))
+
+    def test_space_just_before_a_topic_or_name_is_the_pages_own(self):
+        """From a field run: a caption with #tags and @names stopped as differing from the plan, and Douyin can make each one a link of its own, set side by side."""
+        words = browser_backends.douyin_card_words
+        self.assertEqual(words("设定：@上善无形\n参考 @ZipZipPipe 的形象\n\n#阿哈的抓马小曲 #大肥鱼 #阿哈摇"), words("设定：@上善无形 参考@ZipZipPipe 的形象#阿哈的抓马小曲#大肥鱼 #阿哈摇"))
+        # Space after one still counts: without it, where a name or topic ends can't be told.
+        for wanted, shown in (("@上善无形\nGPT娘", "@上善无形GPT娘"), ("#阿哈摇 好看", "#阿哈摇好看"), ("@上善无形 GPT娘", "@SomeoneElse GPT娘"), ("#a #b", "#a #c"), ("C++", "C#")):
+            with self.subTest(wanted=wanted):
+                self.assertNotEqual(words(wanted), words(shown))
 
     async def test_what_was_there_goes_first(self):
         box, _ = await self.type_it("New.")
