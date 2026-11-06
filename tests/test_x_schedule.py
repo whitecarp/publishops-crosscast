@@ -642,6 +642,7 @@ class ReadBackTests(unittest.IsolatedAsyncioTestCase):
 
     def page(self, body):
         page = AsyncMock()
+        page.url = "https://x.com/" + OWNER  # A page that can be checked for a platform's check, as each look in a read-back does.
         page.locator = lambda selector: AsyncMock(inner_text=AsyncMock(return_value=body), all=AsyncMock(return_value=[]))
         page.get_by_text = lambda *a, **k: AsyncMock(all=AsyncMock(return_value=[]))
         return page
@@ -659,6 +660,21 @@ class ReadBackTests(unittest.IsolatedAsyncioTestCase):
         result, read = await self.after_its_time([{"id": "1", "text": "My title"}, {"id": "2", "text": "My title"}])
         self.assertEqual("found", result["id"])
         self.assertEqual("2", read.await_args.args[3]["id"])
+
+    async def test_after_its_time_a_post_whose_player_comes_late_still_settles_it(self):
+        """From a field run: on a cold browser X showed a post before its video player, so a single read saw no video."""
+        moment = datetime.now(timezone.utc) - timedelta(minutes=5)
+        receipt = {**self.receipt(schedule={"at": moment.isoformat()}), "media_url": "https://studio.x.com/library/13_77/edit"}
+        post = {"id": "2", "text": "My title", "published_at": moment.isoformat(), "media_id": "77"}
+        page = self.page("")
+        with patch.object(browser_backends, "works", new=AsyncMock()), patch.object(browser_backends, "risk_check", new=AsyncMock()) as checked, \
+                patch.object(browser_backends, "own_posts", new=AsyncMock(side_effect=[[{**post, "has_video": False}], [{**post, "has_video": True}]])), \
+                patch.object(browser_backends, "verify", new=AsyncMock(return_value={"state": "SUBMISSION_VERIFIED", "id": "found"})) as read:
+            result = await browser_backends.verify_scheduled_x(page, OWNER, receipt)
+        self.assertEqual("found", result["id"])
+        self.assertEqual("2", read.await_args.args[3]["id"])
+        page.wait_for_timeout.assert_awaited_once_with(500)
+        checked.assert_awaited_once()
 
     async def test_the_words_it_was_given_decide_when_it_has_them(self):
         result, read = await self.after_its_time([{"id": "2", "text": "My post text"}], expected_text="My post text")

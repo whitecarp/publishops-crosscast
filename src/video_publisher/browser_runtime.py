@@ -132,28 +132,71 @@ def challenge_address(address):
     return any(on_site(parts.hostname or "", site) and re.match(path, parts.path) for site, path in CHALLENGE_ADDRESSES.items())
 
 
-# Whether these words are inside Studio's own upload window, and not in a window of their own within it.
-# Studio's own elements can have roots of their own, so the way up goes through them.
+# For words inside Studio's own upload window, and not in a window of their own within it: each piece of text that window shows, so the words
+# can be weighed against the rest of it. None for any other words. The way up follows what is drawn, so words a component slots into a window
+# of its own meet that window, and both the way up and the reading go through Studio's components' own roots. A window inside the upload window
+# is its own frame only if it holds the upload form, which CrossCast itself fills in there (its progress, title box, Next button or file picker).
+# Any other window inside it, and any alert window, is a window of its own. Text counts as shown when it is drawn and not hidden, whatever the
+# element around it is drawn as; what a person types into its boxes is theirs and isn't read. Each block is read apart, so the end of one block
+# and the start of the next can't make up words neither says, while words split across styled pieces of one line still read as one.
 YOUTUBE_UPLOAD_WINDOW = """e => {
-  for (let n = e; n; n = n.parentElement || n.getRootNode().host) {
-    if (n.getAttribute('role') === 'alertdialog') return false;
-    if (n.tagName === 'YTCP-UPLOADS-DIALOG') return true;
+  const form = 'ytcp-video-upload-progress, #title-textarea, #next-button, ytcp-uploads-file-picker';
+  const holds = root => !!root.querySelector(form) || [...root.querySelectorAll('*')].some(n => n.shadowRoot && holds(n.shadowRoot));
+  let place = null;
+  for (let n = e; n; n = n.assignedSlot || n.parentElement || n.getRootNode().host) {
+    if (n.tagName === 'YTCP-UPLOADS-DIALOG') { place = n; break; }
+    const role = (n.getAttribute('role') || '').toLowerCase();
+    if (role === 'alertdialog') return null;
+    if ((role === 'dialog' || (n.getAttribute('aria-modal') || '').toLowerCase() === 'true' || ['DIALOG', 'TP-YT-PAPER-DIALOG'].includes(n.tagName))
+        && !holds(n)) return null;
   }
-  return false;
+  if (!place) return null;
+  const said = [];
+  const read = n => {
+    if (n.nodeType === 3) {
+      const around = n.parentElement || (n.parentNode && n.parentNode.host);
+      const box = document.createRange();
+      box.selectNodeContents(n);
+      if (around && getComputedStyle(around).visibility === 'visible' && box.getClientRects().length) said.push(n.data);
+      return;
+    }
+    if (n.nodeType !== 1) {
+      for (const child of n.childNodes) read(child);
+      return;
+    }
+    const display = getComputedStyle(n).display;
+    if (n.matches('script, style, [contenteditable]:not([contenteditable="false"])') || display === 'none') return;
+    const block = !(display.startsWith('inline') || display === 'contents');
+    if (block) said.push('\\n');
+    if (n.shadowRoot) {
+      read(n.shadowRoot);
+      said.push('\\n');
+    }
+    for (const child of n.childNodes) read(child);
+    if (block) said.push('\\n');
+  };
+  read(place);
+  return said.join('').split('\\n');
 }"""
+
+
+def check_words_in(pieces):
+    """Every phrase a check, a pushback or a recovery page uses, in these pieces of text, each read on its own."""
+    return [found[0] for piece in pieces for found in HUMAN_LABELS.finditer(piece or "")]
 
 
 async def studio_feature_notice(item):
     """Whether these are Studio's own upload window saying in a check's words what a feature needs.
 
     A field run's channel had not verified a phone number, and that window said so about custom thumbnails. Looking for the word
-    thumbnail close by missed it on the next run, so inside that window, the words a check asks with are taken as Studio's notice.
-    Google asks for its own checks on its own pages (CHALLENGE_ADDRESSES) or in a window of their own. Those, words about doing
-    too much or about a locked account, and the same words anywhere else on Studio still stop everything."""
-    if not await item.evaluate(YOUTUBE_UPLOAD_WINDOW):
-        return False
-    said = [found[0] for found in HUMAN_LABELS.finditer(await item.text_content() or "")]
-    return bool(said) and all(IDENTITY_WORDS.fullmatch(words) for words in said)
+    thumbnail close by missed it on the next run, so inside that window, the words a check asks with are taken as Studio's notice,
+    as long as they are this element's own and nothing the window shows is any other kind of warning. From a review: words about
+    doing too much can sit beside a link that asks for a check, and only the link was looked at. Google asks for its own checks on
+    its own pages (CHALLENGE_ADDRESSES) or in a window of their own. Those, words about doing too much or about a locked account
+    anywhere in the window, and the same words anywhere else on Studio still stop everything."""
+    shown = await item.evaluate(YOUTUBE_UPLOAD_WINDOW)
+    own = check_words_in([await item.text_content() or ""])
+    return shown is not None and bool(own) and all(IDENTITY_WORDS.fullmatch(words) for words in own + check_words_in(shown))
 
 
 async def platform_words(page):
@@ -186,7 +229,16 @@ async def what_asked(page):
         # A site built from elements of its own, as Studio is, also says which one held the words: only a name from the site's own code.
         within = await item.evaluate("""e => { for (let n = e; n; n = n.parentElement || n.getRootNode().host) if (n.tagName.includes('-')) {
           const name = n.tagName.toLowerCase(); return /^[a-z][a-z0-9-]{1,60}$/.test(name) ? name : 'other'; } return null; }""")
-        return {**seen, "within": within} if within else seen
+        if within:
+            seen["within"] = within
+        # Inside Studio's upload window, the other warning words it showed, which kept these from passing for Studio's notice. Only phrases from
+        # CrossCast's own list, never anything else the page says.
+        if urlsplit(page.url).hostname == "studio.youtube.com":
+            shown = await item.evaluate(YOUTUBE_UPLOAD_WINDOW)
+            also = sorted({words for words in check_words_in(shown or []) if not IDENTITY_WORDS.fullmatch(words)})
+            if also:
+                seen["also"] = also
+        return seen
     except Exception:
         return None
 

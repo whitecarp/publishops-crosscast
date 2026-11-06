@@ -282,21 +282,24 @@ async def douyin_card_status(card):
     return normalize(await card.evaluate("""card => { const title = card.querySelector('[class^="info-title-text-"]'); return title ? card.innerText.replace(title.innerText, '') : card.innerText; }"""))
 
 
-# Douyin can make an #topic or @name in a caption a link of its own, and #tags typed one after another can then sit side by side with no space.
-# A field run's caption with #tags and @names stopped as differing from the plan. So space just before an #topic or @name doesn't count, on both
-# sides of every comparison. Space after one does: where a name ends can't be told without it, as in @ZipZipPipe的.
-DOUYIN_BEFORE_LINK = re.compile(r'\s+(?=[#@＃＠][^\s#@＃＠])')
+# Douyin can make an #topic or @name in a caption a link of its own, and #tags typed one after another can then sit side by side, with no space
+# between them or each on a line of its own. A field run's caption with #tags and @names stopped as differing from the plan. So space between one
+# #topic or @name and the next doesn't count, on both sides of every comparison. Any other space still counts as it always has: a line that lost
+# its line break with nothing in its place still differs, and where a name ends can't be told without the space after it, as in @ZipZipPipe的.
+DOUYIN_BETWEEN_LINKS = re.compile(r'([#@＃＠][^\s#@＃＠]+)\s+(?=[#@＃＠][^\s#@＃＠])')
 
 
 def douyin_card_words(text):
-    """What was written. Invisible marks, how much spacing there is and space just before an #topic or @name are the page's own.
-    Otherwise punctuation and where a space falls are part of the words: reviews showed 1.2 and 12, and now here and nowhere, must not read the same."""
-    return DOUYIN_BEFORE_LINK.sub('', normalize(''.join(c for c in unicodedata.normalize('NFC', text or '') if unicodedata.category(c) != 'Cf')))
+    """What was written, on a card or in a form's box. Invisible marks, how much spacing there is and space between one #topic or @name and
+    the next are the page's own. Otherwise punctuation and where a space falls are part of the words: reviews showed 1.2 and 12, and now here
+    and nowhere, must not read the same."""
+    unmarked = ''.join(c for c in unicodedata.normalize('NFC', text or '') if unicodedata.category(c) != 'Cf')
+    return normalize(DOUYIN_BETWEEN_LINKS.sub(r'\1', unmarked))
 
 
 def where_words_part(wanted, shown):
-    """For a stop's message: how far the words a form holds agree with the plan's, and the plan's own words just before they part.
-    Nothing the form holds is repeated, since a suggestion Douyin put in can be someone else's name."""
+    """For a stop's message: how far the words a form holds agree with the plan's, with spacing evened out, and the plan's words just before
+    they part. Nothing the form holds is repeated, since a suggestion Douyin put in can be someone else's name."""
     same = next((at for at, (one, other) in enumerate(zip(wanted, shown)) if one != other), min(len(wanted), len(shown)))
     return f"they agree for {same} of the plan's {len(wanted)} characters, up to \"{wanted[max(0, same - 16):same]}\", and the form holds {len(shown)}"
 
@@ -308,7 +311,8 @@ DOUYIN_SUGGESTIONS_MS = 500  # For a list that opens a moment after the words go
 
 
 async def douyin_close_suggestions(page, editor):
-    """Escape closes the list and changes no words. Should a page ever take it to mean leaving the box too, the cursor goes back to the end of the words."""
+    """Escape closes the list and changes no words. Should a page ever take it to mean leaving the box too, the cursor goes back to the end of
+    the words. The read-back after typing catches anything else."""
     await page.wait_for_timeout(DOUYIN_SUGGESTIONS_MS)
     await page.keyboard.press('Escape')
     await editor.evaluate("""e => { if (e.contains(document.activeElement)) return;
@@ -501,13 +505,15 @@ X_PLAYER_SECONDS = 8
 
 async def x_own_posts_with_players(page, identity, wanted):
     """This account's posts, read again every half second for up to X_PLAYER_SECONDS while one that `wanted` picks shows no video yet.
-    For a one-shot read: finish() reads again on its own, five seconds apart. works() has just checked this page for a platform's check on each of its looks.
+    For a one-shot read: finish() reads again on its own, five seconds apart. Each look again checks the page for a platform's check, as
+    works() does on each of its own: from a review, a check shown during the wait would otherwise go unrecorded by this command.
     """
     posts = await own_posts(page, identity)
     for _ in range(X_PLAYER_SECONDS * 2):
         if not any(wanted(post) and not post['has_video'] for post in posts):
             break
         await page.wait_for_timeout(500)
+        await risk_check(page)
         posts = await own_posts(page, identity)
     return posts
 

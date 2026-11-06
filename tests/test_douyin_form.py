@@ -197,6 +197,13 @@ class WholeFormTests(Base):
         await self.run_form(StubTx(tags=["Tag", "Other"]))
         self.assertEqual(["publish"], [write["word"] for write in self.writes])
 
+    async def test_a_line_joined_before_the_tags_never_publishes(self):
+        await self.open(form().replace('>Words</div>', '>Words<span class="topic">#Tag</span></div>'))
+        with self.assertRaises(VpubError) as caught:
+            await self.run_form(StubTx(tags=["Tag"]))
+        self.assertEqual("metadata_mismatch", caught.exception.code)
+        self.assertEqual([], self.writes)
+
     async def test_words_that_came_out_different_say_where_and_never_publish(self):
         await self.open()
         with self.assertRaises(VpubError) as caught:
@@ -276,14 +283,21 @@ class CaptionTypingTests(Base):
         self.assertNotEqual(words("One. Two."), words("One. *Two."))
         self.assertNotEqual(words("Version 1.2"), words("Version 12"))
 
-    def test_space_just_before_a_topic_or_name_is_the_pages_own(self):
-        """From a field run: a caption with #tags and @names stopped as differing from the plan, and Douyin can make each one a link of its own, set side by side."""
+    def test_space_between_topics_or_names_is_the_pages_own(self):
+        """From a field run: a caption with #tags and @names stopped as differing from the plan, and Douyin can make each one a link of its own,
+        set side by side with no space between them or each on a line of its own."""
         words = browser_backends.douyin_card_words
-        self.assertEqual(words("设定：@上善无形\n参考 @ZipZipPipe 的形象\n\n#阿哈的抓马小曲 #大肥鱼 #阿哈摇"), words("设定：@上善无形 参考@ZipZipPipe 的形象#阿哈的抓马小曲#大肥鱼 #阿哈摇"))
-        # Space after one still counts: without it, where a name or topic ends can't be told.
-        for wanted, shown in (("@上善无形\nGPT娘", "@上善无形GPT娘"), ("#阿哈摇 好看", "#阿哈摇好看"), ("@上善无形 GPT娘", "@SomeoneElse GPT娘"), ("#a #b", "#a #c"), ("C++", "C#")):
+        caption = "设定：@上善无形\n参考 @ZipZipPipe 的形象\n\n#阿哈的抓马小曲 #大肥鱼 #阿哈摇"
+        for shown in ("设定：@上善无形\n参考 @ZipZipPipe 的形象\n\n#阿哈的抓马小曲#大肥鱼#阿哈摇", "设定：@上善无形 参考 @ZipZipPipe 的形象 #阿哈的抓马小曲\n#大肥鱼\n#阿哈摇"):
+            with self.subTest(shown=shown):
+                self.assertEqual(words(caption), words(shown))
+        # Any other space counts as it always has. Without the space after a name or topic, where it ends can't be told, and a line that lost
+        # its line break with nothing in its place is another text.
+        for wanted, shown in (("@上善无形\nGPT娘", "@上善无形GPT娘"), ("#阿哈摇 好看", "#阿哈摇好看"), ("@上善无形 GPT娘", "@SomeoneElse GPT娘"), ("#a #b", "#a #c"),
+                              ("C++", "C#"), ("享有\n\n#阿哈的抓马小曲 #大肥鱼", "享有#阿哈的抓马小曲 #大肥鱼"), ("参考：\n@上善无形 的设定", "参考：@上善无形 的设定")):
             with self.subTest(wanted=wanted):
                 self.assertNotEqual(words(wanted), words(shown))
+        self.assertEqual(words("享有\n\n#阿哈的抓马小曲"), words("享有 #阿哈的抓马小曲"))
 
     async def test_what_was_there_goes_first(self):
         box, _ = await self.type_it("New.")
@@ -303,16 +317,18 @@ class CaptionTypingTests(Base):
                 self.assertEqual(browser_backends.douyin_card_words(caption), browser_backends.douyin_card_words(await box.inner_text()))
 
     # A box like Douyin's: a list of suggestions for the #topic or @name the cursor is at the end of, and Enter there picks one instead of starting a line.
+    # Its script keeps to a scope of its own: from a review, a second page set in the same tab otherwise failed to declare its names again and had no list.
     SUGGESTING = """<!doctype html><meta charset="utf-8"><body><div contenteditable="true" id="box">Old words</div><div id="list" hidden>SomeoneElse</div>
-      <script>const box = document.getElementById('box'), list = document.getElementById('list'); window.pending = 0;
+      <script>(() => { const box = document.getElementById('box'), list = document.getElementById('list'); window.pending = 0;
       const atEnd = () => { const range = getSelection().rangeCount && getSelection().getRangeAt(0); const node = range && range.endContainer;
         return node && node.nodeType === 3 && /[#@][^\\s#@]*$/.test(node.data.slice(0, range.endOffset)); };
       const look = () => { list.hidden = !atEnd(); };
-      box.addEventListener('input', () => { if (LATE) { window.pending++; setTimeout(() => { window.pending--; look(); }, LATE); } else look(); });
+      // A late list stands for a lookup that comes back after a while and opens its list then, wherever the cursor has got to.
+      box.addEventListener('input', () => { if (!LATE) return look(); if (atEnd()) { window.pending++; setTimeout(() => { window.pending--; list.hidden = false; }, LATE); } });
       box.addEventListener('keydown', e => {
         if (e.key === 'Escape') { list.hidden = true; if (LEAVES) box.blur(); }
         if (e.key === 'Enter' && !list.hidden) { e.preventDefault(); list.hidden = true; document.execCommand('insertText', false, 'SomeoneElse '); }
-      });</script>"""
+      }); })();</script>"""
     # What a field run's caption had: lines ending in @names, a name in the middle of a line, and #tags at the end.
     FIELD_CAPTION = "开头一段。\n\n原作角色设定：@上善无形\n角色设计参考：@ZipZipPipe\n参考 @ZipZipPipe 的形象\n\n#阿哈的抓马小曲 #大肥鱼 #阿哈摇"
 
@@ -320,6 +336,9 @@ class CaptionTypingTests(Base):
         await self.page.set_content(self.SUGGESTING.replace("LATE", str(late)).replace("LEAVES", "true" if leaves else "false"))
         box = self.page.locator("#box")
         await browser_backends.douyin_type_caption(self.page, box, self.FIELD_CAPTION)
+        # Whatever list was still coming has come before anything is looked at.
+        await self.page.wait_for_function("window.pending === 0")
+        await self.page.wait_for_timeout(50)
         return box
 
     async def test_enter_never_reaches_suggestions_a_line_ending_in_a_name_opened(self):

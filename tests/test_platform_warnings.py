@@ -359,7 +359,18 @@ class WhoIsAskingTests(Home, ChromeCase):
                      '<ytcp-uploads-dialog role="dialog"><h1>缩略图</h1>' + '<div>' * 10 + '<span>验证是你本人</span>' + '</div>' * 10 + '<p>' + '说明' * 300 + '</p></ytcp-uploads-dialog>',
                      '<ytcp-uploads-dialog role="dialog"><ytcp-uploads-details><div role="alert">使用此功能前，请先验证是你本人。</div></ytcp-uploads-details></ytcp-uploads-dialog>',
                      '<ytcp-uploads-dialog role="dialog"><ytcp-notice></ytcp-notice></ytcp-uploads-dialog>'
-                     '<script>document.querySelector("ytcp-notice").attachShadow({mode: "open"}).innerHTML = "<div><span>Verify it\'s you</span> to use this feature</div>";</script>'):
+                     '<script>document.querySelector("ytcp-notice").attachShadow({mode: "open"}).innerHTML = "<div><span>Verify it\'s you</span> to use this feature</div>";</script>',
+                     # The window's own frame, a person's own words that happen to say too much, and a warning nobody can see.
+                     '<ytcp-uploads-dialog role="dialog"><tp-yt-paper-dialog role="dialog" aria-modal="true"><ytcp-video-upload-progress></ytcp-video-upload-progress>'
+                     '<div contenteditable="true">别操作频繁</div><div hidden>Rate limit exceeded</div><div><span>验证是你本人</span>后即可上传自定义缩略图</div>'
+                     '<button id="next-button">下一步</button></tp-yt-paper-dialog></ytcp-uploads-dialog>',
+                     # The same frame with its form inside an element with a root of its own.
+                     '<ytcp-uploads-dialog role="dialog"><tp-yt-paper-dialog role="dialog"><ytcp-uploads-details></ytcp-uploads-details>'
+                     '<div><span>验证是你本人</span>后即可上传自定义缩略图</div></tp-yt-paper-dialog></ytcp-uploads-dialog>'
+                     '<script>document.querySelector("ytcp-uploads-details").attachShadow({mode: "open"}).innerHTML = "<div id=\'title-textarea\'></div>";</script>',
+                     # From a second review: words nobody can see, and two blocks whose ends would run together into a captcha's words.
+                     '<ytcp-uploads-dialog role="dialog"><div style="visibility:hidden">Rate limit exceeded</div><div>为了账号安全</div>'
+                     '<div><span>验证是你本人</span>后即可上传自定义缩略图</div></ytcp-uploads-dialog>'):
             with self.subTest(body=body[:70]):
                 self.assertFalse(await self.shown(body, studio))
                 await rt.risk_check(self.page)
@@ -373,7 +384,23 @@ class WhoIsAskingTests(Home, ChromeCase):
                      '<ytcp-uploads-dialog role="dialog"><div>你的操作过于频繁</div></ytcp-uploads-dialog>',
                      '<ytcp-uploads-dialog role="dialog"><div>Choose a way to recover</div></ytcp-uploads-dialog>',
                      '<ytcp-uploads-dialog role="dialog"><div>安全验证</div></ytcp-uploads-dialog>',
-                     '<ytcp-uploads-dialog role="dialog"><div>Unusual activity. Verify it\'s you</div></ytcp-uploads-dialog>'):
+                     '<ytcp-uploads-dialog role="dialog"><div>Unusual activity. Verify it\'s you</div></ytcp-uploads-dialog>',
+                     # From a review: words about doing too much beside a link that asks for a check, a window inside the window, and an alert window
+                     # whose role is written in capitals.
+                     '<ytcp-uploads-dialog role="dialog"><div>Unusual activity on this channel. <a href="#">Verify it\'s you</a></div></ytcp-uploads-dialog>',
+                     '<ytcp-uploads-dialog role="dialog"><tp-yt-paper-dialog role="dialog"><div>缩略图</div><button id="next-button">下一步</button>'
+                     '<tp-yt-paper-dialog role="dialog"><div>验证是你本人</div><button>继续</button></tp-yt-paper-dialog></tp-yt-paper-dialog></ytcp-uploads-dialog>',
+                     '<ytcp-uploads-dialog role="dialog"><ytcp-dialog><div role="dialog" aria-modal="true">验证是你本人<button>继续</button></div></ytcp-dialog></ytcp-uploads-dialog>',
+                     '<ytcp-uploads-dialog role="dialog"><tp-yt-paper-dialog role="dialog"><h2>Verify it\'s you</h2><button>Next</button></tp-yt-paper-dialog></ytcp-uploads-dialog>',
+                     '<ytcp-uploads-dialog role="dialog"><div role="AlertDialog"><div>Verify it\'s you</div></div></ytcp-uploads-dialog>',
+                     # From a second review: a window drawn only through its children, an alert window a component slots the words into, and a
+                     # button whose words are its value.
+                     '<ytcp-uploads-dialog role="dialog" style="display:contents"><div>Unusual activity on this channel. <a href="#">Verify it\'s you</a></div></ytcp-uploads-dialog>',
+                     '<ytcp-uploads-dialog role="dialog"><ytcp-alert-host><span>Verify it\'s you</span></ytcp-alert-host></ytcp-uploads-dialog>'
+                     '<script>document.querySelector("ytcp-alert-host").attachShadow({mode: "open"}).innerHTML = "<div role=\'alertdialog\'><slot></slot></div>";</script>',
+                     '<ytcp-uploads-dialog role="dialog"><div>验证是你本人后即可上传自定义缩略图</div><input type="submit" value="Verify it\'s you"></ytcp-uploads-dialog>',
+                     # Words about doing too much split across styled pieces of one line, beside the link.
+                     '<ytcp-uploads-dialog role="dialog"><div>Unusual <b>activity</b> on this channel. <a href="#">Verify it\'s you</a></div></ytcp-uploads-dialog>'):
             with self.subTest(body=body[:70]):
                 self.assertTrue(await self.shown(body, studio))
         self.assertTrue(await self.shown('<ytcp-uploads-dialog role="dialog"><div>验证是你本人</div></ytcp-uploads-dialog>'))
@@ -384,6 +411,16 @@ class WhoIsAskingTests(Home, ChromeCase):
         with self.assertRaises(VpubError):
             await rt.risk_check(self.page)
         self.assertEqual({"sign": "words", "phrase": "验证是你本人", "place": "dialog", "within": "ytcp-feature-dialog"}, read_json(self.stop_file())["seen"])
+
+    async def test_a_stop_in_studios_upload_window_says_which_other_warning_kept_it(self):
+        """From a second review: a real warning beside the link and the known thumbnail notice otherwise leave the same record."""
+        self.body = '<ytcp-uploads-dialog role="dialog"><div>Unusual activity on this channel, Someone. <a href="#">Verify it\'s you</a></div></ytcp-uploads-dialog>'
+        await self.page.goto("https://studio.youtube.com/channel/abc/videos/upload")
+        with self.assertRaises(VpubError):
+            await rt.risk_check(self.page)
+        seen = read_json(self.stop_file())["seen"]
+        self.assertEqual((["Unusual activity"], "dialog"), (seen["also"], seen["place"]))
+        self.assertNotIn("Someone", str(seen))
 
     async def test_words_nobody_can_see_are_not(self):
         self.assertFalse(await self.shown("<h1 hidden>Confirm it's you</h1>"))
