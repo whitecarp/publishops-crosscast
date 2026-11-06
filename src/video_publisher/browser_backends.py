@@ -298,14 +298,30 @@ def douyin_card_words(text):
 
 
 def where_words_part(wanted, shown):
-    """For a stop's message: how far the words a form holds agree with the plan's, with spacing evened out, and the plan's words just before
-    they part. Nothing the form holds is repeated, since a suggestion Douyin put in can be someone else's name."""
+    """For a stop's message: how far the words a form holds agree with the plan's, with spacing evened out, the plan's words just before they
+    part, and what differs after that: which of the plan's characters the form lacks, and how many it has in their place or besides. Nothing
+    the form holds is repeated, since a suggestion Douyin put in can be someone else's name."""
+    from difflib import SequenceMatcher
     same = next((at for at, (one, other) in enumerate(zip(wanted, shown)) if one != other), min(len(wanted), len(shown)))
-    return f"they agree for {same} of the plan's {len(wanted)} characters, up to \"{wanted[max(0, same - 16):same]}\", and the form holds {len(shown)}"
+    said = f"they agree for {same} of the plan's {len(wanted)} characters, up to \"{wanted[max(0, same - 16):same]}\", and the form holds {len(shown)}"
+    changes = []
+    for kind, start, end, other_start, other_end in SequenceMatcher(None, wanted, shown, autojunk=False).get_opcodes():
+        if kind == 'delete':
+            changes.append(f"lacks \"{wanted[start:end][:16]}\" at character {start + 1}")
+        elif kind == 'insert':
+            changes.append(f"has {other_end - other_start} more at character {start + 1}")
+        elif kind == 'replace':
+            changes.append(f"has {other_end - other_start} other in place of \"{wanted[start:end][:16]}\" at character {start + 1}")
+    if changes:
+        said += "; the form " + ", ".join(changes[:4]) + (f", and {len(changes) - 4} more changes" if len(changes) > 4 else "")
+    return said
 
 
 # Douyin opens suggestions for an #topic or @name the cursor is at the end of, and Enter there picks one instead of starting a line.
 # A field run's caption had lines ending in @names, and the words on its form came out different from the plan's.
+# The next run closed the lists with Escape, and the form came back short of exactly the caption's three @, the one in the middle of a line
+# too: Douyin keeps a typed @ waiting for someone to be picked, past spaces, and takes it away when that is closed. So a plain @ can't be
+# typed there. The read-back then stops it before anything is published, and says which characters are missing.
 DOUYIN_SUGGESTS = re.compile(r'[#@＃＠]')
 DOUYIN_SUGGESTIONS_MS = 500  # For a list that opens a moment after the words go in, as one that looks names up can.
 
@@ -323,6 +339,7 @@ async def douyin_close_suggestions(page, editor):
 async def douyin_type_caption(page, editor, caption):
     """A caption set in one go came out with a star at each new paragraph, on the card and, for a real video, on its public page, and the person never wrote those. So it is typed as a person would, a line at a time.
     A line with an #topic or @name in it has any suggestions closed before the next key, the last line too: a field run's suggestions for a last #tag stayed over the cover buttons below and took their click.
+    Closing them never picks anyone, and Escape kept the #; it takes an @ away, which the read-back then catches.
     Every caller reads the words back afterwards."""
     await editor.click()
     await editor.press('ControlOrMeta+A')
@@ -1038,10 +1055,12 @@ async def execute(page, platform, identity, payload):
             pass
         human = isinstance(e, VpubError) and e.code in {"human_verification_required", "auth_expired"}
         state = "WAITING_FOR_USER" if human else "UNKNOWN" if tx.receipt["final_submit_attempted"] else "PREPARATION_INCOMPLETE"
+        # These wait on a person's choice too, though no check of the account was asked for: a phone number for the feature, or going without it.
+        chooses = human or (isinstance(e, VpubError) and e.code in {"cover_unavailable", "phone_verification_needed"})
         return tx.save(state=state, blocked_phase=tx.receipt['phase'], phase="blocked", review_url=page.url,
                        error={"code": e.code if isinstance(e, VpubError) else "browser_step_failed",
                               "message": e.message if isinstance(e, VpubError) else failure_message(e)},
-                       user_action_required=human,
+                       user_action_required=chooses,
                        hint="Progress is saved here. Whether the platform kept a draft isn't known, so look there before running it again. Nothing is uploaded or submitted again automatically.")
 
 

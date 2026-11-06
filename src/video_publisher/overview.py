@@ -92,6 +92,13 @@ def next_step(row, busy):
         return "vpub works bilibili --limit 20", "Read the existing works, then check Bilibili's creator center (including review and draft views). If you identify this exact upload, record its ID with vpub adopt. An incomplete or empty list cannot prove it was never uploaded: keep UNKNOWN if unsure. Do not re-encode, reset the record or upload again to evade the duplicate guard."
     if state == "WAITING_FOR_USER":
         return f"vpub auth login {platform}", f"Complete the official sign-in or verification, then run vpub resume {key}."
+    # From a review: a plain resume here would only send the same thumbnail to the same request again.
+    stopped = (receipt.get("error") or {}).get("code")
+    if stopped == "cover_unavailable":
+        return None, (f"This channel can't take the planned custom thumbnail yet (YouTube asks for a verified phone number). The person either "
+                      f"verifies it in YouTube Studio and then runs vpub resume {key}, or runs vpub resume {key} --no-cover to finish without it.")
+    if stopped == "phone_verification_needed":
+        return None, f"YouTube asks for a verified phone number before this channel can use a feature this needs. The person verifies it in YouTube Studio, then runs vpub resume {key}."
     if state in {"IN_PROGRESS", "PREPARATION_INCOMPLETE"} or state.startswith("UPLOAD") or (method == "api" and not receipt.get("id")):
         return f"vpub resume {key}", "The command stopped before finishing. Resume checks the saved state and never submits twice."
     if receipt.get("still_a_draft"):

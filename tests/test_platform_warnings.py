@@ -405,6 +405,41 @@ class WhoIsAskingTests(Home, ChromeCase):
                 self.assertTrue(await self.shown(body, studio))
         self.assertTrue(await self.shown('<ytcp-uploads-dialog role="dialog"><div>验证是你本人</div></ytcp-uploads-dialog>'))
 
+    # Word for word from a field run's screenshot: Studio's window, once a custom thumbnail was chosen on a channel without a verified phone number.
+    GATE = ('<tp-yt-paper-dialog role="dialog"><h2>验证是你本人</h2><div>若要使用这项功能，请先验证你的电话号码。此流程只需几分钟时间。</div>'
+            '<button>取消</button><button>验证</button></tp-yt-paper-dialog>')
+
+    async def test_studios_window_asking_for_a_phone_number_for_a_feature_stops_only_this_attempt(self):
+        """From a field run: that window of Studio's own stopped every platform as a check."""
+        studio = "https://studio.youtube.com/channel/abc/videos/upload"
+        for body in (self.GATE, self.GATE.replace("，", ",").replace("<button>取消</button><button>验证</button>", "<div><button>验证</button><button>取消</button></div>"),
+                     '<ytcp-uploads-dialog role="dialog"><tp-yt-paper-dialog role="dialog"><div id="title-textarea" contenteditable="true">My title</div>'
+                     '<button id="next-button">下一步</button>' + self.GATE + '</tp-yt-paper-dialog></ytcp-uploads-dialog>'):
+            with self.subTest(body=body[:60]):
+                self.assertFalse(await self.shown(body, studio))
+                with self.assertRaises(VpubError) as caught:
+                    await rt.risk_check(self.page)
+                self.assertEqual("phone_verification_needed", caught.exception.code)
+                self.assertFalse(self.stop_file().exists())
+
+    async def test_a_check_that_only_looks_like_that_window_still_stops_everything(self):
+        """From a review: a check can use some of the same words, have its box inside a component's own root or a frame, or sit around that window."""
+        studio = "https://studio.youtube.com/channel/abc/videos/upload"
+        shadow_box = ('<script>document.querySelector("ytcp-code-box").attachShadow({mode: "open"}).innerHTML = "<input>";</script>')
+        for body in (self.GATE.replace("若要使用这项功能", "我们检测到你的账号存在异常活动。若要继续使用这项功能"),
+                     self.GATE.replace("<button>取消</button>", "<ytcp-code-box></ytcp-code-box><button>取消</button>") + shadow_box,
+                     self.GATE.replace("<button>取消</button>", '<iframe srcdoc="<input>"></iframe><button>取消</button>'),
+                     self.GATE.replace("<button>取消</button>", "<select><option>+1</option></select><button>取消</button>"),
+                     self.GATE.replace("<button>取消</button>", '<div role="textbox"></div><button>取消</button>'),
+                     '<div role="dialog"><input type="password">' + self.GATE.replace('<tp-yt-paper-dialog role="dialog">', '<tp-yt-paper-dialog aria-modal="true">') + '</div>',
+                     self.GATE.replace("<button>取消</button>", "<div>Unusual activity</div><button>取消</button>"),
+                     # Another language's window stops everything until it has been seen and written down word for word.
+                     '<div role="dialog"><h2>Verify it\'s you</h2><p>To use this feature, first verify your phone number.</p><button>Cancel</button><button>Verify</button></div>',
+                     '<tp-yt-paper-dialog role="dialog"><h2>验证是你本人</h2><div>为了保护你的账号，请输入密码。</div><button>下一步</button></tp-yt-paper-dialog>'):
+            with self.subTest(body=body[:70]):
+                self.assertTrue(await self.shown(body, studio))
+        self.assertTrue(await self.shown(self.GATE, "https://www.youtube.com/"))
+
     async def test_a_stop_on_studio_also_names_the_element_that_held_the_words(self):
         self.body = '<ytcp-feature-dialog role="dialog"><div>请验证是你本人</div></ytcp-feature-dialog>'
         await self.page.goto("https://studio.youtube.com/channel/abc/videos/upload")

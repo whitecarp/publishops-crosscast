@@ -1287,6 +1287,16 @@ async def publish_youtube(page, tx):
                             'Custom thumbnails need a verified channel. Verify it in YouTube Studio, or plan without a cover.')
         await choose_file(page, page.locator(f'{YT_DIALOG} input#file-loader').first, tx.cover())
         await page.wait_for_timeout(2000)
+        # A field run's channel without a verified phone number got Studio's window asking for one here, over the form. A check of the account
+        # still comes first and stops everything.
+        try:
+            await risk_check(page)
+        except VpubError as stopped:
+            if stopped.code != 'phone_verification_needed':
+                raise
+            raise VpubError('cover_unavailable', 'YouTube asked for a verified phone number before this channel can use a custom thumbnail, so nothing was '
+                            'published, and the upload is kept as a draft. Verify the phone number in YouTube Studio yourself and run vpub resume again, '
+                            'or run vpub resume with --no-cover to go without the thumbnail.') from None
         tx.save(cover={'state': 'UI_ACCEPTED', 'source': 'production_artwork', 'remote_pixels_verified': False})
     await yt_radio(page, 'VIDEO_MADE_FOR_KIDS_MFK' if options['made_for_kids'] else 'VIDEO_MADE_FOR_KIDS_NOT_MFK', 'audience_unverified', 'audience')
     more = await visible(page.locator(f'{YT_DIALOG} #toggle-button'))

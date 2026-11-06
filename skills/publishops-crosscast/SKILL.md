@@ -51,7 +51,7 @@ Keep `vpub safety status` limits unless the user requests a change. Use `--writt
 
 ## Recovery and feedback
 
-- A verification request, risk control or rate limit stops all CrossCast platforms. Read `vpub status`; only the affected platform's auth login still opens a window. Run `vpub stop --clear` only after reading its cause and the user says the check is complete.
+- A verification request, risk control or rate limit stops all CrossCast platforms (Studio's phone-number request stops only that upload). Read `vpub status`; only the affected platform's auth login still opens a window. Run `vpub stop --clear` only after reading its cause and the user says the check is complete.
 - Never blindly repeat writes: failure may follow success. Read the original receipt and use its verify/resume path; resume may select media again. An uncertain X edit cannot be retried through CrossCast, even with `--person-approved`; use `--verify-only` or inspect/fix it on X.
 - Paid `report`, `read-all` and `notify` return `paid_feature_required`; the add-on is not on sale. Offer `vpub ops sync` for recent reads.
 - Never test by deleting videos, clearing saved lists, contacting unrelated accounts or enabling recurring operations without the user's request.

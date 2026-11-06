@@ -199,12 +199,73 @@ async def studio_feature_notice(item):
     return shown is not None and bool(own) and all(IDENTITY_WORDS.fullmatch(words) for words in own + check_words_in(shown))
 
 
+# Studio's own window asking for a verified phone number before a feature can be used. A field run's channel, with a custom thumbnail
+# planned, got one headed 验证是你本人 that said 若要使用这项功能，请先验证你的电话号码。此流程只需几分钟时间。 over 取消 and 验证, a window
+# of its own that doesn't hold the upload form. It is the feature asking for a phone number, not a check of the account. From a review:
+# a check can use some of the same words, so only that window word for word counts, with letters and digits compared, since a reading of a
+# screenshot can't be sure of its punctuation. Another language's window, or any other words, stop everything until one is seen.
+STUDIO_PHONE_GATES = {"验证是你本人若要使用这项功能请先验证你的电话号码此流程只需几分钟时间取消验证",
+                      "验证是你本人若要使用这项功能请先验证你的电话号码此流程只需几分钟时间验证取消"}
+# For words in a window of their own: everything that window shows, read through Studio's components' own roots, or None for words in no
+# window, or when it or a window around it, short of the upload window's own frame, holds anything to type into or pick from, or a frame.
+STUDIO_GATE_WINDOW = """e => {
+  const isWindow = n => { const role = (n.getAttribute('role') || '').toLowerCase();
+    return role === 'dialog' || role === 'alertdialog' || (n.getAttribute('aria-modal') || '').toLowerCase() === 'true' || ['DIALOG', 'TP-YT-PAPER-DIALOG'].includes(n.tagName); };
+  const finds = (root, selector) => !!root.querySelector(selector) || [...root.querySelectorAll('*')].some(n => n.shadowRoot && finds(n.shadowRoot, selector));
+  const form = 'ytcp-video-upload-progress, #title-textarea, #next-button, ytcp-uploads-file-picker';
+  const typed = 'input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]), textarea, select, iframe, '
+              + '[contenteditable]:not([contenteditable="false"]), [role=textbox], [role=combobox], [role=spinbutton], [role=searchbox]';
+  let box = null;
+  for (let n = e; n; n = n.assignedSlot || n.parentElement || n.getRootNode().host) {
+    if (n.tagName === 'YTCP-UPLOADS-DIALOG' || (box && isWindow(n) && finds(n, form))) break;
+    if (!isWindow(n)) continue;
+    if (finds(n, typed)) return null;
+    box = box || n;
+  }
+  if (!box) return null;
+  const said = [];
+  const read = n => {
+    if (n.nodeType === 3) {
+      const around = n.parentElement || (n.parentNode && n.parentNode.host);
+      const shown = document.createRange();
+      shown.selectNodeContents(n);
+      if (around && getComputedStyle(around).visibility === 'visible' && shown.getClientRects().length) said.push(n.data);
+      return;
+    }
+    if (n.nodeType === 1) {
+      if (n.matches('script, style') || getComputedStyle(n).display === 'none') return;
+      if (n.shadowRoot) read(n.shadowRoot);
+    }
+    for (const child of n.childNodes) read(child);
+  };
+  read(box);
+  return said.join(' ');
+}"""
+
+
+async def studio_phone_gate(item):
+    """Whether these words head Studio's own window asking for a verified phone number before a feature can be used, word for word.
+    Clicking 验证 there goes on to YouTube's own page for the phone number, which is the person's to do."""
+    shown = await item.evaluate(STUDIO_GATE_WINDOW)
+    return shown is not None and ''.join(c for c in shown if c.isalnum()) in STUDIO_PHONE_GATES
+
+
+async def studio_gate_shown(page):
+    """Whether Studio shows that window on this page."""
+    if urlsplit(page.url).hostname != "studio.youtube.com":
+        return False
+    for item in await page.get_by_text(HUMAN_LABELS).all():
+        if await item.is_visible() and await studio_phone_gate(item):
+            return True
+    return False
+
+
 async def platform_words(page):
     """The first thing on the page that asks for a check in the platform's own voice."""
     # Only Studio has that upload window, so no other page is asked about it.
     studio = urlsplit(page.url).hostname == "studio.youtube.com"
     for item in await page.get_by_text(HUMAN_LABELS).all():
-        if await item.is_visible() and not await item.evaluate(SOMEONES_WORDS, OTHER_PEOPLES_WORDS) and not (studio and await studio_feature_notice(item)):
+        if await item.is_visible() and not await item.evaluate(SOMEONES_WORDS, OTHER_PEOPLES_WORDS) and not (studio and (await studio_feature_notice(item) or await studio_phone_gate(item))):
             return item
     return None
 
@@ -249,6 +310,10 @@ async def risk_check(page):
         # Recorded where it is seen: a batch or a multi-step read catches the error below so it can report its other steps.
         pushed_back(platform_at(page.url), "human_verification_required", await what_asked(page))
         raise VpubError("human_verification_required", "The platform requires human verification.", f"Run auth login for this platform and complete the official verification, then {how_to_clear_a_stop()}; inspect any existing draft before retrying.")
+    # Only this command stops there, and nothing is written to the stop file: no check of the account was asked for, so nothing else needs to wait.
+    if await studio_gate_shown(page):
+        raise VpubError("phone_verification_needed", "YouTube asks for a verified phone number before this channel can use a feature, so CrossCast "
+                        "stopped there and pressed nothing more. Verify the phone number in YouTube Studio yourself.")
 
 
 async def identity(page, platform):

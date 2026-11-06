@@ -204,6 +204,15 @@ class WholeFormTests(Base):
         self.assertEqual("metadata_mismatch", caught.exception.code)
         self.assertEqual([], self.writes)
 
+    async def test_a_form_that_lost_an_at_sign_never_publishes_and_says_so(self):
+        """From a field run: Douyin took the @ away from each name in the caption, and the words were stopped before 发布."""
+        await self.open(form().replace('>Words</div>', '>Credit: 上善无形</div>'))
+        with self.assertRaises(VpubError) as caught:
+            await self.run_form(StubTx(description="Credit: @上善无形"))
+        self.assertEqual("metadata_mismatch", caught.exception.code)
+        self.assertIn('lacks "@" at character 9', caught.exception.message)
+        self.assertEqual([], self.writes)
+
     async def test_words_that_came_out_different_say_where_and_never_publish(self):
         await self.open()
         with self.assertRaises(VpubError) as caught:
@@ -307,7 +316,7 @@ class CaptionTypingTests(Base):
         """From a field run: the topic suggestions Douyin opened for a caption's last #tag stayed over the cover buttons below and took their click."""
         await self.page.set_content(self.PAGE + """<div id="topics" hidden style="position:fixed;inset:0">#Tag 话题</div>
           <script>const box = document.getElementById('box'), topics = document.getElementById('topics');
-          box.addEventListener('input', () => { topics.hidden = !/[#@][^\\s#@]*$/.test(box.innerText.trim()); });
+          box.addEventListener('input', () => { topics.hidden = !/[#@][^\\s#@]*$/.test(box.innerText.replace(/\\n+$/, '')); });
           box.addEventListener('keydown', e => { if (e.key === 'Escape') topics.hidden = true; });</script>""")
         box = self.page.locator("#box")
         for caption in ("Words.\n\n#Tag", "Words for @someone"):
@@ -320,13 +329,22 @@ class CaptionTypingTests(Base):
     # Its script keeps to a scope of its own: from a review, a second page set in the same tab otherwise failed to declare its names again and had no list.
     SUGGESTING = """<!doctype html><meta charset="utf-8"><body><div contenteditable="true" id="box">Old words</div><div id="list" hidden>SomeoneElse</div>
       <script>(() => { const box = document.getElementById('box'), list = document.getElementById('list'); window.pending = 0;
-      const atEnd = () => { const range = getSelection().rangeCount && getSelection().getRangeAt(0); const node = range && range.endContainer;
-        return node && node.nodeType === 3 && /[#@][^\\s#@]*$/.test(node.data.slice(0, range.endOffset)); };
-      const look = () => { list.hidden = !atEnd(); };
-      // A late list stands for a lookup that comes back after a while and opens its list then, wherever the cursor has got to.
-      box.addEventListener('input', () => { if (!LATE) return look(); if (atEnd()) { window.pending++; setTimeout(() => { window.pending--; list.hidden = false; }, LATE); } });
+      // As a field run showed: a typed @ waits for someone to be picked past any spaces after it, and a # topic ends at a space.
+      const token = () => { const range = getSelection().rangeCount && getSelection().getRangeAt(0); const node = range && range.endContainer;
+        if (!node || node.nodeType !== 3) return null;
+        const before = node.data.slice(0, range.endOffset), name = before.lastIndexOf('@'), topic = /#[^\\s#@]*$/.exec(before);
+        if (topic && topic.index > name) return {node, at: topic.index, kind: '#'};
+        return name >= 0 ? {node, at: name, kind: '@'} : null; };
+      const look = () => { list.hidden = !token(); };
+      // A late list stands for a lookup that comes back after a while and opens its list then, if the cursor is still at the end of the name or topic.
+      box.addEventListener('input', () => { if (!token()) { list.hidden = true; return; } if (!LATE) return look(); window.pending++; setTimeout(() => { window.pending--; look(); }, LATE); });
       box.addEventListener('keydown', e => {
-        if (e.key === 'Escape') { list.hidden = true; if (LEAVES) box.blur(); }
+        if (e.key === 'Escape') {
+          // As Douyin did in a field run: Escape closes a list of names and takes the @ away with it. A list of topics keeps its #.
+          const open = !list.hidden && token(); list.hidden = true;
+          if (open && open.kind === '@') open.node.deleteData(open.at, 1);
+          if (LEAVES) box.blur();
+        }
         if (e.key === 'Enter' && !list.hidden) { e.preventDefault(); list.hidden = true; document.execCommand('insertText', false, 'SomeoneElse '); }
       }); })();</script>"""
     # What a field run's caption had: lines ending in @names, a name in the middle of a line, and #tags at the end.
@@ -341,24 +359,31 @@ class CaptionTypingTests(Base):
         await self.page.wait_for_timeout(50)
         return box
 
-    async def test_enter_never_reaches_suggestions_a_line_ending_in_a_name_opened(self):
-        """From a field run: a caption with lines ending in @names came out on Douyin's form different from the plan."""
+    async def test_enter_never_reaches_suggestions_a_line_with_a_name_opened(self):
+        """From two field runs: a caption with lines ending in @names came out on Douyin's form different from the plan, and then, with Escape
+        closing the lists, short of exactly its three @. No one is ever picked; the missing @ is what the read-back then stops on."""
         for late in (0, 200):
             with self.subTest(late=late):
                 box = await self.type_into_suggesting_box(late)
                 said = await box.inner_text()
                 self.assertNotIn("SomeoneElse", said)
-                self.assertEqual(browser_backends.douyin_card_words(self.FIELD_CAPTION), browser_backends.douyin_card_words(said))
+                self.assertEqual(browser_backends.douyin_card_words(self.FIELD_CAPTION.replace("@", "")), browser_backends.douyin_card_words(said))
                 self.assertTrue(await self.page.locator("#list").is_hidden())
 
     async def test_a_box_that_escape_leaves_gets_the_rest_of_the_words_at_their_end(self):
         box = await self.type_into_suggesting_box(leaves=True)
-        self.assertEqual(browser_backends.douyin_card_words(self.FIELD_CAPTION), browser_backends.douyin_card_words(await box.inner_text()))
+        self.assertEqual(browser_backends.douyin_card_words(self.FIELD_CAPTION.replace("@", "")), browser_backends.douyin_card_words(await box.inner_text()))
 
     async def test_lines_without_a_topic_or_name_go_in_with_no_pause(self):
         with patch.object(browser_backends, "douyin_close_suggestions", new=AsyncMock()) as closing:
             await self.type_it("One line.\n\nTwo, with #tag in it.\nThree @name\nFour.")
         self.assertEqual(2, closing.await_count)
+
+    def test_a_form_that_lost_its_at_signs_says_which(self):
+        """From a field run: Douyin took away a caption's three @, and the stop said only where the words first parted."""
+        plan = browser_backends.douyin_card_words("原作角色设定：@上善无形\n参考：@ZipZipPipe\n参考 @ZipZipPipe 的形象")
+        said = browser_backends.where_words_part(plan, plan.replace("@", ""))
+        self.assertEqual(3, said.count('lacks "@"'))
 
     def test_where_the_words_part_is_said_with_the_plans_words_only(self):
         said = browser_backends.where_words_part("原作角色设定：@上善无形 角色设计参考", "原作角色设定：@SomeoneElse 角色设计参考")

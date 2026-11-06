@@ -214,6 +214,14 @@ class StatusTests(OverviewFixture):
         self.assertEqual("vpub auth login x", item["next_command"])
         self.assertIn("vpub resume " + key, item["note"])
 
+    def test_a_thumbnail_youtube_wants_a_phone_number_for_names_the_persons_choice(self):
+        """From a review: a plain resume would only send the same thumbnail to the same request again."""
+        key = self.row("PREPARATION_INCOMPLETE", method="browser", platform="youtube", receipt={"error": {"code": "cover_unavailable"}})
+        item = self.attention()[key]
+        self.assertIsNone(item["next_command"])
+        self.assertIn(f"vpub resume {key} --no-cover", item["note"])
+        self.assertIn("verifies it in YouTube Studio", item["note"])
+
     def test_a_youtube_press_that_left_a_draft_is_sent_to_resume(self):
         key = self.row("SUBMITTED_UNVERIFIED", method="browser", platform="youtube", receipt={"id": "abc", "still_a_draft": True})
         item = self.attention()[key]

@@ -490,6 +490,25 @@ class FormTests(FormCase):
         self.assertEqual("cover_unavailable", caught.exception.code)
         self.assertEqual([], page.clicks("#done-button"))
 
+    def test_studio_asking_for_a_phone_number_for_the_thumbnail_stops_before_the_final_click(self):
+        """From a field run: once the thumbnail went in, a channel without a verified phone number got Studio's window asking for one."""
+        cover = self.root / "cover.jpg"
+        cover.write_bytes(b"cover")
+        for number, (code, expected) in enumerate((("phone_verification_needed", "cover_unavailable"), ("human_verification_required", "human_verification_required"))):
+            with self.subTest(code=code):
+                page = FakeStudio()
+
+                async def checked(seen):
+                    if ("files", "input#file-loader", str(cover)) in page.log:
+                        raise VpubError(code, "From the page.")
+                with patch.object(browser_forms, "risk_check", new=checked):
+                    with self.assertRaises(VpubError) as caught:
+                        self.run_form(page, {**self.plan(), "confirmation": str(number) * 64, "cover": str(cover), "cover_sha256": file_sha(cover)})
+                self.assertEqual(expected, caught.exception.code)
+                self.assertEqual([], page.clicks("#done-button"))
+                if expected == "cover_unavailable":
+                    self.assertIn("--no-cover", caught.exception.message)
+
     def test_the_thumbnail_is_sent_when_the_channel_allows_it(self):
         cover = self.root / "cover.jpg"
         cover.write_bytes(b"cover")
