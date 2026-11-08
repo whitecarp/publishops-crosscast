@@ -875,9 +875,9 @@ class CoverOnANewPostTests(Base):
     def test_that_window_has_the_edit_routes_three_minutes(self):
         self.assertEqual(180, browser_edits.DOUYIN_COVER_SECONDS)
 
-    def test_a_covered_slot_is_looked_at_about_every_second_for_ninety(self):
+    def test_a_covered_slot_is_looked_at_a_second_apart_for_ninety(self):
         """From a review: the tests cut this wait short, so nothing else holds it to what the field runs called for. Round 2's pointer gets
-        half a second for what it brings up, and goes to the window's top-left corner for a look with it away."""
+        half a second for what it brings up, and rests just off the page for a look with it away."""
         self.assertEqual((90, 1000), (browser_forms.DOUYIN_COVERED_SECONDS, browser_forms.DOUYIN_COVERED_LOOK_MS))
         # From a review of a490e80: the pointer rests just off the page for a look with it away, which hovers nothing, and the moves and the
         # spots tried were held by nothing.
@@ -1136,6 +1136,26 @@ ARRIVES = """([inBox, goes]) => { const slot = document.querySelectorAll('.cover
 # An icon of MASK_OPENS's own over all of it, as a remove icon that shows a little after the pointer has settled might, with a press of its own.
 ICON_LATER = """() => { const mask = document.querySelector('.mask-x1y2'), icon = document.createElement('i'); icon.className = 'icon-l1';
   icon.style.cssText = 'position:absolute;inset:0'; icon.setAttribute('onclick', "event.stopPropagation(); pressed('delete')"); mask.append(icon); }"""
+# From the final check of 073cf63, what comes on top part of the way through a press: MASK_OPENS, whose own mousedown lays a pressed look of
+# its own over all of it, as a card's pressed state might; and a layer of the page's own, fixed in the window and outside both cover boxes,
+# that the 竖封面3:4 slot's own mousedown lays over it, sending word of its own press. Each comes after the press's pointerdown and mousedown.
+PRESSED_LOOK = MASK_OPENS + """<script>(() => { const mask = document.currentScript.previousElementSibling;
+  mask.addEventListener('mousedown', () => { const look = document.createElement('span'); look.className = 'pressed-p1';
+    look.style.cssText = 'position:absolute;inset:0;display:block'; mask.append(look); }); })();</script>"""
+LAID_AT_MOUSEDOWN = """<script>(() => { const slot = document.querySelectorAll('.cover-b')[1];
+  slot.addEventListener('mousedown', () => { const r = slot.getBoundingClientRect(), layer = document.createElement('div'); layer.className = 'toast-m1';
+    layer.style.cssText = `position:fixed;z-index:9;left:${r.left - 4}px;top:${r.top - 4}px;width:${r.width + 8}px;height:${r.height + 8}px`;
+    """ + NAMES + """ layer.onclick = () => pressed('toast'); document.body.append(layer); }, {once: true}); })();</script>"""
+# From a review of the change after 073cf63: MASK_OPENS made a control by its own mousedown, as a page could, so that what was being pressed
+# no longer passes the look; and MASK_OPENS with a pressed look that draws it in a pixel on every side while the button is down, as cards
+# often have, so that it no longer covers all of the slot during its press. The mask is as wide as the whole cover box, so a shrink by a share
+# of its size would take it off the slot altogether, and its inline inset would win over the rule without !important.
+TURNS_CONTROL = MASK_OPENS + """<script>(() => { const mask = document.currentScript.previousElementSibling;
+  mask.addEventListener('mousedown', () => { mask.tabIndex = 0; }); })();</script>"""
+SHRINKS_WHEN_PRESSED = MASK_OPENS + """<style>.mask-x1y2:active { inset: 1px !important }</style>"""
+# A second cover- element in the 竖封面3:4 cover box, brought by a test, which leaves the slot's own locator two things to choose from, so that
+# every look after it fails.
+SECOND_TALL_SLOT = """() => document.querySelectorAll('[class^="coverControl-"]')[1].append(Object.assign(document.createElement('div'), {className: 'cover-c'}))"""
 # A slot with borders of two widths, at fractional places and sizes, part of it below the window, and every move of the pointer the page sees.
 BORDERED = """<!doctype html><meta charset="utf-8"><body style="margin:0"><div style="height:%spx"></div>
   <div class="coverControl-a" style="position:relative;margin-left:10.29px;width:max-content">
@@ -1550,9 +1570,9 @@ class BothCoversTests(Base):
                 self.assertIs(True, self.tx.receipt["cover_slot_covered"]["over_it"]["control"])
 
     async def test_what_comes_over_the_slot_after_the_wait_is_looked_at_before_any_press_through(self):
-        """From a review: nothing showed that the press through is decided on one more look just before it, or that the browser's own check
-        then refuses a layer that comes after that look. Here a button takes the mask's place as the wait ends, and then a layer of the page
-        comes over the slot just after the look, and neither is pressed, nor is the mask."""
+        """From a review: nothing showed that the press through is decided on one more look just before it, or that a layer that comes after
+        that look is held back from its press, as the guard on the press now does. Here a button takes the mask's place as the wait ends, and
+        then a layer of the page comes over the slot just after the look, and neither is pressed, nor is the mask."""
         self.portrait_only()
         real = browser_forms.douyin_slot_last
 
@@ -1800,6 +1820,24 @@ class BothCoversTests(Base):
                 self.assertEqual((True, why, "div", None), (covered["open_but_refused"], covered["centre_trial"], covered["over_it"]["tag"], covered["over_it_away"]))
                 self.assertEqual(why == "moved", covered.get("moved", 0) > 0)
 
+    async def test_a_centre_that_came_open_before_every_later_look_failed_is_told_as_the_last_one_seen(self):
+        """From the final check of 073cf63: a look found the centre open and its trial press didn't go through, every look after it failed,
+        and the stop said both that the centre was open at the last look and that the last look had failed."""
+        self.portrait_only()
+
+        async def trial(slot, aimed, at=None):
+            await self.page.evaluate(SECOND_TALL_SLOT)
+            return "refused"
+        with patch.object(browser_forms, "douyin_slot_trial", trial), patch.object(browser_forms, "DOUYIN_COVERED_SECONDS", 4):
+            said = await self.stopped(extra=laid_over(goes=300))
+        self.assertEqual([], self.pressed())
+        self.assertIn(", its centre was open at the last look with the pointer on it that could see it, yet it took no trial press. Its last look "
+                      "failed, so nothing was pressed through: Browser command failed (Error): ", said)
+        self.assertNotIn("open at the last look,", said)
+        covered = self.tx.receipt["cover_slot_covered"]
+        self.assertEqual((True, "refused"), (covered["open_but_refused"], covered["centre_trial"]))
+        self.assertIn("strict mode violation", covered["unseen"])
+
     async def test_what_lay_over_a_slot_is_kept_when_the_cover_step_stops_after_its_window_opened(self):
         """From round 1's final check: what lay over a slot was saved only once its cover was on, or when the slot step itself stopped, so a
         cover window that then hung kept nothing of it. It is saved as soon as the window opens, and the window's own stop says whether the
@@ -1863,6 +1901,72 @@ class BothCoversTests(Base):
         self.assertIn("Douyin's 竖封面3:4 slot couldn't take the press through its own cover box, so nothing was published. Nothing was pressed: "
                       "something else was on top at its point by then [in the way: i, intercepts pointer events].", said)
         self.assertIs(False, self.tx.receipt["cover_slot_covered"]["pressed_once"])
+
+    async def test_a_press_held_back_part_of_the_way_through_says_where_and_is_never_made_again(self):
+        """From the final check of 073cf63: when something new came on top part of the way through a press, the guard held back the rest of it,
+        and the stop said the press had gone through and Douyin's cover window hadn't opened, with nothing in the record about the guard. A
+        mask whose own mousedown lays a pressed look over it, pressed through after the wait, and a layer of the page's own that the slot's own
+        mousedown lays over it, on the press after a first trial press: each press is held back from its pointerup on, nothing is pressed
+        again, and the stop and the record say where it was cut short and what was in the way, by its tag alone. From a review of that, the
+        layer holds words that name people, which go nowhere, and a mask its own mousedown makes a control is told as the pressed part itself."""
+        self.portrait_only()
+        why = {"span": "something else was on top at its point by then [in the way: span]", "div": "something else was on top at its point by then [in the way: div]",
+               "itself": "by then what it was pressing there was no longer as the look had found it [in the way: itself]"}
+        for tall, extra, pressed, tag in ((PRESSED_LOOK, "", "through its own cover box", "span"), ("", LAID_AT_MOUSEDOWN, "at its centre", "div"),
+                                          (TURNS_CONTROL, "", "through its own cover box", "itself")):
+            with self.subTest(pressed=pressed, tag=tag):
+                self.tx.receipt, self.writes[:] = {}, []
+                payload, errors = {}, io.StringIO()
+                with patch.object(browser_forms, "DOUYIN_WINDOW_MS", 1000), contextlib.redirect_stderr(errors), progress.relay("douyin", payload):
+                    progress.attach(payload)
+                    try:
+                        said = await self.stopped(tall=tall, extra=extra)
+                    finally:
+                        progress.attach({})
+                self.assertEqual([], self.pressed())
+                self.assertIn(f"Douyin's 竖封面3:4 slot was pressed once {pressed}, but CrossCast held back its pointerup and anything after it, since "
+                              f"{why[tag]}, and Douyin's cover window didn't open, so nothing was published and nothing was pressed again.", said)
+                covered = self.tx.receipt["cover_slot_covered"]
+                self.assertEqual((pressed, True, {"from": "pointerup", "in_the_way": tag}), (covered["pressed"], covered["pressed_once"], covered["cut_short"]))
+                for secret in SECRETS:
+                    for where in (said, json.dumps(self.tx.receipt, ensure_ascii=False), errors.getvalue()):
+                        self.assertNotIn(secret, where)
+        # Whatever the page's world might hand back, only an event's name from the fixed list and a plain tag go anywhere.
+        for state in ({"held": "keydown", "in_the_way": "<div title=张三>"}, {"held": None, "in_the_way": "DIV"}, {"held": "pointerup", "in_the_way": None}):
+            cut = browser_forms.douyin_cut_short(state)
+            self.assertEqual("other", cut["in_the_way"])
+            self.assertIn(cut["from"], browser_forms.DOUYIN_PRESS_EVENTS + ("other",))
+            self.assertNotIn("张三", browser_forms.douyin_cut_short_said(cut))
+
+    async def test_a_bare_part_that_shrinks_while_pressed_still_takes_its_press_through(self):
+        """From a review of the change after 073cf63: the guard asked at every event of a press through that the bare part still covered all of
+        the slot, so a mask with a pressed look that draws it in, as cards often have, had its press held back and stopped the post, since the
+        browser shows that look before the press's first event. That part has to be bare just before the button goes down; at the press's own
+        events it needs only to be that very part on top there, in its cover box and in no control."""
+        self.portrait_only()
+        await self.post(tall=SHRINKS_WHEN_PRESSED)
+        self.assertEqual(["mask"], self.pressed())
+        cover = self.tx.receipt["portrait_cover"]
+        self.assertEqual(("UI_ACCEPTED", "through its own cover box"), (cover["state"], cover["pressed"]))
+        self.assertNotIn("cut_short", cover)
+        self.assertEqual(["publish"], self.went_out())
+
+    async def test_a_first_press_cut_short_whose_window_opens_keeps_the_cut_until_its_cover_is_on(self):
+        """From a review of the change after 073cf63: a first press cut short whose cover window opened anyway kept no sign of the cut, though the
+        window may then hang. The cut is kept until the cover is on, and goes then."""
+        self.portrait_only()
+        opens_at_mousedown = LAID_AT_MOUSEDOWN.replace("document.body.append(layer);", "document.body.append(layer); document.getElementById('d').hidden = false;")
+        self.assertNotEqual(LAID_AT_MOUSEDOWN, opens_at_mousedown)
+        with patch.object(browser_edits, "DOUYIN_COVER_SECONDS", 1), self.assertRaises(VpubError) as caught:
+            await self.post(extra=opens_at_mousedown + DONE_STAYS)
+        self.assertEqual("cover_not_ready", caught.exception.code)
+        covered = self.tx.receipt["cover_slot_covered"]
+        self.assertEqual(("at its centre", True, {"from": "pointerup", "in_the_way": "div"}), (covered["pressed"], covered["pressed_once"], covered["cut_short"]))
+        self.assertTrue(covered["note"].endswith("and Douyin's cover window opened."))
+        self.tx.receipt, self.writes[:] = {}, []
+        await self.post(extra=opens_at_mousedown)
+        self.assertNotIn("cover_slot_covered", self.tx.receipt)
+        self.assertEqual("UI_ACCEPTED", self.tx.receipt["portrait_cover"]["state"])
 
     async def test_a_press_at_the_centre_held_back_says_the_centre_was_open_and_took_its_trial_press(self):
         """From a review of a490e80: a layer that came over the slot's centre after its trial press passed was pressed round on a page that can
