@@ -889,12 +889,44 @@ DOUYIN_SLOT_MS = 10000  # As long as the press a field run's covered 横封面4:
 # What a trial press says of a slot that something lies over or that is turned off, as with a field run's 9:16 video's 横封面4:3 slot.
 DOUYIN_SLOT_OFF = re.compile(r'intercepts pointer events|element is not enabled')
 DOUYIN_WINDOW_MS = 20000  # How long a press on a slot waits for Douyin's cover window to open.
+DOUYIN_COVER_AGAIN = 'vpub resume tries again, and vpub resume KEY --no-cover goes without one.'
 # From field runs on 647e002 and 7fa6c10: something lay over a cover slot in three of the last four Douyin posts, a span twice and a div twice,
 # the second div over a reopened draft's 竖封面3:4 slot on both tries. Nothing else with buttons was open, and no more than its tag was kept.
 # So a slot something lies over is looked at again about every second for this long, with nothing pressed, for a layer Douyin shows while
 # it readies the cover area, a list that opened late or a toast to go.
 DOUYIN_COVERED_SECONDS = 90
 DOUYIN_COVERED_LOOK_MS = 1000
+# From round 1's final check and an offline probe of this driver: a press, a trial press too, moves the pointer onto its point, where what the
+# page shows only under the pointer then comes up and takes the press, and every look that decided a press had been made with the pointer
+# somewhere else. So the pointer goes to a press's point first, and what it brings up gets this long: a fixed wait, since a window that isn't
+# drawing may never run an animation frame. The probe also found that what came up under a pointer held still isn't hovered itself until the
+# pointer moves again, so a mask that came with the pointer brought up an icon of its own only at the press. The pointer is put on the same
+# point again, up to DOUYIN_AIM_MOVES times, until what is on top there is what it hovers; the probe's deepest case took three.
+DOUYIN_SETTLE_MS = 500
+DOUYIN_AIM_MOVES = 4
+DOUYIN_POINTER_AWAY = (1, 1)  # The window's top-left corner, for a look with the pointer away from the slot.
+DOUYIN_SPOT_TRIES = 4  # How many spots of a slot, or of a bare part of its cover box, are aimed at and looked at before none is taken to hold.
+# The point of the window a Playwright press on an element goes to, worked out as Playwright works it out: the middle of the part of its box
+# inside the window, or the offset at from its padding box, rounded down to hundredths. The aim and the look both use it, so the pointer is
+# put where the press will go and the look sees what is there. The probe found a press made after this aim moved the pointer nowhere.
+DOUYIN_POINT = r"""(e, at) => {
+  const r = e.getBoundingClientRect(), cut = n => (n * 100 | 0) / 100;
+  if (at) { const s = getComputedStyle(e);
+    return {x: cut(r.left + (parseInt(s.borderLeftWidth, 10) || 0) + at.x), y: cut(r.top + (parseInt(s.borderTopWidth, 10) || 0) + at.y)}; }
+  const x0 = Math.min(Math.max(r.left, 0), innerWidth), x1 = Math.min(Math.max(r.right, 0), innerWidth);
+  const y0 = Math.min(Math.max(r.top, 0), innerHeight), y1 = Math.min(Math.max(r.bottom, 0), innerHeight);
+  let x = 0, y = 0;
+  for (const v of [x0, x1, x1, x0]) x += v / 4;
+  for (const v of [y0, y0, y1, y1]) y += v / 4;
+  return {x: cut(x), y: cut(y)};
+}"""
+# Where the pointer goes for a press on an element, whether the element shows at all, and whether all of it lies in the window, as a press
+# would otherwise scroll it there first.
+DOUYIN_AIM = r"""(e, at) => { const point = """ + DOUYIN_POINT + r""", r = e.getBoundingClientRect();
+  return {...point(e, at), shown: r.width > 0 && r.height > 0 && getComputedStyle(e).visibility === 'visible',
+    in_window: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight}; }"""
+# Whether what is on top at the pointer's point is what the pointer hovers, so that a press made there now brings up nothing more.
+DOUYIN_SETTLED = r"""p => { const top = document.elementFromPoint(p.x, p.y); return !!top && top.matches(':hover') && !top.querySelector(':hover'); }"""
 # What lies over a slot, seen from inside it without pressing anything: at the slot's centre, where Playwright presses, and on a grid over
 # its box, as offsets from its padding box, which a press's position is measured from, nearest the centre first. From a review, the centre
 # is open as Playwright's own check has it: where the slot, or the button or link that holds it, or something inside either is on top. And
@@ -903,9 +935,13 @@ DOUYIN_COVERED_LOOK_MS = 1000
 # What is on top at the centre is told by its tag, a few class tokens of code, a role from a fixed list, its style, how much it covers, where
 # it sits, whether it holds the slot, which then takes no pointer events there, and whether it is a control or lies in one below what holds
 # the slot, since a press on the slot reaches those holders anyway; and the same for the outermost thing holding it that doesn't hold the
-# slot. Never by its words or any other attribute: a field run's list showed other people's names. With wanted, it also gives a handle on
-# the one part of the cover box a press may go through (douyin_slot_through).
-DOUYIN_SLOT_LOOK = r"""(slot, wanted) => {
+# slot. Never by its words or any other attribute: a field run's list showed other people's names. From round 1's final check, embedded
+# frames, objects and players with controls count as controls too. Asked with through, it also gives handles on the parts of the cover box a
+# press may go through (douyin_through_press); with at, whether that spot of the slot holds; and with layer and on, whether that part of the
+# cover box is itself on top at that point of its own. Each of those is asked with the pointer already on the point it decides.
+DOUYIN_SLOT_LOOK = r"""(slot, ask) => {
+  ask = ask || {};
+  const point = """ + DOUYIN_POINT + r""";
   const W = innerWidth, H = innerHeight, r = slot.getBoundingClientRect(), root = slot.getRootNode().elementFromPoint ? slot.getRootNode() : document;
   const target = slot.matches('input, textarea, select') || slot.isContentEditable ? slot : slot.closest('button, [role=button], a, [role=link]') || slot;
   const fits = (value, shape) => shape.test(value) ? value : 'other', round = n => Math.round(n * 100) / 100;
@@ -916,7 +952,7 @@ DOUYIN_SLOT_LOOK = r"""(slot, wanted) => {
   const roles = /^(alert|alertdialog|banner|button|checkbox|combobox|dialog|group|img|link|list|listbox|listitem|log|menu|menubar|menuitem|menuitemcheckbox|menuitemradio|none|note|option|presentation|progressbar|radio|region|searchbox|slider|spinbutton|status|switch|tab|tablist|tabpanel|textbox|timer|toolbar|tooltip|tree|treeitem)$/;
   const controls = /^(button|link|checkbox|radio|switch|menuitem|menuitemcheckbox|menuitemradio|option|tab|combobox|textbox|searchbox|slider|spinbutton|treeitem)$/;
   const roleOf = e => tokens(e).length ? tokens(e).find(t => roles.test(t)) || 'other' : null;
-  const control = e => e.matches('button, a, input, select, textarea, label, summary, [contenteditable]:not([contenteditable="false" i])')
+  const control = e => e.matches('button, a, input, select, textarea, label, summary, iframe, object, embed, video[controls], audio[controls], [contenteditable]:not([contenteditable="false" i])')
     || (e.hasAttribute('tabindex') && e.tabIndex >= 0) || tokens(e).some(t => controls.test(t));
   const inControl = e => { for (let n = e; n && !n.contains(slot); n = n.parentElement) if (control(n)) return true; return false; };
   const facts = e => { const s = getComputedStyle(e);
@@ -924,41 +960,103 @@ DOUYIN_SLOT_LOOK = r"""(slot, wanted) => {
       role: roleOf(e), modal: e.getAttribute('aria-modal') === 'true', position: fits(s.position, /^[a-z-]{1,20}$/),
       z_index: fits(s.zIndex, /^(auto|-?\d{1,10})$/), opacity: Number(s.opacity) || 0, pointer_events: fits(s.pointerEvents, /^[a-z-]{1,20}$/),
       cursor: fits(s.cursor, /^[a-z-]{1,20}$/), slot_covered: share(e, r.left, r.top, r.right, r.bottom), window_covered: share(e, 0, 0, W, H)}; };
-  const x0 = Math.max(r.left, 0), y0 = Math.max(r.top, 0), x1 = Math.min(r.right, W), y1 = Math.min(r.bottom, H), cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-  const hit = x1 > x0 && y1 > y0 ? root.elementFromPoint(cx, cy) : null, under = hit && root.elementsFromPoint(cx, cy).find(e => target.contains(e));
-  const grid = [];
+  const lead = e => { const s = getComputedStyle(e); return {x: parseInt(s.borderLeftWidth, 10) || 0, y: parseInt(s.borderTopWidth, 10) || 0}; };
+  // A part of the slot's own cover box a press may go through: inside that box, as big as the slot, not holding it, no control and in none.
+  const box = slot.closest('[class^="coverControl-"]');
+  const bare = e => !!e && !!box && box.contains(e) && !e.contains(slot) && !inControl(e) && share(e, r.left, r.top, r.right, r.bottom) >= 0.99;
+  const x0 = Math.max(r.left, 0), y0 = Math.max(r.top, 0), x1 = Math.min(r.right, W), y1 = Math.min(r.bottom, H), c = point(slot, null);
+  const hit = x1 > x0 && y1 > y0 ? root.elementFromPoint(c.x, c.y) : null, under = hit && root.elementsFromPoint(c.x, c.y).find(e => target.contains(e));
+  const holds = e => !!e && !!under && target.contains(e) && e.contains(under);
+  const edge = lead(slot), grid = [];
   for (const down of [0.1, 0.3, 0.5, 0.7, 0.9]) for (const across of [0.1, 0.3, 0.5, 0.7, 0.9]) {
-    const x = r.left + r.width * across, y = r.top + r.height * down;
-    if (x >= 0 && y >= 0 && x < W && y < H)
-      grid.push({x, y, top: root.elementFromPoint(x, y), off: Math.hypot(across - 0.5, down - 0.5), at: {x: round(x - r.left - slot.clientLeft), y: round(y - r.top - slot.clientTop)}});
+    const at = {x: round(r.width * across - edge.x), y: round(r.height * down - edge.y)}, p = point(slot, at);
+    if (p.x >= 0 && p.y >= 0 && p.x < W && p.y < H) grid.push({p, at, top: root.elementFromPoint(p.x, p.y), off: Math.hypot(across - 0.5, down - 0.5)});
   }
   grid.sort((a, b) => a.off - b.off);
-  const seen = {open: !!hit && target.contains(hit), spots: grid.filter(p => p.top && under && target.contains(p.top) && p.top.contains(under)).slice(0, 5).map(p => p.at)};
-  const answer = (over_it, through = null, layer = null) => wanted ? {seen: {...seen, over_it, through}, layer} : {...seen, over_it, through};
+  const seen = {open: !!hit && target.contains(hit), spots: grid.filter(g => holds(g.top)).slice(0, 5).map(g => g.at)};
+  if (ask.at) { const p = point(slot, ask.at); seen.at_open = holds(root.elementFromPoint(p.x, p.y)); }
+  if (ask.layer) { const q = point(ask.layer, ask.on), top = root.elementFromPoint(q.x, q.y); seen.on_bare = top === ask.layer && bare(top); }
+  const answer = (over_it, parts = []) => {
+    const through = ask.through ? parts.map(g => { const b = g.top.getBoundingClientRect(), e = lead(g.top);
+      return {at: g.at, on: {x: round(g.p.x - b.left - e.x), y: round(g.p.y - b.top - e.y)}}; }) : null;
+    return ask.through ? {seen: {...seen, over_it, through}, layers: parts.map(g => g.top)} : {...seen, over_it, through};
+  };
   if (seen.open) return answer(null);
   const inWindow = {slot_in_window: r.left >= 0 && r.top >= 0 && r.right <= W && r.bottom <= H, window: [W, H]};
   if (!hit) return answer({tag: null, ...inWindow});
-  const box = slot.closest('[class^="coverControl-"]'), inBox = !!box && box.contains(hit), holds = hit.contains(slot), isControl = inControl(hit);
-  let holder = holds ? null : hit;
+  const inBox = !!box && box.contains(hit), holds_slot = hit.contains(slot), isControl = inControl(hit);
+  let holder = holds_slot ? null : hit;
   while (holder && holder.parentElement && !holder.parentElement.contains(slot)) holder = holder.parentElement;
   const boxes = [...document.querySelectorAll('[contenteditable]:not([contenteditable="false" i])')];
   const place = inBox ? 'cover box' : boxes.some(e => e.contains(hit) || (holder && holder.contains(e))) ? 'description' : 'page';
-  // The one thing a press may go through: a part of the cover box's layer over the centre, as big as the slot, no control and in none, at
-  // the spot nearest the centre where it is itself on top, so an icon or a label of its own there never takes the press.
-  const bare = inBox && holder && !isControl ? grid.find(p => p.top && holder.contains(p.top) && !inControl(p.top) && share(p.top, r.left, r.top, r.right, r.bottom) >= 0.99) : null;
-  const on = bare && bare.top.getBoundingClientRect();
-  return answer({...facts(hit), place, off_body: !!holder && holder.parentElement === document.body, control: isControl, holds_slot: holds,
-    holder: holder && holder !== hit ? facts(holder) : null, ...inWindow},
-    bare ? {at: bare.at, on: {x: round(bare.x - on.left - bare.top.clientLeft), y: round(bare.y - on.top - bare.top.clientTop)}} : null, bare ? bare.top : null);
+  // The spots a press through may go to: where a bare part of the layer over the centre is itself on top, nearest the centre first. From
+  // round 1's final check, what is on top at the centre may be an icon or a button of that layer's own that showed with the pointer, which
+  // is never pressed, so the spots are its other ones.
+  const parts = inBox && holder ? grid.filter(g => holder.contains(g.top) && bare(g.top)).slice(0, ask.tries || 4) : [];
+  return answer({...facts(hit), place, off_body: !!holder && holder.parentElement === document.body, control: isControl, holds_slot,
+    holder: holder && holder !== hit ? facts(holder) : null, ...inWindow}, parts);
 }"""
+
+
+async def douyin_evaluate(target, script, arg=None):
+    """A page script on a slot's locator, which waits for the slot as a press on it would, or on a handle on a part of its cover box."""
+    from patchright.async_api import Locator
+    if isinstance(target, Locator):
+        return await target.evaluate(script, arg, timeout=DOUYIN_SLOT_MS)
+    return await target.evaluate(script, arg)
+
+
+async def douyin_pointer_rest(page, point):
+    """Puts the pointer on this point and gives what it brings up DOUYIN_SETTLE_MS, again until what is on top there is what the pointer hovers
+    (DOUYIN_SETTLED), at most DOUYIN_AIM_MOVES times. Whether it settled."""
+    for _ in range(DOUYIN_AIM_MOVES):
+        await page.mouse.move(point['x'], point['y'])
+        await page.wait_for_timeout(DOUYIN_SETTLE_MS)
+        if await page.evaluate(DOUYIN_SETTLED, {'x': point['x'], 'y': point['y']}):
+            return True
+    return False
+
+
+async def douyin_slot_aim(page, target, at=None):
+    """Puts the pointer where a press on the target will go, before anything there is looked at or pressed: its centre, or the offset at from
+    its padding box (DOUYIN_POINT), after scrolling it into the window if it isn't all there, as the press would. From round 1's final check
+    and an offline probe of this driver: a press moves the pointer onto its point, and a layer the page shows only under the pointer then
+    took the press, or refused one right after a trial press had passed. The probe found that a press made with the pointer already on its
+    point moves it nowhere, and once what it brought up has settled, brings up nothing more. Returns the point and whether it settled, or
+    None for a target that can't be aimed at now, which its press or look then reports."""
+    from patchright.async_api import Error as BrowserError
+    try:
+        point = await douyin_evaluate(target, DOUYIN_AIM, at)
+        if isinstance(point, dict) and point.get('shown') and not point.get('in_window'):
+            await target.scroll_into_view_if_needed(timeout=DOUYIN_SLOT_MS)
+            point = await douyin_evaluate(target, DOUYIN_AIM, at)
+        if not isinstance(point, dict) or not point.get('shown'):
+            return None
+        return {'x': point['x'], 'y': point['y'], 'settled': await douyin_pointer_rest(page, point)}
+    except BrowserError:
+        return None
+
+
+async def douyin_pointer_away(page):
+    """Puts the pointer at DOUYIN_POINTER_AWAY, off the slot and its cover box, and lets what that brings up settle the same way, for a look at
+    what stays over the slot with the pointer away. A page that can't take it shows in the look that follows."""
+    from patchright.async_api import Error as BrowserError
+    x, y = DOUYIN_POINTER_AWAY
+    try:
+        await douyin_pointer_rest(page, {'x': x, 'y': y})
+    except BrowserError:
+        pass
 
 
 async def douyin_slot_refuses(page, editor, slot):
     """Why a cover slot can't take a press, or None when it can. The browser stops a trial press before the page's own controls see it, though a
-    review's probe of this driver found that listeners a page put on its window first do see it, and that it moves the pointer onto the slot.
-    When something lies over the slot, Escape goes to the description once more, from the end of its words, in case a list it opened late is
-    what lies there, and douyin_slot_opening then looks at what is there before anything is pressed."""
+    review's probe of this driver found that listeners a page put on its window first do see it. From round 1's final check and an offline
+    probe of this driver: a press moves the pointer onto the slot, and a layer the page shows a moment later under the pointer let a trial
+    press pass and then refused the press right after it. So the pointer is put on the slot's centre first, and what it brings up settles,
+    before the trial press. When something lies over the slot, Escape goes to the description once more, from the end of its words, in case
+    a list it opened late is what lies there, and douyin_slot_press then looks at what is there before anything is pressed."""
     from patchright.async_api import Error as BrowserError
+    await douyin_slot_aim(page, slot)
     try:
         await slot.click(trial=True, timeout=DOUYIN_SLOT_MS)
         return None
@@ -969,76 +1067,188 @@ async def douyin_slot_refuses(page, editor, slot):
     return refused
 
 
-async def douyin_slot_look(slot, through=False):
-    """What lies over a slot now, seen with nothing pressed (DOUYIN_SLOT_LOOK), and with through, a handle on the one thing a press may go
-    through, or None. From a review: a look the page didn't answer, as when the slot was taken off the page for a while or a second cover-
-    element came, ended the wait with a bare driver error, so it is a look that saw nothing open, and says why."""
+async def douyin_cover_dialog(page):
+    """Douyin's cover window, once a slot has been pressed."""
+    await page.locator('[role=dialog]').first.wait_for(state='visible', timeout=DOUYIN_WINDOW_MS)
+    dialog = await unique_visible(page.locator('[role=dialog]'), 'Douyin cover editor')
+    await dialog.get_by_text('上传封面', exact=True).wait_for(timeout=DOUYIN_WINDOW_MS)
+    return dialog
+
+
+async def douyin_first_press(page, tx, slot, role, label):
+    """The press on a slot that took its first trial press: at once, at the same point, with nothing looked at, as both of 阿哈摇's slots were
+    pressed. From round 1's final check, it is guarded as the covered route's presses are. One the browser refuses because something
+    intercepts it presses nothing, and (None, why) sends the slot on as if its trial press had been refused that way. Any other refusal stops
+    here, and so does a press that goes through and opens no cover window, with nothing pressed again. Otherwise (the window, None)."""
     from patchright.async_api import Error as BrowserError
+    try:
+        await slot.click(timeout=DOUYIN_SLOT_MS)
+    except BrowserError as exc:
+        refused = failure_message(exc)
+        if 'intercepts pointer events' in refused:
+            return None, refused
+        raise VpubError('cover_blocked', f"Douyin's {label} slot took its trial press, then couldn't take the press at its centre, so nothing was published. {refused}",
+                        DOUYIN_COVER_AGAIN) from None
+    try:
+        return await douyin_cover_dialog(page), None
+    except BrowserError:
+        tx.save(cover_slot_covered={'role': role, 'slot': label, 'refused': None, 'over_it': None, 'pressed': 'at its centre', 'pressed_once': True,
+                                    'note': 'It took its first trial press, so nothing was looked at, and it was pressed once at its centre.'})
+        raise VpubError('cover_blocked', f"Douyin's {label} slot was pressed once at its centre, and Douyin's cover window didn't open, so nothing was published "
+                        "and nothing was pressed again.", DOUYIN_COVER_AGAIN) from None
+
+
+async def douyin_slot_look(slot, through=False, at=None, layer=None, on=None):
+    """What lies over a slot now, seen with nothing pressed (DOUYIN_SLOT_LOOK), and with through, handles on the parts of its cover box a press
+    may go through. With at, whether that spot of the slot holds, and with layer and on, whether that part of the cover box is itself on top
+    at that point of its own. From a review: a look the page didn't answer, as when the slot was taken off the page for a while or a second
+    cover- element came, ended the wait with a bare driver error, so it is a look that saw nothing open, and says why."""
+    from patchright.async_api import Error as BrowserError
+    ask = {'through': through, 'at': at, 'layer': layer, 'on': on, 'tries': DOUYIN_SPOT_TRIES}
     try:
         await slot.scroll_into_view_if_needed(timeout=DOUYIN_SLOT_MS)
         if not through:
-            return await slot.evaluate(DOUYIN_SLOT_LOOK, timeout=DOUYIN_SLOT_MS), None
-        found = await slot.evaluate_handle(DOUYIN_SLOT_LOOK, True, timeout=DOUYIN_SLOT_MS)
-        return await (await found.get_property('seen')).json_value(), (await found.get_property('layer')).as_element()
+            return await slot.evaluate(DOUYIN_SLOT_LOOK, ask, timeout=DOUYIN_SLOT_MS), []
+        found = await slot.evaluate_handle(DOUYIN_SLOT_LOOK, ask, timeout=DOUYIN_SLOT_MS)
+        parts = await (await found.get_property('layers')).get_properties()
+        return await (await found.get_property('seen')).json_value(), [parts[key].as_element() for key in sorted(parts, key=int)]
     except BrowserError as exc:
-        return {'open': False, 'spots': [], 'over_it': None, 'through': None, 'unseen': failure_message(exc)}, None
+        return {'open': False, 'spots': [], 'over_it': None, 'through': [], 'unseen': failure_message(exc)}, []
 
 
-async def douyin_slot_spot(slot, seen):
-    """The press a slot takes a trial of now, or None: at its centre, as Playwright presses, or at a spot of its own where a press reaches nothing
-    one at its centre wouldn't."""
+async def douyin_drawn(page, covered):
+    """Whether the page was drawing, gathered once, at the first look that finds the slot covered, for the lead that the hidden window draws no
+    frames (douyin_drawing): fixed words, true or false, and a count."""
+    if covered['drawing'] is None:
+        from .browser_edits import douyin_drawing
+        covered['drawing'] = await douyin_drawing(page)
+
+
+async def douyin_look_away(page, slot, covered):
+    """A look with the pointer away from the slot (douyin_pointer_away). What it sees over the centre is kept as over_it_away, None when the
+    centre was open then."""
+    await douyin_pointer_away(page)
+    seen, _ = await douyin_slot_look(slot)
+    covered['over_it_away'], covered['unseen'] = seen['over_it'], seen.get('unseen')
+    if seen['over_it']:
+        await douyin_drawn(page, covered)
+    return seen
+
+
+async def douyin_slot_trial(slot, aimed, at=None):
+    """Whether the slot takes a trial press at the point the pointer was aimed at, with the pointer still there, so the press can follow at that
+    point with the pointer unmoved. A point the pointer didn't settle on isn't tried. Playwright tries a refused press again after scrolling
+    the slot, which would leave the pointer on a point no look has seen, so a slot that has moved since the aim isn't pressed either."""
     from patchright.async_api import Error as BrowserError
-    press = ({'pressed': 'at its centre', 'click': {}} if seen['open'] else
-             {'pressed': 'at a spot where nothing lay over it', 'click': {'position': seen['spots'][0]}, 'at': seen['spots'][0]} if seen['spots'] else None)
-    if press is not None:
-        try:
-            await slot.click(trial=True, timeout=DOUYIN_SLOT_MS, **press['click'])
-        except BrowserError:
-            press = None
-    return press
+    if not aimed or not aimed['settled']:
+        return False
+    try:
+        await slot.click(trial=True, timeout=DOUYIN_SLOT_MS, **({'position': at} if at else {}))
+        now = await douyin_evaluate(slot, DOUYIN_AIM, at)
+    except BrowserError:
+        return False
+    return (now['x'], now['y']) == (aimed['x'], aimed['y'])
 
 
-async def douyin_slot_opening(page, slot):
-    """Where a slot that something lay over can be pressed, once Escape has gone to the description, and what lay over its centre. From field
-    runs on 647e002 and 7fa6c10, where a slot was covered on both of its tries. It is looked at about every second for up to
-    DOUYIN_COVERED_SECONDS, and nothing is pressed but trial presses: at its centre once that is open, or at a spot of its own where nothing
-    lies over it, where a person would press it. A stop or a platform check ends the wait. A probe of this driver found that a trial press
-    moves the pointer onto the slot, so a layer its cover box shows under the pointer can come and stay. From a review: like X's waits, this
-    one ends before the command's own cut-off, which would close the browser with nothing recorded."""
+async def douyin_look_on(page, slot, covered, through=False):
+    """A look with the pointer on the slot's centre, aimed there again so that what it brings up has settled, and the trial press there when the
+    centre is open then. What it sees over the centre is what a press there would hit, kept as over_it. From round 1's final check, a later
+    look that finds the centre open but takes no trial press is flagged, so a stop doesn't tell what an earlier look saw as if it were the
+    last. Returns what it saw, handles on the parts of the cover box a press may go through, and the press, or None."""
+    aimed = await douyin_slot_aim(page, slot)
+    seen, layers = await douyin_slot_look(slot, through=through)
+    covered['unseen'] = seen.get('unseen')
+    if seen['open']:
+        if await douyin_slot_trial(slot, aimed):
+            return seen, layers, {'pressed': 'at its centre', 'click': {}}
+        covered['open_but_refused'] = True
+    elif seen['over_it']:
+        covered['over_it'], covered['open_but_refused'] = seen['over_it'], False
+        await douyin_drawn(page, covered)
+    return seen, layers, None
+
+
+async def douyin_spot_press(page, slot, spots):
+    """A press at a spot of the slot's own, for a slot whose centre something lies over, decided with the pointer on that spot: up to
+    DOUYIN_SPOT_TRIES of them, nearest the centre first. From a review, a spot holds only where what is on top holds what a press at the
+    centre would reach beneath anything over it. From round 1's final check, that is looked at with the pointer there, since a button of the
+    slot's own that showed only under the pointer took such a press."""
+    for at in spots[:DOUYIN_SPOT_TRIES]:
+        aimed = await douyin_slot_aim(page, slot, at)
+        seen, _ = await douyin_slot_look(slot, at=at)
+        if seen.get('at_open') and await douyin_slot_trial(slot, aimed, at):
+            return {'pressed': 'at a spot where nothing lay over it', 'click': {'position': at}, 'at': at}
+    return None
+
+
+async def douyin_through_press(page, slot, seen, layers):
+    """The press through a part of the slot's own cover box as big as the slot, no control and in none, where it is itself on top: where a
+    person's press would land, and what they would be pressing. From a review: pressed with force at the slot's centre, the press went to a
+    small icon of the layer there with a press of its own, so it goes through a handle on that part, with the browser's own check left on,
+    which refuses anything from elsewhere that comes over the point. From round 1's final check: an icon or a button that showed only under
+    the pointer took that press too. So the spots come from a look with the pointer on the slot, since a layer that came with the pointer is
+    there only then, and each of up to DOUYIN_SPOT_TRIES of them is aimed at and looked at again, and pressed only if that part itself is on
+    top there with the pointer there."""
+    for spot, layer in zip(seen.get('through') or [], layers):
+        aimed = await douyin_slot_aim(page, layer, spot['on'])
+        there, _ = await douyin_slot_look(slot, layer=layer, on=spot['on'])
+        if aimed and aimed['settled'] and there.get('on_bare'):
+            return {'pressed': 'through its own cover box', 'click': {'position': spot['on']}, 'at': spot['at'], 'target': layer}
+    return None
+
+
+async def douyin_slot_opening(page, slot, covered):
+    """Where a slot that something lay over can be pressed, once Escape has gone to the description: from field runs on 647e002 and 7fa6c10,
+    where a slot was covered on both of its tries. A look with the pointer away and one with it on the slot's centre come first. From round
+    1's final check and an offline probe of this driver: what is open with the pointer away and over the slot with the pointer on it came with
+    the pointer, and since every press brings the pointer back, waiting can't clear it, so this returns at once, with came_with_pointer. What
+    stays with the pointer away is looked at about every second for up to DOUYIN_COVERED_SECONDS, with the pointer away and nothing pressed
+    but trial presses: at the centre once it is open, aimed at and looked at again with the pointer on it, or at a spot of the slot's own,
+    the same way. A stop or a platform check ends the wait. From a review: like X's waits, this one ends before the command's own cut-off,
+    which would close the browser with nothing recorded."""
     from . import browser_runtime
-    started, over_it, waiting = time.monotonic(), None, False
     end = browser_runtime.command_deadline
-    limit = DOUYIN_COVERED_SECONDS if end is None else min(DOUYIN_COVERED_SECONDS, end - X_COMMAND_MARGIN_SECONDS - started)
-    while True:
-        await risk_check(page)
-        stop_check('douyin')
-        seen, _ = await douyin_slot_look(slot)
-        over_it = seen['over_it'] or over_it
-        press = await douyin_slot_spot(slot, seen)
-        waited = round(time.monotonic() - started, 1)
-        if press is not None or waited >= limit:
-            if waiting:
-                stage('reading the page')
-            return {'press': press, 'over_it': over_it, 'unseen': seen.get('unseen'), 'waited_seconds': waited}
+    limit = DOUYIN_COVERED_SECONDS if end is None else min(DOUYIN_COVERED_SECONDS, end - X_COMMAND_MARGIN_SECONDS - covered['started'])
+    away = await douyin_look_away(page, slot, covered)
+    on, _, covered['press'] = await douyin_look_on(page, slot, covered)
+    waiting = False
+    while covered['press'] is None:
+        if away['open'] and not on['open'] and not on.get('unseen'):
+            covered['came_with_pointer'] = True
+            break
+        # The same spots aren't aimed at again while nothing about them has changed, so the pointer doesn't go back and forth every second.
+        if not away['open'] and away['spots'] and away['spots'] != covered['tried']:
+            covered['tried'] = away['spots']
+            covered['press'] = await douyin_spot_press(page, slot, away['spots'])
+            if covered['press']:
+                break
+        if time.monotonic() - covered['started'] >= limit:
+            break
         if not waiting:
             stage('waiting for a cover slot to clear')
             waiting = True
         await page.wait_for_timeout(DOUYIN_COVERED_LOOK_MS)
+        await risk_check(page)
+        stop_check('douyin')
+        away = await douyin_look_away(page, slot, covered)
+        if away['open']:
+            on, _, covered['press'] = await douyin_look_on(page, slot, covered)
+    if waiting:
+        stage('reading the page')
 
 
-async def douyin_slot_through(slot, covered):
-    """The press through a slot's own cover box, once nothing else will do, decided on one more look just before it, so that nothing that came
-    over the slot since is pressed in its place; a centre or spot of its own that has come open by then is tried as any other. Only a part of
-    the cover box's layer over the centre is pressed, as big as the slot, no control and in none, where it is itself on top: where a person's
-    press would land, and what they would be pressing. Nothing outside that box is ever pressed, and no control over the slot. From a review:
-    pressed with force at the slot's centre, the press went to whatever was on top there, a small icon of the layer with a press of its own
-    too, and to a layer that came after the look. So it goes through a handle on that part, with the browser's own check left on, which
-    refuses anything from elsewhere that comes over the spot."""
-    seen, layer = await douyin_slot_look(slot, through=True)
-    press = await douyin_slot_spot(slot, seen)
-    if press is None and layer:
-        press = {'pressed': 'through its own cover box', 'click': {'position': seen['through']['on']}, 'at': seen['through']['at'], 'target': layer}
-    return {**covered, 'over_it': seen['over_it'] or covered['over_it'], 'unseen': seen.get('unseen'), 'press': press}
+async def douyin_slot_last(page, slot, covered, leave_out):
+    """What a slot gets once waiting can't clear what lies over it: at once for what came with the pointer, or after the wait for what stayed.
+    One more look with the pointer on the slot's centre, which may find it open, then a spot of the slot's own that holds with the pointer on
+    it, and, unless it is a 4:3 slot that may be left out, the press through a bare part of its own cover box (douyin_through_press). The
+    press, or None."""
+    seen, layers, press = await douyin_look_on(page, slot, covered, through=not leave_out)
+    if press is None and seen['spots'] != covered['tried']:
+        press = await douyin_spot_press(page, slot, seen['spots'])
+    if press is None and not leave_out:
+        covered['bare_spots'] = len(seen.get('through') or [])
+        press = await douyin_through_press(page, slot, seen, layers)
+    return press
 
 
 def douyin_seconds(seconds):
@@ -1066,39 +1276,65 @@ def douyin_over_it_words(over_it):
             f"{over_it['position']}, over {part} and {round(over_it['window_covered'] * 100)}% of the window")
 
 
+def douyin_last_seen(covered):
+    """What the last look with the pointer on a slot's centre saw there. From round 1's final check: a stop told what an earlier look had seen,
+    though the last one had found the centre open and its trial press refused."""
+    if covered.get('open_but_refused'):
+        return 'its centre was open at the last look, yet it took no trial press'
+    if not covered['over_it'] and covered.get('unseen'):
+        return 'no look could see what lay over its centre'
+    return douyin_over_it_words(covered['over_it'])
+
+
+def douyin_pointer_said(covered):
+    """Whether what lay over a slot's centre showed only while the pointer was over the slot or stayed with the pointer away, in fixed words."""
+    over_it = covered['over_it']
+    if covered.get('open_but_refused') or not over_it or not over_it.get('tag') or over_it.get('holds_slot'):
+        return ''
+    if covered.get('came_with_pointer'):
+        return ' It showed only while the pointer was over the slot.'
+    return ' It stayed with the pointer away from the slot.' if covered.get('over_it_away') else ''
+
+
 def douyin_over_it_said(covered):
-    """A stop's short account of what lay over a slot, and how long it was waited for, with no words from the page."""
-    return f"After a wait of {douyin_seconds(covered['waited_seconds'])}, {douyin_over_it_words(covered['over_it'])}."
+    """A stop's short account of what lay over a slot, how long it was waited for, and whether it showed only while the pointer was over the
+    slot, with no words from the page."""
+    return f"After a wait of {douyin_seconds(covered['waited_seconds'])}, {douyin_last_seen(covered)}.{douyin_pointer_said(covered)}"
 
 
 def douyin_not_through(covered):
-    """Why a slot still covered after the wait wasn't pressed through what lay over it."""
+    """Why a slot that still couldn't take a press wasn't pressed through what lay over it."""
     over_it = covered['over_it']
     if covered.get('unseen'):
         return f"Its last look failed, so nothing was pressed through: {covered['unseen']}"
-    if not over_it or not over_it.get('tag') or over_it.get('holds_slot'):
+    if covered.get('open_but_refused') or not over_it or not over_it.get('tag') or over_it.get('holds_slot'):
         return 'So nothing was pressed through.'
     if over_it['place'] != 'cover box':
         return "It lies outside the slot's own cover box, so it wasn't pressed."
+    if covered.get('bare_spots'):
+        return "Wherever a bare part of it as big as the slot lay on top, something else was on top once the pointer was there, so it wasn't pressed."
     if over_it['control']:
         return "It's a control, or lies inside one, so it wasn't pressed."
     return "No part of it as big as the slot lay bare to a press, so it wasn't pressed."
 
 
 def douyin_slot_record(covered, role=None, label=None):
-    """What a receipt keeps of a slot that something lay over: what it was, with no words from the page, how and where the slot was pressed, if
-    it was, and how long it waited. A stop's goes under cover_slot_covered with the slot's role and label, so a cover's own key means what it did."""
+    """What a receipt keeps of a slot that something lay over: what it was with the pointer on the slot and with the pointer away, with no
+    words from the page, whether it came with the pointer, whether the page was drawing, how and where the slot was pressed, if it was, and
+    how long it waited. A stop's goes under cover_slot_covered with the slot's role and label, so a cover's own key means what it did."""
     press = covered['press'] or {}
-    return {**({'role': role, 'slot': label} if role else {}), 'refused': covered['refused'], 'over_it': covered['over_it'], 'pressed': press.get('pressed'),
+    return {**({'role': role, 'slot': label} if role else {}), 'refused': covered['refused'], 'over_it': covered['over_it'],
+            'over_it_away': covered['over_it_away'], 'came_with_pointer': covered['came_with_pointer'], 'pressed': press.get('pressed'),
             **({'at': press['at']} if 'at' in press else {}), **({'unseen': covered['unseen']} if covered.get('unseen') else {}),
+            **({'open_but_refused': True} if covered.get('open_but_refused') else {}), 'drawing': covered['drawing'],
             'waited_seconds': covered['waited_seconds']}
 
 
 def douyin_slot_skipped(size, refused=None, covered=None):
     """The record of a 4:3 cover left out while a 竖封面3:4 one goes on: for a video taller than it is wide, whose 横封面4:3 slot isn't pressed
-    at all, or for one whose size couldn't be read and whose slot was turned off, or still had something over it after the wait. Such a slot
-    is never pressed through. A review found its note said the description's list had been closed when nothing had been done about one, so it
-    says only what was tried."""
+    at all, or for one whose size couldn't be read and whose slot was turned off, had something over it that came with the pointer, or still
+    had something over it after the wait. Such a slot is never pressed through. A review found its note said the description's list had been
+    closed when nothing had been done about one, so it says only what was tried."""
     if not refused:
         return {'state': 'SKIPPED', 'video_size': list(size),
                 'note': f"The video is {size[0]}x{size[1]}, taller than it is wide, so Douyin's 横封面4:3 slot wasn't pressed and the planned 4:3 cover wasn't set."}
@@ -1106,22 +1342,26 @@ def douyin_slot_skipped(size, refused=None, covered=None):
     if not covered:
         return {'state': 'SKIPPED', 'video_size': None, 'refused': refused,
                 'note': f"{unread} was turned off, so the planned 4:3 cover wasn't set and nothing was pressed there."}
+    if covered['came_with_pointer']:
+        how = (f"{unread} had something over it that showed only while the pointer was over the slot, once Escape had been pressed in the "
+               f"description at the end of its words: {douyin_last_seen(covered)}.")
+    else:
+        how = (f"{unread} still couldn't take a press after Escape was pressed in the description at the end of its words and a wait of "
+               f"{douyin_seconds(covered['waited_seconds'])}: {douyin_last_seen(covered)}.{douyin_pointer_said(covered)}")
+    failed = f" Its last look failed: {covered['unseen'].rstrip('.')}." if covered.get('unseen') else ''
     return {'state': 'SKIPPED', 'video_size': None, **douyin_slot_record(covered),
-            'note': f"{unread} still couldn't take a press after Escape was pressed in the description at the end of its words and a wait of "
-                    f"{douyin_seconds(covered['waited_seconds'])}: {douyin_over_it_words(covered['over_it'])}. So the planned 4:3 cover wasn't set "
-                    "and nothing was pressed there."}
+            'note': f"{how}{failed} So the planned 4:3 cover wasn't set and nothing was pressed there."}
 
 
 def douyin_slot_blocked(role, label, size, tall_too, refused, covered=None):
     """The stop for a cover slot that couldn't take a press, saying why a 4:3 cover wasn't left out instead, and for one that something lay
-    over, what it was, for how long, and why it wasn't pressed through."""
+    over, what it was, for how long, whether it came with the pointer, and why it wasn't pressed through."""
     why = ('' if role != 'landscape' else
            f"The video is {size[0]}x{size[1]}, at least as wide as it is tall, so its 4:3 cover is never left out. " if size and size[0] >= size[1] else
            "It's the only cover this attempt has, so it isn't left out. " if not tall_too else
            "A 4:3 cover is left out only when something lies over its slot or the slot is turned off, and the browser saw neither. ")
     over = f" {douyin_over_it_said(covered)} {douyin_not_through(covered)}" if covered else ''
-    return VpubError('cover_blocked', f"Douyin's {label} slot couldn't take a press, so nothing was published. {why}{refused}{over}",
-                     'vpub resume tries again, and vpub resume KEY --no-cover goes without one.')
+    return VpubError('cover_blocked', f"Douyin's {label} slot couldn't take a press, so nothing was published. {why}{refused}{over}", DOUYIN_COVER_AGAIN)
 
 
 def douyin_cover_unopened(label, record, failed=None):
@@ -1129,17 +1369,13 @@ def douyin_cover_unopened(label, record, failed=None):
     or opened no cover window."""
     done = (f"couldn't take the press {record['pressed']}, so nothing was published. {failed}" if failed else
             f"was pressed once {record['pressed']}, and Douyin's cover window didn't open, so nothing was published and nothing was pressed again.")
-    return VpubError('cover_blocked', f"Douyin's {label} slot {done} {douyin_over_it_said(record)}",
-                     'vpub resume tries again, and vpub resume KEY --no-cover goes without one.')
+    return VpubError('cover_blocked', f"Douyin's {label} slot {done} {douyin_over_it_said(record)}", DOUYIN_COVER_AGAIN)
 
 
-async def douyin_slot_press(page, tx, editor, slot, role, label, size, tall_too):
-    """How a cover slot is to be pressed: {} for one that takes its first trial press, which is pressed as it always was, or, for one that
-    something lay over, what it was and where the slot can be pressed, after a look for a platform check and a stop. None is a 4:3 cover left
-    out, whose record is saved. Anything else stops here, before anything is published."""
-    refused = await douyin_slot_refuses(page, editor, slot)
-    if not refused:
-        return {}
+async def douyin_slot_press(page, tx, slot, role, label, size, tall_too, refused):
+    """How a cover slot that refused a press is to be pressed: for one that something lay over, what it was and where the slot can be pressed,
+    after a platform check and a stop. None is a 4:3 cover left out, whose record is saved. Anything else stops here, before anything is
+    published."""
     # The one cover ever left out after a refusal: a 4:3 one on a video whose size can't be read, while a 竖封面3:4 one goes on.
     leave_out = role == 'landscape' and tall_too and not size
     if 'intercepts pointer events' not in refused:
@@ -1147,12 +1383,17 @@ async def douyin_slot_press(page, tx, editor, slot, role, label, size, tall_too)
             tx.save(landscape_cover=douyin_slot_skipped(None, refused))
             return None
         raise douyin_slot_blocked(role, label, size, tall_too, refused)
-    covered = {'refused': refused, **await douyin_slot_opening(page, slot)}
+    covered = {'refused': refused, 'over_it': None, 'over_it_away': None, 'came_with_pointer': False, 'drawing': None, 'press': None,
+               'unseen': None, 'open_but_refused': False, 'bare_spots': 0, 'tried': None, 'started': time.monotonic()}
+    await douyin_slot_opening(page, slot, covered)
+    # A 4:3 slot that may be left out is never pressed through: under what came with the pointer it is left out at once, unless a spot of its
+    # own holds, and under what stayed, once the wait is over, as before.
+    if covered['press'] is None and (covered['came_with_pointer'] or not leave_out):
+        covered['press'] = await douyin_slot_last(page, slot, covered, leave_out)
+    covered['waited_seconds'] = round(time.monotonic() - covered['started'], 1)
     if covered['press'] is None and leave_out:
         tx.save(landscape_cover=douyin_slot_skipped(None, refused, covered))
         return None
-    if covered['press'] is None:
-        covered = await douyin_slot_through(slot, covered)
     # From a review: these came before that last look, not between it and the press it decides.
     await risk_check(page)
     stop_check('douyin')
@@ -1162,31 +1403,38 @@ async def douyin_slot_press(page, tx, editor, slot, role, label, size, tall_too)
     return covered
 
 
-async def douyin_cover_dialog(page):
-    """Douyin's cover window, once a slot has been pressed."""
-    await page.locator('[role=dialog]').first.wait_for(state='visible', timeout=DOUYIN_WINDOW_MS)
-    dialog = await unique_visible(page.locator('[role=dialog]'), 'Douyin cover editor')
-    await dialog.get_by_text('上传封面', exact=True).wait_for(timeout=DOUYIN_WINDOW_MS)
-    return dialog
-
-
 async def douyin_cover_window(page, tx, slot, role, label, how):
-    """One press on a cover slot, and the cover window it opens. A slot that took its first trial press is pressed as it always was. One that
-    something lay over is pressed once, as douyin_slot_press found it could be, on the slot or on the part of its own cover box found for it,
-    and a press that doesn't go through, or that opens no cover window, stops with cover_blocked. Nothing is pressed again."""
+    """The one press on a slot that something lay over, where douyin_slot_press found it could be, with the pointer already there: on the slot,
+    or on the part of its own cover box found for it. A press that doesn't go through, or that opens no cover window, stops with
+    cover_blocked, and nothing is pressed again. From round 1's final check: once the window is open, what lay over the slot is saved at once,
+    so a stop later in the cover step keeps it, and the cover's own record takes its place once the cover is on."""
     from patchright.async_api import Error as BrowserError
-    if not how:
-        await slot.click()
-        return await douyin_cover_dialog(page)
     press, pressed = how['press'], False
     try:
         await (press.get('target') or slot).click(timeout=DOUYIN_SLOT_MS, **press['click'])
         pressed = True
-        return await douyin_cover_dialog(page)
+        dialog = await douyin_cover_dialog(page)
     except BrowserError as exc:
         record = {**douyin_slot_record(how, role, label), 'pressed_once': pressed}
         tx.save(cover_slot_covered=record)
         raise douyin_cover_unopened(label, record, None if pressed else failure_message(exc)) from None
+    tx.save(cover_slot_covered={**douyin_slot_record(how, role, label), 'pressed_once': True, 'note': "It was pressed once, and Douyin's cover window opened."})
+    return dialog
+
+
+async def douyin_slot_window(page, tx, editor, slot, role, label, size, tall_too):
+    """One press on a cover slot and the cover window it opens, with how the slot was pressed: {} for one that took its first trial press. None
+    is a 4:3 cover left out, whose record is saved. Anything else stops before anything is published, and nothing is pressed again."""
+    refused = await douyin_slot_refuses(page, editor, slot)
+    if not refused:
+        dialog, refused = await douyin_first_press(page, tx, slot, role, label)
+        if dialog is not None:
+            return dialog, {}
+        # From round 1's final check: a layer came between the trial press and the press, which the browser then refused. The slot goes on as
+        # if its trial press had been refused that way, after the same one Escape in the description.
+        await douyin_leave_caption(page, editor, from_the_end=True)
+    how = await douyin_slot_press(page, tx, slot, role, label, size, tall_too, refused)
+    return None if how is None else (await douyin_cover_window(page, tx, slot, role, label, how), how)
 
 
 async def finish_douyin_form(page, tx, before):
@@ -1202,9 +1450,10 @@ async def finish_douyin_form(page, tx, before):
     # A review found leaving the 4:3 one out left a post with no cover when it was the only one, as vpub resume --cover gives, and that a
     # wider video went out without it after any refusal, a second slot from a layout change too. So it is left out only while a 竖封面3:4 cover
     # goes on: on a taller video, or on one whose size can't be read when its slot is turned off or still covered after the wait. Any other
-    # refusal stops here. From field runs on 647e002 and 7fa6c10, a slot something lies over is waited for and pressed only where nothing
-    # lies over it, or through a bare part of its own cover box as big as itself, and one that still can't be stops with what lay there
-    # (douyin_slot_press).
+    # refusal stops here. From field runs on 647e002 and 7fa6c10 and round 1's final check, a slot something lies over is pressed only where a
+    # look made with the pointer already on that point found it could be: on the slot itself, or through a bare part of its own cover box as
+    # big as itself. What came with the pointer is pressed through at once, what stays is waited for, and a slot that still can't be pressed
+    # stops with what lay there (douyin_slot_window).
     tall_too = bool(tx.cover('portrait'))
     for role, label, path in [cover for cover in planned if cover[2]]:
         control = page.locator('[class^="coverControl-"]').filter(has=page.get_by_text(label, exact=True))
@@ -1213,10 +1462,10 @@ async def finish_douyin_form(page, tx, before):
         if tall_too and size and size[1] > size[0]:
             tx.save(landscape_cover=douyin_slot_skipped(size))
             continue
-        how = await douyin_slot_press(page, tx, editor, slot, role, label, size, tall_too)
-        if how is None:
+        opened = await douyin_slot_window(page, tx, editor, slot, role, label, size, tall_too)
+        if opened is None:
             continue
-        dialog = await douyin_cover_window(page, tx, slot, role, label, how)
+        dialog, how = opened
         area = await unique_visible(dialog.locator('.semi-upload').filter(has_text='点击上传文件或拖拽文件到这里'), 'Douyin cover upload area')
         await choose_file(page, area.locator('input.semi-upload-hidden-input'), path)
         from .browser_edits import DOUYIN_COVER_SECONDS, douyin_cover_settles, douyin_cover_stuck, douyin_cover_traffic

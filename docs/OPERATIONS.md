@@ -698,7 +698,7 @@ B站使用內含的 [kukemc/bili-cli](https://github.com/kukemc/bili-cli)，並�
 
 留言、數據、按讚、私訊等非發布的瀏覽器指令，現在每個帳號共用一個背景瀏覽器，後續指令不必重新啟動 Chrome。它只在你的電腦上運行，透過經過驗證的私有管道通訊；閒置 5 分鐘、滿 1 小時、發生任何錯誤或執行 `vpub stop` 後都會結束。YouTube 的瀏覽器是真實的 Chrome 視窗，因此只在 Windows 上共用：它在隱藏桌面上運行，閒置 20 秒後關閉。在其他系統上，YouTube 的每個步驟都會自行啟動並關閉瀏覽器。發布、`resume`、`edit` 和登入會先關閉它再單獨執行。已送出的指令不會自動重送。某一步逾時時，錯誤是 `browser_step_timeout`，它會指出是哪一步（啟動 Chrome、確認誰已登入、檢查頁面有沒有平台的警告，或執行指令），並說明並沒有證據顯示登入已經過期；再執行指令之前請先查看回執。在共用瀏覽器上，第二個指令會等第一個完成，最多等三分鐘，不會直接失敗。會改動內容的指令，或 Windows 以外的 YouTube 指令，在另一個指令執行時啟動，會以 `busy` 或 `browser_busy` 停下：請稍等再重新執行，絕不要刪除鎖檔。若要關閉此功能，在設定檔把 `browser_idle_seconds` 設為 0，或設定環境變數 `VPUB_BROWSER_IDLE_SECONDS=0`。
 
-瀏覽器指令執行時會在 stderr 寫入簡短的 JSON 行，每到一個階段寫一行，且至少每 15 秒一行，讓較慢的指令不會看起來像卡住：`{"event": "browser_progress", "platform": "youtube", "stage": "opening the page", "elapsed_seconds": 12.3}`。階段有 `waiting for the browser`、`starting the browser`、`checking the account`、`opening the page`、`reading the page`、`uploading`、`pressing`、`reading back` 與 `closing the browser`。這些行不含任何人的文字、名稱、ID 或網址。stdout 仍只有一個 JSON 結果，請分開讀取這兩個資料流。
+瀏覽器指令執行時會在 stderr 寫入簡短的 JSON 行，每到一個階段寫一行，且至少每 15 秒一行，讓較慢的指令不會看起來像卡住：`{"event": "browser_progress", "platform": "youtube", "stage": "opening the page", "elapsed_seconds": 12.3}`。階段有 `waiting for the browser`、`starting the browser`、`checking the account`、`opening the page`、`reading the page`、`uploading`、`waiting for a cover slot to clear`、`pressing`、`waiting for platform confirmation`、`reading back` 與 `closing the browser`。這些行不含任何人的文字、名稱、ID 或網址。stdout 仍只有一個 JSON 結果，請分開讀取這兩個資料流。
 
 ## 查看需要處理的事項
 

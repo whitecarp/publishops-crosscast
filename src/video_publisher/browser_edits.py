@@ -1,4 +1,5 @@
 """Official-page edits using the existing CLI-owned session, not the host browser."""
+import asyncio
 from pathlib import Path
 import re
 import time
@@ -298,9 +299,47 @@ def douyin_cover_traffic(page):
 
 
 async def douyin_cover_stuck(page,fonts,seen):
-    """What a stop can say about the page, with no words from it."""
+    """What a stop can say about the page, with no words from it. Douyin's cover window often hangs after 完成 in the background browser while the phone sets a cover in a second, and one lead is that the hidden window isn't drawing frames, so it says whether the page was drawing too (douyin_drawing)."""
     windows=page.locator('[role=dialog]')
-    return f"Its fonts were {fonts} at the press and are {await douyin_fonts(page)} now. {await windows.locator('visible=true').count()} of {await windows.count()} windows on the page are showing. Requests since the press: {seen}."
+    return f"Its fonts were {fonts} at the press and are {await douyin_fonts(page)} now. {await windows.locator('visible=true').count()} of {await windows.count()} windows on the page are showing. Requests since the press: {seen}. {douyin_drawing_said(await douyin_drawing(page))}"
+
+
+# Whether a page is drawing, for the lead that a hidden window draws no frames: whether it is visible, kept only as one of a few fixed words, whether it has focus, whether an animation frame runs within a second, which a timer cuts off, and how many animations are running. Never any words from the page. A fact the page can't give is unknown.
+DOUYIN_DRAWING="""async () => {
+  const fact=read=>{try{return read();}catch(e){return 'unknown';}};
+  const visibility=fact(()=>['visible','hidden','prerender'].includes(document.visibilityState)?document.visibilityState:'other');
+  const focused=fact(()=>document.hasFocus()===true);
+  const running=fact(()=>document.getAnimations().filter(a=>a.playState==='running').length);
+  let frame='unknown';
+  try{frame=await new Promise(done=>{const late=setTimeout(()=>done(false),1000);requestAnimationFrame(()=>{clearTimeout(late);done(true);});});}catch(e){}
+  return {visibility,focused,frame_within_a_second:frame,running_animations:running};
+}"""
+DOUYIN_DRAWING_WORDS={'visible','hidden','prerender','other'}
+DOUYIN_DRAWING_SECONDS=5  # A page that doesn't answer by then, which a frozen one wouldn't, is one whose facts are unknown.
+
+
+async def douyin_drawing(page):
+    """Whether the page was drawing (DOUYIN_DRAWING), as numbers, true or false and fixed words, with unknown for whatever it couldn't say. It never raises: it is only for a stop's account."""
+    try:
+        seen=await asyncio.wait_for(page.evaluate(DOUYIN_DRAWING),DOUYIN_DRAWING_SECONDS)
+    except Exception:
+        seen={}
+    seen=seen if isinstance(seen,dict) else {}
+    def flag(value):
+        return value if isinstance(value,bool) else 'unknown'
+    count=seen.get('running_animations')
+    return {'visibility':seen.get('visibility') if seen.get('visibility') in DOUYIN_DRAWING_WORDS else 'unknown','focused':flag(seen.get('focused')),
+            'frame_within_a_second':flag(seen.get('frame_within_a_second')),'running_animations':count if type(count) is int and count>=0 else 'unknown'}
+
+
+def douyin_drawing_said(drawing):
+    """Those facts in one sentence of fixed words."""
+    shown={'visible':'was visible','hidden':'was hidden','prerender':'was still being prerendered','other':'was neither visible nor hidden'}.get(drawing['visibility'],"didn't say whether it was visible")
+    focus={True:'had focus',False:'had no focus'}.get(drawing['focused'],"didn't say whether it had focus")
+    frame={True:'drew a frame within a second',False:'drew no frame within a second'}.get(drawing['frame_within_a_second'],"didn't say whether it drew a frame")
+    count=drawing['running_animations']
+    running=f"had {count} animation{'' if count==1 else 's'} running" if type(count) is int else "didn't say how many animations were running"
+    return f"The page {shown}, {focus}, {frame} and {running}."
 
 
 async def douyin_cover_settles(page):
