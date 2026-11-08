@@ -291,8 +291,10 @@ def douyin_caption(description, tags):
 # bili-cli's own limit on the people one description mentions (DESC_MENTIONS_MAX); a test holds the two together.
 MENTIONS_MOST = 10
 # Said to whoever writes the words. bili-cli puts a mention whose @nickname it can't find at the start of the description, which would change the approved words.
-MENTION_HOW = ("Bilibili's description must hold each person in mention_uids as @ and their current Bilibili nickname, followed by a space, where the mention goes; "
-               "bili user info UID gives the nickname. Without that, bili-cli would put the mention at the start, so CrossCast stops before anything is uploaded.")
+# bili-cli only takes the ordinary @ and space, and a real contest entry on 2026-11-05 mixed them up with their full-width look-alikes.
+MENTION_HOW = ("Bilibili's description must hold each person in mention_uids where the mention goes, written as the ordinary half-width @ (not the full-width ＠), "
+               "their current Bilibili nickname, then an ordinary space (not a full-width one); bili user info UID gives the nickname. "
+               "Without that, bili-cli would put the mention at the start, so CrossCast stops before anything is uploaded.")
 
 
 def bilibili_topic(value):
@@ -314,7 +316,8 @@ def mention_uids(value):
 def mentions_written(description, uids):
     """Only a check that there are enough @names. Whether each is that person's current nickname, only Bilibili can say, so the upload asks bili-cli's own dry run first."""
     if len(set(re.findall(r"@\S+", description))) < len(uids):
-        raise VpubError("invalid_mention", "Bilibili's description has fewer @nicknames than mention_uids has people.", MENTION_HOW)
+        wide = " A full-width ＠ doesn't count, so write the ordinary @." if re.search(r"＠\S", description) else ""
+        raise VpubError("invalid_mention", "Bilibili's description has fewer @nicknames than mention_uids has people." + wide, MENTION_HOW)
 
 
 def how_to_clear_a_stop():

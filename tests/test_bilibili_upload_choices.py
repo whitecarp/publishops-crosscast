@@ -2,11 +2,12 @@
 
 A topic can only be joined at upload, an activity topic's mission_id is what enters its contest, and bili upload status reports
 neither, so the receipt keeps them. Whether Bilibili has the topic and finds each @nickname depends on Bilibili, so bili-cli's
-own dry run is asked first, where a refusal sends nothing and the same video can be tried again.
+own dry run is asked first, before the attempt is recorded, where a refusal sends nothing and the same video can be tried again.
 """
 import asyncio
 import os
 from pathlib import Path
+import re
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -33,6 +34,8 @@ class FakeBili:
 
     def __init__(self):
         self.calls, self.dry_answer, self.dry_refusal = [], None, None
+        # The archive view under bili upload status, which holds the topic and contest the work is in.
+        self.archive = {"topic_id": TOPIC["id"], "mission_id": TOPIC["mission_id"]}
 
     def __call__(self, args, timeout=210, program=None):
         self.calls.append(list(args))
@@ -41,7 +44,7 @@ class FakeBili:
         if words[:2] == ["upload", "video"]:
             return self.upload(words, dry)
         if words[:2] == ["upload", "status"]:
-            return {"bvid": WORK, "ai_declare": True, "private": False}
+            return {"archive": {"bvid": WORK, **self.archive}} if "--raw" in words else {"bvid": WORK, "ai_declare": True, "private": False}
         if words[:3] == ["danmaku", "interact", "list"]:
             return {"items": []}
         raise AssertionError(f"Unexpected bili call: {args}")
@@ -119,6 +122,21 @@ class UploadTests(Temporary):
         self.assertEqual([], self.bili.uploads())
         return refused.exception
 
+    def go(self, **bilibili):
+        """vpub publish of an approved plan with the topic, both covers and two mentions."""
+        self.picture("wide.png", (1600, 900))
+        self.picture("c43.png", (1200, 900))
+        with patch.object(adapters, "preflight", return_value={"identity": "42"}):
+            plan = load_plan(self.manifest(**bilibili))
+            return cli.publish_plan(plan, plan["confirmation"], reviewed=True)["results"]["bilibili"]
+
+    def records(self):
+        ledger = Ledger()
+        try:
+            return ledger.rows("bilibili")
+        finally:
+            ledger.close()
+
     def test_the_upload_gets_the_topic_the_43_cover_and_each_mention_after_its_own_dry_run(self):
         result = self.publish(topic="AI MV 大赛", mention_uids=[111, 222])
         upload = ["upload", "video", "v.mp4", "--title", "标题", "--desc", WORDS, "--ai-declare", "--tag", "音乐", "--cover", "wide.jpg",
@@ -134,10 +152,22 @@ class UploadTests(Temporary):
         self.assertEqual(("SUBMITTED", entered), (self.marks[0]["state"], self.marks[0]["topic"]))
         self.assertEqual(["upload", "status", WORK], self.bili.calls[2])
 
+    def test_verify_says_whether_bilibili_kept_the_topic_and_its_contest(self):
+        kept = self.publish(topic="AI MV 大赛")
+        self.assertEqual((True, "SUBMISSION_VERIFIED"), (kept["topic_kept"], kept["state"]))
+        self.assertIn("Bilibili's record keeps the topic", kept["note"])
+        self.bili.archive = {"topic_id": TOPIC["id"]}  # The topic without its contest.
+        dropped = self.publish(topic="AI MV 大赛")
+        self.assertEqual(False, dropped["topic_kept"])
+        self.assertIn("doesn't show the topic this upload sent, or its contest", dropped["note"])
+        self.assertNotIn("大赛", kept["note"] + dropped["note"])
+
     def test_without_them_the_upload_is_as_it_was(self):
         self.publish({"video": "v.mp4"})
         self.assertEqual([["upload", "video", "v.mp4", "--title", "标题", "--desc", WORDS, "--ai-declare", "--tag", "音乐"]], self.bili.uploads())
         self.assertEqual([], self.bili.dry_runs())
+        # With no topic, verify reads nothing more than before.
+        self.assertFalse(any("--raw" in call for call in self.bili.calls))
 
     def test_a_43_cover_alone_needs_no_dry_run(self):
         result = self.publish({"video": "v.mp4", "covers": {"bilibili": {"cover43": {"path": "c43.jpg", "sha256": "2"}}}})
@@ -158,9 +188,17 @@ class UploadTests(Temporary):
             with self.subTest(words=words):
                 error = self.refused("mention_not_written", description=words, mention_uids=[111, 222])
                 self.assertIn(f"Check mention_uids {places}.", error.hint)
-                self.assertIn("followed by a space", error.hint)
+                self.assertIn("then an ordinary space", error.hint)
                 for said in ("小白", "Example", "111", "222"):
                     self.assertNotIn(said, error.message + error.hint)
+
+    def test_a_full_width_at_or_space_is_named_where_it_is(self):
+        # A real contest entry on 2026-11-05 mixed up the ordinary @ and space with these look-alikes.
+        error = self.refused("mention_not_written", description="谢谢 ＠小白 和 @Example\u3000帮忙", mention_uids=[111, 222])
+        self.assertIn("Check mention_uids #1 (full-width ＠), #2 (no ordinary space after it).", error.hint)
+        self.assertIn("the ordinary half-width @ (not the full-width ＠)", error.hint)
+        for said in ("小白", "Example"):
+            self.assertNotIn(said, error.message + error.hint)
 
     def test_a_mention_that_ends_the_description_needs_no_space_after_it(self):
         self.assertEqual("SUBMISSION_VERIFIED", self.publish(description="谢谢 @小白", mention_uids=[111])["state"])
@@ -181,6 +219,34 @@ class UploadTests(Temporary):
             self.publish(topic="AI MV 大赛")
         self.assertFalse(never_sent(caught.exception))
         self.assertEqual([], self.bili.uploads())
+
+    def test_vpub_publish_asks_the_dry_run_before_it_records_the_attempt_and_only_once(self):
+        claim = Ledger.claim
+
+        def claimed(ledger, *args):
+            self.bili.calls.append("claimed")
+            return claim(ledger, *args)
+        with patch.object(Ledger, "claim", claimed):
+            result = self.go()
+        steps = [call if call == "claimed" else "dry run" if call[0] == "--dry-run" else " ".join(call[:2]) for call in self.bili.calls]
+        self.assertEqual(["dry run", "claimed", "upload video", "upload status"], steps[:4])
+        self.assertEqual(("SUBMISSION_VERIFIED", 1), (result["state"], steps.count("dry run")))
+
+    def test_a_dry_run_cut_off_midway_leaves_no_record_so_the_video_can_go_again(self):
+        # It can take minutes, and an attempt recorded before it would look like an upload that may have gone out.
+        self.bili.dry_refusal = KeyboardInterrupt()
+        with self.assertRaises(KeyboardInterrupt):
+            self.go()
+        self.assertEqual([], self.records())
+        self.bili.dry_refusal = None
+        self.assertEqual("SUBMISSION_VERIFIED", self.go()["state"])
+        self.assertEqual(1, len(self.bili.uploads()))
+
+    def test_vpub_publish_records_a_dry_run_that_did_not_answer_as_one_and_never_tries_it_again(self):
+        self.bili.dry_answer = {"bvid": WORK}
+        first, second = self.go(), self.go()
+        self.assertEqual(("UNKNOWN", "backend_error", "SKIPPED_EXISTING"), (first["state"], first["code"], second["state"]))
+        self.assertEqual((1, 1, []), (len(self.records()), len(self.bili.dry_runs()), self.bili.uploads()))
 
     def test_a_refusal_leaves_the_video_free_to_go_again_once_the_plan_is_right(self):
         self.picture("wide.png", (1600, 900))
@@ -253,18 +319,46 @@ class PlanTests(Temporary):
         self.assertEqual({"cover43"}, set(load_plan(self.manifest(others=douyin))["covers"]["bilibili"]))
         self.refused("invalid_submission_mode", submission_mode="draft_only", topic=None, mention_uids=None)
 
+    def test_a_43_cover_past_the_pixel_limit_the_others_have_is_refused_and_left_as_it_is(self):
+        huge = self.root / "huge43.png"
+        Image.new("1", (8000, 6000)).save(huge)  # 4:3 and 48 megapixels, yet only kilobytes at one bit a pixel.
+        before = huge.read_bytes()
+        with self.assertRaises(VpubError) as refused:
+            load_plan(self.manifest(covers={"bilibili": {"cover43": "huge43.png"}}))
+        self.assertEqual(("invalid_cover", before), (refused.exception.code, huge.read_bytes()))
+        self.assertIn("40-megapixel", refused.exception.message)
+
     def test_the_copy_request_says_where_each_at_nickname_goes(self):
         target = metadata.request(self.manifest())["targets"]["bilibili"]
         self.assertEqual([111, 222], target["mention_uids"])
-        self.assertIn("@ and their current Bilibili nickname, followed by a space", target["mention_note"])
+        self.assertIn("the ordinary half-width @ (not the full-width ＠), their current Bilibili nickname, then an ordinary space (not a full-width one)", target["mention_note"])
         self.assertIn("bili user info UID", target["mention_note"])
         self.assertNotIn("mention_note", metadata.request(self.manifest(mention_uids=None))["targets"]["bilibili"])
+
+    def test_a_full_width_at_is_named_before_anything_asks_bilibili(self):
+        with self.assertRaises(VpubError) as refused:
+            load_plan(self.manifest(description="谢谢 ＠小白 和 @Example 帮忙"))
+        self.assertEqual("invalid_mention", refused.exception.code)
+        self.assertIn("A full-width ＠ doesn't count", refused.exception.message)
+        self.assertNotIn("小白", refused.exception.message + refused.exception.hint)
+        with self.assertRaises(VpubError) as refused:
+            load_plan(self.manifest(description="谢谢 @小白 帮忙"))
+        self.assertNotIn("full-width", refused.exception.message)
+
+    def test_the_person_is_shown_the_topic_and_who_will_be_notified_before_saying_yes(self):
+        from video_publisher.publication_review import check
+        both = "On Bilibili, also show its topic, which can enter the video in a contest, and the people in its mention_uids, who will be notified."
+        self.assertIn(both, check(load_plan(self.manifest()), None)["next"])
+        self.assertIn("On Bilibili, also show its topic, which can enter the video in a contest.", check(load_plan(self.manifest(mention_uids=None)), None)["next"])
+        self.assertNotIn("On Bilibili", check(load_plan(self.manifest(topic=None, mention_uids=None)), None)["next"])
 
 
 class IncludedBiliTests(unittest.TestCase):
     """The dry run CrossCast reads is the included bili-cli's own, run in its own process with its requests replaced, so a renamed
     field shows here. Nothing is contacted: the topic search, the nickname lookup and the zone and tag checks answer from here."""
     STAND_IN = '''import bilibili_api.utils.network as network
+from bilibili_api import user
+from bilibili_api.exceptions import ResponseCodeException
 from bili_cli import config
 from bili_cli.commands import upload
 
@@ -276,14 +370,18 @@ class Nowhere:
         raise AssertionError("This test contacts nothing.")
 
 
-NAMES = {"111": "小白", "222": "Example"}
+NAMES = {111: "小白", 222: "Example"}
 async def topic(cred, query): return {"id": 1340873, "name": "AI MV 大赛", "mission_id": 4071698, "activity": 1}
-async def people(values): return {NAMES[value]: int(value) for value in values}
+async def info(self):
+    # Bilibili answers a UID with no account with an error code (-404 in its API notes), which bilibili-api raises.
+    if self.get_uid() not in NAMES: raise ResponseCodeException(-404, "啥都木有")
+    return {"mid": self.get_uid(), "name": NAMES[self.get_uid()]}
 async def zone(cred, title): return {"tid": 21, "tid_name": "a / b", "zone": 1011, "zone_name": "c"}
 async def no_rejects(cred, tags): return []
 network.Api, upload.web_client = Nowhere, Nowhere
 config.require_credential = lambda: type("Cred", (), {"bili_jct": "x"})()
-upload.find_topic, upload._desc_mentions, upload._predict_zone, upload._check_tags = topic, people, zone, no_rejects
+user.User.get_user_info = info
+upload.find_topic, upload._predict_zone, upload._check_tags = topic, zone, no_rejects
 from bili_cli.main import main
 main()
 '''
@@ -316,6 +414,16 @@ main()
             with self.subTest(code=code), self.assertRaises(NothingSent) as refused:
                 self.check(**options)
             self.assertEqual(code, refused.exception.code)
+
+    def test_a_uid_with_no_account_comes_back_as_the_code_the_skill_says(self):
+        # bili-cli's own words for a person it can't find come only from an answer without a name, which this never is.
+        with self.assertRaises(NothingSent) as refused:
+            self.check(mention_uids=[111, 333])
+        details = (Path(__file__).resolve().parents[1] / "skills/publishops-crosscast/references/details.md").read_text(encoding="utf-8")
+        said = re.search(r"for a UID with no account, bili-cli's own code, such as `(\w+)`", details)
+        self.assertEqual(("not_found", "not_found"), (refused.exception.code, said and said[1]))
+        self.assertIn("Check each UID in mention_uids", refused.exception.hint)
+        self.assertNotIn("333", refused.exception.message + refused.exception.hint)
 
     def test_its_words_for_what_it_cannot_find_are_the_ones_crosscast_puts_another_way(self):
         from bili_cli.commands import comment, owner, upload

@@ -473,7 +473,7 @@ class TwoCommandTests(unittest.TestCase):
         self.assertEqual(("AI MV 大赛", [111, 222], str(self.cover43)), (bilibili["topic"], bilibili["mention_uids"], bilibili["cover43"]))
         # Whoever writes the words is told where each @nickname goes.
         for note in (bilibili["mention_note"], answer["targets"]["bilibili"]["mention_note"]):
-            self.assertIn("@ and their current Bilibili nickname, followed by a space", note)
+            self.assertIn("the ordinary half-width @ (not the full-width ＠), their current Bilibili nickname, then an ordinary space", note)
         self.assertEqual([111, 222], answer["targets"]["bilibili"]["mention_uids"])
         self.write_copy(description="谢谢 @小白 和 @Example 帮忙")
         with patch.object(adapters, "bili", side_effect=AssertionError("No platform access")):
@@ -514,6 +514,9 @@ class TwoCommandTests(unittest.TestCase):
 
     def test_bilibilis_choices_are_checked_before_any_words_are_written(self):
         self.refused("invalid_cover", self.prepare, "--bilibili-cover43", self.picture("wide.png", (1600, 1000)), platforms="bilibili")
+        huge = self.folder / "huge43.png"
+        Image.new("1", (8000, 6000)).save(huge)  # 4:3, but past the 40 megapixels every cover is held to.
+        self.assertIn("40-megapixel", self.refused("invalid_cover", self.prepare, "--bilibili-cover43", huge, platforms="bilibili").message)
         self.refused("invalid_mention", self.prepare, "--bilibili-mention", "小白", platforms="bilibili")
         self.refused("invalid_topic", self.prepare, "--bilibili-topic", " AI MV 大赛", platforms="bilibili")
         self.refused("bilibili_not_chosen", self.prepare, "--bilibili-topic", "AI MV 大赛", platforms="youtube")
@@ -523,7 +526,15 @@ class TwoCommandTests(unittest.TestCase):
     def test_words_without_each_at_nickname_stop_before_any_upload(self):
         self.contest()
         self.write_copy(description="谢谢 @小白 帮忙")
-        self.assertIn("followed by a space", self.refused("invalid_mention", self.go).hint)
+        self.assertIn("then an ordinary space", self.refused("invalid_mention", self.go).hint)
+        self.assertEqual([], self.sent)
+
+    def test_the_person_is_shown_the_topic_and_who_will_be_notified_before_saying_yes(self):
+        self.contest()
+        self.write_copy(title="联系我 13812345678", description="谢谢 @小白 和 @Example 帮忙")
+        answer = self.go()
+        self.assertEqual("NEEDS_A_PERSON", answer["state"])
+        self.assertIn("On Bilibili, also show its topic, which can enter the video in a contest, and the people in its mention_uids, who will be notified.", answer["next"])
         self.assertEqual([], self.sent)
 
 

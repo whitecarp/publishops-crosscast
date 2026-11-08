@@ -40,6 +40,8 @@ CALLS = [
      "--cover", "cover.jpg", "--tid", "21", "--private", "--schedule", "2030-01-01T00:00:00+08:00"],
     ["upload", "video", "video.mp4", "--title", "T", "--desc", "D", "--no-ai-declare", "--tag", "a"],
     ["upload", "status", BV],
+    # The archive view, which verify reads for the topic and contest an upload joined.
+    ["upload", "status", BV, "--raw"],
     ["upload", "stats", BV],
     ["upload", "list", "--status", "published", "--page", "1", "--size", "20"],
     ["video", "info", BV],

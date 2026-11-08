@@ -195,6 +195,7 @@ def go(folder, confirm=None, dry_run=False, workers=1, *, person_approved=False)
                         f'Write them in "{folder / "copy.json"}" and run this again. request.json beside it has the limits and instructions.')
     ready = build(folder, words)
     show_first = review_required(folder)
+    from .publication_review import also_show
     if dry_run:
         from . import cli
         answer = step("publish", ready, "--dry-run")
@@ -206,7 +207,7 @@ def go(folder, confirm=None, dry_run=False, workers=1, *, person_approved=False)
             what = ("save it unpublished, as a draft or preview" if len(drafts) == len(answer.get("platforms", {}))
                     else f"publish it, with {', '.join(drafts)} saved only as a draft" if drafts else "publish it")
             if show_first or answer.get('text_flags'):
-                answer['next'] = f'Nothing was uploaded. Stop, show this plan and any flagged text to the user, and wait for their yes. Only after approval for its configured audience, to {what}, run: vpub go "{folder}" --confirm {answer["confirmation"]} --person-approved'
+                answer['next'] = f'Nothing was uploaded. Stop and show this plan and any flagged text to the user.{also_show(answer)} Wait for their yes. Only after approval for its configured audience, to {what}, run: vpub go "{folder}" --confirm {answer["confirmation"]} --person-approved'
             else:
                 answer["next"] = f'Nothing was uploaded. To {what}, run: vpub go "{folder}"'
         return answer
@@ -220,9 +221,9 @@ def go(folder, confirm=None, dry_run=False, workers=1, *, person_approved=False)
                 'review_required': show_first, 'review_reasons': plan.get('review_reasons', []),
                 'first_publication_platforms': plan.get('first_publication_platforms', []), 'review': plan,
                 "confirmation": plan["confirmation"], "platform_writes": 0,
-                "next": f'Stop and show the user this plan, including its text, audience, AI labels, covers and any flagged text. Wait for their yes. Only then: vpub go "{folder}" --confirm {plan["confirmation"]} --person-approved. This attests their approval; the CLI cannot verify who supplied it. Otherwise change copy.json or publish.json and run vpub go again.'}
+                "next": f'Stop and show the user this plan, including its text, audience, AI labels, covers and any flagged text.{also_show(plan)} Wait for their yes. Only then: vpub go "{folder}" --confirm {plan["confirmation"]} --person-approved. This attests their approval; the CLI cannot verify who supplied it. Otherwise change copy.json or publish.json and run vpub go again.'}
     answer = step("publish", ready, "--confirm", confirm or plan["confirmation"], "--workers", workers,
                   *(['--person-approved'] if person_approved is True else []))
     if answer.get('state') == 'NEEDS_A_PERSON':
-        answer['next'] = f'Stop and show this exact plan to the user. Wait for their yes. Only then: vpub go "{folder}" --confirm {answer["confirmation"]} --person-approved. This is caller attestation, not independent proof of consent.'
+        answer['next'] = f'Stop and show this exact plan to the user.{also_show(plan)} Wait for their yes. Only then: vpub go "{folder}" --confirm {answer["confirmation"]} --person-approved. This is caller attestation, not independent proof of consent.'
     return answer

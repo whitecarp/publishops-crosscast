@@ -323,8 +323,20 @@ def check_bilibili_upload(args, options):
     if options.get("mention_uids") and str(meta.get("desc") or "").strip() != options["description"].strip():
         places = unwritten_mentions(options["description"], options["mention_uids"], meta.get("desc_v2"))
         raise NothingSent("mention_not_written", "bili-cli would change Bilibili's description to fit its mentions, so nothing was uploaded.",
-                          MENTION_HOW + (f" Check mention_uids #{', #'.join(map(str, places))}." if places else "") + " Then approve the new plan.")
+                          MENTION_HOW + (f" Check mention_uids {', '.join(places)}." if places else "") + " Then approve the new plan.")
     return answer
+
+
+def check_upload(platform, plan, options):
+    """bili-cli's dry run of a Bilibili upload with a topic or mentions, asked before vpub publish records the attempt. Returns the upload it checked, or None.
+
+    It can take three and a half minutes, and one cut off after the record would leave what looks like an upload that may have gone out."""
+    if (platform != "bilibili" or options.get("method") == "native" or options.get("submission_mode") == "draft_only"
+            or not (options.get("topic") or options.get("mention_uids"))):
+        return None
+    args = bilibili_upload(upload_plan(platform, plan), options)
+    check_bilibili_upload(args, options)
+    return args
 
 
 def dry_run_refused(error):
@@ -336,15 +348,25 @@ def dry_run_refused(error):
         return NothingSent("mention_not_found", "Bilibili has no account for one of the plan's mention_uids, so nothing was uploaded.",
                            "Check each UID against the number in that person's space link, then approve the new plan.")
     # CrossCast's own words for a bili-cli that didn't answer warn against sending again, which a dry run can't have done.
-    hint = "Run it again later." if error.code in {"backend_timeout", "backend_error"} else error.hint or ""
+    # A UID with no account at all comes back as Bilibili's own refusal, not as the words above, and bili-cli's hint for it is about video and comment IDs.
+    hint = ("Run it again later." if error.code in {"backend_timeout", "backend_error"} else
+            "Check each UID in mention_uids and any collection ID, then approve the new plan." if error.code == "not_found" else error.hint or "")
     return NothingSent(error.code, error.message, f"Nothing was uploaded: this was bili-cli's dry run, which only reads. {hint}".strip())
 
 
 def unwritten_mentions(description, uids, segments):
-    """Which of mention_uids, counting from 1, the description doesn't hold as @nickname and a space, going by the nicknames bili-cli's dry run found."""
+    """Which of mention_uids, as #1 counting from 1, the description doesn't hold as @nickname and a space, going by the nicknames bili-cli's dry run found.
+    A real contest entry on 2026-11-05 mixed up the @ or the space with its full-width look-alike, so each says when it is that."""
     names = {str(part.get("biz_id")): str(part.get("raw_text") or "") for part in segments or [] if isinstance(part, dict) and part.get("type") == 2}
-    return [place for place, uid in enumerate(uids, 1)
-            if not names.get(str(uid)) or not re.search(re.escape("@" + names[str(uid)]) + r"(?: |\Z)", description.strip())]
+    text, places = description.strip(), []
+    for place, uid in enumerate(uids, 1):
+        name = names.get(str(uid))
+        if name and re.search(re.escape("@" + name) + r"(?: |\Z)", text):
+            continue
+        slip = (" (full-width ＠)" if name and "＠" + name in text else
+                " (no ordinary space after it)" if name and re.search(re.escape("@" + name) + r"[^\S ]", text) else "")
+        places.append(f"#{place}{slip}")
+    return places
 
 
 def publish_bilibili(plan, options, checkpoint):
@@ -352,7 +374,8 @@ def publish_bilibili(plan, options, checkpoint):
         from .drafts_bilibili import save
         return save(plan, options, checkpoint)
     args = bilibili_upload(plan, options)
-    if options.get("topic") or options.get("mention_uids"):
+    # vpub publish asks it before recording the attempt and hands over the upload that passed. Any other upload is asked here, still before it is sent.
+    if (options.get("topic") or options.get("mention_uids")) and plan.get("checked_upload") != args:
         check_bilibili_upload(args, options)
     v = bili(args, timeout=3600)
     found = v.get("topic") if isinstance(v.get("topic"), dict) else {}
@@ -378,6 +401,17 @@ def publish_bilibili(plan, options, checkpoint):
     return verify("bilibili", options["account"], receipt, checkpoint)
 
 
+def topic_kept(topic, work):
+    """Whether Bilibili's own record of the work holds the topic, and any contest, that the upload sent, or None if that can't be read.
+    bili upload status leaves both out, but the archive view under it has them: bili-cli's edit copies them from there, as the web editor does."""
+    from .edits_bilibili import archive
+    try:
+        found = archive(work)
+    except VpubError:
+        return None
+    return str(found.get("topic_id")) == str(topic["id"]) and (not topic.get("mission_id") or str(found.get("mission_id")) == str(topic["mission_id"]))
+
+
 def moment(text):
     return datetime.fromisoformat(str(text).replace("Z", "+00:00"))
 
@@ -395,17 +429,23 @@ def bilibili_differences(receipt, info):
     return differs
 
 
+def upload_plan(platform, plan):
+    """The plan with the covers this platform's upload sends: its own landscape one, and on Bilibili the 4:3 one too."""
+    landscape = plan.get("covers", {}).get(platform, {}).get("landscape")
+    if landscape:
+        plan = {**plan, "cover": landscape["path"], "cover_sha256": landscape["sha256"]}
+    cover43 = plan.get("covers", {}).get(platform, {}).get("cover43") if platform == "bilibili" else None
+    if cover43:
+        plan = {**plan, "cover43": cover43["path"]}
+    return plan
+
+
 def publish(platform, plan, options, checkpoint):
     if options.get("method") == "native":
         from .native_browser import queue
         return queue(platform, plan, options)
-    landscape = plan.get("covers", {}).get(platform, {}).get("landscape")
-    if landscape:
-        plan = {**plan, "cover": landscape["path"], "cover_sha256": landscape["sha256"]}
+    plan = upload_plan(platform, plan)
     if platform == "bilibili":
-        cover43 = plan.get("covers", {}).get(platform, {}).get("cover43")
-        if cover43:
-            plan = {**plan, "cover43": cover43["path"]}
         return publish_bilibili(plan, options, checkpoint)
     if platform == "youtube" and options.get("method") == "api":
         return youtube_api().publish(plan, options, checkpoint)
@@ -442,6 +482,12 @@ def verify(platform, account, receipt, checkpoint=None):
             result.update(declaration_mismatch=True,
                           note="Bilibili recorded a different AI-content declaration. Correct it on this existing work "
                                "(bili upload edit with --ai-declare or --no-ai-declare); do not upload again.")
+        if isinstance(receipt.get("topic"), dict) and receipt["topic"].get("id"):
+            result["topic_kept"] = kept = topic_kept(receipt["topic"], video_id)
+            result["note"] += {True: " Bilibili's record keeps the topic and any contest this upload entered.",
+                               False: " Bilibili's record doesn't show the topic this upload sent, or its contest. A topic can't be added afterwards, "
+                                      "so look at the work on Bilibili before anything else; don't upload it again.",
+                               None: " Whether Bilibili kept the topic couldn't be read; vpub verify reads it again."}[kept]
         from .edits_bilibili import finish_chapters
         from .widgets_bilibili import finish as finish_widgets, seen as widgets_seen
         result = finish_widgets(finish_chapters(result, checkpoint), checkpoint)

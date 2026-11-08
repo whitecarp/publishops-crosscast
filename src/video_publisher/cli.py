@@ -163,6 +163,17 @@ def _publish_platform(plan, platform, snapshot_lock):
             return {"state": "NOT_STARTED", "code": e.code if isinstance(e, VpubError) else "snapshot_failed",
                     "message": e.message if isinstance(e, VpubError) else type(e).__name__,
                     "hint": "Nothing was uploaded to this platform. Check the files and free disk space, then create a fresh plan."}
+        # bili-cli's dry run for a Bilibili topic or mentions only reads but can take minutes, so it comes before the claim:
+        # a refusal or an interruption there leaves no record, and the video can go once the plan is right.
+        checked = doubtful = None
+        try:
+            checked = adapters.check_upload(platform, safe_plan, opts)
+        except Exception as e:
+            if not never_sent(e):
+                doubtful = e  # It may not have been only a dry run, so it is recorded below like a failed upload and never tried again.
+            else:
+                pushed_back(platform, e.code)
+                return {"state": "NOT_STARTED", "code": e.code, "message": e.message, "hint": e.hint}
         record = {"plan_hash": plan["confirmation"], "title": opts["title"], "identity": identity,
                   "options": opts, "approved_plan": plan, "upload_plan": safe_plan, "started_at": now()}
         if not ledger.claim(platform, account, plan["video_sha256"], record):
@@ -173,8 +184,10 @@ def _publish_platform(plan, platform, snapshot_lock):
             ledger.save(key, receipt["state"], record)
 
         try:
+            if doubtful is not None:
+                raise doubtful
             stop_check(platform)
-            receipt = adapters.publish(platform, safe_plan, opts, checkpoint)
+            receipt = adapters.publish(platform, {**safe_plan, "checked_upload": checked} if checked else safe_plan, opts, checkpoint)
             checkpoint(receipt)
             if receipt["state"] == "WAITING_FOR_USER":
                 adapters.email_reminder(key, platform, 1)

@@ -125,7 +125,7 @@ B站（含存草稿）需要提供封面，或在 PATH 中有 ffmpeg 自动截�
 
 首次登录之后，CLI 自己完成上传：B站走 bili-cli，YouTube、抖音、Instagram、X 由 CLI 在后台操作专用的 Chrome。YouTube、X 和 Instagram 的官方 API 路径需要付费附加组件，附加组件目前还没有开售；这里的其他功能都不需要它。上传时可以带章节（B站、YouTube、抖音），并加入播放列表（YouTube）或合集（B站、抖音）。B站、YouTube、抖音和 X 都支持定时发布；Instagram 不支持，要求定时的方案会被拒绝。`vpub init --draft-only` 只上传、不发布：B站和 YouTube 会留下未发布的草稿，抖音会按它自己的“暂存离开”，之后上传页可能会在“继续编辑”下提供这份草稿（CrossCast 只看不点，因为这个入口说不出是谁的草稿，而且打开它可能会把草稿用掉），Instagram 和 X 则停在预览，预览不一定能保留，所以不会被说成已保存。
 
-B站上传还能加入话题（活动话题会同时报名活动）、带上手机端推荐流用的 4:3 封面，并真正 @ 别人：`vpub prepare VIDEO --bilibili-topic 话题名 --bilibili-cover43 IMAGE --bilibili-mention UID`。话题投稿后加不上，要在上传时选好。简介里要写上 @ 加对方现在的昵称，再跟一个空格，否则上传会停下，什么都不会发出。这项还没有通过 `vpub` 在真实账号上试过。
+B站上传还能加入话题（活动话题会同时报名活动）、带上手机端推荐流用的 4:3 封面，并真正 @ 别人：`vpub prepare VIDEO --bilibili-topic 话题名 --bilibili-cover43 IMAGE --bilibili-mention UID`。话题投稿后加不上，要在上传时选好。简介里要写上半角的 @（不是全角的 ＠）加对方现在的昵称，再跟一个普通空格（不是全角空格），否则上传会停下，什么都不会发出。这项还没有通过 `vpub` 在真实账号上试过。
 
 </details>
 
