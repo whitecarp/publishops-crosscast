@@ -6,6 +6,7 @@ and the collection list. Nothing here contacts Douyin, and none of these steps h
 from datetime import datetime, timedelta, timezone
 import asyncio
 import html
+import io
 import json
 import os
 from pathlib import Path
@@ -15,8 +16,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from video_publisher import browser_backends, browser_edits, browser_forms, cli, video_shape
-from video_publisher.core import VpubError, atomic_json, douyin_caption, home, load_plan
+from video_publisher import browser_backends, browser_edits, browser_forms, cli, edits, video_shape
+from video_publisher.core import DOUYIN_NAME_LAST, VpubError, atomic_json, douyin_caption, douyin_caption_units, home, load_plan
 from shared_chrome import ChromeCase, async_playwright
 
 OWNER = "owner123"
@@ -39,7 +40,7 @@ def douyin_holds(caption, at_signs=True):
         if line.startswith("#"):
             lines.append("<div>" + "".join(f'<span class="topic">{tag}</span>' for tag in line.split()) + "</div>")
         elif line:
-            end = "&nbsp;" if browser_backends.DOUYIN_NAME_LAST.search(line) else ""
+            end = "&nbsp;" if DOUYIN_NAME_LAST.search(line) else ""
             lines.append(f"<div>{html.escape(line if at_signs else line.replace('@', ''))}{end}</div>")
         else:
             lines.append("<div><br></div>")
@@ -71,7 +72,7 @@ def form(keep_time=True, shows_box=True, collections=("Recipes", "Recipes more")
       <button class="button-dhlUZE primary-cECiOJ" id="post">发布</button>
       <button class="button-dhlUZE cancel-btn-zy_rHA" id="keep">暂存离开</button>
       <script>
-      const send = word => fetch('/write', {{method: 'POST', body: JSON.stringify({{word, later: document.getElementById('later').dataset.checked, when: document.querySelector('[placeholder="日期和时间"]').value, picked: document.getElementById('picked').innerText}})}});
+      const send = word => fetch('/write', {{method: 'POST', body: JSON.stringify({{word, later: document.getElementById('later').dataset.checked, when: document.querySelector('[placeholder="日期和时间"]').value, picked: document.getElementById('picked').innerText, words: document.querySelector('[contenteditable=true]').innerText}})}});
       document.getElementById('later').onclick = () => {{ document.getElementById('later').dataset.checked = 'true'; {show} }};
       document.getElementById('post').onclick = () => send('publish').then(() => {{ location.href = '/creator-micro/content/manage'; }});
       document.getElementById('keep').onclick = () => send('keep');
@@ -492,6 +493,15 @@ class CaptionTypingTests(Base):
         box = await self.type_into_suggesting_box(leaves=True)
         self.assertEqual(browser_backends.douyin_card_words(self.FIELD_CAPTION), browser_backends.douyin_card_words(await box.inner_text()))
 
+    async def test_after_its_last_line_the_cursor_is_never_put_back_where_a_list_opens(self):
+        """As when the box is left before the covers: with nothing more to type, an Escape that left the box doesn't have the cursor put back at
+        the end of the last #topic, where a list can open again over whatever is pressed next, as an edit's save is."""
+        await self.page.set_content(self.PAGE + REOPENS.replace('id="topics"', 'id="topics" hidden', 1))
+        box = self.page.locator("#box")
+        await browser_backends.douyin_type_caption(self.page, box, "Words.\n\n#Tag")
+        self.assertTrue(await self.page.locator("#topics").is_hidden())
+        self.assertEqual(browser_backends.douyin_card_words("Words.\n\n#Tag"), browser_backends.douyin_card_words(await box.inner_text()))
+
     async def test_a_field_runs_words_lost_their_at_signs_as_that_run_typed_them(self):
         """From a field run: its form came back 3 characters short after the Escape that closed Douyin's lists. Typed as that run typed it,
         a line at a time with each list closed, this box comes back the same way, word for word as that run's stop said, with no one picked."""
@@ -534,6 +544,15 @@ class CaptionTypingTests(Base):
         _, seen = await self.type_it("Plain line.\n参考：@上善无形\n@ZipZipPipe 的形象\n已有空格：@ZipZipPipe \n@上善无形 #tag\n#Tag")
         self.assertEqual(["Plain line.", "参考：@上善无形 ", "@ZipZipPipe 的形象 ", "已有空格：@ZipZipPipe ", "@上善无形 #tag", "#Tag"],
                          [data for kind, data in seen if kind == "insertText"])
+
+    async def test_douyins_1000_units_are_counted_on_what_goes_into_the_box(self):
+        """From a review: the checks counted the plan's words, without the space typed at the end of a line whose last #topic or @name is an
+        @name, so a caption at the limit would have gone in and been cut by Douyin. Each Enter is one unit, and an emoji two."""
+        caption = "Plain line.\n参考：@上善无形\n\n@ZipZipPipe 的形象\n已有空格：@ZipZipPipe \n@上善无形 #tag\n#Tag 😀"
+        _, seen = await self.type_it(caption)
+        typed = sum(len(data.encode("utf-16-le")) // 2 if kind == "insertText" else kind == "insertParagraph" for kind, data in seen)
+        self.assertEqual(len(caption.encode("utf-16-le")) // 2 + 2, typed)  # The plan's words, and a space after each of two lines' last name.
+        self.assertEqual(typed, douyin_caption_units(caption))
 
     async def test_lines_without_a_topic_or_name_go_in_with_no_pause(self):
         with patch.object(browser_backends, "douyin_close_suggestions", new=AsyncMock()) as closing:
@@ -887,9 +906,27 @@ TURNED_OFF = """<script>(() => { const slot = document.querySelector('.cover-b')
   off.className = slot.className; off.style.cssText = slot.style.cssText; off.disabled = true; slot.replaceWith(off); })();</script>"""
 HIDDEN = """<script>document.querySelector('.cover-b').style.visibility = 'hidden'</script>"""
 TWO_SLOTS = """<div class="cover-c" style="width:40px;height:30px"></div>"""
-# A list the description opened, over everything below it until Escape reaches the box.
+# The words before the cursor, when it is in the box.
+BEFORE_CURSOR = """const box = document.querySelector('[contenteditable=true]'), topics = document.getElementById('topics');
+  const before = () => { const caret = getSelection().rangeCount && getSelection().getRangeAt(0), words = document.createRange();
+    if (!caret || !box.contains(caret.endContainer)) return null;
+    words.selectNodeContents(box); words.setEnd(caret.endContainer, caret.endOffset); return words.toString(); };"""
+# A list the description opened for the #topic at the end of its words, over everything below it until Escape reaches the box with the cursor
+# there, as Douyin's list is for the #topic or @name the cursor is at the end of.
 OPEN_LIST = """<div id="topics" style="position:fixed;inset:0;background:white" onclick="pressed('list')">#Tag 话题</div>
-  <script>document.querySelector('[contenteditable=true]').addEventListener('keydown', e => { if (e.key === 'Escape') document.getElementById('topics').hidden = true; });</script>"""
+  <script>(() => { %s
+  box.addEventListener('keydown', e => { if (e.key === 'Escape' && before() === box.textContent) topics.hidden = true; }); })();</script>""" % BEFORE_CURSOR
+# A list that opens again whenever the cursor comes to rest at the end of a #topic, and an Escape that closes it and leaves the box too,
+# which the code allows a page might do. It starts open, as the description left it.
+REOPENS = """<div id="topics" style="position:fixed;inset:0;background:white" onclick="pressed('list')">#Tag 话题</div>
+  <script>(() => { %s
+  document.addEventListener('selectionchange', () => { if (/#[^\\s#@]+$/.test(before() || '')) topics.hidden = false; });
+  box.addEventListener('keydown', e => { if (e.key === 'Escape') { topics.hidden = true; box.blur(); } }); })();</script>""" % BEFORE_CURSOR
+# Sends word of each Escape that reaches the description.
+ESCAPES = """<script>document.querySelector('[contenteditable=true]').addEventListener('keydown', e => {
+  if (e.key === 'Escape') fetch('/write', {method: 'POST', body: JSON.stringify({word: 'escape'})}); });</script>"""
+# The cursor at the end of the box's words, as typing leaves it.
+CURSOR_AFTER_TYPING = "e => { e.focus(); getSelection().selectAllChildren(e); getSelection().collapseToEnd(); }"
 
 
 class BothCoversTests(Base):
@@ -911,10 +948,11 @@ class BothCoversTests(Base):
         self.tx = StubTx()
         self.tx.cover = lambda role="landscape": str(self.image)
 
-    async def post(self, wide="", tall="", extra="", focused=False):
-        await self.open(form() + BOTH_COVERS % (wide, tall) + extra)
+    async def post(self, wide="", tall="", extra="", focused=False, words="Words"):
+        await self.open(form().replace(">Words</div>", f">{words}</div>") + BOTH_COVERS % (wide, tall) + extra)
+        self.tx.options["description"] = words
         if focused:
-            await self.page.locator("[contenteditable=true]").focus()
+            await self.page.locator("[contenteditable=true]").evaluate(CURSOR_AFTER_TYPING)
         with patch.object(browser_forms, "finish", new=AsyncMock(return_value={"state": "SUBMITTED_UNVERIFIED"})):
             return await browser_forms.finish_douyin_form(self.page, self.tx, {})
 
@@ -922,7 +960,21 @@ class BothCoversTests(Base):
         return [write["slot"] for write in self.writes if write["word"] == "cover"]
 
     def went_out(self):
-        return [write["word"] for write in self.writes if write["word"] != "cover"]
+        return [write["word"] for write in self.writes if write["word"] not in ("cover", "escape")]
+
+    def escapes(self):
+        return sum(write["word"] == "escape" for write in self.writes)
+
+    async def first_looks(self, **post):
+        """Whether the description's list was over everything as each slot was first tried."""
+        shown, real = [], browser_forms.douyin_slot_refuses
+
+        async def looked(page, editor, slot):
+            shown.append(await page.locator("#topics").is_visible())
+            return await real(page, editor, slot)
+        with patch.object(browser_forms, "douyin_slot_refuses", looked):
+            await self.post(**post)
+        return shown
 
     async def test_a_landscape_video_gets_both_covers_as_before(self):
         for size in ((1920, 1080), (1080, 1080), None):
@@ -934,8 +986,9 @@ class BothCoversTests(Base):
                 self.assertEqual(["publish"], self.went_out())
 
     async def test_a_portrait_video_gets_only_its_portrait_cover_and_its_4_3_slot_is_never_pressed(self):
+        """As in that field run, something lies over the 4:3 slot, and the post goes out without anything waiting on it."""
         self.tx.size = (1080, 1920)
-        await self.post()
+        await self.post(wide=OVER_IT)
         self.assertEqual(["tall"], self.pressed())
         skipped = self.tx.receipt["landscape_cover"]
         self.assertEqual(("SKIPPED", [1080, 1920]), (skipped["state"], skipped["video_size"]))
@@ -945,16 +998,20 @@ class BothCoversTests(Base):
         self.assertEqual(["publish"], self.went_out())
 
     async def test_a_4_3_slot_covered_or_turned_off_on_a_video_whose_size_cant_be_read_is_left_out_and_the_record_says_why(self):
-        for wide, refusal in ((OVER_IT, "in the way: div, intercepts pointer events"), (TURNED_OFF, "element is not enabled")):
+        """From a review: the record said the description's list had been closed, when Escape had gone to the description only for a slot with
+        something over it. It says only what was tried, and each Escape that reached the description is counted here."""
+        for wide, refusal, why, escapes in ((OVER_IT, "in the way: div, intercepts pointer events", "had something over it when tried a second time, after "
+                                             "Escape was pressed in the description at the end of its words", 1), (TURNED_OFF, "element is not enabled", "was turned off", 0)):
             with self.subTest(refusal=refusal):
                 self.tx.receipt, self.writes[:] = {}, []
-                await self.post(wide=wide)
+                await self.post(wide=wide, extra=ESCAPES)
                 self.assertEqual(["tall"], self.pressed())
                 skipped = self.tx.receipt["landscape_cover"]
                 self.assertEqual(("SKIPPED", None), (skipped["state"], skipped["video_size"]))
                 self.assertIn(refusal, skipped["refused"])
-                self.assertIn("The video's size couldn't be read from its file, and Douyin's 横封面4:3 slot had something over it or was turned off", skipped["note"])
-                self.assertIn("so the planned 4:3 cover wasn't set and nothing was pressed there", skipped["note"])
+                self.assertEqual(f"The video's size couldn't be read from its file, and Douyin's 横封面4:3 slot {why}, so the planned 4:3 cover wasn't set "
+                                 "and nothing was pressed there.", skipped["note"])
+                self.assertEqual(escapes, self.escapes())
                 self.assertEqual("UI_ACCEPTED", self.tx.receipt["portrait_cover"]["state"])
                 self.assertEqual(["publish"], self.went_out())
 
@@ -1005,12 +1062,14 @@ class BothCoversTests(Base):
         self.assertEqual("UI_ACCEPTED", self.tx.receipt["landscape_cover"]["state"])
 
     async def test_a_list_the_description_left_open_is_closed_before_any_slot_is_pressed(self):
-        """From field runs: the #tag suggestions stayed over the cover slots and took their press."""
-        await self.post(extra=OPEN_LIST, focused=True)
+        """From field runs: the #tag suggestions stayed over the cover slots and took their press. From a review, this held without the close
+        before the covers, as each slot's own second try closed the list too, so the list is looked for as each slot is first tried."""
+        self.assertEqual([False, False], await self.first_looks(extra=OPEN_LIST, focused=True))
         self.assertEqual(["wide", "tall"], self.pressed())
         self.assertEqual(["publish"], self.went_out())
 
     async def test_a_list_left_open_without_the_cursor_in_the_box_is_closed_from_the_end_of_its_words(self):
+        """This copy's list closes only for an Escape with the cursor at the end of the words, as Douyin's is for the #topic it is at the end of."""
         await self.post(extra=OPEN_LIST)
         self.assertEqual(["wide", "tall"], self.pressed())
         self.assertEqual(["publish"], self.went_out())
@@ -1021,11 +1080,21 @@ class BothCoversTests(Base):
                 await self.open(form() + OPEN_LIST)
                 editor = self.page.locator("[contenteditable=true]")
                 if focused:
-                    await editor.focus()
+                    await editor.evaluate(CURSOR_AFTER_TYPING)
                 await browser_backends.douyin_leave_caption(self.page, editor, from_the_end=not focused)
                 self.assertTrue(await self.page.locator("#topics").is_hidden())
                 self.assertEqual("Words", (await editor.inner_text()).strip())
                 self.assertFalse(await editor.evaluate("e => e.contains(document.activeElement)"))
+
+    async def test_leaving_the_box_never_puts_the_cursor_back_where_a_list_opens(self):
+        """From a review: an Escape that left the box had the cursor put back at the end of its words, the end of its last #topic, where Douyin
+        opens its list, just before the box was left. A list that opened again there would have lain over the cover slots."""
+        for focused in (True, False):
+            with self.subTest(focused=focused):
+                self.tx.receipt, self.writes[:] = {}, []
+                await self.post(extra=REOPENS, focused=focused, words="Words #Tag")
+                self.assertEqual(["wide", "tall"], self.pressed())
+                self.assertEqual(["publish"], self.went_out())
 
     async def test_a_portrait_slot_that_cannot_take_a_press_stops_before_anything_goes_out(self):
         self.tx.cover = lambda role="landscape": str(self.image) if role == "portrait" else None
@@ -1040,12 +1109,16 @@ def mp4_box(kind, body):
     return struct.pack(">I4s", 8 + len(body), kind) + body
 
 
+def mp4_header(width, height, turned=False, version=0):
+    """What a track's header holds as an encoder writes it: its times, matrix and size."""
+    matrix = (0, 0x10000, 0, -0x10000, 0, 0, 0, 0, 0x40000000) if turned else (0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x40000000)
+    return bytes([version, 0, 0, 7]) + bytes(32 if version else 20) + bytes(16) + struct.pack(">9i", *matrix) + struct.pack(">II", width << 16, height << 16)
+
+
 def mp4_track(width, height, handler=b"vide", turned=False, version=0):
     """A track as an encoder writes one: a header with its times, matrix and size, and its media's handler."""
-    matrix = (0, 0x10000, 0, -0x10000, 0, 0, 0, 0, 0x40000000) if turned else (0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x40000000)
-    header = bytes([version, 0, 0, 7]) + bytes(32 if version else 20) + bytes(16) + struct.pack(">9i", *matrix) + struct.pack(">II", width << 16, height << 16)
     media = mp4_box(b"mdhd", bytes(24)) + mp4_box(b"hdlr", bytes(8) + handler + bytes(12) + b"\0")
-    return mp4_box(b"trak", mp4_box(b"tkhd", header) + mp4_box(b"mdia", media))
+    return mp4_box(b"trak", mp4_box(b"tkhd", mp4_header(width, height, turned, version)) + mp4_box(b"mdia", media))
 
 
 def mp4(*tracks, header_last=False, long_media=False):
@@ -1077,6 +1150,47 @@ class VideoShapeTests(unittest.TestCase):
                 self.assertIsNone(self.size_of(data))
         self.assertIsNone(video_shape.frame_size(None))
         self.assertIsNone(video_shape.frame_size(Path(tempfile.gettempdir()) / "no-such-clip-anywhere.mp4"))
+
+    def test_a_header_that_makes_no_sense_has_no_size(self):
+        """From a review: an empty track header at the end of the movie header raised IndexError, and the size is read after the upload, where
+        that would have stopped a post that had gone up. Each box is read only as far as it goes, so a short one never reads on into the next."""
+        video = mp4_box(b"mdia", mp4_box(b"hdlr", bytes(8) + b"vide" + bytes(13)))
+        for case, data in (("an empty track header, last of all", mp4(mp4_box(b"trak", video + mp4_box(b"tkhd", b"")))),
+                           ("a track header too short to hold its size", mp4(mp4_box(b"trak", mp4_box(b"tkhd", mp4_header(1080, 1920)[:-8]) + video))),
+                           ("a handler too short to say what it is, before a box that would", mp4(mp4_box(b"trak", mp4_box(b"tkhd", mp4_header(1080, 1920))
+                                                                                                            + mp4_box(b"mdia", mp4_box(b"hdlr", bytes(4)) + mp4_box(b"vide", bytes(13))))))):
+            with self.subTest(case=case):
+                self.assertIsNone(self.size_of(data))
+
+    def from_memory(self, data):
+        """Read as from a file, with none written, so that every cut and every changed byte can be tried in a moment."""
+        with patch.object(video_shape, "open", create=True, new=lambda path, mode: io.BytesIO(data)):
+            return video_shape.frame_size("clip.mp4")
+
+    def test_a_file_cut_short_or_changed_anywhere_never_raises(self):
+        """A file cut short anywhere has its whole size or none, and one with any byte changed has some size or none."""
+        for whole in (mp4(mp4_track(1080, 1920)), mp4(mp4_track(1080, 1920, version=1), header_last=True, long_media=True)):
+            self.assertEqual((1080, 1920), self.from_memory(whole))
+            for cut in range(len(whole)):
+                self.assertIn(self.from_memory(whole[:cut]), (None, (1080, 1920)), f"cut at {cut}")
+            for at in range(len(whole)):
+                for value in (0, 1, 0xff):
+                    size = self.from_memory(whole[:at] + bytes([value]) + whole[at + 1:])
+                    self.assertTrue(size is None or len(size) == 2 and min(size) > 0, f"byte {at} set to {value}: {size}")
+
+    def test_a_file_that_gets_shorter_as_it_is_read_has_no_size(self):
+        """A file still being written or copied can hold less by the time it is read than when its size was taken. A header read short is no
+        header, though the video's own track may be whole in what came back."""
+        whole, cut = mp4(mp4_track(1080, 1920), mp4_track(0, 0, b"soun")), 0
+
+        class Shrinks(io.BytesIO):
+            def tell(self):
+                at = super().tell()
+                self.truncate(cut)
+                return at
+        for cut in range(len(whole) - len(mp4_box(b"mdat", bytes(64)))):
+            with patch.object(video_shape, "open", create=True, new=lambda path, mode: Shrinks(whole)):
+                self.assertIsNone(video_shape.frame_size("clip.mp4"), f"cut at {cut}")
 
     def test_an_attempt_reads_its_own_video(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"VPUB_HOME": folder}):
@@ -1131,9 +1245,14 @@ class ResumeFromKeptDraftTests(Base):
         self.assertEqual("https://creator.douyin.com/creator-micro/content/upload", self.page.url)
 
     async def test_words_the_draft_lost_are_typed_again_before_the_press(self):
-        html = form().replace(">Words</div>", ">Something else</div>") + "<span>重新上传</span>"
-        await self.resume(self.stopped(), html=html)
-        self.assertEqual(["publish"], [write["word"] for write in self.writes])  # The form's own check holds the press if they still differ.
+        """A draft whose lines ran together is typed again too, or the read-back before 发布 would stop every resume."""
+        for shown, words in (("Something else", "Words"), ("Words and more", "Words\nand more")):
+            with self.subTest(shown=shown):
+                tx, self.writes[:] = self.stopped(), []
+                tx.options["description"] = words
+                await self.resume(tx, html=form().replace(">Words</div>", f">{shown}</div>") + "<span>重新上传</span>")
+                went_out = [(write["word"], [line for line in write["words"].split("\n") if line.strip()]) for write in self.writes]
+                self.assertEqual([("publish", words.split("\n"))], went_out)  # The form's own check holds the press if they still differ.
 
     async def test_with_nothing_on_offer_the_file_goes_up_again(self):
         with self.assertRaises(RuntimeError):
@@ -1306,6 +1425,32 @@ class PlanTests(unittest.TestCase):
         for value in ("", " 前后有空格 ", "x" * 21, 7):
             with self.subTest(value=value):
                 self.refused("invalid_collection", collection_title=value)
+
+    def test_a_caption_is_held_to_douyins_1000_units_as_it_is_typed(self):
+        """From a review: each check counted the plan's words, without the space typed at the end of a line whose last #topic or @name is an
+        @name, so a caption at the limit would have been typed and then cut by Douyin. A plan, an edit and the upload itself count what is typed:
+        here, the plan's words and one space."""
+        text = {"expected_identity": OWNER, "title": "标题", "content_language": "zh-Hans", "metadata_language": "zh-Hans", "metadata_mode": "target_only", "tags": ["tag"]}
+        for length, fits in ((985, False), (984, True)):
+            description = "好" * length + "\n参考：@上善无形"
+            caption = douyin_caption(description, ["tag"])
+            with self.subTest(length=length):
+                self.assertEqual((length + 15, length + 16), (len(caption.encode("utf-16-le")) // 2, douyin_caption_units(caption)))
+                page, tx = AsyncMock(), StubTx(description=description, tags=["tag"])
+                with patch.object(browser_forms, "works", new=AsyncMock(side_effect=RuntimeError("went on to the upload"))):
+                    if fits:
+                        self.assertEqual(description, self.plan(description=description, tags=["tag"])["description"])
+                        self.assertEqual(caption, edits.validate_patch("douyin", {**text, "description": description})["caption"])
+                        with self.assertRaisesRegex(RuntimeError, "went on to the upload"):
+                            asyncio.run(browser_forms.publish_douyin(page, tx))
+                        continue
+                    self.refused("invalid_description", description=description, tags=["tag"])
+                    for refuse in (lambda: edits.validate_patch("douyin", {**text, "description": description}), lambda: asyncio.run(browser_forms.publish_douyin(page, tx))):
+                        with self.assertRaises(VpubError) as caught:
+                            refuse()
+                        self.assertEqual("description_too_long", caught.exception.code)
+                        self.assertIn("1000 UTF-16 units as typed", caught.exception.message)
+                    self.assertEqual([], page.mock_calls)
 
     def test_a_draft_keeps_only_what_a_draft_can_hold(self):
         self.assertEqual("draft_only", self.plan(submission_mode="draft_only")["submission_mode"])

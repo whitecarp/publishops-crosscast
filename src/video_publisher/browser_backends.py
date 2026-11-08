@@ -9,7 +9,7 @@ from pathlib import Path
 import unicodedata
 from urllib.parse import parse_qs, urlsplit
 
-from .core import VpubError, atomic_json, file_sha, home, now, presses_on_record, read_json, receipt_turn, snapshot_file, stop_check, wrong_file
+from .core import VpubError, atomic_json, douyin_typed_lines, file_sha, home, now, presses_on_record, read_json, receipt_turn, snapshot_file, stop_check, wrong_file
 from .browser_runtime import failure_message, failure_record, look_until, plain_address, platform_at, risk_check, unique_visible, visible
 from .progress import stage
 from .video_shape import frame_size
@@ -385,10 +385,10 @@ def douyin_form_differs(wanted, shown):
 # The next run closed the lists with Escape, and the form came back short of exactly the caption's three @, the one in the middle of a line
 # too: Douyin keeps a typed @ waiting for someone to be picked, past spaces, and takes it away when that is closed.
 # A later run's lines ended in "@ZipZipPipe " with a space, and every @ stayed through that same Escape and went out as written: a name
-# whose words before the cursor end in a space is no longer waiting. So a line whose last #topic or @name is an @name ends in a space,
-# and a form's read-back counts where its lines end (douyin_form_differs), since that space would otherwise hide a line break lost after it.
+# whose words before the cursor end in a space is no longer waiting. So a line whose last #topic or @name is an @name ends in a space
+# (core.douyin_typed_lines, which the 1000-unit checks count too), and a form's read-back counts where its lines end (douyin_form_differs),
+# since that space would otherwise hide a line break lost after it.
 DOUYIN_SUGGESTS = re.compile(r'[#@＃＠]')
-DOUYIN_NAME_LAST = re.compile(r'[@＠][^#@＃＠]*$')
 DOUYIN_SUGGESTIONS_MS = 500  # For a list that opens a moment after the words go in, as one that looks names up can.
 # The cursor to the end of the box's words, unless it is in the box already and that was asked for.
 DOUYIN_CURSOR_AT_END = """(e, unless_inside) => { if (unless_inside && e.contains(document.activeElement)) return;
@@ -396,23 +396,26 @@ DOUYIN_CURSOR_AT_END = """(e, unless_inside) => { if (unless_inside && e.contain
   const chosen = getSelection(); chosen.removeAllRanges(); chosen.addRange(end); }"""
 
 
-async def douyin_close_suggestions(page, editor):
+async def douyin_close_suggestions(page, editor, more_to_type=True):
     """Escape closes the list and changes no words. Should a page ever take it to mean leaving the box too, the cursor goes back to the end of
-    the words. The read-back after typing catches anything else."""
+    the words while there are more to type. The read-back after typing catches anything else."""
     await page.wait_for_timeout(DOUYIN_SUGGESTIONS_MS)
     await page.keyboard.press('Escape')
-    await editor.evaluate(DOUYIN_CURSOR_AT_END, True)
+    if more_to_type:
+        await editor.evaluate(DOUYIN_CURSOR_AT_END, True)
 
 
 async def douyin_leave_caption(page, editor, from_the_end=False):
     """Before anything below the box is pressed: a list its words opened is closed once more, for one that opened late, and the cursor
     leaves the box, so none opens again over the cover buttons. A field run's 9:16 video had its 横封面4:3 press taken by something over it,
-    and another's #tag suggestions had done that before. Escape goes only to the box, from the end of its words when it held no cursor."""
+    and another's #tag suggestions had done that before. Escape goes only to the box, from the end of its words when it held no cursor.
+    A review found that if Escape left the box, the cursor went back to the end of its last #topic, where Douyin opens its list, just before
+    the box was left, so it isn't put back here."""
     if from_the_end:
         await editor.evaluate(DOUYIN_CURSOR_AT_END, False)
     elif not await editor.evaluate('e => e.contains(document.activeElement)'):
         return
-    await douyin_close_suggestions(page, editor)
+    await douyin_close_suggestions(page, editor, more_to_type=False)
     await editor.evaluate('e => { if (e.contains(document.activeElement)) document.activeElement.blur(); }')
 
 
@@ -425,13 +428,14 @@ async def douyin_type_caption(page, editor, caption):
     await editor.click()
     await editor.press('ControlOrMeta+A')
     await editor.press('Backspace')
-    for number, line in enumerate(caption.split('\n')):
+    lines = douyin_typed_lines(caption)
+    for number, line in enumerate(lines):
         if number:
             await page.keyboard.press('Enter')
         if line:
-            await page.keyboard.insert_text(line + ' ' if DOUYIN_NAME_LAST.search(line) and not line[-1].isspace() else line)
+            await page.keyboard.insert_text(line)
             if DOUYIN_SUGGESTS.search(line):
-                await douyin_close_suggestions(page, editor)
+                await douyin_close_suggestions(page, editor, more_to_type=number < len(lines) - 1)
 
 
 def douyin_card_says(title, caption):

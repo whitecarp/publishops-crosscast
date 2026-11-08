@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .categories import STUDIO_CATEGORIES
-from .core import VpubError, douyin_caption, stop_check
+from .core import DOUYIN_TOO_LONG, VpubError, douyin_caption, douyin_caption_units, stop_check
 from .browser_runtime import failure_message, look_until, risk_check, unique_visible, visible
 from .progress import stage
 from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, X_CHOSEN_TIME, YT_DONE_WINDOW, YT_EDIT_DRAFT, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style, studio_zone_offsets_agree,
@@ -784,8 +784,8 @@ async def douyin_reopen_kept_draft(page, tx, caption):
 
 async def publish_douyin(page, tx):
     caption = douyin_caption(tx.options['description'], tx.options['tags'])
-    if len(caption.encode('utf-16-le')) // 2 > 1000:
-        raise VpubError('description_too_long', 'Douyin description plus hashtags exceeds 1000 UTF-16 units. No video uploaded.')
+    if douyin_caption_units(caption) > 1000:
+        raise VpubError('description_too_long', DOUYIN_TOO_LONG + ' No video uploaded.')
     if tx.resuming and tx.receipt['media_selected'] and await douyin_reopen_kept_draft(page, tx, caption):
         return await finish_douyin_form(page, tx, tx.receipt['before_ids'])
     before = await works(page, 'douyin', tx.identity, must_answer=True)
@@ -891,29 +891,33 @@ DOUYIN_SLOT_OFF = re.compile(r'intercepts pointer events|element is not enabled'
 
 
 async def douyin_slot_refuses(page, editor, slot):
-    """Why a cover slot can't take a press, or None once it can. A trial press clicks nothing. When something lies over the slot, the
-    description's own list is closed once more, from the end of its words, in case one opened late, and the slot is tried again."""
+    """Why a cover slot can't take a press, or None once it can, and whether it was tried a second time. A trial press clicks nothing. When
+    something lies over the slot, Escape goes to the description once more, from the end of its words, in case a list it opened late is what
+    lies there, and the slot is tried again."""
     from patchright.async_api import Error as BrowserError
     for again in (False, True):
         try:
             await slot.click(trial=True, timeout=DOUYIN_SLOT_MS)
-            return None
+            return None, again
         except BrowserError as exc:
             refused = failure_message(exc)
         if again or 'intercepts pointer events' not in refused:
-            return refused
+            return refused, again
         await douyin_leave_caption(page, editor, from_the_end=True)
 
 
-def douyin_slot_skipped(size, refused=None):
+def douyin_slot_skipped(size, refused=None, again=False):
     """The record of a 4:3 cover left out while a 竖封面3:4 one goes on: for a video taller than it is wide, whose 横封面4:3 slot isn't pressed
-    at all, or for one whose size couldn't be read and whose slot had something over it or was turned off."""
+    at all, or for one whose size couldn't be read and whose slot had something over it or was turned off. A review found its note said the
+    description's list had been closed when nothing had been done about one, so it says only what was tried."""
     if not refused:
         return {'state': 'SKIPPED', 'video_size': list(size),
                 'note': f"The video is {size[0]}x{size[1]}, taller than it is wide, so Douyin's 横封面4:3 slot wasn't pressed and the planned 4:3 cover wasn't set."}
+    why = 'had something over it' if 'intercepts pointer events' in refused else 'was turned off'
+    tried = ' when tried a second time, after Escape was pressed in the description at the end of its words' if again else ''
     return {'state': 'SKIPPED', 'video_size': None, 'refused': refused,
-            'note': "The video's size couldn't be read from its file, and Douyin's 横封面4:3 slot had something over it or was turned off, even with "
-                    "the description's suggestions closed, so the planned 4:3 cover wasn't set and nothing was pressed there."}
+            'note': f"The video's size couldn't be read from its file, and Douyin's 横封面4:3 slot {why}{tried}, so the planned 4:3 cover wasn't set "
+                    "and nothing was pressed there."}
 
 
 def douyin_slot_blocked(role, label, size, tall_too, refused):
@@ -947,9 +951,9 @@ async def finish_douyin_form(page, tx, before):
         if tall_too and size and size[1] > size[0]:
             tx.save(landscape_cover=douyin_slot_skipped(size))
             continue
-        refused = await douyin_slot_refuses(page, editor, slot)
+        refused, again = await douyin_slot_refuses(page, editor, slot)
         if refused and role == 'landscape' and tall_too and not size and DOUYIN_SLOT_OFF.search(refused):
-            tx.save(landscape_cover=douyin_slot_skipped(None, refused))
+            tx.save(landscape_cover=douyin_slot_skipped(None, refused, again))
             continue
         if refused:
             raise douyin_slot_blocked(role, label, size, tall_too, refused)

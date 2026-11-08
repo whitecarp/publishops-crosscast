@@ -284,6 +284,24 @@ def douyin_caption(description, tags):
     return "\n\n".join(p for p in (description, " ".join("#" + t.lstrip("#") for t in tags)) if p)
 
 
+# A line whose last #topic or @name is an @name is typed with a space at its end, as field runs showed it keeps the @ (douyin_type_caption).
+# A review found the 1000-unit checks counted the plan's words without those spaces, so a caption at the limit would have been typed and then
+# cut by Douyin. Every check counts what is typed.
+DOUYIN_NAME_LAST = re.compile(r'[@＠][^#@＃＠]*$')
+DOUYIN_TOO_LONG = ("Douyin description plus hashtags exceeds 1000 UTF-16 units as typed, counting the space typed at the end of each line whose "
+                   "last #topic or @name is an @name.")
+
+
+def douyin_typed_lines(caption):
+    """The caption's lines as they are typed into Douyin's description box."""
+    return [line + ' ' if DOUYIN_NAME_LAST.search(line) and not line[-1].isspace() else line for line in caption.split('\n')]
+
+
+def douyin_caption_units(caption):
+    """The UTF-16 units Douyin's box holds once the caption is typed, each line break one."""
+    return len('\n'.join(douyin_typed_lines(caption)).encode('utf-16-le')) // 2
+
+
 def how_to_clear_a_stop():
     """A field run cleared a stop from an ordinary window and it stayed: an app installed from the Store can have its own private AppData, so the same command looked in another folder, found no stop and said so."""
     return f"vpub stop --clear, with VPUB_HOME set to {home()} if you run it in another window"
@@ -466,8 +484,8 @@ def load_plan(path, selected=None):
             raise VpubError("invalid_tags", "Bilibili requires 1–10 tags.")
         if platform == "youtube" and sum(len(t) + 1 for t in tags) > 500:
             raise VpubError("invalid_tags", "YouTube tags exceed the 500-character budget.")
-        if platform == "douyin" and len(douyin_caption(desc, tags).encode("utf-16-le")) // 2 > 1000:
-            raise VpubError("invalid_description", "Douyin description plus hashtags exceeds 1000 UTF-16 units.")
+        if platform == "douyin" and douyin_caption_units(douyin_caption(desc, tags)) > 1000:
+            raise VpubError("invalid_description", DOUYIN_TOO_LONG)
         visibility = v.get("visibility")
         supported = {"bilibili": {"public", "private"}, "youtube": {"public", "private", "unlisted"}, "douyin": {"public", "private"},
                      "x": {"account"}, "instagram": {"account"}}
