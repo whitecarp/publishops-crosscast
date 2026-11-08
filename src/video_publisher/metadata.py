@@ -7,7 +7,7 @@ from copy import deepcopy
 from pathlib import Path
 import re
 
-from .core import PLATFORMS, VpubError, X_POST_LIMIT, atomic_json, digest, load_plan, read_json, title_limit
+from .core import MENTION_HOW, PLATFORMS, VpubError, X_POST_LIMIT, atomic_json, digest, load_plan, read_json, title_limit
 
 from .categories import STUDIO_CATEGORIES
 from .language_policy import route
@@ -38,6 +38,7 @@ def request(manifest, source=None, allow_links=False):
                                "description_limit": 1000 if p == "douyin" else 5000 if p == "youtube" else X_POST_LIMIT if p == "x" else 2000,
                                **({"post_limit": X_POST_LIMIT, "post_counting": "The title, description, tags and AI line are one post. Chinese, Japanese and Korean characters and recognized emoji count 2; URLs count 23; most Latin characters and spaces count 1. CrossCast checks the complete post with an offline parser; unrecognized emoji and domain names may be overestimated."} if p == "x" else {}),
                                "chapters": platforms[p].get("chapters", []),
+                               **({"mention_uids": platforms[p]["mention_uids"], "mention_note": MENTION_HOW} if p == "bilibili" and platforms[p].get("mention_uids") else {}),
                                **({"category_selection": {"required": True, "current_id": platforms[p].get("category_id"), "choices": {number: name.title() for number, name in STUDIO_CATEGORIES.items()}}} if p == "youtube" else {})}
                            for p in platforms}, "allow_links": allow_links,
                "host_instructions": [

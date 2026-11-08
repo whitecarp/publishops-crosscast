@@ -105,6 +105,18 @@ def portrait(source, boxes, output):
             "next": "Look at the result before using it: text must read clearly and nothing important may be cut. Then use it as the --portrait cover, in vpub prepare or covers prepare."}
 
 
+def check_cover43(path):
+    """Bilibili's 4:3 cover goes up as it is, with no fitting, so it has to be 4:3 already. A landscape given by mistake would show squeezed or cut in its phone feed."""
+    try:
+        with Image.open(path) as opened:
+            wide, tall = opened.size
+    except (OSError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
+        raise VpubError("invalid_cover", f"Can't read Bilibili's 4:3 cover: {path}") from exc
+    if abs(wide * 3 - tall * 4) > tall * 4 / 100:
+        raise VpubError("invalid_cover", f"Bilibili's 4:3 cover is {wide}x{tall}, which isn't 4:3.",
+                        "Use the 4:3 artwork made for Bilibili's phone feed, such as 1200x900, or leave it out and Bilibili makes one from the landscape cover. Nothing was uploaded.")
+
+
 def check_supplied(cover, portrait, platforms):
     """The covers someone named, before anyone writes words around them. prepare still checks them when it fits them."""
     if not cover:
@@ -198,6 +210,10 @@ def prepare(manifest, source, out_dir, output, portrait=None):
     value["video"] = str((path.parent / value["video"]).resolve())
     value.pop("cover", None)
     value["covers"] = {}
+    # Bilibili's 4:3 cover is used as it is, not fitted, so it only moves along with the plan.
+    cover43 = (variants.get("bilibili") or {}).get("cover43")
+    if cover43:
+        value["covers"]["bilibili"] = {"cover43": str((path.parent / cover43).resolve())}
     assets = []
     with scratch(directory.parent) as tmp:
         staging = Path(tmp)

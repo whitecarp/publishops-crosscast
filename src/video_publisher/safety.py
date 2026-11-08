@@ -78,7 +78,7 @@ NEVER_PUBLISH = re.compile(
     r"""|(?:\b(?:password|passwd|passcode)|密码|密碼)["']?\s*[:=]\s*(?:["'][^"'\s]+["']|(?=[!-~]*[\d!@#$%^&*_+=-])[!-~]{4,}|[!-~]+[ \t]*$)""", re.I | re.M)
 LOOKS_PRIVATE = re.compile(PRIVATE_PATH, re.I)
 # What viewers read in one platform's plan.
-PLAN_TEXT = ("title", "description", "tags", "chapters", "playlist_titles", "collection_title", "widgets")
+PLAN_TEXT = ("title", "description", "tags", "chapters", "playlist_titles", "collection_title", "widgets", "topic")
 CONTACT = re.compile(
     r"https?://|\bwww\.|\byoutu\.be\b|\b[\w-]+\.(?:com|net|org|cn|io|co|me|ly|gg|tv|app|xyz|top|cc|ai|ru|uk|jp|de|fr|kr|hk|tw|ca|au|br|eu|sg|info|link|site|shop|vip|club|live|online|store|fun|icu|pro|biz|cloud|dev|sh|im|fm|mobi|asia|tech|wang|ltd|xin)\b(?:/\S*)?"
     r"|\b[a-z0-9-]+\s*(?:。|\sdot\s|点)\s*(?:com|net|org|cn)\b|[\w.+-]+@[\w-]+\.[\w.-]+|(?<!\d)1[3-9]\d{9}(?!\d)|(?<![\d.])\+\d{8,15}(?!\d)"

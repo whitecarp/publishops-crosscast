@@ -125,6 +125,8 @@ Every release starts with a plan that spells out platforms, accounts, visibility
 
 After the first sign-in, the CLI does the uploading itself: Bilibili through bili-cli, and YouTube, Douyin, Instagram and X through a dedicated Chrome the CLI runs in the background. The official API routes for YouTube, X and Instagram need the paid add-on, which isn't on sale yet; everything else here works without it. Uploads can carry chapters (Bilibili, YouTube, Douyin) and join a playlist (YouTube) or a collection (Bilibili, Douyin). Bilibili, YouTube, Douyin and X can schedule a future time; Instagram cannot, and a plan that asks for it is refused. `vpub init --draft-only` uploads without publishing: Bilibili and YouTube keep an unpublished draft, Douyin presses its own save-and-leave button, and its upload page may then offer the draft under 继续编辑 (CrossCast only looks, because it can't show whose draft that is and opening it may use it up), and Instagram and X stop at a preview that may not last, so it is never called saved.
 
+On Bilibili, `vpub prepare VIDEO --bilibili-topic NAME --bilibili-cover43 IMAGE --bilibili-mention UID` also joins a topic (an activity topic enters its contest), adds the 4:3 cover its phone feed shows and @mentions people for real. A topic can't be added after the upload. Write each person in the description as @ and their current nickname, then a space, or the upload stops with nothing sent. Not yet tried through `vpub` on a real account.
+
 </details>
 
 <details>

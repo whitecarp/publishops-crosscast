@@ -125,6 +125,8 @@ B站（含存草稿）需要提供封面，或在 PATH 中有 ffmpeg 自動擷�
 
 首次登入之後，CLI 自己完成上傳：B站走 bili-cli，YouTube、抖音、Instagram、X 由 CLI 在背景操作專用的 Chrome。YouTube、X 和 Instagram 的官方 API 路徑需要付費附加元件，附加元件目前還沒有開賣；這裡的其他功能都不需要它。上傳時可以附上章節（B站、YouTube、抖音），並加入播放清單（YouTube）或合集（B站、抖音）。B站、YouTube、抖音和 X 都支援排程發布；Instagram 不支援，要求排程的方案會被拒絕。`vpub init --draft-only` 只上傳、不發布：B站和 YouTube 會留下未發布的草稿，抖音會按它自己的「暫存離開」，之後上傳頁可能會在「繼續編輯」下提供這份草稿（CrossCast 只看不按，因為這個入口說不出是誰的草稿，而且打開它可能會把草稿用掉），Instagram 和 X 則停在預覽，預覽不一定能保留，所以不會被說成已儲存。
 
+B站上傳還能加入話題（活動話題會同時報名活動）、附上手機端推薦流用的 4:3 封面，並真正 @ 別人：`vpub prepare VIDEO --bilibili-topic 話題名 --bilibili-cover43 IMAGE --bilibili-mention UID`。話題投稿後加不上，要在上傳時選好。簡介裡要寫上 @ 加對方目前的暱稱，再跟一個空格，否則上傳會停下，什麼都不會送出。這項還沒有透過 `vpub` 在真實帳號上試過。
+
 </details>
 
 <details>
