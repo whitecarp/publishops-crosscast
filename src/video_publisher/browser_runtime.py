@@ -255,33 +255,105 @@ def remember_identity(platform, account, actual):
     atomic_json(identity_path(platform, account), {"identity": actual, "verified_at": now(), "method": "browser"})
 
 
+# Creator Center's home page is the only one that shows the 抖音号, and a sign-in opens it itself no more often than this.
+DOUYIN_HOME_SECONDS = 30
+# How long Creator Center's menu has to stay on a tab before the sign-in takes it for signed in. From a review: a signed-out page could draw it
+# for a moment before it moves on to the sign-in page.
+DOUYIN_MENU_SECONDS = 4
+# Douyin's sign-in form: an element whose words are all a sign-in label, such as those a field check saw on it (扫码登录, 验证码登录, 密码登录, 登录),
+# a password box, or a QR code in a sign-in form or a window, or one whose own few words say 登录. From a review: a signed-in page can mention
+# signing in among other words, as a menu item can, and carry a QR code of its own, such as one to upload from a phone. A page showing a sign-in
+# form is left alone: loading another page over it would replace a QR code the person may be scanning.
+SIGN_IN_WORDS = re.compile(r"^\s*(?:(?:扫码|掃碼|扫一扫|掃一掃|验证码|驗證碼|短信|簡訊|密码|密碼|手机号码|手機號碼|手机号|手機號|手机|手機|账号|帳號|帐号)\s*){0,2}"
+                           r"(?:登录|登錄|登入)(?:\s*/\s*(?:注册|註冊))?\s*$")
+PASSWORD_BOX = 'input[type="password" i]'
+QR_CODES = 'img[alt*="二维码"], img[alt*="二維碼"], img[alt*="QR" i], [class*="qrcode" i], [class*="qr-code" i], [class*="qr_code" i]'
+SIGN_IN_QR = """e => { for (let n = e, card = true; n && n !== document.body; n = n.parentElement) {
+  if (/login/i.test((n.getAttribute('class') || '') + ' ' + n.id) || n.matches('dialog, [role="dialog"], [aria-modal="true"]')) return true;
+  const words = card ? n.innerText || '' : '';  // The QR code's own card ends where a longer text begins.
+  if (words.length > 150) card = false;
+  else if (/登录|登錄|登入/.test(words)) return true;
+} return false; }"""
+# What a running sign-in's job file says, so vpub auth status says what it waits for. A field run's kept asking the person to sign in for minutes
+# after they had, while Creator Center's home page loaded.
+LOGIN_NOTES = {
+    "login": {"hint": "Complete official login in the CrossCast Chrome window. No password, SMS or CAPTCHA is entered by the CLI."},
+    "check": {"hint": "The platform is asking for a check or account recovery. Finish it yourself in the CrossCast Chrome window; the CLI never answers it."},
+    "home": {"waiting_for": f"Creator Center's home page to show the account's 抖音号. CrossCast opens that page itself, at most every {DOUYIN_HOME_SECONDS} seconds; "
+                            "on a slow connection it can take minutes to load.",
+             "hint": "Signed in; opening Creator Center's home page to read your 抖音号. Leave the CrossCast Chrome window open; there's nothing to click."},
+}
+
+
+async def sign_in_shown(page):
+    """Whether a page shows a sign-in form, or a QR code to sign in with (see SIGN_IN_WORDS)."""
+    if await visible(page.locator(PASSWORD_BOX)):
+        return True
+    for item in await page.locator(QR_CODES).all():
+        if await item.is_visible() and await item.evaluate(SIGN_IN_QR):
+            return True
+    for item in await page.get_by_text(SIGN_IN_WORDS).all():
+        if await item.is_visible():
+            return True
+    return False
+
+
+async def douyin_signed_in(page):
+    """Signed in to Creator Center on this page, whether or not it shows the 抖音号. A field run's QR sign-in left the window on the upload page,
+    signed in, until the person clicked 首页 in its left menu: that menu is the sign. A page showing a sign-in form or a check is never one."""
+    address = urlsplit(page.url)
+    if address.scheme != "https" or address.hostname != "creator.douyin.com" or not address.path.startswith("/creator-micro/"):
+        return False
+    return bool(await visible(page.get_by_text("首页", exact=True))) and not await sign_in_shown(page) and not await challenge_shown(page)
+
+
+async def loaded_at(page):
+    """When the page's document began to load, which tells one load of a page from the next. One that can't be read in time matches nothing."""
+    try:
+        return await asyncio.wait_for(page.evaluate("performance.timeOrigin"), 10)
+    except Exception:
+        return object()
+
+
 async def login(pw, payload):
     platform, account = payload["platform"], payload["account"]
     job = Path(payload["job_path"])
     context = await open_context(pw, platform, account, interactive=True)
     deadline = time.monotonic() + 900
     waiting = {"platform": platform, "login_url": URLS[platform], "expires_epoch": time.time() + 900}
+    told = None
+
+    def tell(note):
+        """Each note once, and again after another, so the job file always says what the sign-in waits for now. From a review: a note counted as
+        told before it was written, so one that failed to write was never tried again and the job file kept the note before it."""
+        nonlocal told
+        if note != told:
+            atomic_json(job, {"state": "VERIFICATION_REQUIRED" if note == "check" else "LOGIN_PENDING", **waiting, "window_opened": True, **LOGIN_NOTES[note]})
+            told = note
     try:
         page = context.pages[0] if context.pages else await context.new_page()
         await page.goto(URLS[platform], wait_until="domcontentloaded", timeout=60000)
         await page.bring_to_front()
-        atomic_json(job, {"state": "LOGIN_PENDING", **waiting, "window_opened": True,
-                          "hint": "Complete official login in the CrossCast Chrome window. No password, SMS or CAPTCHA is entered by the CLI."})
-        asked = False
+        tell("login")
+        # On Douyin: when the home page was last opened, which the first load did; for each tab reloaded to prove a fresh load, the account it
+        # showed and that load; and for each tab, address and load, since when it has shown Creator Center signed in on every look.
+        home_opened, reloaded, menus = time.monotonic(), {}, {}
         while time.monotonic() < deadline:
             # A sign-in can replace its tab or open another, so only closing every tab cancels it.
             pages = [item for item in context.pages if not item.is_closed()]
             if not pages:
                 raise VpubError("login_cancelled", "Login window was closed before account verification.")
-            # A signed-in menu can still show behind a check, so a check on any tab comes before who the account is.
+            # A signed-in menu can still show behind a check, so a check on any tab comes before who the account is. A tab that can't be read could
+            # be showing one. Either way no load reloaded so far counts any more (see below).
             challenged = await any_challenge(pages)
             if challenged is not False:
-                if challenged and not asked:
-                    asked = True
-                    atomic_json(job, {"state": "VERIFICATION_REQUIRED", **waiting, "window_opened": True,
-                                      "hint": "The platform is asking for a check or account recovery. Finish it yourself in the CrossCast Chrome window; the CLI never answers it."})
+                reloaded.clear()
+                if challenged:
+                    tell("check")
                 await asyncio.sleep(2)
                 continue
+            seen = set()  # Whether a tab was signed in, and whether a tab of Douyin's showed a sign-in form.
+            earlier, menus = menus, {}
             for page in pages:
                 try:
                     actual = await identity(page, platform)
@@ -289,13 +361,47 @@ async def login(pw, payload):
                         # A sign-in can end on Instagram's home page, which cannot say for certain who this is.
                         if platform == "instagram" and urlsplit(page.url).path == "/" and await page.locator("a").filter(has=page.locator(INSTAGRAM_AVATAR)).count():
                             await page.goto(URLS[platform], wait_until="domcontentloaded", timeout=60000)
+                        # Or on a Creator Center page without the 抖音号, which a field run's person had to leave by clicking 首页. The home page
+                        # itself is left to load, however long it takes: opening it again would only start that over. From a review: a signed-out
+                        # page could draw the menu for a moment before it moves on to the sign-in page, so the menu counts once it has stayed.
+                        elif platform == "douyin" and await douyin_signed_in(page):
+                            seen.add("signed in")
+                            menu = (page, page.url, await loaded_at(page))
+                            menus[menu] = earlier.get(menu, time.monotonic())
+                            if time.monotonic() - menus[menu] < DOUYIN_MENU_SECONDS:
+                                continue
+                            tell("home")
+                            if urlsplit(page.url).path.rstrip("/") != urlsplit(URLS[platform]).path and time.monotonic() - home_opened >= DOUYIN_HOME_SECONDS:
+                                home_opened = time.monotonic()
+                                await page.goto(URLS[platform], wait_until="commit", timeout=60000)
+                        elif told == "home" and await sign_in_shown(page):
+                            seen.add("sign-in form")
                         continue
-                    # Wait for the login redirect to settle and prove a fresh load.
-                    await asyncio.sleep(3)
-                    await page.reload(wait_until="domcontentloaded")
-                    await asyncio.sleep(2)
-                    if await any_challenge(pages) is not False or await identity(page, platform) != actual:
-                        continue
+                    seen.add("signed in")
+                    # Wait for the login redirect to settle and prove a fresh load: the account must show again on the load a reload brings. From a
+                    # review: only Creator Center's home page needed more (below), so elsewhere this is as it always was.
+                    if platform != "douyin":
+                        await asyncio.sleep(3)
+                        await page.reload(wait_until="domcontentloaded")
+                        await asyncio.sleep(2)
+                        if await any_challenge(pages) is not False or await identity(page, platform) != actual:
+                            continue
+                    else:
+                        # From a field run: Creator Center's home page then sat on 加载中… for minutes, and was reloaded again each time it showed the
+                        # account. So that load is watched until it does, and only that load counts; any other load of the tab gets a reload of its own
+                        # first. And only while no check shows: from a review, a person who passed a check on that load was then recorded on it, though
+                        # the next load could ask again. So after a check the account has to show on a new reload.
+                        if reloaded.get(page) != (actual, await loaded_at(page)):
+                            await asyncio.sleep(3)
+                            await page.reload(wait_until="commit", timeout=60000)
+                            reloaded[page] = (actual, await loaded_at(page))
+                            await asyncio.sleep(2)
+                        if await any_challenge(pages) is not False:
+                            reloaded.clear()
+                            continue
+                        if await identity(page, platform) != actual:
+                            tell("home")
+                            continue
                 except Exception as exc:
                     if isinstance(exc, VpubError):
                         raise
@@ -308,7 +414,14 @@ async def login(pw, payload):
                 if (home() / "STOP.json").exists():
                     result["next"] = f"CrossCast is still stopped because of a platform's warning. Once its check is done, run {how_to_clear_a_stop()}."
                 return result
+            # A sign-in form and no tab signed in: the sign-in didn't hold, as a reload can show, and the person has to sign in again.
+            if seen == {"sign-in form"}:
+                tell("login")
             await asyncio.sleep(2)
+        if told == "home":
+            raise VpubError("login_timeout", "Signed in, but Creator Center's home page didn't show the account's 抖音号 within 15 minutes, so the sign-in "
+                            "wasn't recorded. The saved profile is retained.",
+                            "Run vpub auth login douyin again. If the home page keeps loading, the connection to Douyin is slow just now; try again later.")
         raise VpubError("login_timeout", "Login was not completed within 15 minutes; saved profile is retained.")
     finally:
         await close_context(context)

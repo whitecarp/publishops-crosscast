@@ -6,7 +6,7 @@ Use the installed `vpub` CLI. Read `vpub --help`, `vpub capabilities`, and the r
 
 ## Host-limited sign-in
 
-Browser `vpub auth login PLATFORM --method browser` starts a tracked worker and returns promptly. Leave its official Chrome window open for the person. Check with `vpub auth status PLATFORM --method browser --wait 5`; use the same `--account` on both commands if selected. `STARTING`, `LOGIN_PENDING` and `VERIFICATION_REQUIRED` do not authorize another login. The person handles any check on the official page.
+Browser `vpub auth login PLATFORM --method browser` starts a tracked worker and returns promptly. Leave its official Chrome window open for the person. Check with `vpub auth status PLATFORM --method browser --wait 5`; use the same `--account` on both commands if selected. `STARTING`, `LOGIN_PENDING` and `VERIFICATION_REQUIRED` do not authorize another login. The person handles any check on the official page. On Douyin, once they have signed in, a pending job's `waiting_for` says what it still waits for: CrossCast opens Creator Center's home page itself to read the 抖音号, so nobody needs to click 首页.
 
 If the host stops the waiting command but the worker survives, check the same job. If the worker also stops, `login_interrupted` means completion is unverified, not that a saved sign-in expired. Close any leftover CrossCast sign-in window, then run login once to reuse the retained profile. If the host repeatedly terminates it, have the person run these commands in their own terminal. Do not change host controls, copy credentials, clear STOP, or repeatedly restart. This recovery was tested with offline synthetic processes; it is not a live WorkBuddy compatibility claim.
 
