@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 from . import x_pages
 from .core import VpubError, X_AI_LINE, X_POST_LIMIT, atomic_json, file_sha, now, read_json, stop_check, x_post_text, x_weighted_length
 from .browser_runtime import failure_message, failure_record, look_until, risk_check, unique_visible, visible
-from .browser_backends import choose_file, douyin_card_words, douyin_editor_address, douyin_editor_boxes, douyin_type_caption, normalize, where_words_part, work_url, x_words
+from .browser_backends import choose_file, douyin_card_words, douyin_editor_address, douyin_editor_boxes, douyin_form_differs, douyin_type_caption, normalize, work_url, x_words
 from .progress import stage
 from .edits import x_edit_readback_note, x_edit_was_attempted
 
@@ -374,21 +374,21 @@ async def douyin_fields(page,url,work_id):
 async def douyin_text(page,work_id,patch,save,submit,output,verify_only=False):
     """Title and description on the work's own edit page, the one its cover uses. Saved once, then read back from a fresh load."""
     url=douyin_editor_address(work_id)
-    wanted=normalize(patch['title']),douyin_card_words(patch['caption'])
-    async def current(title,editor): return normalize(await title.input_value()),douyin_card_words(await editor.inner_text())
+    # The description is read as a new post's is before 发布, its words and then where its lines end, since it is typed the same way.
+    async def differs(title,editor): return normalize(await title.input_value())!=normalize(patch['title']),douyin_form_differs(patch['caption'],await editor.inner_text())
     title,editor=await douyin_fields(page,url,work_id)
-    if await current(title,editor)==wanted:
+    if not any(await differs(title,editor)):
         return save(state='EDIT_VERIFIED',unchanged=True,platform_writes=0,url=url)
     if verify_only:
         return save(state='EDIT_MISMATCH',platform_writes=0,url=url,reason='The saved text differs; no write attempted.')
     if await douyin_says_held(page): raise douyin_held()
     await title.fill(patch['title'])
     await douyin_type_caption(page,editor,patch['caption'])
-    shown=await current(title,editor)
-    if shown[0]!=wanted[0]:
+    title_differs,words_differ=await differs(title,editor)
+    if title_differs:
         raise VpubError('metadata_mismatch','Douyin\'s form did not keep the intended title; nothing was saved.')
-    if shown[1]!=wanted[1]:
-        raise VpubError('metadata_mismatch',f'Douyin\'s form did not keep the intended description, so nothing was saved: {where_words_part(wanted[1],shown[1])}.')
+    if words_differ:
+        raise VpubError('metadata_mismatch',f'Douyin\'s form did not keep the intended description, so nothing was saved: {words_differ}.')
     button=await visible(page.get_by_role('button',name=re.compile(r'^(保存|保存修改|提交修改|发布)$')))
     if button is None: raise VpubError('layout_changed','Existing-work save button is unavailable; nothing was saved.')
     await douyin_can_press(page,button)
@@ -397,7 +397,7 @@ async def douyin_text(page,work_id,patch,save,submit,output,verify_only=False):
     stayed=await douyin_moved_on(page,pressed,output)
     if stayed: return save(state='EDIT_SUBMITTED_UNVERIFIED',platform_writes=1,url=url,after_press=stayed,note='Pressed once, and the page did not go back to the works list. See after_press; do not press again.')
     title,editor=await douyin_fields(page,url,work_id)
-    matched=await current(title,editor)==wanted
+    matched=not any(await differs(title,editor))
     return save(state='EDIT_VERIFIED' if matched else 'EDIT_SUBMITTED_UNVERIFIED',platform_writes=1,url=url,note='Douyin may review the change, and the old text may show until that finishes.')
 
 

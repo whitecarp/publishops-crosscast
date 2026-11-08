@@ -44,7 +44,9 @@ class LastMomentTests(SharedBrowser):
                 self.title, self.words = self.saves[-1]["title"], self.saves[-1]["words"]
             return await self.json_at(route, {})
         if urlsplit(route.request.url).path == "/creator-micro/content/post/video":
-            return await self.page_at(route, f"""<input placeholder="填写作品标题，为作品获得更多流量" value="{self.title}"><div contenteditable="true" id="c">{self.words}</div>
+            # Saved words come back a line at a time, as field reads of real edit pages showed (STARRED below), since their lines are read back too.
+            words = self.words.replace("\n", "<br>")
+            return await self.page_at(route, f"""<input placeholder="填写作品标题，为作品获得更多流量" value="{self.title}"><div contenteditable="true" id="c">{words}</div>
               {self.tip}<button id="go" class="{self.button_class}">发布</button><script>document.getElementById('go').onclick = async () => {{
                 await fetch('/save', {{method: 'POST', body: JSON.stringify({{title: document.querySelector('input').value, words: document.getElementById('c').innerText}})}}); {"document.body.insertAdjacentHTML('beforeend', " + repr(self.stays) + ")" if self.stays else "location.href = '/creator-micro/content/manage'"}; }};</script>""")
         await self.page_at(route, "manage")
