@@ -773,12 +773,9 @@ async def douyin_reopen_kept_draft(page, tx, caption):
     await look_until(page, title.input_value, 15000)
     if await title.input_value() != tx.options['title']:
         raise VpubError('wrong_work', "The draft Douyin reopened isn't titled as this attempt is, so nothing was changed.", "Look at it on Douyin's upload page yourself.")
-    editor = await unique_visible(page.locator('[contenteditable=true]'), 'Douyin description')
-    # Read as the read-back before 发布 reads it, or a draft whose lines ran together would never be typed again and would stop every resume.
-    if douyin_form_differs(caption, await editor.inner_text()):
-        await douyin_type_caption(page, editor, caption)
     await page.get_by_text('重新上传', exact=True).wait_for(state='visible', timeout=120000)
     tx.save(phase='uploaded', draft_url=page.url)
+    # From a review of setting covers first: the words a draft lost are typed again by publish_douyin, after any cover still to be set.
     return True
 
 
@@ -787,7 +784,15 @@ async def publish_douyin(page, tx):
     if douyin_caption_units(caption) > 1000:
         raise VpubError('description_too_long', DOUYIN_TOO_LONG + ' No video uploaded.')
     if tx.resuming and tx.receipt['media_selected'] and await douyin_reopen_kept_draft(page, tx, caption):
-        return await finish_douyin_form(page, tx, tx.receipt['before_ids'])
+        # From a review of setting covers first: a cover step that stopped on a form just uploaded left its draft with no words, and the
+        # resume typed them before the covers, the order that buried 肥鱼抢麦's slot. So a kept draft gets its covers first too, with its box
+        # emptied while one is still to be set, and its words after; they are read back before 发布 as ever.
+        editor = await unique_visible(page.locator('[contenteditable=true]'), 'Douyin description')
+        if douyin_covers_to_set(tx) and await editor.inner_text():
+            await douyin_empty_caption(tx, editor)
+        await douyin_set_covers(page, tx, editor)
+        await douyin_words_in(page, tx, caption)
+        return await finish_douyin_form(page, tx, tx.receipt['before_ids'], covers=False)
     before = await works(page, 'douyin', tx.identity, must_answer=True)
     same_title = await douyin_cards_titled(page, tx.options['title'], caption)
     # An attempt starting over goes up again, so it's held to a work with these words already being there. A new plan for a repost isn't.
@@ -805,16 +810,26 @@ async def publish_douyin(page, tx):
                         "Continue or discard that draft on Douyin's upload page yourself, then run this again.")
     tx.save(draft_offered_before=False)
     await upload_file(page, tx.media(), accept='video/')
+    # From a review of setting covers first: a form just uploaded holds none of the covers an earlier run set on another form, and its
+    # receipt said they were on, so this form and a later resume from its kept draft went without them. Their records go with that form.
+    for key in ('landscape_cover', 'portrait_cover'):
+        tx.receipt.pop(key, None)
     tx.save(phase='uploading')
     await page.wait_for_url(re.compile(r'/content/(publish|post/video)'), timeout=120000)
     tx.save(phase='editing', draft_url=page.url)
     title = page.locator('input[placeholder*="填写作品标题"]')
     await title.fill(tx.options['title'])
-    editor = await unique_visible(page.locator('[contenteditable=true]'), 'Douyin description')
-    await douyin_type_caption(page, editor, caption)
     await page.get_by_text('重新上传', exact=True).wait_for(state='visible', timeout=900000)
-    tx.save(phase='uploaded')
-    return await finish_douyin_form(page, tx, before)
+    tx.save(phase='uploaded', description_typed=False)
+    # From field runs on a16202b and fc60a30: once 肥鱼抢麦's long description was in, what lay over its 竖封面3:4 slot came from the
+    # description's own wrapper, and at every point of the slot's grid something else was on top, so no press could go to it. So on a form
+    # just uploaded the covers go on first, while the description is still empty, and the words go in after them. From a review of that:
+    # the title, filled last, still held the cursor, so it leaves first, and the description box is found once the upload is done.
+    await page.evaluate('() => { if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur(); }')
+    editor = await unique_visible(page.locator('[contenteditable=true]'), 'Douyin description')
+    await douyin_set_covers(page, tx, editor)
+    await douyin_words_in(page, tx, caption)
+    return await finish_douyin_form(page, tx, before, covers=False)
 
 
 async def douyin_schedule(page, when):
@@ -889,7 +904,10 @@ DOUYIN_SLOT_MS = 10000  # As long as the press a field run's covered 横封面4:
 # What a trial press says of a slot that something lies over or that is turned off, as with a field run's 9:16 video's 横封面4:3 slot.
 DOUYIN_SLOT_OFF = re.compile(r'intercepts pointer events|element is not enabled')
 DOUYIN_WINDOW_MS = 20000  # How long a press on a slot waits for Douyin's cover window to open.
-DOUYIN_COVER_AGAIN = 'vpub resume tries again, and vpub resume KEY --no-cover goes without one.'
+# From a final check of setting covers first: the description goes in after the covers, so a draft Douyin kept from a stop here may hold
+# no words yet, and one finished by hand would go out without them.
+DOUYIN_COVER_AGAIN = ('vpub resume tries again, and vpub resume KEY --no-cover goes without one. The description goes in after the covers, '
+                      "so Douyin's kept draft may not hold it yet: finish the draft with vpub resume, not by hand.")
 # From field runs on 647e002 and 7fa6c10: something lay over a cover slot in three of the last four Douyin posts, a span twice and a div twice,
 # the second div over a reopened draft's 竖封面3:4 slot on both tries. Nothing else with buttons was open, and no more than its tag was kept.
 # So a slot something lies over is looked at again for this long, with nothing pressed, for a layer Douyin shows while it readies the cover
@@ -986,11 +1004,15 @@ DOUYIN_SLOT_LOOK = r"""(slot, ask) => {
   const W = innerWidth, H = innerHeight, fits = (value, shape) => shape.test(value) ? value : 'other';
   const roles = /^(alert|alertdialog|banner|button|checkbox|combobox|dialog|group|img|link|list|listbox|listitem|log|menu|menubar|menuitem|menuitemcheckbox|menuitemradio|none|note|option|presentation|progressbar|radio|region|searchbox|slider|spinbutton|status|switch|tab|tablist|tabpanel|textbox|timer|toolbar|tooltip|tree|treeitem)$/;
   const roleOf = e => tokens(e).length ? tokens(e).find(t => roles.test(t)) || 'other' : null;
+  // Where something lies, in whole pixels: left, top, width and height. From a review of the field run on fc60a30, what lay over the slot
+  // and what held it are given so too.
+  const rect = e => { const b = e.getBoundingClientRect(); return [b.left, b.top, b.width, b.height].map(n => Math.round(n) + 0); };
   const facts = e => { const s = getComputedStyle(e);
     return {tag: fits(e.tagName.toLowerCase(), /^[a-z][a-z0-9-]{0,40}$/), classes: [...e.classList].filter(c => /^[A-Za-z_-][A-Za-z0-9_-]{0,40}$/.test(c)).slice(0, 4),
       role: roleOf(e), modal: e.getAttribute('aria-modal') === 'true', position: fits(s.position, /^[a-z-]{1,20}$/),
       z_index: fits(s.zIndex, /^(auto|-?\d{1,10})$/), opacity: Number(s.opacity) || 0, pointer_events: fits(s.pointerEvents, /^[a-z-]{1,20}$/),
-      cursor: fits(s.cursor, /^[a-z-]{1,20}$/), slot_covered: share(e, r.left, r.top, r.right, r.bottom), window_covered: share(e, 0, 0, W, H)}; };
+      cursor: fits(s.cursor, /^[a-z-]{1,20}$/), slot_covered: share(e, r.left, r.top, r.right, r.bottom), window_covered: share(e, 0, 0, W, H),
+      box: rect(e)}; };
   const lead = e => { const s = getComputedStyle(e); return {x: parseInt(s.borderLeftWidth, 10) || 0, y: parseInt(s.borderTopWidth, 10) || 0}; };
   const x0 = Math.max(r.left, 0), y0 = Math.max(r.top, 0), x1 = Math.min(r.right, W), y1 = Math.min(r.bottom, H), c = point(slot, null);
   const hit = x1 > x0 && y1 > y0 ? root.elementFromPoint(c.x, c.y) : null, under = hit && reach();
@@ -1003,11 +1025,20 @@ DOUYIN_SLOT_LOOK = r"""(slot, ask) => {
   const grid = cells.filter(Boolean).sort((a, b) => a.off - b.off);
   // From the field run on a16202b, nothing told why no spot was pressed. So a look also maps its grid, row by row from the top, in fixed
   // letters: o what a press at the centre would reach, b the slot's own picture (own), s another part of its own, c a control of its own,
-  // m a bare part of its own cover box, X anything else, and - outside the window.
-  const mark = g => !g ? '-' : !target.contains(g.top) ? (bare(g.top) ? 'm' : 'X')
+  // m a bare part of its own cover box, X anything else, and - outside the window. From the field run on fc60a30, where every point was X,
+  // anything else is told apart too: k another part of its own cover box, h something holding what the press goes to, whether the slot
+  // takes no pointer events there or the holder paints over it, D something of the description's, as the place over the centre is told,
+  // and X what is left. A look also gives where the slot, its cover box and the description box lie.
+  // From a review of that: only boxes that show and take words, as CrossCast's own lookup of the description finds it.
+  const boxes = [...document.querySelectorAll('[contenteditable=true]')].filter(b => b.getClientRects().length > 0);
+  const outer = e => { let h = e; while (h && h.parentElement && !h.parentElement.contains(slot)) h = h.parentElement; return h; };
+  const words = e => { const h = outer(e); return boxes.some(b => b.contains(e) || (!!h && h.contains(b))); };
+  const mark = g => !g ? '-' : !g.top ? 'X' : !target.contains(g.top)
+    ? (g.top.contains(slot) ? 'h' : bare(g.top) ? 'm' : !!box && box.contains(g.top) ? 'k' : words(g.top) ? 'D' : 'X')
     : !!under && g.top.contains(under) ? 'o' : own(g.top, null) ? 'b' : inControl(g.top) ? 'c' : 's';
   const map = [0, 5, 10, 15, 20].map(i => cells.slice(i, i + 5).map(mark).join(''));
-  const seen = {open: !!hit && target.contains(hit), spots: grid.filter(g => holds(g.top)).slice(0, 5).map(g => g.at), map};
+  const where ={slot: rect(slot), cover_box: box ? rect(box) : null, description: boxes.length === 1 ? rect(boxes[0]) : null};
+  const seen = {open: !!hit && target.contains(hit), spots: grid.filter(g => holds(g.top)).slice(0, 5).map(g => g.at), map, where};
   let atTop = null;
   if (ask.at) { const p = point(slot, ask.at); atTop = root.elementFromPoint(p.x, p.y); seen.at_open = holds(atTop); }
   if (ask.layer) { const q = point(ask.layer, ask.on), top = root.elementFromPoint(q.x, q.y); seen.on_bare = top === ask.layer && bare(top); }
@@ -1024,7 +1055,6 @@ DOUYIN_SLOT_LOOK = r"""(slot, ask) => {
   const inBox = !!box && box.contains(hit), holds_slot = hit.contains(slot), isControl = inControl(hit);
   let holder = holds_slot ? null : hit;
   while (holder && holder.parentElement && !holder.parentElement.contains(slot)) holder = holder.parentElement;
-  const boxes = [...document.querySelectorAll('[contenteditable]:not([contenteditable="false" i])')];
   const place = inBox ? 'cover box' : boxes.some(e => e.contains(hit) || (holder && holder.contains(e))) ? 'description' : 'page';
   // The spots a press through may go to: where a bare part of the layer over the centre is itself on top, nearest the centre first. From
   // round 1's final check, what is on top at the centre may be an icon or a button of that layer's own that showed with the pointer, which
@@ -1304,9 +1334,21 @@ async def douyin_drawn(page, covered):
 def douyin_map(seen):
     """The look's map of its grid (DOUYIN_SLOT_LOOK), five rows of five fixed letters, or None for anything else."""
     rows = seen.get('map')
-    if isinstance(rows, list) and len(rows) == 5 and all(isinstance(row, str) and re.fullmatch(r'[obscmX-]{5}', row) for row in rows):
+    if isinstance(rows, list) and len(rows) == 5 and all(isinstance(row, str) and re.fullmatch(r'[obscmkhDX-]{5}', row) for row in rows):
         return rows
     return None
+
+
+def douyin_where(seen):
+    """Where the look found the slot, its cover box and the description box, each as whole pixels (left, top, width, height) or None, from
+    the field run on fc60a30, where something lay over every point of the slot. Anything else is None."""
+    found = seen.get('where')
+    if not isinstance(found, dict):
+        return None
+    def box(value):
+        ok = isinstance(value, list) and len(value) == 4 and all(type(n) is int and -100000 < n < 100000 for n in value)
+        return value if ok else None
+    return {name: box(found.get(name)) for name in ('slot', 'cover_box', 'description')}
 
 
 def douyin_tried(covered, why):
@@ -1332,7 +1374,7 @@ async def douyin_look_away(page, slot, covered):
     seen, _ = await douyin_slot_look(slot)
     covered['unseen'] = seen.get('unseen')
     if not covered['unseen']:
-        covered['over_it_away'], covered['slot_map_away'] = seen['over_it'], douyin_map(seen)
+        covered['over_it_away'], covered['slot_map_away'], covered['where'] = seen['over_it'], douyin_map(seen), douyin_where(seen)
     if seen['over_it']:
         await douyin_drawn(page, covered)
     return seen
@@ -1618,6 +1660,7 @@ def douyin_slot_record(covered, role=None, label=None):
             **({'slot_map': covered['slot_map']} if covered.get('slot_map') else {}),
             **({'slot_map_away': covered['slot_map_away']} if covered.get('slot_map_away') else {}),
             **({'slot_map_spot': covered['slot_map_spot']} if covered.get('slot_map_spot') else {}),
+            **({'where': covered['where']} if covered.get('where') else {}),
             **({'spot_tries': dict(covered['spot_tries'])} if covered.get('spot_tries') else {}),
             'drawing': covered['drawing'], 'waited_seconds': covered['waited_seconds']}
 
@@ -1680,7 +1723,7 @@ async def douyin_slot_press(page, tx, slot, role, label, size, tall_too, refused
         raise douyin_slot_blocked(role, label, size, tall_too, refused)
     covered = {'refused': refused, 'refused_after_trial': after_trial, 'over_it': None, 'over_it_away': None, 'came_with_pointer': False,
                'drawing': None, 'press': None, 'unseen': None, 'open_but_refused': False, 'centre_trial': None, 'unsettled': {}, 'moved': 0,
-               'bare_spots': 0, 'tried': None, 'slot_map': None, 'slot_map_away': None, 'slot_map_spot': None, 'spot_tries': {},
+               'bare_spots': 0, 'tried': None, 'slot_map': None, 'slot_map_away': None, 'slot_map_spot': None, 'spot_tries': {}, 'where': None,
                'started': time.monotonic()}
     await douyin_slot_opening(page, slot, covered)
     # A 4:3 slot that may be left out is never pressed through: under what came with the pointer it is left out at once, unless a spot of its
@@ -1740,14 +1783,76 @@ async def douyin_slot_window(page, tx, editor, slot, role, label, size, tall_too
     return None if how is None else (await douyin_cover_window(page, tx, slot, role, label, how), how)
 
 
-async def finish_douyin_form(page, tx, before):
-    """Complete this already-uploaded form; never select the video again."""
+async def finish_douyin_form(page, tx, before, covers=True):
+    """Complete this already-uploaded form; never select the video again. With covers false, this pass set them already (publish_douyin)."""
     caption = douyin_caption(tx.options['description'], tx.options['tags'])
     title = page.locator('input[placeholder*="填写作品标题"]')
     editor = await unique_visible(page.locator('[contenteditable=true]'), 'Douyin description')
+    if covers:
+        await douyin_set_covers(page, tx, editor)
+    else:
+        await douyin_leave_caption(page, editor)
+    return await douyin_finish_after_covers(page, tx, before, caption, title, editor)
+
+
+def douyin_covers_planned(tx):
+    """The covers left to set, as (role, label, path). A cover an earlier pass set on this form isn't set again, and one it left out is looked
+    at again. A form just uploaded starts with none on (publish_douyin)."""
+    return [(role, label, tx.cover(role)) for role, label in DOUYIN_COVERS if (tx.receipt.get(role + '_cover') or {}).get('state') != 'UI_ACCEPTED']
+
+
+def douyin_covers_to_set(tx):
+    """Whether a cover is left that a slot will be pressed for, with a file to set it from. From a final check of setting covers first: a
+    video taller than it is wide never has its 4:3 one pressed, so that one doesn't count, and a kept draft's words aren't taken out for it."""
+    tall_too = bool(tx.cover('portrait'))
+    for role, _, path in douyin_covers_planned(tx):
+        size = tx.video_size() if role == 'landscape' else None
+        if path and not (tall_too and size and size[1] > size[0]):
+            return True
+    return False
+
+
+async def douyin_empty_caption(tx, editor):
+    """The kept draft's words taken out of its description box, as douyin_type_caption does before it types, so that nothing of theirs lies
+    over a cover slot while a cover is set. They go back in afterwards (douyin_words_in) and are read back before 发布."""
+    await editor.click()
+    await editor.press('ControlOrMeta+A')
+    await editor.press('Backspace')
+    tx.save(description_typed=False)
+
+
+async def douyin_words_in(page, tx, caption):
+    """The plan's words in the description box once the covers are set, typed only where the box doesn't already hold them, read as the
+    read-back before 发布 reads them, or a draft whose lines ran together would never be typed again and would stop every resume. From a
+    review of setting covers first, the box is found again here, after the cover windows, and the receipt says the words are in."""
+    editor = await unique_visible(page.locator('[contenteditable=true]'), 'Douyin description')
+    if douyin_form_differs(caption, await editor.inner_text()):
+        await douyin_type_caption(page, editor, caption)
+    tx.save(description_typed=True)
+
+
+# Said by a stop in the cover step while the description isn't in the form yet. From a check of setting covers first: a run's own receipt
+# keeps a stop's code and message, not its hint, so this is part of the message.
+DOUYIN_WORDS_NOT_IN = ("The description isn't in Douyin's kept draft yet, since it goes in after the covers, so finish this post with vpub "
+                       "resume, not by hand on Douyin.")
+
+
+async def douyin_set_covers(page, tx, editor):
+    """The covers this attempt plans (douyin_covers_now). A stop there while the description is still to go in says so, so that nobody posts
+    the kept draft by hand without its words."""
+    try:
+        await douyin_covers_now(page, tx, editor)
+    except VpubError as exc:
+        if tx.receipt.get('description_typed') is False and DOUYIN_WORDS_NOT_IN not in exc.message:
+            raise VpubError(exc.code, f"{exc.message.rstrip()} {DOUYIN_WORDS_NOT_IN}", exc.hint) from None
+        raise
+
+
+async def douyin_covers_now(page, tx, editor):
+    """The covers this attempt plans, each through its own slot and Douyin's cover window, after the description's lists are closed and the
+    cursor has left it (douyin_leave_caption)."""
     await douyin_leave_caption(page, editor)
-    # A cover an earlier pass set isn't set again; one it left out is looked at again.
-    planned = [(role, label, tx.cover(role)) for role, label in DOUYIN_COVERS if (tx.receipt.get(role + '_cover') or {}).get('state') != 'UI_ACCEPTED']
+    planned = douyin_covers_planned(tx)
     # From a field run: a 1080x1920 video's 横封面4:3 slot had something over it, and its press ran out and stopped the post. So a video taller
     # than it is wide gets only its 竖封面3:4 cover, as the owner chose, though an earlier 1080x1920 video's slot had taken its 4:3 cover.
     # A review found leaving the 4:3 one out left a post with no cover when it was the only one, as vpub resume --cover gives, and that a
@@ -1793,7 +1898,7 @@ async def finish_douyin_form(page, tx, before):
                 await window.wait_for_element_state('hidden', timeout=DOUYIN_COVER_SECONDS * 1000)
             except BrowserTimeout:
                 # A field run's first real post stopped here on a 30-second wait, as the edit route's window had stayed for over three minutes.
-                raise VpubError('cover_not_ready', f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so nothing was published. {await douyin_cover_stuck(page, fonts, traffic())}", 'vpub resume tries again, and vpub resume KEY --no-cover goes without one.') from None
+                raise VpubError('cover_not_ready', f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so nothing was published. {await douyin_cover_stuck(page, fonts, traffic())}", DOUYIN_COVER_AGAIN) from None
         finally:
             traffic(stop=True)
         saved = await control.locator('img').count() > 0
@@ -1803,6 +1908,11 @@ async def finish_douyin_form(page, tx, before):
         if (tx.receipt.get('cover_slot_covered') or {}).get('role') == role:
             tx.receipt.pop('cover_slot_covered')
         tx.save(**{role+'_cover': {'state':'UI_ACCEPTED', 'remote_pixels_verified':False, **(douyin_slot_record(how) if how else {})}})
+
+
+async def douyin_finish_after_covers(page, tx, before, caption, title, editor):
+    """The rest of the form once its covers are on or left out: the declaration, who sees it, its collection and time, the title and words
+    read back, and the one press on 发布."""
     # Ordinary videos are published without a self-declaration.
     if tx.options['ai_generated']:
         await page.get_by_text('自主声明', exact=True).click()
@@ -1837,6 +1947,12 @@ async def finish_douyin_form(page, tx, before):
         return await douyin_keep_draft(page, tx)
     post = await unique_visible(page.get_by_role('button', name='发布', exact=True), 'Douyin final publish')
     await tx.submit(page, post)
+    # From the field run on fc60a30 and a review of that: a post that went out without a cover, with --no-cover, or with --cover in a slot
+    # other than the one that stopped, kept a stopped run's account of what lay over a slot. It goes once 发布 has been pressed, not before,
+    # so a run that stops short of that keeps it.
+    if 'cover_slot_covered' in tx.receipt:
+        tx.receipt.pop('cover_slot_covered')
+        tx.save()
     await page.wait_for_url(re.compile(r'/content/manage'), timeout=60000)
     return await finish(page, tx, before)
 
