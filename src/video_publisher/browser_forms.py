@@ -14,7 +14,7 @@ from .core import VpubError, douyin_caption, stop_check
 from .browser_runtime import failure_message, look_until, risk_check, unique_visible, visible
 from .progress import stage
 from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, X_CHOSEN_TIME, YT_DONE_WINDOW, YT_EDIT_DRAFT, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style, studio_zone_offsets_agree,
-                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, x_chosen_time_says, x_new_works, x_new_posts, x_schedule_baseline, x_schedule_moment, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_leave_caption, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED, where_words_part)
+                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, x_chosen_time_says, x_new_works, x_new_posts, x_schedule_baseline, x_schedule_moment, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_cards_at, douyin_cards_titled, douyin_form_differs, douyin_leave_caption, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
 
 X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
 YT_DIALOG = 'ytcp-uploads-dialog'
@@ -774,7 +774,8 @@ async def douyin_reopen_kept_draft(page, tx, caption):
     if await title.input_value() != tx.options['title']:
         raise VpubError('wrong_work', "The draft Douyin reopened isn't titled as this attempt is, so nothing was changed.", "Look at it on Douyin's upload page yourself.")
     editor = await unique_visible(page.locator('[contenteditable=true]'), 'Douyin description')
-    if douyin_card_words(await editor.inner_text()) != douyin_card_words(caption):
+    # Read as the read-back before 发布 reads it, or a draft whose lines ran together would never be typed again and would stop every resume.
+    if douyin_form_differs(caption, await editor.inner_text()):
         await douyin_type_caption(page, editor, caption)
     await page.get_by_text('重新上传', exact=True).wait_for(state='visible', timeout=120000)
     tx.save(phase='uploaded', draft_url=page.url)
@@ -885,6 +886,8 @@ async def douyin_keep_draft(page, tx):
 
 DOUYIN_COVERS = (('landscape', '横封面4:3'), ('portrait', '竖封面3:4'))
 DOUYIN_SLOT_MS = 10000  # As long as the press a field run's covered 横封面4:3 slot ran out on.
+# What a trial press says of a slot that something lies over or that is turned off, as with a field run's 9:16 video's 横封面4:3 slot.
+DOUYIN_SLOT_OFF = re.compile(r'intercepts pointer events|element is not enabled')
 
 
 async def douyin_slot_refuses(page, editor, slot):
@@ -903,15 +906,24 @@ async def douyin_slot_refuses(page, editor, slot):
 
 
 def douyin_slot_skipped(size, refused=None):
-    """The record of a 4:3 cover left out, with its video's own size: for a video taller than it is wide, whose 横封面4:3 slot isn't pressed
-    at all, or for a slot that couldn't take a press."""
+    """The record of a 4:3 cover left out while a 竖封面3:4 one goes on: for a video taller than it is wide, whose 横封面4:3 slot isn't pressed
+    at all, or for one whose size couldn't be read and whose slot had something over it or was turned off."""
     if not refused:
         return {'state': 'SKIPPED', 'video_size': list(size),
                 'note': f"The video is {size[0]}x{size[1]}, taller than it is wide, so Douyin's 横封面4:3 slot wasn't pressed and the planned 4:3 cover wasn't set."}
-    shape = f"The video is {size[0]}x{size[1]}. " if size else ""
-    return {'state': 'SKIPPED', 'video_size': list(size) if size else None, 'refused': refused,
-            'note': f"{shape}Douyin's 横封面4:3 slot couldn't take a press, even with the description's suggestions closed, so the planned 4:3 cover "
-                    "wasn't set and nothing was pressed there."}
+    return {'state': 'SKIPPED', 'video_size': None, 'refused': refused,
+            'note': "The video's size couldn't be read from its file, and Douyin's 横封面4:3 slot had something over it or was turned off, even with "
+                    "the description's suggestions closed, so the planned 4:3 cover wasn't set and nothing was pressed there."}
+
+
+def douyin_slot_blocked(role, label, size, tall_too, refused):
+    """The stop for a cover slot that couldn't take a press, saying why a 4:3 cover wasn't left out instead."""
+    why = ('' if role != 'landscape' else
+           f"The video is {size[0]}x{size[1]}, at least as wide as it is tall, so its 4:3 cover is never left out. " if size and size[0] >= size[1] else
+           "It's the only cover this attempt has, so it isn't left out. " if not tall_too else
+           "A 4:3 cover is left out only when something lies over its slot or the slot is turned off, and the browser saw neither. ")
+    return VpubError('cover_blocked', f"Douyin's {label} slot couldn't take a press, so nothing was published. {why}{refused}",
+                     'vpub resume tries again, and vpub resume KEY --no-cover goes without one.')
 
 
 async def finish_douyin_form(page, tx, before):
@@ -921,24 +933,26 @@ async def finish_douyin_form(page, tx, before):
     editor = await unique_visible(page.locator('[contenteditable=true]'), 'Douyin description')
     await douyin_leave_caption(page, editor)
     # A cover an earlier pass set isn't set again; one it left out is looked at again.
-    planned =[(role, label, tx.cover(role)) for role, label in DOUYIN_COVERS if (tx.receipt.get(role + '_cover') or {}).get('state') != 'UI_ACCEPTED']
+    planned = [(role, label, tx.cover(role)) for role, label in DOUYIN_COVERS if (tx.receipt.get(role + '_cover') or {}).get('state') != 'UI_ACCEPTED']
+    # From a field run: a 1080x1920 video's 横封面4:3 slot had something over it, and its press ran out and stopped the post. So a video taller
+    # than it is wide gets only its 竖封面3:4 cover, as the owner chose, though an earlier 1080x1920 video's slot had taken its 4:3 cover.
+    # A review found leaving the 4:3 one out left a post with no cover when it was the only one, as vpub resume --cover gives, and that a
+    # wider video went out without it after any refusal, a second slot from a layout change too. So it is left out only while a 竖封面3:4 cover
+    # goes on: on a taller video, or on one whose size can't be read when its slot is covered or turned off. Any other refusal stops here.
+    tall_too = bool(tx.cover('portrait'))
     for role, label, path in [cover for cover in planned if cover[2]]:
         control = page.locator('[class^="coverControl-"]').filter(has=page.get_by_text(label, exact=True))
         slot = control.locator('[class^="cover-"]:not([class^="cover-tip"])')
-        # From a field run: a 1080x1920 video's 横封面4:3 slot had something over it, and its press ran out and stopped the post. So a video taller
-        # than it is wide gets only its 竖封面3:4 cover, as the owner chose, though an earlier 1080x1920 video's slot had taken its 4:3 cover;
-        # and on any video, a 横封面4:3 slot that can't take a press is left out while the 竖封面3:4 one still goes on.
         size = tx.video_size() if role == 'landscape' else None
-        if size and size[1] > size[0]:
+        if tall_too and size and size[1] > size[0]:
             tx.save(landscape_cover=douyin_slot_skipped(size))
             continue
         refused = await douyin_slot_refuses(page, editor, slot)
-        if refused and role == 'landscape':
-            tx.save(landscape_cover=douyin_slot_skipped(size, refused))
+        if refused and role == 'landscape' and tall_too and not size and DOUYIN_SLOT_OFF.search(refused):
+            tx.save(landscape_cover=douyin_slot_skipped(None, refused))
             continue
         if refused:
-            raise VpubError('cover_blocked', f"Douyin's 竖封面3:4 slot couldn't take a press, so nothing was published. {refused}",
-                            'vpub resume tries again, and vpub resume KEY --no-cover goes without one.')
+            raise douyin_slot_blocked(role, label, size, tall_too, refused)
         await slot.click()
         await page.locator('[role=dialog]').first.wait_for(state='visible', timeout=20000)
         dialog = await unique_visible(page.locator('[role=dialog]'), 'Douyin cover editor')
@@ -999,9 +1013,9 @@ async def finish_douyin_form(page, tx, before):
         tx.save(schedule=await douyin_schedule(page, datetime.fromisoformat(tx.options['schedule'].replace('Z', '+00:00'))))
     if await title.input_value() != tx.options['title']:
         raise VpubError('metadata_mismatch', "Douyin's title differs from the plan, so nothing was published.")
-    shown, wanted = douyin_card_words(await editor.inner_text()), douyin_card_words(caption)
-    if shown != wanted:
-        raise VpubError('metadata_mismatch', f"Douyin's description differs from the plan, so nothing was published: {where_words_part(wanted, shown)}.",
+    differs = douyin_form_differs(caption, await editor.inner_text())
+    if differs:
+        raise VpubError('metadata_mismatch', f"Douyin's description differs from the plan, so nothing was published: {differs}.",
                         'vpub resume opens the kept draft and writes the description again.')
     tx.save(phase='preview', metadata_readback=True, ai_disclosure='native_control', visibility=tx.options['visibility'])
     if tx.options.get('submission_mode') == 'draft_only':

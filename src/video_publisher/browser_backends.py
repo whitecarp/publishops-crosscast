@@ -354,12 +354,39 @@ def where_words_part(wanted, shown):
     return said
 
 
+# A line whose last #topic or @name is an @name is typed with a space at its end, and a review found a line break lost after it then read as
+# the plan's: the line ran on into the next with that space where its break had been. So a form's box is read a line at a time as well.
+# Blank lines don't count, nor do lines of nothing but #topics and @names, which Douyin can set side by side or each on a line of its own.
+# A card holds no line breaks, so this is for a form's box only.
+DOUYIN_LINKS_ONLY = re.compile(r'(?:[#@＃＠][^\s#@＃＠]+)+')
+
+
+def douyin_lines(text):
+    """A box's lines that hold words, each as its own number and its words as douyin_card_words reads them."""
+    lines = ((number, douyin_card_words(line)) for number, line in enumerate((text or '').splitlines(), 1))
+    return [(number, words) for number, words in lines if words and not DOUYIN_LINKS_ONLY.fullmatch(words)]
+
+
+def douyin_form_differs(wanted, shown):
+    """How the words a Douyin form's box shows differ from the plan's, for a stop's message, or None when they don't: its words as a card's
+    are read, then where its lines end. Only the plan's own words and line numbers are given."""
+    words = douyin_card_words(wanted), douyin_card_words(shown)
+    if words[0] != words[1]:
+        return where_words_part(*words)
+    plan, form = douyin_lines(wanted), [line for _, line in douyin_lines(shown)]
+    if [line for _, line in plan] == form:
+        return None
+    parted = next((number for at, (number, line) in enumerate(plan) if form[at:at + 1] != [line]), plan[-1][0] if plan else 1)
+    return f"the form has the plan's words, but its lines don't end where the plan's do, first at the plan's line {parted}"
+
+
 # Douyin opens suggestions for an #topic or @name the cursor is at the end of, and Enter there picks one instead of starting a line.
 # A field run's caption had lines ending in @names, and the words on its form came out different from the plan's.
 # The next run closed the lists with Escape, and the form came back short of exactly the caption's three @, the one in the middle of a line
 # too: Douyin keeps a typed @ waiting for someone to be picked, past spaces, and takes it away when that is closed.
 # A later run's lines ended in "@ZipZipPipe " with a space, and every @ stayed through that same Escape and went out as written: a name
-# whose words before the cursor end in a space is no longer waiting. So a line whose last #topic or @name is an @name ends in a space.
+# whose words before the cursor end in a space is no longer waiting. So a line whose last #topic or @name is an @name ends in a space,
+# and a form's read-back counts where its lines end (douyin_form_differs), since that space would otherwise hide a line break lost after it.
 DOUYIN_SUGGESTS = re.compile(r'[#@＃＠]')
 DOUYIN_NAME_LAST = re.compile(r'[@＠][^#@＃＠]*$')
 DOUYIN_SUGGESTIONS_MS = 500  # For a list that opens a moment after the words go in, as one that looks names up can.
@@ -393,7 +420,8 @@ async def douyin_type_caption(page, editor, caption):
     """A caption set in one go came out with a star at each new paragraph, on the card and, for a real video, on its public page, and the person never wrote those. So it is typed as a person would, a line at a time.
     A line with an #topic or @name in it has any suggestions closed before the next key, the last line too: a field run's suggestions for a last #tag stayed over the cover buttons below and took their click.
     Closing them never picks anyone, and Escape kept the #. It takes away an @ still waiting for a pick, so a line whose last one is an @name gets
-    a space at its end first, which shows as nothing and which the read-back doesn't count. Every caller reads the words back afterwards."""
+    a space at its end first, which shows as nothing. Every caller reads the words back afterwards with douyin_form_differs, which also counts
+    where the lines end, so a line that ran on into the next with that space where its break had been still stops."""
     await editor.click()
     await editor.press('ControlOrMeta+A')
     await editor.press('Backspace')
