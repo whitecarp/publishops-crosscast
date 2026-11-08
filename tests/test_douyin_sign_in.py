@@ -207,7 +207,7 @@ class CreatorCenterTests(SignIn, SharedBrowser):
 
 class Tab:
     """A stand-in tab: where it is, the account it shows, whether Creator Center shows it signed in there, and which load of it is showing.
-    Its first load ends on the upload page, where the person signed in."""
+    Its first load ends on the upload page, where the person signed in. A check of None is a tab that can't be read just then."""
 
     def __init__(self, clock, url=UPLOAD, who=None, at_home=None, follows=True, refused=(), slow=0):
         self.clock, self.url, self.who, self.at_home, self.follows, self.refused, self.slow = clock, url, who, at_home, follows, refused, slow
@@ -255,6 +255,8 @@ class StandInTests(SignIn, unittest.IsolatedAsyncioTestCase):
             return page.account()
 
         async def check(page):
+            if page.check is None:
+                raise RuntimeError("The tab can't be read just now.")
             return page.check
 
         async def form(page):
@@ -356,6 +358,34 @@ class StandInTests(SignIn, unittest.IsolatedAsyncioTestCase):
         result = await self.sign_in([tab], load_again)
         self.assertEqual(OWNER, result["identity"])
         self.assertEqual(2, tab.reload.await_count)
+
+    async def test_a_check_on_the_reloaded_page_means_a_new_reload_once_it_is_gone(self):
+        """From a review: the person passed a check on the load the reload brought, the account then showed on that same load, and the sign-in was
+        recorded there, though the next load could ask again. Now nothing is recorded until the account shows on a new reload, and the same goes
+        after a tab that couldn't be read, which could have been showing one. On every platform."""
+        for platform in ("douyin", "x", "youtube", "instagram"):
+            # What shows (a check, or None for a tab that can't be read), from which wait after the reload to which, and how many reads the reloaded
+            # page shows nothing for. The first wait after the reload comes just before the look right after it; each later one, before a pass's first look.
+            for shown, start, end, slow in ((True, 1, 3, 0), (True, 1, 1, 0), (True, 2, 3, 6), (None, 1, 1, 0), (None, 2, 3, 6)):
+                with self.subTest(platform=platform, shown=shown, start=start, end=end):
+                    rt.identity_path(platform, "default").unlink(missing_ok=True)
+                    tab, after, recorded = Tab(self.clock, url=HOME, who=OWNER, slow=slow), [], []
+
+                    async def reload(**options):
+                        recorded.append(bool(self.saves.await_count) or rt.identity_path(platform, "default").exists())
+                        await tab.reloaded(**options)
+                    tab.reload.side_effect = reload
+
+                    async def person(context):
+                        # The tab stays on the load the reload brought while the check comes and goes.
+                        if tab.reload.await_count == 1:
+                            after.append(self.waits)
+                            tab.check = shown if start <= len(after) <= end else False
+                    result = await self.sign_in([tab], person, platform=platform)
+                    self.assertEqual(OWNER, result["identity"])
+                    self.assertEqual(2, tab.reload.await_count)
+                    self.assertEqual([False, False], recorded)
+                    self.assertEqual(bool(shown and end > 1), "VERIFICATION_REQUIRED" in {note["state"] for note in self.notes})
 
     async def test_a_reload_that_never_shows_the_account_again_records_nothing(self):
         tab = Tab(self.clock, url=HOME, who=OWNER, slow=10 ** 6)

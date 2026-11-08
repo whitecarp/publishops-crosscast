@@ -325,9 +325,11 @@ async def login(pw, payload):
             pages = [item for item in context.pages if not item.is_closed()]
             if not pages:
                 raise VpubError("login_cancelled", "Login window was closed before account verification.")
-            # A signed-in menu can still show behind a check, so a check on any tab comes before who the account is.
+            # A signed-in menu can still show behind a check, so a check on any tab comes before who the account is. A tab that can't be read could
+            # be showing one. Either way no load reloaded so far counts any more (see below).
             challenged = await any_challenge(pages)
             if challenged is not False:
+                reloaded.clear()
                 if challenged:
                     tell("check")
                 await asyncio.sleep(2)
@@ -354,13 +356,16 @@ async def login(pw, payload):
                     seen.add("signed in")
                     # Wait for the login redirect to settle and prove a fresh load: the account must show again on the load a reload brings. From a
                     # field run: Creator Center's home page then sat on 加载中… for minutes, and was reloaded again each time it showed the account. So
-                    # that load is watched until it does, and only that load counts; any other load of the tab gets a reload of its own first.
+                    # that load is watched until it does, and only that load counts; any other load of the tab gets a reload of its own first. And only
+                    # while no check shows: from a review, a person who passed a check on that load was then recorded on it, though the next load could
+                    # ask again. So after a check the account has to show on a new reload.
                     if reloaded.get(page) != (actual, await loaded_at(page)):
                         await asyncio.sleep(3)
                         await page.reload(wait_until="commit", timeout=60000)
                         reloaded[page] = (actual, await loaded_at(page))
                         await asyncio.sleep(2)
                     if await any_challenge(pages) is not False:
+                        reloaded.clear()
                         continue
                     if await identity(page, platform) != actual:
                         if platform == "douyin":

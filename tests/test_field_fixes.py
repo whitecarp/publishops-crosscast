@@ -109,6 +109,11 @@ class FakePage:
         self.reload = AsyncMock()
         self.bring_to_front = AsyncMock()
 
+    async def evaluate(self, expression):
+        """Which load of the tab is showing, as a real tab's performance.timeOrigin says: new with each goto or reload. From a review: without it every
+        look seemed a new load, and a sign-in recorded on the load a check had shown on went unseen."""
+        return self.goto.await_count + self.reload.await_count
+
     def is_closed(self):
         return self.closed
 
