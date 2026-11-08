@@ -29,7 +29,7 @@ LATE = MENU + "<div id='card'>加载中…</div>"
 QR = '<div><div>扫码登录</div><div>验证码登录</div><div>密码登录</div><div class="login-qrcode"><img alt="二维码" width="100" height="100"></div></div>'
 SENT_TO_SIGN_IN = "<script>location.replace('/')</script>"
 SIGNED_IN = "Signed in; opening Creator Center's home page to read your 抖音号"
-RELOADING = "Signed in; loading the page once more"
+SIGN_IN = rt.LOGIN_NOTES["login"]["hint"]
 REAL_SLEEP = asyncio.sleep
 
 
@@ -47,8 +47,8 @@ class Clock:
 
 
 class SignIn:
-    """Runs a sign-in on these tabs with that clock. Each wait moves it on by `speed` times its length, records what the job file says, then runs
-    `each`, as a person acts between the sign-in's looks."""
+    """Runs a sign-in on these tabs with that clock. Each wait moves it on by `speed` times its length (`seconds`), records what the job file says,
+    then runs `each`, as a person acts between the sign-in's looks."""
 
     async def sign_in(self, pages, each=None, platform="douyin", speed=1):
         context = types.SimpleNamespace(pages=pages, close=AsyncMock())
@@ -56,7 +56,7 @@ class SignIn:
 
         async def wait(seconds):
             self.clock.now += seconds * speed
-            self.waits += 1
+            self.waits, self.seconds = self.waits + 1, seconds
             await REAL_SLEEP(0.01)  # The page's own scripts run meanwhile.
             if self.job.exists():
                 self.notes.append(read_json(self.job))
@@ -89,16 +89,16 @@ class CreatorCenterTests(SignIn, SharedBrowser):
         return [path for path, *_ in self.loads]
 
     def scan(self, home_page, at=5, late=0):
-        """The person scans the QR code at the sign-in's `at`th wait, and Douyin takes the window to the upload page, signed in. A `late` home
-        page shows the account only that many waits after each load of it."""
+        """Once the QR code has loaded and the sign-in has waited `at` times, the person scans it, and Douyin takes the window to the upload page,
+        signed in. A `late` home page shows the account only that many waits after each load of it."""
         async def person(context):
-            if self.waits == at:
+            if self.scanned is None and self.waits >= at and "/" in self.paths():
                 self.site = {HOME_PATH: home_page, UPLOAD_PATH: MENU + "<div>发布视频</div>"}
                 self.scanned = len(self.loads)
                 await self.page.goto(UPLOAD)
             homes = [looked for path, _, looked in self.loads[self.scanned:] if path == HOME_PATH] if self.scanned is not None else []
-            if late and homes and self.waits - homes[-1] == late:
-                await self.page.evaluate(f"document.getElementById('card').textContent = '抖音号：{OWNER}'")
+            if late and homes and self.waits - homes[-1] >= late:
+                await self.page.evaluate(f"(card => card && (card.textContent = '抖音号：{OWNER}'))(document.getElementById('card'))")
         return person
 
     async def test_a_sign_in_left_on_the_upload_page_opens_the_home_page_itself(self):
@@ -132,6 +132,24 @@ class CreatorCenterTests(SignIn, SharedBrowser):
         self.assertFalse(rt.identity_path("douyin", "default").exists())
         self.saves.assert_not_awaited()
         self.assertTrue(self.hints()[-1].startswith(SIGNED_IN))
+
+    async def test_a_sign_in_that_does_not_hold_on_the_reload_asks_for_the_sign_in_again(self):
+        """The 抖音号 showed, but the reload brought the QR code back: the job says to sign in again, not that the person is signed in."""
+        scan = self.scan(DASHBOARD)
+
+        async def signed_out(context):
+            await scan(context)
+            if self.scanned is not None and self.seconds == 3:  # The wait before the reload: Douyin signs the window out meanwhile.
+                self.site = {}
+            if self.waits == 40:
+                context.pages.clear()
+        with self.assertRaises(VpubError) as caught:
+            await self.sign_in([self.page], signed_out, speed=2)
+        self.assertEqual("login_cancelled", caught.exception.code)
+        self.assertEqual([UPLOAD_PATH, HOME_PATH, HOME_PATH, "/"], self.paths()[self.scanned:])
+        self.assertTrue(self.signed_in_hints())
+        self.assertEqual(SIGN_IN, self.hints()[-1])
+        self.assertFalse(rt.identity_path("douyin", "default").exists())
 
     async def test_a_qr_code_is_never_loaded_over(self):
         async def leave(context):
@@ -193,7 +211,7 @@ class Tab:
 
     def __init__(self, clock, url=UPLOAD, who=None, at_home=None, follows=True, refused=(), slow=0):
         self.clock, self.url, self.who, self.at_home, self.follows, self.refused, self.slow = clock, url, who, at_home, follows, refused, slow
-        self.closed, self.check, self.signed_in, self.load, self.blank, self.visits = False, False, True, 0, 0, []
+        self.closed, self.check, self.form, self.signed_in, self.load, self.blank, self.visits = False, False, False, True, 0, 0, []
         self.goto = AsyncMock(side_effect=self.went)
         self.reload = AsyncMock(side_effect=self.reloaded)
         self.bring_to_front = AsyncMock()
@@ -238,8 +256,11 @@ class StandInTests(SignIn, unittest.IsolatedAsyncioTestCase):
 
         async def check(page):
             return page.check
-        for target in (patch.dict(os.environ, {"VPUB_HOME": str(self.root / "runtime")}), patch.object(rt, "identity", identity),
-                       patch.object(rt, "challenge_shown", check), patch.object(rt, "douyin_signed_in", self.signed_in)):
+
+        async def form(page):
+            return page.form
+        for target in (patch.dict(os.environ, {"VPUB_HOME": str(self.root / "runtime")}), patch.object(rt, "identity", identity), patch.object(rt, "challenge_shown", check),
+                       patch.object(rt, "douyin_signed_in", self.signed_in), patch.object(rt, "sign_in_shown", form)):
             target.start()
             self.addCleanup(target.stop)
 
@@ -294,6 +315,16 @@ class StandInTests(SignIn, unittest.IsolatedAsyncioTestCase):
         self.assertEqual([("LOGIN_PENDING", SIGNED_IN), ("VERIFICATION_REQUIRED", "The platform is asking for a check or account recovery"), ("LOGIN_PENDING", SIGNED_IN)],
                          [step for at, step in enumerate(said) if not at or step != said[at - 1]])
 
+    async def test_a_tab_still_showing_a_qr_code_does_not_undo_a_sign_in_on_another(self):
+        signed, stray = Tab(self.clock, at_home=OWNER, slow=3), Tab(self.clock, follows=False)
+        stray.signed_in, stray.form = False, True
+        result = await self.sign_in([signed, stray])
+        self.assertEqual(OWNER, result["identity"])
+        hints = self.hints()
+        since = next(at for at, hint in enumerate(hints) if hint.startswith(SIGNED_IN))
+        self.assertEqual({SIGNED_IN}, {hint.split(".")[0] for hint in hints[since:]})
+        self.assertEqual([], stray.visits)
+
     async def test_other_platforms_never_open_a_page_for_this(self):
         for platform in ("x", "youtube", "instagram"):
             with self.subTest(platform=platform):
@@ -305,8 +336,8 @@ class StandInTests(SignIn, unittest.IsolatedAsyncioTestCase):
         self.signed_in.assert_not_awaited()
 
     async def test_a_reload_that_shows_the_account_late_is_watched_rather_than_reloaded_again(self):
-        """What it proves is unchanged: the account shows again on the load the reload brought."""
-        for platform, note in (("douyin", SIGNED_IN), ("x", RELOADING)):
+        """What it proves is unchanged: the account shows again on the load the reload brought. Other platforms' job file says what it always did."""
+        for platform, note in (("douyin", SIGNED_IN), ("x", SIGN_IN)):
             with self.subTest(platform=platform):
                 tab = Tab(self.clock, url=HOME, who=OWNER, slow=3)
                 result = await self.sign_in([tab], platform=platform)
@@ -330,8 +361,7 @@ class StandInTests(SignIn, unittest.IsolatedAsyncioTestCase):
         tab = Tab(self.clock, url=HOME, who=OWNER, slow=10 ** 6)
         with self.assertRaises(VpubError) as caught:
             await self.sign_in([tab], platform="x", speed=30)
-        self.assertEqual("login_timeout", caught.exception.code)
-        self.assertIn("reloaded page", caught.exception.message)
+        self.assertEqual(("login_timeout", "Login was not completed within 15 minutes; saved profile is retained."), (caught.exception.code, caught.exception.message))
         tab.reload.assert_awaited_once()
         self.assertFalse(rt.identity_path("x", "default").exists())
         self.saves.assert_not_awaited()

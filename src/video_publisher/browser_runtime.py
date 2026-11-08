@@ -269,12 +269,7 @@ LOGIN_NOTES = {
     "home": {"waiting_for": f"Creator Center's home page to show the account's 抖音号. CrossCast opens that page itself, at most every {DOUYIN_HOME_SECONDS} seconds; "
                             "on a slow connection it can take minutes to load.",
              "hint": "Signed in; opening Creator Center's home page to read your 抖音号. Leave the CrossCast Chrome window open; there's nothing to click."},
-    "fresh": {"waiting_for": "The page to load once more and show the same account, to prove the sign-in holds. On a slow connection that can take minutes.",
-              "hint": "Signed in; loading the page once more to check the sign-in holds. Leave the CrossCast Chrome window open; there's nothing to click."},
 }
-# Running out of time after the person signed in means the page never showed the account in a way that counts.
-SIGNED_IN_TIMEOUTS = {"home": "Signed in, but Creator Center's home page didn't show the account's 抖音号 within 15 minutes, so the sign-in wasn't recorded.",
-                      "fresh": "Signed in, but the reloaded page didn't show the account again within 15 minutes, so the sign-in wasn't recorded."}
 
 
 async def sign_in_shown(page):
@@ -337,6 +332,7 @@ async def login(pw, payload):
                     tell("check")
                 await asyncio.sleep(2)
                 continue
+            seen = set()  # Whether a tab was signed in, and whether a tab of Douyin's showed a sign-in form.
             for page in pages:
                 try:
                     actual = await identity(page, platform)
@@ -347,11 +343,15 @@ async def login(pw, payload):
                         # Or on a Creator Center page without the 抖音号, which a field run's person had to leave by clicking 首页. The home page
                         # itself is left to load, however long it takes: opening it again would only start that over.
                         elif platform == "douyin" and await douyin_signed_in(page):
+                            seen.add("signed in")
                             tell("home")
                             if urlsplit(page.url).path.rstrip("/") != urlsplit(URLS[platform]).path and time.monotonic() - home_opened >= DOUYIN_HOME_SECONDS:
                                 home_opened = time.monotonic()
                                 await page.goto(URLS[platform], wait_until="commit", timeout=60000)
+                        elif told == "home" and await sign_in_shown(page):
+                            seen.add("sign-in form")
                         continue
+                    seen.add("signed in")
                     # Wait for the login redirect to settle and prove a fresh load: the account must show again on the load a reload brings. From a
                     # field run: Creator Center's home page then sat on 加载中… for minutes, and was reloaded again each time it showed the account. So
                     # that load is watched until it does, and only that load counts; any other load of the tab gets a reload of its own first.
@@ -363,7 +363,8 @@ async def login(pw, payload):
                     if await any_challenge(pages) is not False:
                         continue
                     if await identity(page, platform) != actual:
-                        tell("home" if platform == "douyin" else "fresh")
+                        if platform == "douyin":
+                            tell("home")
                         continue
                 except Exception as exc:
                     if isinstance(exc, VpubError):
@@ -377,10 +378,14 @@ async def login(pw, payload):
                 if (home() / "STOP.json").exists():
                     result["next"] = f"CrossCast is still stopped because of a platform's warning. Once its check is done, run {how_to_clear_a_stop()}."
                 return result
+            # A sign-in form and no tab signed in: the sign-in didn't hold, as a reload can show, and the person has to sign in again.
+            if seen == {"sign-in form"}:
+                tell("login")
             await asyncio.sleep(2)
-        if told in SIGNED_IN_TIMEOUTS:
-            raise VpubError("login_timeout", SIGNED_IN_TIMEOUTS[told] + " The saved profile is retained.",
-                            f"Run vpub auth login {platform} again. If the page keeps loading, the connection to the platform is slow just now; try again later.")
+        if told == "home":
+            raise VpubError("login_timeout", "Signed in, but Creator Center's home page didn't show the account's 抖音号 within 15 minutes, so the sign-in "
+                            "wasn't recorded. The saved profile is retained.",
+                            "Run vpub auth login douyin again. If the home page keeps loading, the connection to Douyin is slow just now; try again later.")
         raise VpubError("login_timeout", "Login was not completed within 15 minutes; saved profile is retained.")
     finally:
         await close_context(context)
