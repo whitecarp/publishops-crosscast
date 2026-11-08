@@ -39,7 +39,7 @@ vpub go final-crosscast
 
 The person signs in on official pages: Bilibili QR, dedicated Chrome otherwise. Never collect credentials/PINs/codes, import profiles, or answer checks. Browser login returns promptly; check `vpub auth status PLATFORM --method browser --wait 5`. Pending means wait. On `login_interrupted`, close its leftover window, then login once with the saved profile. If repeatedly stopped, use the person's terminal, never bypass host controls. [Details](references/details.md#host-limited-sign-in).
 
-Packaged Windows AI apps can have separate copies of `%LOCALAPPDATA%`. A sign-in in another app may therefore be unavailable here, not expired. Explain; the user can sign in here or set `VPUB_HOME` to a normal shared folder. Never copy browser profiles. TikTok is unsupported.
+Packaged Windows AI apps can have separate copies of `%LOCALAPPDATA%`. A sign-in in another app may be unavailable here, not expired. Explain; the user can sign in here or set `VPUB_HOME` to a normal shared folder. Never copy browser profiles. TikTok is unsupported.
 
 ## After posting
 
@@ -51,7 +51,7 @@ Keep `vpub safety status` limits unless the user requests a change. Use `--writt
 
 ## Recovery and feedback
 
-- A verification request, risk control or rate limit stops all CrossCast platforms. Read `vpub status`; only the affected platform's auth login still opens a window (YouTube: `--keep-open`). Run `vpub stop --clear` only after reading its cause and the user says the check is complete.
+- A verification request, risk control or rate limit stops all CrossCast platforms. Read `vpub status`; only that platform's auth login opens a window (YouTube: `--keep-open`). Run `vpub stop --clear` only after reading its cause and the user says the check is complete.
 - Never blindly repeat writes: failure may follow success. Read the original receipt and use its verify/resume path; resume may select media again. An uncertain X edit cannot be retried through CrossCast, even with `--person-approved`; use `--verify-only` or inspect/fix it on X.
 - Paid `report`, `read-all` and `notify` return `paid_feature_required`; the add-on is not on sale. Offer `vpub ops sync` for recent reads.
 - Never test by deleting videos, clearing saved lists, contacting unrelated accounts or enabling recurring operations without the user's request.
