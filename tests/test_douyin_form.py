@@ -1189,6 +1189,19 @@ SLOT_PLAIN = SLOT_PART % "part('div', 'inset:0', 'plain');"
 REPLACE_LATER = """() => { const slot = document.querySelectorAll('.cover-b')[1], mask = document.createElement('div'); mask.className = 'replace-r1';
   mask.style.cssText = 'position:absolute;inset:0;background-image:url(""" + GIF + """)'; mask.setAttribute('onclick', "event.stopPropagation(); pressed('replace')");
   slot.insertBefore(mask, slot.querySelector('.mark-m1')); }"""
+# From the field runs on a16202b and fc60a30: once a long description was in, something of the description's lay over all of the 竖封面3:4
+# slot. Here the box goes into a wrapper of its own, and once its words run past 30 characters a part of that wrapper's own lies over all of
+# the slot, as long words spilling down over the cover area might, sending word of its own press.
+LONG_WORDS_COVER = """<script>(() => { const words = document.querySelector('[contenteditable=true]'), wrapper = document.createElement('div');
+  wrapper.className = 'publish-mention-wrapper-T2'; words.replaceWith(wrapper); wrapper.append(words);
+  const spill = () => { const shown = document.querySelector('.spill-s1');
+    if (words.innerText.trim().length <= 30) { if (shown) shown.remove(); return; }
+    if (shown) return;
+    const r = document.querySelectorAll('.cover-b')[1].getBoundingClientRect(), part = document.createElement('div'); part.className = 'spill-s1';
+    part.style.cssText = `position:absolute;z-index:5;left:${r.left + scrollX - 4}px;top:${r.top + scrollY - 4}px;width:${r.width + 8}px;height:${r.height + 8}px`;
+    part.onclick = () => pressed('spill'); wrapper.append(part); fetch('/write', {method: 'POST', body: JSON.stringify({word: 'spilled'})}); };
+  new MutationObserver(spill).observe(words, {childList: true, subtree: true, characterData: true}); spill(); })();</script>"""
+LONG_WORDS = "A description that runs on well past thirty characters, as 肥鱼抢麦's did."
 # A second cover- element in the 竖封面3:4 cover box, brought by a test, which leaves the slot's own locator two things to choose from, so that
 # every look after it fails.
 SECOND_TALL_SLOT = """() => document.querySelectorAll('[class^="coverControl-"]')[1].append(Object.assign(document.createElement('div'), {className: 'cover-c'}))"""
@@ -1590,6 +1603,8 @@ class BothCoversTests(Base):
         self.assertEqual([], self.writes)
         self.assertIn(", it took no pointer events at its centre, where div.coverControl-a, which holds it, was on top. So nothing was pressed through.", said)
         self.assertIs(True, self.tx.receipt["cover_slot_covered"]["over_it"]["holds_slot"])
+        # From a review of the field run on fc60a30, the map tells what holds the slot apart from anything over it.
+        self.assertEqual(["hhhhh"] * 5, self.tx.receipt["cover_slot_covered"]["slot_map_away"])
 
     async def test_a_control_over_a_slot_is_never_pressed_and_the_post_stops(self):
         """A button over the slot, or something inside one, could do whatever its own press does, so it is never pressed, in the cover box too.
@@ -1713,13 +1728,16 @@ class BothCoversTests(Base):
         self.assertLess(time.monotonic() - started, 30)
 
     async def test_an_earlier_stops_account_of_a_slot_goes_once_its_cover_is_on(self):
-        """From a review: nothing showed this, and a resumed receipt would report a block that a later pass got past."""
+        """From a review: nothing showed this, and a resumed receipt would report a block that a later pass got past. From the field run on
+        fc60a30 and a review of that, an account of a slot this pass didn't set, the 4:3 one here, stayed in the receipt of a post that went
+        out, so it goes too once 发布 has been pressed; the one whose cover went on goes as soon as it does."""
         self.portrait_only()
-        for role, kept in (("portrait", False), ("landscape", True)):
+        for role in ("portrait", "landscape"):
             with self.subTest(role=role):
                 self.tx.receipt, self.writes[:] = {"cover_slot_covered": {"role": role, "pressed": None}}, []
                 await self.post()
-                self.assertEqual(kept, "cover_slot_covered" in self.tx.receipt)
+                self.assertNotIn("cover_slot_covered", self.tx.receipt)
+                self.assertEqual(["publish"], self.went_out())
 
     async def test_the_pointer_is_put_on_a_point_until_what_it_brings_up_has_settled(self):
         """From an offline probe of this driver: what comes up under a pointer held still isn't hovered itself until the pointer moves again,
@@ -2021,7 +2039,10 @@ class BothCoversTests(Base):
                 cover = self.tx.receipt["portrait_cover"]
                 self.assertEqual(("UI_ACCEPTED", "at a spot where nothing lay over it", False, "description", ["publish-mention-wrapper-T1"]),
                                  (cover["state"], cover["pressed"], cover["came_with_pointer"], cover["over_it_away"]["place"], cover["over_it_away"]["holder"]["classes"]))
-                self.assertEqual(["bbbbb", "bbbbb", "XXXXX", "bbbbb", "bbbbb"], cover["slot_map_away"])
+                self.assertEqual(["bbbbb", "bbbbb", "DDDDD", "bbbbb", "bbbbb"], cover["slot_map_away"])
+                # From a review of the field run on fc60a30, where the slot and the description box lay, in whole pixels.
+                self.assertEqual([30, 40], cover["where"]["slot"][2:])
+                self.assertEqual(4, len(cover["where"]["description"]))
                 self.assertLess(cover["waited_seconds"], 10)
                 for secret in SECRETS:
                     self.assertNotIn(secret, json.dumps(self.tx.receipt, ensure_ascii=False))
@@ -2038,7 +2059,7 @@ class BothCoversTests(Base):
                 self.assertEqual([], self.pressed())
                 self.assertIn("It lies outside the slot's own cover box, so it wasn't pressed. No clear spot of the slot's own was one a press could go to.", said)
                 covered = self.tx.receipt["cover_slot_covered"]
-                self.assertEqual([letter * 5, letter * 5, "XXXXX", letter * 5, letter * 5], covered["slot_map_away"])
+                self.assertEqual([letter * 5, letter * 5, "DDDDD", letter * 5, letter * 5], covered["slot_map_away"])
                 self.assertNotIn("spot_tries", covered)
 
     async def test_a_part_of_the_slots_own_that_comes_after_the_look_at_a_spot_is_never_pressed(self):
@@ -2069,7 +2090,136 @@ class BothCoversTests(Base):
         self.assertEqual(("UI_ACCEPTED", "through its own cover box", "description"), (cover["state"], cover["pressed"], cover["over_it"]["place"]))
         self.assertGreater(cover["spot_tries"].get("closed", 0), 0)
         # From a final check: the look from a clear spot, which found the mask, is kept.
-        self.assertEqual(["mmmmm", "mmmmm", "XXXXX", "mmmmm", "mmmmm"], cover["slot_map_spot"])
+        self.assertEqual(["mmmmm", "mmmmm", "DDDDD", "mmmmm", "mmmmm"], cover["slot_map_spot"])
+
+    async def test_on_a_form_just_uploaded_the_covers_go_on_before_a_long_description(self):
+        """From the field runs on a16202b and fc60a30: 肥鱼抢麦's long description went in first, and then something of the description's lay
+        over every point of its 竖封面3:4 slot, so the post stopped with nothing pressed. On a form just uploaded the covers go on while the
+        description is still empty now, the words go in after them, and the post goes out once with nothing of the description's pressed."""
+        self.portrait_only()
+        self.tx.media, self.tx.options["description"] = (lambda: "clip.mp4"), LONG_WORDS
+        self.html = form() + BOTH_COVERS % ("", "") + "<span>重新上传</span>" + LONG_WORDS_COVER
+
+        async def uploaded(page, path, trigger=None, accept=None):
+            await page.goto("https://creator.douyin.com/creator-micro/content/post/video")
+        with patch.object(browser_forms, "finish", new=AsyncMock(return_value={"state": "SUBMITTED_UNVERIFIED"})), \
+                patch.object(browser_forms, "works", new=AsyncMock(return_value={})), patch.object(browser_forms, "upload_file", new=uploaded):
+            await browser_forms.publish_douyin(self.page, self.tx)
+        self.assertEqual(["tall"], self.pressed())
+        self.assertEqual("UI_ACCEPTED", self.tx.receipt["portrait_cover"]["state"])
+        # The words did lie over the slot once they were in, and the post still went out once.
+        self.assertEqual(["spilled", "publish"], self.went_out())
+        self.assertEqual([LONG_WORDS], [write["words"].strip() for write in self.writes if write["word"] == "publish"])
+
+    async def test_a_kept_draft_gets_its_covers_before_its_long_description_too(self):
+        """From a review of setting covers first: a cover step that stopped on a form just uploaded leaves a draft with no words, and the resume
+        typed them before the covers, the order that buried 肥鱼抢麦's slot; a draft an earlier build left with its words in is the same. Either
+        way the covers go on with the box empty now, and the words go in after them and go out once, as planned."""
+        self.portrait_only()
+        for kind, held in (("empty", ""), ("words", LONG_WORDS)):
+            with self.subTest(kind=kind):
+                self.tx.receipt, self.writes[:] = {"media_selected": True, "before_ids": [], "draft_offered_before": False}, []
+                self.tx.resuming, self.tx.media, self.tx.options["description"] = True, (lambda: "clip.mp4"), LONG_WORDS
+                self.upload_page = ResumeFromKeptDraftTests.OFFER
+                self.html = form().replace(">Words</div>", f">{held}</div>") + BOTH_COVERS % ("", "") + "<span>重新上传</span>" + LONG_WORDS_COVER
+                with patch.object(browser_forms, "DOUYIN_OFFER_SECONDS", 1), \
+                        patch.object(browser_forms, "finish", new=AsyncMock(return_value={"state": "SUBMITTED_UNVERIFIED"})), \
+                        patch.object(browser_forms, "works", new=AsyncMock(return_value={})), \
+                        patch.object(browser_forms, "upload_file", new=AsyncMock(side_effect=RuntimeError("selected"))) as selected:
+                    await browser_forms.publish_douyin(self.page, self.tx)
+                selected.assert_not_called()
+                self.assertEqual(["tall"], self.pressed())
+                # Up to 发布; this copy of the site then shows the same form again, words and all.
+                went = self.went_out()
+                self.assertEqual(["spilled"] * (2 if held else 1) + ["publish"], went[:went.index("publish") + 1])
+                self.assertEqual([LONG_WORDS], [write["words"].strip() for write in self.writes if write["word"] == "publish"])
+                self.assertIs(True, self.tx.receipt["description_typed"])
+
+    async def test_a_cover_stop_on_a_form_just_uploaded_says_the_description_isnt_in_yet(self):
+        """From a check of setting covers first: a stop in the cover step left Douyin's kept draft with no description, and only the stop's
+        hint said so, which a run's receipt doesn't keep, so a person finishing that draft by hand would have posted it with no words. The
+        stop's own message says so now, nothing goes out, and the receipt says the words aren't in."""
+        self.portrait_only()
+        self.tx.media, self.tx.options["description"] = (lambda: "clip.mp4"), LONG_WORDS
+        self.html = form() + BOTH_COVERS % ("", "") + "<span>重新上传</span>" + laid_over()
+
+        async def uploaded(page, path, trigger=None, accept=None):
+            await page.goto("https://creator.douyin.com/creator-micro/content/post/video")
+        with patch.object(browser_forms, "finish", new=AsyncMock(return_value={"state": "SUBMITTED_UNVERIFIED"})), \
+                patch.object(browser_forms, "works", new=AsyncMock(return_value={})), patch.object(browser_forms, "upload_file", new=uploaded), \
+                self.assertRaises(VpubError) as caught:
+            await browser_forms.publish_douyin(self.page, self.tx)
+        self.assertEqual("cover_blocked", caught.exception.code)
+        self.assertTrue(caught.exception.message.endswith(browser_forms.DOUYIN_WORDS_NOT_IN))
+        self.assertEqual(([], []), (self.pressed(), self.went_out()))
+        self.assertIs(False, self.tx.receipt["description_typed"])
+
+    async def test_a_form_uploaded_again_gets_its_covers_whatever_an_earlier_form_had(self):
+        """From a final check of setting covers first: a resume that found no kept draft uploaded the video again to a new form, and the
+        receipt still said the 竖封面3:4 cover an earlier form had was on, so the new form, and a later resume from its kept draft, went out
+        without it. Those records go with the upload now, and the cover goes on the new form."""
+        self.portrait_only()
+        self.tx.resuming, self.tx.media = True, (lambda: "clip.mp4")
+        self.tx.receipt = {"media_selected": True, "before_ids": [], "draft_offered_before": False,
+                           "portrait_cover": {"state": "UI_ACCEPTED", "remote_pixels_verified": False}}
+        self.html = form() + BOTH_COVERS % ("", "") + "<span>重新上传</span>"
+
+        async def uploaded(page, path, trigger=None, accept=None):
+            await page.goto("https://creator.douyin.com/creator-micro/content/post/video")
+        with patch.object(browser_forms, "DOUYIN_OFFER_SECONDS", 1), patch.object(browser_forms, "finish", new=AsyncMock(return_value={"state": "SUBMITTED_UNVERIFIED"})), \
+                patch.object(browser_forms, "works", new=AsyncMock(return_value={})), patch.object(browser_forms, "upload_file", new=uploaded):
+            await browser_forms.publish_douyin(self.page, self.tx)
+        self.assertEqual(["tall"], self.pressed())
+        self.assertEqual(("UI_ACCEPTED", ["publish"]), (self.tx.receipt["portrait_cover"]["state"], self.went_out()))
+
+    async def test_a_kept_drafts_words_stay_when_no_cover_is_left_to_press(self):
+        """From a final check of setting covers first: a video taller than it is wide never has its 4:3 cover pressed, but that cover counted as
+        left to set, so a kept draft whose 竖封面3:4 cover was already on had its words taken out and typed again. They stay now, and nothing
+        is pressed."""
+        self.tx.size = (1080, 1920)
+        self.tx.receipt = {"media_selected": True, "before_ids": [], "draft_offered_before": False,
+                           "portrait_cover": {"state": "UI_ACCEPTED", "remote_pixels_verified": False}}
+        self.tx.resuming, self.tx.media, self.tx.options["description"] = True, (lambda: "clip.mp4"), LONG_WORDS
+        self.upload_page = ResumeFromKeptDraftTests.OFFER
+        self.html = form().replace(">Words</div>", f">{LONG_WORDS}</div>") + BOTH_COVERS % ("", "") + "<span>重新上传</span>" + LONG_WORDS_COVER
+        with patch.object(browser_forms, "DOUYIN_OFFER_SECONDS", 1), patch.object(browser_forms, "finish", new=AsyncMock(return_value={"state": "SUBMITTED_UNVERIFIED"})), \
+                patch.object(browser_forms, "works", new=AsyncMock(return_value={})), \
+                patch.object(browser_forms, "upload_file", new=AsyncMock(side_effect=RuntimeError("selected"))):
+            await browser_forms.publish_douyin(self.page, self.tx)
+        self.assertEqual([], self.pressed())
+        went = self.went_out()
+        self.assertEqual(["spilled", "publish"], went[:went.index("publish") + 1])
+        self.assertEqual("SKIPPED", self.tx.receipt["landscape_cover"]["state"])
+
+    async def test_on_a_form_just_uploaded_a_4_3_slot_left_out_is_looked_at_once(self):
+        """From a review of setting covers first: nothing held that the rest of the form leaves the covers alone once they were set before the
+        words. A 4:3 slot left out on a form just uploaded, as one is on a video whose size can't be read with something over its slot, is
+        looked at once, and not again with the words in."""
+        self.tx.media = lambda: "clip.mp4"
+        self.html = form() + BOTH_COVERS % (OVER_IT, "") + "<span>重新上传</span>"
+        real, looked = browser_forms.douyin_slot_window, []
+
+        async def window(page, tx, editor, slot, role, label, size, tall_too):
+            looked.append(role)
+            return await real(page, tx, editor, slot, role, label, size, tall_too)
+
+        async def uploaded(page, path, trigger=None, accept=None):
+            await page.goto("https://creator.douyin.com/creator-micro/content/post/video")
+        with patch.object(browser_forms, "douyin_slot_window", window), patch.object(browser_forms, "finish", new=AsyncMock(return_value={"state": "SUBMITTED_UNVERIFIED"})), \
+                patch.object(browser_forms, "works", new=AsyncMock(return_value={})), patch.object(browser_forms, "upload_file", new=uploaded):
+            await browser_forms.publish_douyin(self.page, self.tx)
+        self.assertEqual(["landscape", "portrait"], looked)
+        self.assertEqual("SKIPPED", self.tx.receipt["landscape_cover"]["state"])
+        self.assertEqual((["tall"], ["publish"]), (self.pressed(), self.went_out()))
+
+    async def test_a_post_that_goes_out_without_its_covers_drops_a_stopped_runs_account_of_its_slot(self):
+        """From the field run on fc60a30: vpub resume --no-cover finished the post, and its receipt still said what had lain over a slot in the
+        run it stopped."""
+        self.tx.cover = lambda role="landscape": None
+        self.tx.receipt = {"cover_slot_covered": {"role": "portrait", "slot": "竖封面3:4", "pressed": None}}
+        await self.post()
+        self.assertNotIn("cover_slot_covered", self.tx.receipt)
+        self.assertEqual(([], ["publish"]), (self.pressed(), self.went_out()))
 
     async def test_a_picture_of_the_slots_own_made_a_control_by_its_press_has_the_rest_of_it_held_back(self):
         """From a final check: the guard held a spot press to the very part the look found, but not to its being no control, so a picture that
@@ -2262,12 +2412,16 @@ class BothCoversTests(Base):
         said = json.dumps(seen, ensure_ascii=False)
         for secret in (*SECRETS, "example.org", "zhangsan", "标题", "角色"):
             self.assertNotIn(secret, said)
-        # From the field run on a16202b, a look also maps its grid in fixed letters: the link of the layer is on top everywhere here.
-        self.assertEqual(({"open", "spots", "over_it", "through", "map"}, False, [], None, ["XXXXX"] * 5),
+        # From the field runs on a16202b and fc60a30, a look also maps its grid in fixed letters, the link of the layer over all of it being
+        # another part of the cover box here, and gives where the slot, its cover box and the description box lie, in whole pixels.
+        self.assertEqual(({"open", "spots", "over_it", "through", "map", "where"}, False, [], None, ["kkkkk"] * 5),
                          (set(seen), seen["open"], seen["spots"], seen["through"], seen["map"]))
+        self.assertEqual(([60, 60], None), (seen["where"]["slot"][2:], seen["where"]["description"]))
+        self.assertEqual(4, len(seen["where"]["cover_box"]))
         over_it = seen["over_it"]
         self.assertEqual({"tag", "classes", "role", "modal", "position", "z_index", "opacity", "pointer_events", "cursor", "slot_covered", "window_covered",
-                          "place", "off_body", "control", "holds_slot", "holder", "slot_in_window", "window"}, set(over_it))
+                          "box", "place", "off_body", "control", "holds_slot", "holder", "slot_in_window", "window"}, set(over_it))
+        self.assertTrue(all(type(n) is int for n in over_it["box"] + over_it["holder"]["box"]))
         self.assertEqual(("a", ["layer-b2", "one", "two", "three"], None, True, "cover box", "pointer", 1),
                          (over_it["tag"], over_it["classes"], over_it["role"], over_it["control"], over_it["place"], over_it["cursor"], over_it["slot_covered"]))
         holder = over_it["holder"]
