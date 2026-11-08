@@ -14,11 +14,12 @@ from pathlib import Path
 import re
 import struct
 import tempfile
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from video_publisher import browser_backends, browser_edits, browser_forms, cli, edits, progress, video_shape
+from video_publisher import browser_backends, browser_edits, browser_forms, browser_runtime, cli, edits, progress, video_shape
 from video_publisher.core import DOUYIN_NAME_LAST, VpubError, atomic_json, douyin_caption, douyin_caption_units, home, load_plan
 from shared_chrome import ChromeCase, async_playwright
 
@@ -873,6 +874,10 @@ class CoverOnANewPostTests(Base):
     def test_that_window_has_the_edit_routes_three_minutes(self):
         self.assertEqual(180, browser_edits.DOUYIN_COVER_SECONDS)
 
+    def test_a_covered_slot_is_looked_at_about_every_second_for_ninety(self):
+        """From a review: the tests cut this wait short, so nothing else holds it to what the field runs called for."""
+        self.assertEqual((90, 1000), (browser_forms.DOUYIN_COVERED_SECONDS, browser_forms.DOUYIN_COVERED_LOOK_MS))
+
     async def test_a_press_waits_as_long_as_the_one_that_went_through(self):
         """From field runs: 完成 hung at about 11 seconds after the file and went through at about 73."""
         waits, real = [], self.page.wait_for_timeout
@@ -933,18 +938,76 @@ MASK_OPENS = """<div class="mask-x1y2" style="position:absolute;inset:0" onclick
 A_BUTTON = """<button class="edit-b1" style="position:absolute;top:0;left:0;width:100%;height:100%" onclick="pressed('button')"></button>"""
 IN_A_BUTTON = ("""<button class="edit-b1" style="position:absolute;top:0;left:0;width:100%;height:100%;padding:0;border:0" onclick="pressed('button')">"""
                """<span class="icon-c3" style="display:block;width:100%;height:100%"></span></button>""")
+# Controls of other kinds than a button over all of the 竖封面3:4 slot inside its own cover box, each sending word of its own press: a button's
+# role, one after a word that is no role, a place a keyboard can reach, a link with no role, a label and a box to type in.
+FULL = "position:absolute;top:0;left:0;width:100%;height:100%;padding:0;border:0;margin:0;display:block"
+OTHER_CONTROLS = (("div.icon-r1", f"""<div class="icon-r1" role="button" style="{FULL}" onclick="pressed('control')"></div>"""),
+                  ("div.icon-p1", f"""<div class="icon-p1" role="presentation-x button" style="{FULL}" onclick="pressed('control')"></div>"""),
+                  ("div.icon-t1", f"""<div class="icon-t1" tabindex="0" style="{FULL}" onclick="pressed('control')"></div>"""),
+                  ("a.link-a1", f"""<a class="link-a1" href="#x" style="{FULL}" onclick="pressed('control'); return false"></a>"""),
+                  ("label.lab-l1", f"""<label class="lab-l1" style="{FULL}" onclick="pressed('control')"></label>"""),
+                  ("input.in-i1", f"""<input class="in-i1" style="{FULL}" onclick="pressed('control')">"""))
+# A mask of the 竖封面3:4 cover box that shows only while the pointer is over the box, as a cover card's hover layer might, whose press opens
+# the cover window. A trial press moves the pointer there, so it brings the mask up itself.
+HOVER_MASK = """<style>.hover-m1 { display: none } .coverControl-a:hover > .hover-m1 { display: block }</style>
+  <div class="hover-m1" style="position:absolute;inset:0" onclick="pick('mask')"></div>"""
+# MASK_OPENS with a small icon of its own at the slot's centre whose press does something else, as a remove icon on a card could: it takes
+# the slot's picture away.
+ICON_ON_MASK = MASK_OPENS + """<script>(() => { const box = document.currentScript.parentElement, slot = box.querySelector('.cover-b');
+  const s = slot.getBoundingClientRect(), b = box.getBoundingClientRect(), icon = document.createElement('i'); icon.className = 'icon-del';
+  icon.style.cssText = `position:absolute;left:${s.left - b.left + s.width / 2 - 5}px;top:${s.top - b.top + s.height / 2 - 5}px;width:10px;height:10px`;
+  icon.onclick = e => { e.stopPropagation(); pressed('delete'); slot.querySelector('img').remove(); }; box.querySelector('.mask-x1y2').append(icon); })();</script>"""
+# A button of the 竖封面3:4 slot's own over the right part of it, as a remove icon on a cover card could be, sending word of its own press.
+IN_THE_SLOT = """<script>(() => { const slot = document.querySelectorAll('.cover-b')[1], remove = document.createElement('button');
+  remove.className = 'del-x1'; remove.style.cssText = 'position:absolute;right:0;top:0;width:40%;height:100%;padding:0;border:0';
+  remove.onclick = e => { e.stopPropagation(); pressed('remove'); }; slot.style.position = 'relative'; slot.append(remove); })();</script>"""
+# The 竖封面3:4 slot inside a card of its cover box that holds it, as a cover card can, with what the script given puts in the card or on it.
+IN_A_CARD = """<script>(() => { const slot = document.querySelectorAll('.cover-b')[1], card = document.createElement('div');
+  card.className = 'card-t1'; card.style.cssText = 'position:relative;display:inline-block'; slot.replaceWith(card); card.append(slot); %s })();</script>"""
+# A card a keyboard can reach, with a mask over the slot whose press opens the cover window; and a card with a button's role whose own press
+# opens it, with a badge over all of the slot. Neither card lies over the slot, and a press on the slot reaches it anyway.
+MASK_IN_A_CARD = IN_A_CARD % """card.tabIndex = 0; const mask = document.createElement('div'); mask.className = 'mask-m1';
+  mask.style.cssText = 'position:absolute;inset:0'; mask.onclick = () => pick('mask'); card.append(mask);"""
+BADGE_IN_A_BUTTON = IN_A_CARD % """card.setAttribute('role', 'button'); card.onclick = () => pick('card'); slot.onclick = null;
+  const badge = document.createElement('span'); badge.className = 'badge-z1'; badge.style.cssText = 'position:absolute;inset:0'; card.append(badge);"""
+# The 竖封面3:4 slot taking no pointer events, with nothing over it, and a press on its cover box itself sending word.
+NO_POINTER = """<script>(() => { const slot = document.querySelectorAll('.cover-b')[1], box = slot.parentElement; slot.style.pointerEvents = 'none';
+  box.addEventListener('click', e => { if (e.target === box) pressed('box'); }); })();</script>"""
+# The 竖封面3:4 slot's own press sending word and opening no window.
+NO_WINDOW = """<script>document.querySelectorAll('.cover-b')[1].onclick = () => pressed('tall');</script>"""
+# Once Escape reaches the description: the 竖封面3:4 slot taken off the page for three seconds, longer than a look waits for it here, as a
+# redraw could; or a second cover- element in its cover box, which leaves the slot's own locator two things to choose from.
+TAKEN_AWAY = """<script>document.querySelector('[contenteditable=true]').addEventListener('keydown', e => { if (e.key !== 'Escape') return;
+  const slot = document.querySelectorAll('.cover-b')[1], box = slot.parentElement; slot.remove(); setTimeout(() => box.append(slot), 3000); });</script>"""
+SECOND_SLOT = """<script>document.querySelector('[contenteditable=true]').addEventListener('keydown', e => { if (e.key === 'Escape')
+  document.querySelectorAll('[class^="coverControl-"]')[1].append(Object.assign(document.createElement('div'), {className: 'cover-c'})); });</script>"""
+# What the page can change just before a press through MASK_OPENS: a button in the mask's place, and a layer of the page's own over the slot,
+# each sending word of its own press. patchright runs these in a world of its own, so the presses are set as the page's own attributes.
+BUTTON_FOR_THE_MASK = """() => { const mask = document.querySelector('.mask-x1y2'), button = document.createElement('button'); button.className = 'edit-b1';
+  button.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%'; button.setAttribute('onclick', "pressed('button')"); mask.replaceWith(button); }"""
+LATE_LAYER = """() => { const r = document.querySelectorAll('.cover-b')[1].getBoundingClientRect(), layer = document.createElement('div'); layer.className = 'late-l1';
+  layer.style.cssText = `position:fixed;z-index:9;left:${r.left - 4}px;top:${r.top - 4}px;width:${r.width + 8}px;height:${r.height + 8}px`;
+  layer.setAttribute('onclick', "pressed('late')"); document.body.append(layer); }"""
 # A layer of the page's own over the 竖封面3:4 slot, outside both cover boxes and hung off the page's body, sending word of its own press: over
-# all of the slot, or over the part of it left of the share of its width given. With goes, it goes 1.5 seconds after Escape reaches the
-# description, as a layer Douyin shows while it readies the cover area might.
+# all of the slot, or over the part of it left of the share of its width given. With goes, it goes that many milliseconds after Escape
+# reaches the description, as a layer Douyin shows while it readies the cover area might.
 LAID_OVER = """<script>(() => { const slot = document.querySelectorAll('.cover-b')[1], r = slot.getBoundingClientRect(), layer = document.createElement('div');
   layer.className = 'toast-q9 名字'; layer.onclick = () => pressed('layer'); %(words)s
   layer.style.cssText = `position:absolute;z-index:5;left:${r.left + scrollX - 4}px;top:${r.top + scrollY - 4}px;width:${r.width * %(across)s + 4}px;height:${r.height + 8}px`;
   document.body.append(layer);
   document.querySelector('[contenteditable=true]').addEventListener('keydown', e => { if (e.key === 'Escape' && %(goes)s) {
-    window.pending = 1; setTimeout(() => { layer.remove(); window.pending = 0; }, 1500); } }); })();</script>"""
-# Words a layer can hold that name people, as Douyin's description lists do: in its text, its title, its label and its data.
-NAMES = """layer.title = '张三的私信'; layer.setAttribute('aria-label', '@李四 王五'); layer.dataset.owner = '赵六'; layer.textContent = '@赵六 给你发了一条私信';"""
-SECRETS = ("张三", "李四", "王五", "赵六", "私信", "名字")
+    window.pending = 1; setTimeout(() => { layer.remove(); window.pending = 0; }, %(after)s); } }); })();</script>"""
+
+
+def laid_over(across=1, words="", goes=None):
+    return LAID_OVER % {"across": across, "words": words, "goes": "false" if goes is None else "true", "after": goes or 0}
+
+
+# Words a layer can hold that name people, as Douyin's description lists do: in its text, its title, its label and its data. From a review:
+# stderr's lines are JSON in ASCII, where words in Chinese can't be found as written, so one name is in ASCII.
+NAMES = """layer.title = '张三的私信'; layer.setAttribute('aria-label', '@李四 王五'); layer.dataset.owner = '赵六'; layer.dataset.user = 'zhang_san_88';
+  layer.textContent = '@赵六 给你发了一条私信';"""
+SECRETS = ("张三", "李四", "王五", "赵六", "私信", "名字", "zhang_san_88")
 # The cursor at the end of the box's words, as typing leaves it.
 CURSOR_AFTER_TYPING = "e => { e.focus(); getSelection().selectAllChildren(e); getSelection().collapseToEnd(); }"
 
@@ -954,7 +1017,8 @@ class BothCoversTests(Base):
     with nothing published. A video taller than it is wide now gets only its 竖封面3:4 cover. From a review, a 4:3 cover is left out only while
     a 竖封面3:4 one goes on: on such a video, or on one whose size can't be read when its slot is covered or turned off. Anything else that
     refuses a press stops before anything goes out. From field runs on 647e002 and 7fa6c10, a slot something lies over is waited for, and
-    pressed only where nothing lies over it, or through its own cover box once nothing else will do; nothing else over it is ever pressed."""
+    pressed only where nothing lies over it, or through a bare part of its own cover box as big as itself once nothing else will do; nothing
+    else over it is ever pressed."""
     async def asyncSetUp(self):
         await super().asyncSetUp()
         # Long enough for the driver to have looked at what lies over a slot, which a busy test machine took more than half a second to do.
@@ -1037,9 +1101,9 @@ class BothCoversTests(Base):
         over is waited for first, and its record says what lay over it and for how long. It is never pressed through, since it can be left out."""
         unread = "The video's size couldn't be read from its file, and Douyin's 横封面4:3 slot "
         for wide, refusal, note, escapes in (
-                (OVER_IT, "in the way: div, intercepts pointer events", re.escape(unread + "still had something over it after Escape was pressed in the description "
-                 "at the end of its words and a wait of ") + r"\d+ seconds?: div in the slot's own cover box, absolute, over all of the slot and \d+% of the window\. "
-                 + re.escape("So the planned 4:3 cover wasn't set and nothing was pressed there."), 1),
+                (OVER_IT, "in the way: div, intercepts pointer events", re.escape(unread + "still couldn't take a press after Escape was pressed in the description "
+                 "at the end of its words and a wait of ") + r"\d+ seconds?: the last thing seen over its centre was div in the slot's own cover box, absolute, "
+                 r"over all of the slot and \d+% of the window\. " + re.escape("So the planned 4:3 cover wasn't set and nothing was pressed there."), 1),
                 (TURNED_OFF, "element is not enabled", re.escape(unread + "was turned off, so the planned 4:3 cover wasn't set and nothing was pressed there."), 0)):
             with self.subTest(refusal=refusal):
                 self.tx.receipt, self.writes[:] = {}, []
@@ -1146,11 +1210,12 @@ class BothCoversTests(Base):
         with patch.object(browser_forms, "DOUYIN_WINDOW_MS", 1000):
             said = await self.stopped(tall=OVER_IT)
         self.assertIn("Douyin's 竖封面3:4 slot was pressed once through its own cover box, and Douyin's cover window didn't open, so nothing was "
-                      "published and nothing was pressed again. Over it, for ", said)
-        self.assertIn(": div in the slot's own cover box, absolute, over all of the slot and ", said)
+                      "published and nothing was pressed again. After a wait of ", said)
+        self.assertIn(", the last thing seen over its centre was div in the slot's own cover box, absolute, over all of the slot and ", said)
         self.assertEqual(["over"], self.pressed())
         covered = self.tx.receipt["cover_slot_covered"]
         self.assertEqual(("portrait", "竖封面3:4", "through its own cover box", True), (covered["role"], covered["slot"], covered["pressed"], covered["pressed_once"]))
+        self.assertEqual({"x": 15, "y": 20}, covered["at"])  # Nothing smaller lies on it, so it is pressed at the slot's centre.
 
     async def test_a_slot_that_takes_its_first_trial_press_is_pressed_as_before_with_no_look_or_wait(self):
         """As both of 阿哈摇's slots did in its first run: nothing more is looked at, waited for or recorded."""
@@ -1165,26 +1230,59 @@ class BothCoversTests(Base):
         """From field runs on 647e002 and 7fa6c10, something lay over a cover slot and took its press. A person presses the part of the slot they
         can see, and so does CrossCast, once a trial press there has gone through."""
         self.portrait_only()
-        await self.post(extra=LAID_OVER % {"across": 0.6, "words": "", "goes": "false"})
+        await self.post(extra=laid_over(across=0.6))
         self.assertEqual(["tall"], self.pressed())
         cover = self.tx.receipt["portrait_cover"]
         self.assertEqual(("UI_ACCEPTED", False, "at a spot where nothing lay over it"), (cover["state"], cover["remote_pixels_verified"], cover["pressed"]))
-        self.assertGreater(cover["at"]["x"], 0.6 * 30)  # The slot is 30 wide, and the layer covers the part left of 18.
+        self.assertEqual({"x": 21, "y": 20}, cover["at"])  # The slot is 30 by 40, and the layer covers the part left of 18.
         self.assertEqual(("div", ["toast-q9"], "page", True), (cover["over_it"]["tag"], cover["over_it"]["classes"], cover["over_it"]["place"], cover["over_it"]["off_body"]))
         self.assertIn("in the way: div, intercepts pointer events", cover["refused"])
         self.assertEqual(["publish"], self.went_out())
 
+    async def test_a_button_of_the_slots_own_where_nothing_else_lies_is_never_pressed(self):
+        """From a review: a spot was open where anything inside the slot was on top, so a press went to a remove button in its corner, which a
+        press at its centre never reached. A spot is open now only where what is on top holds what a press at the centre would reach."""
+        self.portrait_only()
+        said = await self.stopped(extra=IN_THE_SLOT + laid_over(across=0.6))
+        self.assertEqual([], self.pressed())
+        self.assertIn("It lies outside the slot's own cover box, so it wasn't pressed.", said)
+
     async def test_a_layer_that_goes_away_is_waited_for_and_the_record_says_how_long(self):
-        """As a layer Douyin shows while it readies the cover area, after an upload or a reopened draft, might: the slot is pressed once it is gone."""
+        """As a layer Douyin shows while it readies the cover area, after an upload or a reopened draft, might: the slot is pressed once it is gone.
+        From a review: it went within the time one more trial press would have waited, so it goes later than that here."""
         self.portrait_only()
         with patch.object(browser_forms, "DOUYIN_COVERED_SECONDS", 30):
-            await self.post(extra=LAID_OVER % {"across": 1, "words": "", "goes": "true"})
+            await self.post(extra=laid_over(goes=3000))
         self.assertEqual(["tall"], self.pressed())
         cover = self.tx.receipt["portrait_cover"]
         self.assertEqual(("UI_ACCEPTED", "at its centre", "div"), (cover["state"], cover["pressed"], cover["over_it"]["tag"]))
-        self.assertGreaterEqual(cover["waited_seconds"], 1)
+        self.assertGreaterEqual(cover["waited_seconds"], 2.5)
         self.assertLess(cover["waited_seconds"], 30)
         self.assertEqual(["publish"], self.went_out())
+
+    async def test_a_look_the_page_doesnt_answer_is_a_look_that_saw_nothing_open(self):
+        """From a review: a slot taken off the page for longer than a look waits for it, or a second cover- element in its cover box, ended the
+        wait with a bare driver error. The wait goes on, and the slot is pressed once it is back; one that still can't be looked at stops."""
+        self.portrait_only()
+        with patch.object(browser_forms, "DOUYIN_COVERED_SECONDS", 15):
+            await self.post(extra=laid_over(goes=300) + TAKEN_AWAY)
+        self.assertEqual(["tall"], self.pressed())
+        self.assertGreaterEqual(self.tx.receipt["portrait_cover"]["waited_seconds"], 2)
+        self.tx.receipt, self.writes[:] = {}, []
+        said = await self.stopped(extra=laid_over() + SECOND_SLOT)
+        self.assertEqual([], self.pressed())
+        self.assertIn("Its last look failed, so nothing was pressed through: Browser command failed (Error): Locator.scroll_into_view_if_needed: ", said)
+        self.assertIn("strict mode violation", self.tx.receipt["cover_slot_covered"]["unseen"])
+
+    async def test_a_press_after_the_wait_that_opens_no_window_stops_and_is_never_made_again(self):
+        """From a review: nothing showed that a press at the centre after the wait is held to its window as the press through is."""
+        self.portrait_only()
+        with patch.object(browser_forms, "DOUYIN_WINDOW_MS", 1000):
+            said = await self.stopped(extra=NO_WINDOW + laid_over(goes=500))
+        self.assertEqual(["tall"], self.pressed())
+        self.assertIn("Douyin's 竖封面3:4 slot was pressed once at its centre, and Douyin's cover window didn't open, so nothing was published "
+                      "and nothing was pressed again.", said)
+        self.assertIs(True, self.tx.receipt["cover_slot_covered"]["pressed_once"])
 
     async def test_a_layer_that_stays_is_never_pressed_and_none_of_its_words_go_anywhere(self):
         """It holds words that name people, as Douyin's description lists do. The stop names it by its tag and class alone, in its message, the
@@ -1194,12 +1292,12 @@ class BothCoversTests(Base):
         with patch.object(browser_forms, "DOUYIN_COVERED_SECONDS", 1.5), contextlib.redirect_stderr(errors), progress.relay("douyin", payload):
             progress.attach(payload)
             try:
-                said = await self.stopped(extra=LAID_OVER % {"across": 1, "words": NAMES, "goes": "false"})
+                said = await self.stopped(extra=laid_over(words=NAMES))
             finally:
                 progress.attach({})
         self.assertEqual([], self.pressed())
-        self.assertIn("Over it, for ", said)
-        self.assertIn(": div.toast-q9 hung off the page's body, absolute, over all of the slot and ", said)
+        self.assertIn(" After a wait of ", said)
+        self.assertIn(", the last thing seen over its centre was div.toast-q9 hung off the page's body, absolute, over all of the slot and ", said)
         self.assertIn("It lies outside the slot's own cover box, so it wasn't pressed.", said)
         covered = self.tx.receipt["cover_slot_covered"]
         over_it = covered["over_it"]
@@ -1207,14 +1305,15 @@ class BothCoversTests(Base):
         self.assertGreaterEqual(covered["waited_seconds"], 1.5)
         self.assertLess(covered["waited_seconds"], 6.5)
         stages = [json.loads(line)["stage"] for line in errors.getvalue().splitlines() if line.startswith("{")]
-        self.assertIn("waiting for a cover slot to clear", stages)
+        self.assertEqual(["waiting for a cover slot to clear", "reading the page"], stages[-2:])
         for secret in SECRETS:
             for where in (said, json.dumps(self.tx.receipt, ensure_ascii=False), errors.getvalue()):
                 self.assertNotIn(secret, where)
 
     async def test_a_part_of_the_slots_own_cover_box_is_pressed_through_once_nothing_else_will_do(self):
         """A person's press on the slot would land on it, and the cover box is what they would be pressing. It is pressed only once the wait is
-        over and the post would otherwise stop, and then the cover window has to open."""
+        over and the post would otherwise stop, and then the cover window has to open. A 横封面4:3 slot that can't be left out is pressed
+        through the same way."""
         self.portrait_only()
         await self.post(tall=MASK_OPENS)
         self.assertEqual(["mask"], self.pressed())
@@ -1224,51 +1323,163 @@ class BothCoversTests(Base):
         self.assertGreaterEqual(cover["waited_seconds"], browser_forms.DOUYIN_COVERED_SECONDS)
         self.assertNotIn("cover_slot_covered", self.tx.receipt)
         self.assertEqual(["publish"], self.went_out())
+        self.tx.cover, self.tx.size, self.tx.receipt, self.writes[:] = lambda role="landscape": str(self.image), (1920, 1080), {}, []
+        await self.post(wide=MASK_OPENS)
+        self.assertEqual((["mask", "tall"], "through its own cover box"), (self.pressed(), self.tx.receipt["landscape_cover"]["pressed"]))
+
+    async def test_an_icon_of_the_cover_box_at_the_slots_centre_is_never_pressed(self):
+        """From a review: pressed through at the slot's centre, the press went to a small icon of the mask there, whose own press took the slot's
+        picture away. Only a part of the cover box as big as the slot is pressed through, where it is itself on top."""
+        self.portrait_only()
+        await self.post(tall=ICON_ON_MASK)
+        self.assertEqual(["mask"], self.pressed())
+        cover = self.tx.receipt["portrait_cover"]
+        self.assertEqual(("through its own cover box", "i", ["icon-del"]), (cover["pressed"], cover["over_it"]["tag"], cover["over_it"]["classes"]))
+        self.assertNotEqual({"x": 15, "y": 20}, cover["at"])
+
+    async def test_a_mask_the_pointer_brings_up_is_waited_out_and_then_pressed_through(self):
+        """From a review: a trial press moves the pointer onto the slot, so a mask its cover box shows under the pointer comes up with the first
+        trial press and stays, since nothing moves the pointer away. It is waited out in full and then pressed through, as is pinned here, so
+        that whatever is decided about such a mask has a test to change."""
+        self.portrait_only()
+        await self.post(tall=HOVER_MASK)
+        self.assertEqual(["mask"], self.pressed())
+        cover = self.tx.receipt["portrait_cover"]
+        self.assertIn("in the way: div, intercepts pointer events", cover["refused"])
+        self.assertEqual(("through its own cover box", ["hover-m1"]), (cover["pressed"], cover["over_it"]["classes"]))
+        self.assertGreaterEqual(cover["waited_seconds"], browser_forms.DOUYIN_COVERED_SECONDS)
+
+    async def test_what_holds_the_slot_is_never_taken_for_something_over_it(self):
+        """From a review: a card of the cover box holding the slot was counted as a control over it, though a press on the slot reaches that card
+        anyway, and a hit inside a holder with a button's role was not open, though Playwright's own check takes it. A slot that takes no
+        pointer events, with its own cover box on top, is no layer over it either, and that box is never pressed."""
+        self.portrait_only()
+        await self.post(extra=MASK_IN_A_CARD)
+        self.assertEqual(["mask"], self.pressed())
+        self.assertEqual(("through its own cover box", False), (self.tx.receipt["portrait_cover"]["pressed"], self.tx.receipt["portrait_cover"]["over_it"]["control"]))
+        self.tx.receipt, self.writes[:] = {}, []
+        await self.post(extra=BADGE_IN_A_BUTTON + laid_over(goes=500))
+        self.assertEqual((["card"], "at its centre"), (self.pressed(), self.tx.receipt["portrait_cover"]["pressed"]))
+        self.tx.receipt, self.writes[:] = {}, []
+        said = await self.stopped(extra=NO_POINTER)
+        self.assertEqual([], self.writes)
+        self.assertIn(", it took no pointer events at its centre, where div.coverControl-a, which holds it, was on top. So nothing was pressed through.", said)
+        self.assertIs(True, self.tx.receipt["cover_slot_covered"]["over_it"]["holds_slot"])
 
     async def test_a_control_over_a_slot_is_never_pressed_and_the_post_stops(self):
-        """A button over the slot, or something inside one, could do whatever its own press does, so it is never pressed, in the cover box too."""
+        """A button over the slot, or something inside one, could do whatever its own press does, so it is never pressed, in the cover box too.
+        From a review: only a button showed this, so controls of other kinds are here too."""
         self.portrait_only()
-        for tall, name in ((A_BUTTON, "button.edit-b1"), (IN_A_BUTTON, "span.icon-c3 inside button.edit-b1")):
+        for tall, name in ((A_BUTTON, "button.edit-b1"), (IN_A_BUTTON, "span.icon-c3 inside button.edit-b1"), *((html, name) for name, html in OTHER_CONTROLS)):
             with self.subTest(name=name):
                 self.tx.receipt, self.writes[:] = {}, []
-                said = await self.stopped(tall=tall)
+                with patch.object(browser_forms, "DOUYIN_WINDOW_MS", 1000):
+                    said = await self.stopped(tall=tall)
                 self.assertEqual([], self.writes)
-                self.assertIn(f": {name} in the slot's own cover box, a control, ", said)
+                self.assertIn(f" was {name} in the slot's own cover box, a control, ", said)
                 self.assertIn("It's a control, or lies inside one, so it wasn't pressed.", said)
                 self.assertIs(True, self.tx.receipt["cover_slot_covered"]["over_it"]["control"])
+
+    async def test_what_comes_over_the_slot_after_the_wait_is_looked_at_before_any_press_through(self):
+        """From a review: nothing showed that the press through is decided on one more look just before it, or that the browser's own check
+        then refuses a layer that comes after that look. Here a button takes the mask's place as the wait ends, and then a layer of the page
+        comes over the slot just after the look, and neither is pressed, nor is the mask."""
+        self.portrait_only()
+        real = browser_forms.douyin_slot_through
+
+        async def before(slot, covered):
+            await self.page.evaluate(BUTTON_FOR_THE_MASK)
+            return await real(slot, covered)
+
+        async def after(slot, covered):
+            decided = await real(slot, covered)
+            await self.page.evaluate(LATE_LAYER)
+            return decided
+        with patch.object(browser_forms, "douyin_slot_through", before):
+            said = await self.stopped(tall=MASK_OPENS)
+        self.assertEqual([], self.pressed())
+        self.assertIn(" was button.edit-b1 in the slot's own cover box, a control, ", said)
+        self.tx.receipt, self.writes[:] = {}, []
+        with patch.object(browser_forms, "douyin_slot_through", after):
+            said = await self.stopped(tall=MASK_OPENS)
+        self.assertEqual([], self.pressed())
+        self.assertIn("Douyin's 竖封面3:4 slot couldn't take the press through its own cover box, so nothing was published. Browser command failed", said)
+        self.assertIn("[in the way: div, intercepts pointer events]", said)
+        self.assertIs(False, self.tx.receipt["cover_slot_covered"]["pressed_once"])
 
     async def test_a_stop_during_the_wait_ends_it_with_nothing_pressed(self):
         self.portrait_only()
         looks, real = [], browser_forms.douyin_slot_look
 
-        async def looked(slot):
+        async def looked(slot, through=False):
             looks.append(slot)
             if len(looks) == 2:
                 atomic_json(home() / "STOP.json", {"reason": "A person paused it."})
-            return await real(slot)
+            return await real(slot, through)
         with patch.object(browser_forms, "DOUYIN_COVERED_SECONDS", 60), patch.object(browser_forms, "douyin_slot_look", looked), self.assertRaises(VpubError) as caught:
             await self.post(tall=A_BUTTON)
         self.assertEqual("stopped", caught.exception.code)
         self.assertEqual([], self.writes)
         self.assertEqual(2, len(looks))
 
+    async def test_a_stop_as_the_wait_ends_holds_the_press_through(self):
+        """From a review: nothing showed that the checks before the press come after the look that decides it."""
+        self.portrait_only()
+        real = browser_forms.douyin_slot_opening
+
+        async def then_stopped(page, slot):
+            answer = await real(page, slot)
+            atomic_json(home() / "STOP.json", {"reason": "A person paused it."})
+            return answer
+        with patch.object(browser_forms, "douyin_slot_opening", then_stopped), self.assertRaises(VpubError) as caught:
+            await self.post(tall=MASK_OPENS)
+        self.assertEqual(("stopped", []), (caught.exception.code, self.pressed()))
+
+    async def test_a_platform_check_ends_the_wait_at_once(self):
+        """From a review: nothing showed the platform check at each look, without which one over the slot would be waited out like a layer."""
+        self.portrait_only()
+        check, started = AsyncMock(side_effect=VpubError("human_verification_required", "The platform requires human verification.")), time.monotonic()
+        with patch.object(browser_forms, "DOUYIN_COVERED_SECONDS", 20), patch.object(browser_forms, "risk_check", check), self.assertRaises(VpubError) as caught:
+            await self.post(tall=A_BUTTON)
+        self.assertEqual(("human_verification_required", []), (caught.exception.code, self.writes))
+        self.assertLess(time.monotonic() - started, 15)
+
+    async def test_the_wait_ends_before_the_commands_own_cut_off(self):
+        """From a review: like X's waits, it leaves the command its margin, so the stop comes with its own record."""
+        self.portrait_only()
+        started = time.monotonic()
+        with patch.object(browser_forms, "DOUYIN_COVERED_SECONDS", 60), patch.object(browser_runtime, "command_deadline", started + browser_forms.X_COMMAND_MARGIN_SECONDS + 3):
+            await self.stopped(tall=A_BUTTON)
+        self.assertLess(self.tx.receipt["cover_slot_covered"]["waited_seconds"], 10)
+        self.assertLess(time.monotonic() - started, 30)
+
+    async def test_an_earlier_stops_account_of_a_slot_goes_once_its_cover_is_on(self):
+        """From a review: nothing showed this, and a resumed receipt would report a block that a later pass got past."""
+        self.portrait_only()
+        for role, kept in (("portrait", False), ("landscape", True)):
+            with self.subTest(role=role):
+                self.tx.receipt, self.writes[:] = {"cover_slot_covered": {"role": role, "pressed": None}}, []
+                await self.post()
+                self.assertEqual(kept, "cover_slot_covered" in self.tx.receipt)
+
     async def test_the_look_at_a_slot_holds_no_words_and_no_attribute_values(self):
         """What lies over a slot can name people, in its words or in any attribute. The look keeps its tag, a few class tokens of code, a role
-        from a fixed list and its style, for it and for what holds it, and nothing else."""
+        from a fixed list and its style, for it and for what holds it, and nothing else. From a review, the link here has no role, so its tag
+        alone makes it a control."""
         await self.open('<!doctype html><meta charset="utf-8"><body><div class="coverControl-a" style="position:relative"><div class="cover-b" style="width:60px;height:60px"></div>'
                         '<div id="张三的层" class="pop-a1 名字" title="李四的标题" data-owner="王五" role="赵六的角色" style="position:absolute;inset:0;cursor:url(https://example.org/u/zhangsan.png), auto">'
-                        '<a id="zhangsan" href="https://example.org/u/zhangsan" title="张三" aria-label="@张三" data-user="张三" role="link" class="layer-b2 用户张三 one two three four" '
+                        '<a id="zhangsan" href="https://example.org/u/zhangsan" title="张三" aria-label="@张三" data-user="张三" class="layer-b2 用户张三 one two three four" '
                         'style="display:block;width:100%;height:100%">@张三 给你发了一条私信 <img alt="张三" src="https://example.org/u/zhangsan.png"></a>'
                         '<input placeholder="李四" value="王五"></div></div>')
         seen = await self.page.locator(".cover-b").evaluate(browser_forms.DOUYIN_SLOT_LOOK)
         said = json.dumps(seen, ensure_ascii=False)
         for secret in (*SECRETS, "example.org", "zhangsan", "标题", "角色"):
             self.assertNotIn(secret, said)
-        self.assertEqual((False, []), (seen["open"], seen["spots"]))
+        self.assertEqual(({"open", "spots", "over_it", "through"}, False, [], None), (set(seen), seen["open"], seen["spots"], seen["through"]))
         over_it = seen["over_it"]
         self.assertEqual({"tag", "classes", "role", "modal", "position", "z_index", "opacity", "pointer_events", "cursor", "slot_covered", "window_covered",
-                          "place", "off_body", "control", "holder", "slot_in_window", "window"}, set(over_it))
-        self.assertEqual(("a", ["layer-b2", "one", "two", "three"], "link", True, "cover box", "pointer", 1),
+                          "place", "off_body", "control", "holds_slot", "holder", "slot_in_window", "window"}, set(over_it))
+        self.assertEqual(("a", ["layer-b2", "one", "two", "three"], None, True, "cover box", "pointer", 1),
                          (over_it["tag"], over_it["classes"], over_it["role"], over_it["control"], over_it["place"], over_it["cursor"], over_it["slot_covered"]))
         holder = over_it["holder"]
         self.assertEqual(("div", ["pop-a1"], "other", "other", "absolute"), (holder["tag"], holder["classes"], holder["role"], holder["cursor"], holder["position"]))
