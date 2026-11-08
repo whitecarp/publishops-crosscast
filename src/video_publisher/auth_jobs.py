@@ -132,28 +132,41 @@ def status(platform, account="default"):
         return result
 
 
-def start(platform, account):
+def _keeps_open(path, platform, keep_open):
+    """From a review: asking for a window that stays open, while a sign-in whose window closes once the account shows is still running, got that one back."""
+    try:
+        running = read_json(path) if path.exists() else {}
+    except (OSError, ValueError):
+        running = {}
+    if keep_open and not (isinstance(running, dict) and running.get("keep_open")):
+        raise VpubError("login_busy", "A sign-in for this platform is already running, and its window closes once the account shows.",
+                        f"Let it finish or close its window, then run vpub auth login {platform} --keep-open again.")
+
+
+def start(platform, account, keep_open=False):
     account_name(account)
     path = job_path(platform)
     with _turn(path):
         previous = _status(path)
         if previous and previous.get("state") in PENDING:
             _require_account(previous, account)
+            _keeps_open(path, platform, keep_open)
             return previous  # An elapsed login deadline does not prove a live worker stopped.
         if path.exists():
             saved = read_json(path)
             if saved.get("worker_pid") and alive(saved["worker_pid"]):
                 _require_account(saved, account)
+                _keeps_open(path, platform, keep_open)
                 return previous
         attempt = uuid.uuid4().hex
         folder = _folder(path, attempt)
         payload = {"action": "login", "platform": platform, "account": account,
-                   "job_path": str(folder / "result.json"), "attempt": attempt}
+                   "job_path": str(folder / "result.json"), "attempt": attempt, **({"keep_open": True} if keep_open else {})}
         request = folder / "request.json"
         atomic_json(request, payload)
         # A delayed worker must not adopt a replacement attempt from this inspection copy.
         atomic_json(path.with_suffix(".request.json"), payload)
-        saved = {"state": "STARTING", "platform": platform, "account": account, "attempt": attempt,
+        saved = {"state": "STARTING", "platform": platform, "account": account, "attempt": attempt, **({"keep_open": True} if keep_open else {}),
                  "created_at": now(), "start_deadline": time.time() + START_SECONDS,
                  "expires_epoch": time.time() + 900,
                  "hint": "Sign-in is starting. Leave its CrossCast Chrome window open to finish. "

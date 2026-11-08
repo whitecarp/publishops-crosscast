@@ -192,6 +192,39 @@ class WholeFormTests(Base):
         await self.run_form(StubTx())
         self.assertEqual(("publish", "false"), (self.writes[0]["word"], self.writes[0]["later"]))
 
+    async def test_tags_douyin_set_side_by_side_still_read_as_the_plans(self):
+        await self.open(form().replace('>Words</div>', '>Words<div><br></div><div><span class="topic">#Tag</span><span class="topic">#Other</span></div></div>'))
+        await self.run_form(StubTx(tags=["Tag", "Other"]))
+        self.assertEqual(["publish"], [write["word"] for write in self.writes])
+
+    async def test_a_line_joined_before_the_tags_never_publishes(self):
+        await self.open(form().replace('>Words</div>', '>Words<span class="topic">#Tag</span></div>'))
+        with self.assertRaises(VpubError) as caught:
+            await self.run_form(StubTx(tags=["Tag"]))
+        self.assertEqual("metadata_mismatch", caught.exception.code)
+        self.assertEqual([], self.writes)
+
+    async def test_a_form_that_lost_an_at_sign_never_publishes_and_says_so(self):
+        """From a field run: Douyin took the @ away from each name in the caption, and the words were stopped before 发布."""
+        await self.open(form().replace('>Words</div>', '>Credit: 上善无形</div>'))
+        with self.assertRaises(VpubError) as caught:
+            await self.run_form(StubTx(description="Credit: @上善无形"))
+        self.assertEqual("metadata_mismatch", caught.exception.code)
+        self.assertIn('lacks "@" at character 9', caught.exception.message)
+        self.assertEqual([], self.writes)
+
+    async def test_words_that_came_out_different_say_where_and_never_publish(self):
+        await self.open()
+        with self.assertRaises(VpubError) as caught:
+            await self.run_form(StubTx(description="Words, then more"))
+        self.assertEqual("metadata_mismatch", caught.exception.code)
+        self.assertIn('they agree for 5 of the plan\'s 16 characters, up to "Words", and the form holds 5', caught.exception.message)
+        self.assertEqual([], self.writes)
+        with self.assertRaises(VpubError) as caught:
+            await self.run_form(StubTx(title="Another title"))
+        self.assertIn("title differs", caught.exception.message)
+        self.assertEqual([], self.writes)
+
     async def test_a_draft_presses_keep_once_and_never_publish(self):
         await self.open()
         tx = StubTx(submission_mode="draft_only")
@@ -259,9 +292,104 @@ class CaptionTypingTests(Base):
         self.assertNotEqual(words("One. Two."), words("One. *Two."))
         self.assertNotEqual(words("Version 1.2"), words("Version 12"))
 
+    def test_space_between_topics_or_names_is_the_pages_own(self):
+        """From a field run: a caption with #tags and @names stopped as differing from the plan, and Douyin can make each one a link of its own,
+        set side by side with no space between them or each on a line of its own."""
+        words = browser_backends.douyin_card_words
+        caption = "设定：@上善无形\n参考 @ZipZipPipe 的形象\n\n#阿哈的抓马小曲 #大肥鱼 #阿哈摇"
+        for shown in ("设定：@上善无形\n参考 @ZipZipPipe 的形象\n\n#阿哈的抓马小曲#大肥鱼#阿哈摇", "设定：@上善无形 参考 @ZipZipPipe 的形象 #阿哈的抓马小曲\n#大肥鱼\n#阿哈摇"):
+            with self.subTest(shown=shown):
+                self.assertEqual(words(caption), words(shown))
+        # Any other space counts as it always has. Without the space after a name or topic, where it ends can't be told, and a line that lost
+        # its line break with nothing in its place is another text.
+        for wanted, shown in (("@上善无形\nGPT娘", "@上善无形GPT娘"), ("#阿哈摇 好看", "#阿哈摇好看"), ("@上善无形 GPT娘", "@SomeoneElse GPT娘"), ("#a #b", "#a #c"),
+                              ("C++", "C#"), ("享有\n\n#阿哈的抓马小曲 #大肥鱼", "享有#阿哈的抓马小曲 #大肥鱼"), ("参考：\n@上善无形 的设定", "参考：@上善无形 的设定")):
+            with self.subTest(wanted=wanted):
+                self.assertNotEqual(words(wanted), words(shown))
+        self.assertEqual(words("享有\n\n#阿哈的抓马小曲"), words("享有 #阿哈的抓马小曲"))
+
     async def test_what_was_there_goes_first(self):
         box, _ = await self.type_it("New.")
         self.assertEqual("New.", (await box.inner_text()).strip())
+
+    async def test_suggestions_a_last_tag_opens_are_closed_before_anything_else_is_pressed(self):
+        """From a field run: the topic suggestions Douyin opened for a caption's last #tag stayed over the cover buttons below and took their click."""
+        await self.page.set_content(self.PAGE + """<div id="topics" hidden style="position:fixed;inset:0">#Tag 话题</div>
+          <script>const box = document.getElementById('box'), topics = document.getElementById('topics');
+          box.addEventListener('input', () => { topics.hidden = !/[#@][^\\s#@]*$/.test(box.innerText.replace(/\\n+$/, '')); });
+          box.addEventListener('keydown', e => { if (e.key === 'Escape') topics.hidden = true; });</script>""")
+        box = self.page.locator("#box")
+        for caption in ("Words.\n\n#Tag", "Words for @someone"):
+            with self.subTest(caption=caption):
+                await browser_backends.douyin_type_caption(self.page, box, caption)
+                self.assertTrue(await self.page.locator("#topics").is_hidden())
+                self.assertEqual(browser_backends.douyin_card_words(caption), browser_backends.douyin_card_words(await box.inner_text()))
+
+    # A box like Douyin's: a list of suggestions for the #topic or @name the cursor is at the end of, and Enter there picks one instead of starting a line.
+    # Its script keeps to a scope of its own: from a review, a second page set in the same tab otherwise failed to declare its names again and had no list.
+    SUGGESTING = """<!doctype html><meta charset="utf-8"><body><div contenteditable="true" id="box">Old words</div><div id="list" hidden>SomeoneElse</div>
+      <script>(() => { const box = document.getElementById('box'), list = document.getElementById('list'); window.pending = 0;
+      // As a field run showed: a typed @ waits for someone to be picked past any spaces after it, and a # topic ends at a space.
+      const token = () => { const range = getSelection().rangeCount && getSelection().getRangeAt(0); const node = range && range.endContainer;
+        if (!node || node.nodeType !== 3) return null;
+        const before = node.data.slice(0, range.endOffset), name = before.lastIndexOf('@'), topic = /#[^\\s#@]*$/.exec(before);
+        if (topic && topic.index > name) return {node, at: topic.index, kind: '#'};
+        return name >= 0 ? {node, at: name, kind: '@'} : null; };
+      const look = () => { list.hidden = !token(); };
+      // A late list stands for a lookup that comes back after a while and opens its list then, if the cursor is still at the end of the name or topic.
+      box.addEventListener('input', () => { if (!token()) { list.hidden = true; return; } if (!LATE) return look(); window.pending++; setTimeout(() => { window.pending--; look(); }, LATE); });
+      box.addEventListener('keydown', e => {
+        if (e.key === 'Escape') {
+          // As Douyin did in a field run: Escape closes a list of names and takes the @ away with it. A list of topics keeps its #.
+          const open = !list.hidden && token(); list.hidden = true;
+          if (open && open.kind === '@') open.node.deleteData(open.at, 1);
+          if (LEAVES) box.blur();
+        }
+        if (e.key === 'Enter' && !list.hidden) { e.preventDefault(); list.hidden = true; document.execCommand('insertText', false, 'SomeoneElse '); }
+      }); })();</script>"""
+    # What a field run's caption had: lines ending in @names, a name in the middle of a line, and #tags at the end.
+    FIELD_CAPTION = "开头一段。\n\n原作角色设定：@上善无形\n角色设计参考：@ZipZipPipe\n参考 @ZipZipPipe 的形象\n\n#阿哈的抓马小曲 #大肥鱼 #阿哈摇"
+
+    async def type_into_suggesting_box(self, late=0, leaves=False):
+        await self.page.set_content(self.SUGGESTING.replace("LATE", str(late)).replace("LEAVES", "true" if leaves else "false"))
+        box = self.page.locator("#box")
+        await browser_backends.douyin_type_caption(self.page, box, self.FIELD_CAPTION)
+        # Whatever list was still coming has come before anything is looked at.
+        await self.page.wait_for_function("window.pending === 0")
+        await self.page.wait_for_timeout(50)
+        return box
+
+    async def test_enter_never_reaches_suggestions_a_line_with_a_name_opened(self):
+        """From two field runs: a caption with lines ending in @names came out on Douyin's form different from the plan, and then, with Escape
+        closing the lists, short of exactly its three @. No one is ever picked; the missing @ is what the read-back then stops on."""
+        for late in (0, 200):
+            with self.subTest(late=late):
+                box = await self.type_into_suggesting_box(late)
+                said = await box.inner_text()
+                self.assertNotIn("SomeoneElse", said)
+                self.assertEqual(browser_backends.douyin_card_words(self.FIELD_CAPTION.replace("@", "")), browser_backends.douyin_card_words(said))
+                self.assertTrue(await self.page.locator("#list").is_hidden())
+
+    async def test_a_box_that_escape_leaves_gets_the_rest_of_the_words_at_their_end(self):
+        box = await self.type_into_suggesting_box(leaves=True)
+        self.assertEqual(browser_backends.douyin_card_words(self.FIELD_CAPTION.replace("@", "")), browser_backends.douyin_card_words(await box.inner_text()))
+
+    async def test_lines_without_a_topic_or_name_go_in_with_no_pause(self):
+        with patch.object(browser_backends, "douyin_close_suggestions", new=AsyncMock()) as closing:
+            await self.type_it("One line.\n\nTwo, with #tag in it.\nThree @name\nFour.")
+        self.assertEqual(2, closing.await_count)
+
+    def test_a_form_that_lost_its_at_signs_says_which(self):
+        """From a field run: Douyin took away a caption's three @, and the stop said only where the words first parted."""
+        plan = browser_backends.douyin_card_words("原作角色设定：@上善无形\n参考：@ZipZipPipe\n参考 @ZipZipPipe 的形象")
+        said = browser_backends.where_words_part(plan, plan.replace("@", ""))
+        self.assertEqual(3, said.count('lacks "@"'))
+
+    def test_where_the_words_part_is_said_with_the_plans_words_only(self):
+        said = browser_backends.where_words_part("原作角色设定：@上善无形 角色设计参考", "原作角色设定：@SomeoneElse 角色设计参考")
+        self.assertIn('they agree for 8 of the plan\'s 19 characters, up to "原作角色设定：@", and the form holds 26', said)
+        self.assertNotIn("SomeoneElse", said)
+        self.assertIn("agree for 5 of the plan's 5", browser_backends.where_words_part("Words", "Words and more"))
 
     async def test_the_edit_page_types_it_the_same_way(self):
         self.assertIn("douyin_type_caption(page,editor,patch['caption'])", Path(browser_edits.__file__).read_text(encoding="utf-8"))

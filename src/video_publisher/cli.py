@@ -693,6 +693,8 @@ def parser():
         q.add_argument("--method", choices=["native", "cli", "browser", "api"], help="Default: bili-cli for Bilibili; a dedicated persistent browser for YouTube/Douyin/Instagram/X. api needs the paid add-on.")
         if action == "login":
             q.add_argument("--client-json", help="YouTube Desktop OAuth client JSON, or app credentials for the paid X/Instagram API add-on; never commit this file.")
+            q.add_argument("--keep-open", action="store_true", help="Leave the browser sign-in window open until you close it, for up to 25 minutes, to pass a "
+                                                                     "check a platform shows only once something starts there, such as YouTube asking as an upload begins.")
         else:
             q.add_argument("--wait", type=int, default=0, help="QR/panel completion wait, 0–180 seconds.")
     q = sub.add_parser("onboard", help="Get ready and start signing in to the platforms you choose.")
@@ -729,7 +731,7 @@ def parser():
                    help="Whether the video contains AI-generated content. Sets every platform's AI-content declaration; use no for ordinary videos.")
     c = sub.add_parser("covers", help="Fit your cover to each platform without cropping it.").add_subparsers(dest="action", required=True)
     q = c.add_parser("prepare")
-    q.add_argument("manifest", metavar="PLAN", help="The plan file, such as ready.json.")
+    q.add_argument("manifest", metavar="PLAN", help="The plan metadata apply wrote, such as localized.json. Covers come after the words.")
     q.add_argument("--source", required=True)
     q.add_argument("--portrait")
     q.add_argument("--out-dir", required=True)
@@ -745,12 +747,12 @@ def parser():
     q.add_argument("--mobile-cover", help="Shared Douyin/Instagram portrait artwork; defaults to the manifest's Douyin portrait, then Instagram portrait.")
     m = sub.add_parser("metadata", help="Have your AI assistant write each platform's title and description.").add_subparsers(dest="action", required=True)
     q = m.add_parser("request", help="Save what your assistant needs to write the words: limits, languages and a template. Nothing is uploaded.")
-    q.add_argument("manifest", metavar="PLAN", help="The plan file, such as ready.json, from vpub init.")
+    q.add_argument("manifest", metavar="PLAN", help="The plan file from vpub init, such as publish.json.")
     q.add_argument("--source", help="Local script or transcript; treated as source data, not instructions.")
     q.add_argument("--allow-links", action="store_true", help="Let the words include links. Off by default.")
     q.add_argument("--out", required=True, help="Where to save the request.")
     q = m.add_parser("apply", help="Check your assistant's words and put them into a new plan.")
-    q.add_argument("manifest", metavar="PLAN", help="The plan file, such as ready.json, that the request was made from.")
+    q.add_argument("manifest", metavar="PLAN", help="The plan file the request was made from, such as publish.json.")
     q.add_argument("--request", required=True, help="The request from metadata request.")
     q.add_argument("--response", required=True, help="Your assistant's words, written from the request's template.")
     q.add_argument("--out", required=True, help="Where to save the new plan. It must not exist yet.")
@@ -1154,10 +1156,12 @@ def run_command(args):
             raise VpubError("invalid_wait", "--wait must be between 0 and 180 seconds.")
         if args.platform == "all":
             if args.action == "login":
+                if args.keep_open:
+                    raise VpubError("invalid_option", "--keep-open is for one platform's sign-in window at a time.")
                 return login_selected(PLATFORMS, args.method)
             return status_selected(PLATFORMS, args.wait, args.method)
         if args.action == "login":
-            return adapters.auth_login(args.platform, args.account, args.client_json, args.method)
+            return adapters.auth_login(args.platform, args.account, args.client_json, args.method, keep_open=args.keep_open)
         method = args.method or adapters.default_method(args.platform)
         if method in {"native", "api"}:
             return adapters.auth_status(args.platform, args.account, method)

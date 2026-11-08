@@ -14,7 +14,7 @@ from .core import VpubError, douyin_caption, stop_check
 from .browser_runtime import failure_message, look_until, risk_check, unique_visible, visible
 from .progress import stage
 from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, X_CHOSEN_TIME, YT_DONE_WINDOW, YT_EDIT_DRAFT, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style, studio_zone_offsets_agree,
-                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, x_chosen_time_says, x_new_works, x_new_posts, x_schedule_baseline, x_schedule_moment, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
+                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, x_chosen_time_says, x_new_works, x_new_posts, x_schedule_baseline, x_schedule_moment, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED, where_words_part)
 
 X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
 YT_DIALOG = 'ytcp-uploads-dialog'
@@ -54,6 +54,17 @@ X_UPLOAD_BYTES_PER_SECOND = 2_000_000
 X_DONE_SECONDS = 60
 X_VIDEO_SECONDS = 30
 X_CHANGE_THUMBNAIL = re.compile(r'^\s*Change thumbnail\s*$')
+# What Library's tile says while its file is still going up. A field run saw "Loading 73%" thirty seconds into a 61 MB upload.
+X_LOADING = re.compile(r'Loading\s*(\d{1,3})(?:[.,]\d+)?\s*%', re.I)
+# A number that hasn't moved for this long is not taken for an upload under way, so it no longer holds a click back.
+X_LOADING_STALL_SECONDS = 120
+# How much longer the wait goes on each time, while a number moved during the last wait. A pause shorter than this in a real upload doesn't end it.
+X_LOADING_WAIT_SECONDS = 300
+# How long no moving number must have shown before the first click: one look that missed it isn't enough.
+X_LOADING_CLEAR_SECONDS = 3
+X_LIBRARY_LOOK_SECONDS = 60
+# What a wait leaves of its command's time, so it ends with its own answer rather than being cut off with the browser.
+X_COMMAND_MARGIN_SECONDS = 120
 
 
 async def enabled(locator):
@@ -299,15 +310,74 @@ def x_first_click_hold(size):
     return X_FIRST_CLICK_SECONDS + size / X_UPLOAD_BYTES_PER_SECOND
 
 
-async def x_open_media(page, name, form, filename, hold=0):
+async def x_files_going_up(page):
+    """The percentages below 100 that Library's tiles show for files still going up, lowest first: none, or None when the page couldn't be read.
+    A field run's new tile said "Loading 73%" thirty seconds into a 61 MB upload: the file got a page of its own only at 100%, and the browser closing before then lost the upload.
+    The text is what the match was made on, and a review found a label shown in capitals or with a decimal would otherwise be missed."""
+    from patchright.async_api import Error as BrowserError
+    try:
+        said = [await item.text_content(timeout=5000) or '' for item in await page.get_by_text(X_LOADING).all() if await item.is_visible()]
+    except BrowserError:
+        return None  # The page is still changing, and the next look says what it became.
+    return sorted(number for text in said if (found := X_LOADING.search(text)) and (number := int(found[1])) < 100)
+
+
+async def x_upload_was_lost(page, tx):
+    """What a look found when a resumed attempt's own file never reached Library, so choosing it again is the only way on; None when it is there or can't have been lost.
+    A field run's browser closed at "Loading 73%" on a 61 MB file. Its receipt said a file was chosen, but Media Studio had given the file no page of its own and Library held no file of its name, so every resume looked for that name and never found it.
+    Only an attempt that chose its own file and never got its form open can have lost it. A reused clip, or a file whose form has shown, is in Library, and choosing that again would make two tiles of one name, which get no click.
+    From a review: Library has been seen not to load its list while its Upload Media button worked, so one short look could take a slow list for a lost file. The look lasts X_LIBRARY_LOOK_SECONDS, and Library is loaded afresh once and looked at again before the file is called lost."""
+    if tx.receipt.get('reused_media') or tx.options.get('existing_media_url') or 'open_look' in tx.receipt:
+        return None
+    name = page.get_by_text(tx.receipt['upload_filename'], exact=True)
+
+    async def shows():
+        return bool(await x_names_showing(name))
+    for again in (False, True):
+        if again:
+            await page.reload(wait_until='domcontentloaded', timeout=60000)
+            upload = page.locator('button').filter(has_text=re.compile(r'^\s*Upload Media\s*$')).first
+
+            async def back():
+                return await upload.is_visible()
+            # From a review: a check shown by the reloaded page must stop everything as one shown before it does, and the page the file goes up from must be this account's.
+            try:
+                await wait_until(page, back, seconds=30, label="Library loaded again")
+            except VpubError as failure:
+                if failure.code != 'processing_timeout':
+                    raise
+                raise VpubError('layout_changed', "Library didn't come back after it was loaded again, so nothing was uploaded.", 'Run vpub resume again.') from None
+            hrefs = await page.locator('a[href*="analytics.twitter.com/user/"]').evaluate_all('es => es.map(e=>e.href)')
+            if not any('/user/' + tx.identity.casefold() + '/' in h.casefold() for h in hrefs):
+                raise VpubError('wrong_account', 'Media Studio account does not match the signed-in publishing account.')
+        try:
+            await wait_until(page, shows, seconds=X_LIBRARY_LOOK_SECONDS, label="this attempt's file in Library")
+            return None
+        except VpubError as failure:
+            if failure.code != 'processing_timeout':
+                raise
+    # A count only, for whoever reads the receipt: other files of CrossCast's showing would say Library's list did load.
+    from patchright.async_api import Error as BrowserError
+    try:
+        others = len([item for item in await page.get_by_text(re.compile(r'^crosscast-[0-9a-f]{16}\.\w+$')).all() if await item.is_visible()])
+    except BrowserError:
+        others = None
+    return {'looked_seconds': 2 * X_LIBRARY_LOOK_SECONDS, 'reloaded': True, 'other_crosscast_files_showing': others}
+
+
+async def x_open_media(page, name, form, filename, hold=0, may_upload_again=True):
     """Field runs clicked the uploaded file's name as soon as it showed, and the address didn't change in 30 seconds, while 15 seconds on the name showed twice. A click two minutes after an upload opened the form at once.
     So the file is open once its own form shows, and the address is not waited for. A click changes nothing, and comes again only while no form has come.
     Two field runs in a row clicked five seconds in and got the file's details instead: this file's link and its title box, still on /library, with no Change thumbnail anywhere for ten minutes, while a fresh page's click reached the form. So once those details show, the click comes again on the name out among the tiles. A click can't cut off an upload the way leaving the page could.
-    The next field run clicked 36 times on a 113 MB file's tile and got no further than those details. So a new upload's first click waits as well, which is the `hold`: it's a guess at when the upload ends, since nothing on the page has been seen to say."""
+    The next field run clicked 36 times on a 113 MB file's tile and got no further than those details. So a new upload's first click waits as well, which is the `hold`: a guess at when the upload ends.
+    A later field run saw the tile say it: "Loading 73%" thirty seconds into a 61 MB upload, with the file's page given only at 100%. So no click comes while a tile's number keeps moving, nor for X_LOADING_CLEAR_SECONDS after, and while it moves the wait goes on past its usual end, X_LOADING_STALL_SECONDS at a time.
+    From a review: a number that stays put, at 100 or anywhere, may not be this upload at all, so after X_LOADING_STALL_SECONDS it no longer holds the click back. Nor can the wait run on into the command's own cut-off, which would close the browser mid-upload with nothing recorded."""
     from patchright.async_api import Error as BrowserError
+    from . import browser_runtime
     clicked = None
     began = time.monotonic()
     seen = {'clicks': 0}
+    loading = {'last': None, 'moved_at': None, 'fresh_at': None, 'shown_at': None}
     change = page.locator('button').filter(has_text=X_CHANGE_THUMBNAIL)
     link = page.locator(x_file_link(filename) + ':visible')
 
@@ -323,7 +393,22 @@ async def x_open_media(page, name, form, filename, hold=0):
                     path=re.sub(r'\d+', '<n>', x_studio_path(page.url)))
         if seen['links_showing']:
             seen.setdefault('link_first_at', round(time.monotonic() - began))
-        due = time.monotonic() - began >= hold and (clicked is None or time.monotonic() - clicked >= X_OPEN_SECONDS)
+        going = await x_files_going_up(page)
+        now = time.monotonic()
+        if going:
+            if loading['last'] is None:
+                loading['moved_at'] = now  # A number just seen is taken to be moving until it shows otherwise.
+            elif going != loading['last']:
+                loading['moved_at'] = now
+                seen['loading_moves'] = seen.get('loading_moves', 0) + 1
+            loading['last'], loading['shown_at'] = going, now
+            if now - loading['moved_at'] < X_LOADING_STALL_SECONDS:
+                loading['fresh_at'] = now
+        if going is not None and loading['last'] is not None:
+            seen['loading'] = going
+        # A look that couldn't read the page says nothing, so it doesn't click either.
+        held = going is None or (loading['fresh_at'] is not None and now - loading['fresh_at'] < X_LOADING_CLEAR_SECONDS)
+        due = not held and now - began >= hold and (clicked is None or now - clicked >= X_OPEN_SECONDS)
         target = showing if len(showing) == 1 else await x_names_among_tiles(showing, link) if due else []
         if due and len(target) == 1:
             clicked = time.monotonic()
@@ -334,15 +419,35 @@ async def x_open_media(page, name, form, filename, hold=0):
             except BrowserError:
                 pass  # The next look says what happened.
         return False
-    try:
-        await wait_until(page, opened, seconds=hold + 600, label="the uploaded file's form in Media Studio")
-        return seen  # So a run that gets through can show whether a second click was what did it.
-    except VpubError as failure:
-        if failure.code != 'processing_timeout':
-            raise
-        # A field run ended here with nothing to say which of several things had happened. These are counts, with no words from the page.
-        # A fresh page then opened the same file with one click, which is what a resume does.
-        raise VpubError(failure.code, f"{failure.message} Last look: {seen}. vpub resume looks again on a fresh page without uploading again.", failure.hint) from None
+    after = ("vpub resume looks again on a fresh page, and uploads the file again only if Library shows no file of its name." if may_upload_again
+             else "This file's form has shown before, so vpub resume looks again on a fresh page but never uploads it again: look for it in Media Studio.")
+    seconds = hold + 600
+    while True:
+        end = browser_runtime.command_deadline
+        cut = end is not None and time.monotonic() + seconds > end - X_COMMAND_MARGIN_SECONDS
+        if cut:
+            seconds = max(1, end - X_COMMAND_MARGIN_SECONDS - time.monotonic())
+        moves = seen.get('loading_moves', 0)
+        try:
+            await wait_until(page, opened, seconds=seconds, label="the uploaded file's form in Media Studio")
+            return seen  # So a run that gets through can show whether a second click was what did it.
+        except VpubError as failure:
+            if failure.code != 'processing_timeout':
+                raise
+            # Only a number that moved during this wait, and showed at its end or just before, is an upload still under way. From a review: one that ended
+            # in the wait's last seconds had its click still held back, and stopping then closed the browser as the upload finished.
+            going_on = (seen.get('loading_moves', 0) != moves and loading['shown_at'] is not None
+                        and time.monotonic() - loading['shown_at'] < X_LOADING_CLEAR_SECONDS + X_OPEN_SECONDS)
+            if going_on and cut:
+                raise VpubError('upload_too_slow', f"Media Studio was still taking the file when this command's time ran out, so the browser closes and the upload is lost. Last look: {seen}. "
+                                "On this connection the file can't go up within one command, and vpub resume uploads it again from the start, so run it when the connection is faster.",
+                                "Run vpub resume when the connection is faster; it uploads the file again from the start.") from None
+            if not going_on:
+                # A field run ended here with nothing to say which of several things had happened. These are counts, with no words from the page.
+                # A fresh page then opened the same file with one click, which is what a resume does.
+                raise VpubError(failure.code, f"{failure.message} Last look: {seen}. {after}", failure.hint) from None
+        stop_check('x')
+        seconds = X_LOADING_WAIT_SECONDS  # The file was still going up and getting further, and leaving now would lose it.
 
 
 async def publish_x(page, tx):
@@ -373,23 +478,24 @@ async def publish_x(page, tx):
         if retained_media_url and x_media_address(page.url).get('media_url') != retained_media_url:
             raise VpubError('wrong_work', "Media Studio is no longer on this attempt's file, so no further changes were sent.", 'Look at the original file in Media Studio. Do not upload it again.')
 
-    hold = 0
+    hold, lost = 0, None
     if tx.receipt.get('media_url'):
         if not re.fullmatch(r'https://studio\.x\.com/library/\d+_\d+/edit', tx.receipt['media_url']):
             raise VpubError('invalid_media_url', 'Resume requires the original Media Studio asset URL.')
         await page.goto(tx.receipt['media_url'], wait_until='domcontentloaded', timeout=60000)
         # From a review: a page that went on to another file would have overwritten this attempt's address.
         still_same_media()
-    elif not tx.receipt['media_selected']:
+    elif not tx.receipt['media_selected'] or (lost := await x_upload_was_lost(page, tx)):
         media = tx.media()
         await upload_file(page, media, accept='video/')
-        tx.save(phase='uploading')
+        # Counted once the file has gone up again: a stop or a check before then sends nothing.
+        tx.save(phase='uploading', **({'lost_uploads': tx.receipt.get('lost_uploads', 0) + 1, 'lost_look': lost} if lost else {}))
         hold = x_first_click_hold(Path(media).stat().st_size)
     filename = tx.receipt['upload_filename']
     form = x_media_form(page, filename)
     change = form.locator('button:visible').filter(has_text=X_CHANGE_THUMBNAIL)
     if not tx.receipt.get('media_url'):
-        look = await x_open_media(page, page.get_by_text(filename, exact=True), form, filename, hold)
+        look = await x_open_media(page, page.get_by_text(filename, exact=True), form, filename, hold, may_upload_again='open_look' not in tx.receipt)
         tx.save(phase='opening_media', open_look=look, **x_media_address(page.url))
         retained_media_url = tx.receipt.get('media_url')
     await change.wait_for(state='visible', timeout=X_FORM_SECONDS * 1000)
@@ -845,8 +951,12 @@ async def finish_douyin_form(page, tx, before):
         tx.save(collection=await douyin_collection(page, tx.options['collection_title']))
     if tx.options.get('schedule'):
         tx.save(schedule=await douyin_schedule(page, datetime.fromisoformat(tx.options['schedule'].replace('Z', '+00:00'))))
-    if await title.input_value() != tx.options['title'] or douyin_card_words(await editor.inner_text()) != douyin_card_words(caption):
-        raise VpubError('metadata_mismatch', 'Douyin title or description differs from the manifest.')
+    if await title.input_value() != tx.options['title']:
+        raise VpubError('metadata_mismatch', "Douyin's title differs from the plan, so nothing was published.")
+    shown, wanted = douyin_card_words(await editor.inner_text()), douyin_card_words(caption)
+    if shown != wanted:
+        raise VpubError('metadata_mismatch', f"Douyin's description differs from the plan, so nothing was published: {where_words_part(wanted, shown)}.",
+                        'vpub resume opens the kept draft and writes the description again.')
     tx.save(phase='preview', metadata_readback=True, ai_disclosure='native_control', visibility=tx.options['visibility'])
     if tx.options.get('submission_mode') == 'draft_only':
         return await douyin_keep_draft(page, tx)
@@ -1292,10 +1402,14 @@ async def publish_youtube(page, tx):
         raise VpubError('metadata_mismatch', 'YouTube title or description differs from the manifest.')
     if tx.cover():
         if not await look_until(page, page.locator(f'{YT_DIALOG} input#file-loader').count, 5000):
+            # Said as vpub status says it: a new plan for the same video would only find this attempt.
             raise VpubError('cover_unavailable', 'YouTube offers no custom thumbnail on this channel yet. The upload is kept as a draft; nothing was published.',
-                            'Custom thumbnails need a verified channel. Verify it in YouTube Studio, or plan without a cover.')
+                            "YouTube Studio's settings say why, under the channel's feature eligibility. The person either turns it on there and then "
+                            f"runs vpub resume {tx.plan['confirmation']}, or runs vpub resume {tx.plan['confirmation']} --no-cover to finish without it.")
         await choose_file(page, page.locator(f'{YT_DIALOG} input#file-loader').first, tx.cover())
         await page.wait_for_timeout(2000)
+        # From a review: Google's check can come as the thumbnail goes in, and the presses after it would only meet its window.
+        await risk_check(page)
         tx.save(cover={'state': 'UI_ACCEPTED', 'source': 'production_artwork', 'remote_pixels_verified': False})
     await yt_radio(page, 'VIDEO_MADE_FOR_KIDS_MFK' if options['made_for_kids'] else 'VIDEO_MADE_FOR_KIDS_NOT_MFK', 'audience_unverified', 'audience')
     more = await visible(page.locator(f'{YT_DIALOG} #toggle-button'))

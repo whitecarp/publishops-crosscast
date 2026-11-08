@@ -214,6 +214,21 @@ class StatusTests(OverviewFixture):
         self.assertEqual("vpub auth login x", item["next_command"])
         self.assertIn("vpub resume " + key, item["note"])
 
+    def test_a_thumbnail_the_channel_does_not_offer_names_the_persons_choice(self):
+        """From a review: a plain resume would only stop at the same place again."""
+        key = self.row("PREPARATION_INCOMPLETE", method="browser", platform="youtube", receipt={"error": {"code": "cover_unavailable"}})
+        item = self.attention()[key]
+        self.assertIsNone(item["next_command"])
+        self.assertIn(f"vpub resume {key} --no-cover", item["note"])
+        self.assertIn("turns it on there", item["note"])
+
+    def test_a_youtube_check_gets_a_window_that_stays_open(self):
+        """From a field run: YouTube asked only as an upload began, after a plain sign-in window had already closed."""
+        key = self.row("WAITING_FOR_USER", platform="youtube")
+        item = self.attention()[key]
+        self.assertEqual("vpub auth login youtube --keep-open", item["next_command"])
+        self.assertIn("vpub resume " + key, item["note"])
+
     def test_a_youtube_press_that_left_a_draft_is_sent_to_resume(self):
         key = self.row("SUBMITTED_UNVERIFIED", method="browser", platform="youtube", receipt={"id": "abc", "still_a_draft": True})
         item = self.attention()[key]

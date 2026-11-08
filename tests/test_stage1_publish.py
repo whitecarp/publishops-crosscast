@@ -264,6 +264,63 @@ class XFormTests(Form):
         self.assertEqual(([], 1), (self.uploads, len(self.final)))
         self.assertEqual((True, "https://studio.x.com/library/13_77/edit"), (result["reused_media"], result["media_url"]))
 
+    def library(self, body):
+        """Library as a test needs it. The file's own page and everything else stay as this copy has them."""
+        plain = self.studio
+
+        async def studio(route, path):
+            if path.endswith("/edit") or path == "/schedule" or not self.studio_open:
+                return await plain(route, path)
+            await self.page_at(route, f'<a href="https://analytics.twitter.com/user/{self.studio_account}/home">account</a><button>Upload Media</button>{body}')
+        self.studio = studio
+
+    def resumed(self):
+        """An attempt whose browser closed after choosing its file and before the file had a page of its own, as a field run's did at Loading 73%."""
+        first = Transaction("x", OWNER, self.plan)
+        first.save(media_selected=True, upload_filename=self.clip_in_studio, phase="blocked", state="PREPARATION_INCOMPLETE")
+        return Transaction("x", OWNER, self.plan, resume=True, prior_receipt=first.receipt)
+
+    async def test_a_resume_whose_file_never_reached_the_library_uploads_it_once_more(self):
+        """From a field run: the browser closed at Loading 73% on a 61 MB file, Library then held no file of its name, and each resume looked for that name and never found it."""
+        with patch.object(browser_forms, "X_LIBRARY_LOOK_SECONDS", 1):
+            result = await browser_forms.publish_x(self.page, self.resumed())
+        self.assertEqual(("SUBMISSION_VERIFIED", 1), (result["state"], result["lost_uploads"]))
+        self.assertEqual(([1], 1), (self.uploads, len(self.final)))
+        self.assertIs(True, result["lost_look"]["reloaded"])
+
+    async def test_a_resume_whose_file_is_in_the_library_opens_it_with_no_new_upload(self):
+        """Choosing the file again would make two tiles of one name, which get no click."""
+        name = self.clip_in_studio
+        self.library(f"""<div onclick="location.href = '/library/1_2/edit?name={name}'">{name}</div><input type="file" accept="video/mp4" onchange="fetch('/upload', {{method: 'POST', body: '{{}}'}})">""")
+        result = await browser_forms.publish_x(self.page, self.resumed())
+        self.assertEqual("SUBMISSION_VERIFIED", result["state"])
+        self.assertEqual(([], 1), (self.uploads, len(self.final)))
+        self.assertNotIn("lost_uploads", result)
+
+    async def test_a_tile_still_loading_is_not_clicked_until_its_file_is_up(self):
+        """From a field run: the new tile said Loading 73% thirty seconds into a 61 MB upload, and the file had a page of its own only at 100%."""
+        going_up = ("fetch('/upload', {method: 'POST', body: '{}'}); const name = this.files[0].name;"
+                    " const going = document.createElement('p'); going.textContent = 'Loading 40%'; document.body.append(going);"
+                    " const tile = document.createElement('div'); tile.textContent = name; document.body.append(tile);"
+                    " tile.onclick = () => { if (going.isConnected) { fetch('/wrong', {method: 'POST', body: '{}'}); return; } location.href = '/library/1_2/edit?name=' + encodeURIComponent(name); };"
+                    " setTimeout(() => { going.textContent = 'Loading 80%'; }, 2000); setTimeout(() => going.remove(), 4000);")
+        self.library(f'<input type="file" accept="video/mp4" onchange="{going_up}">')
+        result = await self.publish()
+        self.assertEqual("SUBMISSION_VERIFIED", result["state"])
+        self.assertEqual(([1], [], 1), (self.uploads, self.wrong_presses, len(self.final)))
+        self.assertIn("loading", result["open_look"])
+
+    async def test_a_handle_right_after_a_slash_still_reads_as_its_words(self):
+        """From a field run: X put its own link around @ZipZipPipe written straight after a slash, the page read a line break on each side of it, and a post that had gone out stayed SUBMITTED_UNVERIFIED."""
+        self.plan["options"]["post_text"] = "OC:@上善无形/@ZipZipPipe CC BY-NC-SA 4.0"
+        self.own_words = 'OC:@上善无形/<div><a href="/ZipZipPipe">@ZipZipPipe</a></div> CC BY-NC-SA 4.0'
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
+
+    async def test_other_words_beside_a_handle_still_do_not_read_as_its_words(self):
+        self.plan["options"]["post_text"] = "OC:@上善无形/@ZipZipPipe CC BY-NC-SA 4.0"
+        self.own_words = 'OC:@上善无形/<div><a href="/ZipZipPipe">@ZipZipPipe</a></div> CC BY-SA 4.0'
+        self.assertEqual("SUBMITTED_UNVERIFIED", (await self.publish())["state"])
+
     async def test_a_page_that_goes_on_to_another_file_is_not_taken_for_this_one(self):
         """From a review: the file it landed on would have replaced this attempt's address."""
         self.plan["options"]["existing_media_url"] = "https://studio.x.com/library/13_77/edit"

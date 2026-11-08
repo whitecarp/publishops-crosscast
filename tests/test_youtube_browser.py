@@ -501,6 +501,7 @@ class FormTests(FormCase):
         with self.assertRaises(VpubError) as caught:
             self.run_form(page, plan)
         self.assertEqual("cover_unavailable", caught.exception.code)
+        self.assertIn(f"vpub resume {'a' * 64} --no-cover", caught.exception.hint)
         self.assertEqual([], page.clicks("#done-button"))
 
     def test_the_thumbnail_is_sent_when_the_channel_allows_it(self):
@@ -510,6 +511,22 @@ class FormTests(FormCase):
         _, result = self.run_form(page, {**self.plan(), "cover": str(cover), "cover_sha256": file_sha(cover)})
         self.assertIn(("files", "input#file-loader", str(cover)), page.log)
         self.assertFalse(result["cover"]["remote_pixels_verified"])
+
+    def test_a_check_as_the_thumbnail_goes_in_stops_before_the_next_press(self):
+        """From a review: Google's check can come as the thumbnail goes in, and the presses after it would only meet its window."""
+        cover = self.root / "cover.jpg"
+        cover.write_bytes(b"cover")
+        page = FakeStudio()
+
+        async def check(page):
+            if any(entry[0] == "files" and "file-loader" in entry[1] for entry in page.log):
+                raise VpubError("human_verification_required", "The platform requires human verification.")
+        with patch.object(browser_forms, "risk_check", check), self.assertRaises(VpubError) as caught:
+            self.run_form(page, {**self.plan(), "cover": str(cover), "cover_sha256": file_sha(cover)})
+        self.assertEqual("human_verification_required", caught.exception.code)
+        self.assertEqual([], page.clicks("radio"))
+        self.assertEqual([], page.clicks("#done-button"))
+        self.assertNotEqual("UI_ACCEPTED", (read_json(page.receipt_path).get("cover") or {}).get("state"))
 
     def test_draft_only_uploads_and_never_clicks_final_save(self):
         page = FakeStudio(uploading_polls=1)
@@ -1094,6 +1111,18 @@ class HiddenDesktopTests(Temporary):
             adapters.browser_call("douyin", "publish", "default")
         hidden.assert_not_called()
         plain.assert_called_once()
+
+    def test_a_window_a_person_uses_fills_their_screen(self):
+        """From a field run: a fixed 1000-pixel height, on Windows with display scaling, hid the bottom of Studio and its 设置 under the taskbar."""
+        launch = AsyncMock(return_value=MagicMock(add_cookies=AsyncMock()))
+        pw = MagicMock()
+        pw.chromium.launch_persistent_context = launch
+        asyncio.run(browser_runtime.open_context(pw, "youtube", "default", interactive=True))
+        options = launch.call_args.kwargs
+        self.assertEqual((False, ["--start-maximized"], True), (options["headless"], options["args"], options["no_viewport"]))
+        self.assertNotIn("viewport", options)
+        asyncio.run(browser_runtime.open_context(pw, "youtube", "default"))
+        self.assertEqual({"width": 1440, "height": 1000}, launch.call_args.kwargs["viewport"])
 
     def test_a_command_that_asks_for_a_window_gets_one_off_screen(self):
         launch = AsyncMock(return_value=MagicMock(add_cookies=AsyncMock()))

@@ -288,6 +288,18 @@ def how_to_clear_a_stop():
     """A field run cleared a stop from an ordinary window and it stayed: an app installed from the Store can have its own private AppData, so the same command looked in another folder, found no stop and said so."""
     return f"vpub stop --clear, with VPUB_HOME set to {home()} if you run it in another window"
 
+def how_to_pass_a_check(platform):
+    """What a person does about a platform's check. From a field run: YouTube asked only as an upload began, so the sign-in window, which closes as
+    soon as it sees the account, never showed it, and the person passed it by starting an upload in the CrossCast window."""
+    if platform == "youtube":
+        # Said to whoever reads it, usually an assistant: the check, any upload to let it show and deleting that upload are the person's, and the
+        # stop is cleared only once the person says the check is done.
+        return ("Run vpub auth login youtube --keep-open, which leaves the CrossCast window open for the person for up to 25 minutes. The person passes "
+                "YouTube's check there. YouTube can ask only once something starts, so if nothing shows, the person can start an upload of any short "
+                "clip in that window, pass the check, delete that clip in Studio and close the window. Once the person says the check is done, run "
+                f"{how_to_clear_a_stop()}; inspect any existing draft before retrying.")
+    return f"Run auth login for this platform and complete the official verification, then {how_to_clear_a_stop()}; inspect any existing draft before retrying."
+
 
 def stop_check(platform=None, signing_in=False):
     candidates = [home() / "STOP.json"]
@@ -310,8 +322,11 @@ def stop_check(platform=None, signing_in=False):
             if index == 0 and signing_in and isinstance(signal, dict) and signal.get("source") == "safety" and signal.get("platform") == platform:
                 continue
             if index == 0 and isinstance(signal, dict) and signal.get("source") == "safety":
+                # From a review: YouTube's check showed only as an upload began, and its plain sign-in window closed before then.
+                passing = how_to_pass_a_check("youtube") if signal.get("platform") == "youtube" and signal.get("code") == "human_verification_required" else \
+                    f"{signal.get('platform')}'s own sign-in window still opens with vpub auth login. vpub status says more. Only a person clears the stop: {how_to_clear_a_stop()}."
                 raise VpubError("stopped", f"CrossCast is stopped because {signal.get('platform')} objected ({signal.get('code')}), and a platform's objection stops every platform. Stop file: {path}",
-                                f"{signal.get('platform')}'s own sign-in window still opens with vpub auth login. vpub status says more. Only a person clears the stop: {how_to_clear_a_stop()}.")
+                                passing)
             raise VpubError("stopped", f"Publication stop file exists: {path}",
                             "Inspect the stop reason. Only the operator may clear it" + (f": {how_to_clear_a_stop()}." if index == 0 else "."))
 

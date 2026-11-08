@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 from . import x_pages
 from .core import VpubError, X_AI_LINE, X_POST_LIMIT, atomic_json, file_sha, now, read_json, stop_check, x_post_text, x_weighted_length
 from .browser_runtime import failure_message, failure_record, look_until, risk_check, unique_visible, visible
-from .browser_backends import choose_file, douyin_card_words, douyin_editor_address, douyin_editor_boxes, douyin_type_caption, normalize, work_url
+from .browser_backends import choose_file, douyin_card_words, douyin_editor_address, douyin_editor_boxes, douyin_type_caption, normalize, where_words_part, work_url, x_words
 from .progress import stage
 from .edits import x_edit_readback_note, x_edit_was_attempted
 
@@ -149,7 +149,7 @@ async def execute(page, platform, identity, payload):
                 and str(prior.get('id'))==str(work_id) and isinstance(prior.get('expected_text'),str)):
             wanted=prior['expected_text']
         x_evidence={'url':url,'expected_text':wanted,'verification_source':'exact_owned_post_version'}
-        if normalize(fields['text'])==normalize(wanted):
+        if x_words(fields['text'])==x_words(wanted):
             return save(state='EDIT_VERIFIED',unchanged=True,url=url,platform_writes=0)
         if payload.get('verify_only'):
             return save(state='EDIT_SUBMITTED_UNVERIFIED',url=url,platform_writes=0)
@@ -173,7 +173,7 @@ async def execute(page, platform, identity, payload):
         async def still_same_post():
             _,current,reason=await x_edit_post(page,identity,work_id,editor_url=editor_url)
             await risk_check(page)
-            if reason or normalize(current['text'])!=normalize(fields['text']):
+            if reason or x_words(current['text'])!=x_words(fields['text']):
                 raise VpubError('wrong_work','The original owned post changed while editing; nothing was saved.')
         await submit(update,still_same_post)
         await editor.wait_for(state='hidden',timeout=30000)
@@ -184,7 +184,7 @@ async def execute(page, platform, identity, payload):
             await risk_check(page)
             _,current,reason=await x_edit_post(page,identity,work_id)
             await risk_check(page)
-            ok=not reason and normalize(current['text'])==normalize(wanted)
+            ok=not reason and x_words(current['text'])==x_words(wanted)
             if ok: break
         return save(state='EDIT_VERIFIED' if ok else 'EDIT_SUBMITTED_UNVERIFIED',url=url,platform_writes=1,
                     **({'reason':reason or 'post_text_mismatch'} if not ok else {}))
@@ -384,8 +384,11 @@ async def douyin_text(page,work_id,patch,save,submit,output,verify_only=False):
     if await douyin_says_held(page): raise douyin_held()
     await title.fill(patch['title'])
     await douyin_type_caption(page,editor,patch['caption'])
-    if await current(title,editor)!=wanted:
-        raise VpubError('metadata_mismatch','Douyin\'s form did not keep the intended text; nothing was saved.')
+    shown=await current(title,editor)
+    if shown[0]!=wanted[0]:
+        raise VpubError('metadata_mismatch','Douyin\'s form did not keep the intended title; nothing was saved.')
+    if shown[1]!=wanted[1]:
+        raise VpubError('metadata_mismatch',f'Douyin\'s form did not keep the intended description, so nothing was saved: {where_words_part(wanted[1],shown[1])}.')
     button=await visible(page.get_by_role('button',name=re.compile(r'^(保存|保存修改|提交修改|发布)$')))
     if button is None: raise VpubError('layout_changed','Existing-work save button is unavailable; nothing was saved.')
     await douyin_can_press(page,button)

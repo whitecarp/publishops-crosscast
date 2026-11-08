@@ -452,6 +452,27 @@ class PushbackTests(Temporary):
             self.assertIn("vpub stop --clear", words)
             self.assertIn(f"VPUB_HOME set to {home()}", words)
 
+    def test_a_youtube_check_says_how_to_pass_it_wherever_the_stop_is_read(self):
+        """From a field run: YouTube asked only as an upload began, and its plain sign-in window had closed before then."""
+        from video_publisher.overview import stop_state
+        safety.pushed_back("youtube", "human_verification_required")
+        with self.assertRaises(VpubError) as caught:
+            stop_check("douyin")
+        for words in (caught.exception.hint, read_json(home() / "STOP.json")["hint"], stop_state()["hint"]):
+            self.assertIn("vpub auth login youtube --keep-open", words)
+            self.assertIn("Once the person says the check is done", words)
+            self.assertIn(f"VPUB_HOME set to {home()}", words)
+        safety.clear_stop()
+        for platform, code in (("youtube", "rate_limited"), ("x", "human_verification_required")):
+            with self.subTest(platform=platform, code=code):
+                safety.pushed_back(platform, code)
+                with self.assertRaises(VpubError) as caught:
+                    stop_check("douyin")
+                for words in (caught.exception.hint, read_json(home() / "STOP.json")["hint"], stop_state()["hint"]):
+                    self.assertNotIn("--keep-open", words)
+                    self.assertIn("vpub stop --clear", words)
+                safety.clear_stop()
+
     def test_bilibili_risk_control_stops_it_too(self):
         output = json.dumps({"ok": False, "error": {"code": "risk_control", "message": "Blocked."}})
         with patch.object(adapters.subprocess, "run", return_value=MagicMock(stdout=output)):

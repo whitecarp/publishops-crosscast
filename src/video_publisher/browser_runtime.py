@@ -11,16 +11,20 @@ import threading
 import time
 from urllib.parse import unquote, urlsplit
 
-from .core import VpubError, account_name, atomic_json, config, home, how_to_clear_a_stop, now, read_json
+from .core import VpubError, account_name, atomic_json, config, home, how_to_clear_a_stop, how_to_pass_a_check, now, read_json
 from .progress import stage, watch
 
 BROWSER_PLATFORMS = {"douyin", "instagram", "x", "youtube"}
+# When the running browser command will be cut off (time.monotonic()), set by the worker, so a long wait can end with its own answer first.
+command_deadline = None
 URLS = {"douyin": "https://creator.douyin.com/creator-micro/home",
         "instagram": "https://www.instagram.com/accounts/edit/", "x": "https://x.com/home",
         "youtube": "https://studio.youtube.com/"}
 INSTAGRAM_AVATAR = 'img[alt*="profile picture"], img[alt*="的头像"], img[alt*="的大頭貼"]'
-HUMAN_LABELS = re.compile(r"安全验证|請完成驗證|请完成验证|滑块验证|滑塊驗證|验证是你本人|驗證是你本人|确认是你本人|確認是你本人|验证你的身份|驗證你的身分|确认你的身份|確認你的身分"
-                          r"|Confirm it's you|Verify it's you|Verify your identity|Authenticate your account|Confirm your identity|Unusual activity"
+# The words a platform asks a person to show it's them with.
+IDENTITY_WORDS = re.compile(r"請完成驗證|请完成验证|验证是你本人|驗證是你本人|确认是你本人|確認是你本人|验证你的身份|驗證你的身分|确认你的身份|確認你的身分"
+                            r"|Confirm it's you|Verify it's you|Verify your identity|Authenticate your account|Confirm your identity", re.I)
+HUMAN_LABELS = re.compile(r"安全验证|滑块验证|滑塊驗證|" + IDENTITY_WORDS.pattern + r"|Unusual activity"
                           # A platform saying too much, too fast.
                           r"|(?:操作|评论|評論|回复|回覆|私信|发送|發送)(?:过于|過於|太)?[频頻]繁|Action Blocked|We limit how often|We restrict certain activity|Rate limit exceeded|over the daily limit|temporarily (?:blocked|restricted|limited)"
                           # A locked account's recovery page. A person answers it; CrossCast never presses anything on it.
@@ -128,6 +132,12 @@ def challenge_address(address):
     return any(on_site(parts.hostname or "", site) and re.match(path, parts.path) for site, path in CHALLENGE_ADDRESSES.items())
 
 
+# A field run's YouTube upload stopped on Studio's window headed 验证是你本人, which said a feature needs a verified phone number, over 取消 and
+# 验证. It was first taken for a notice about custom thumbnails, and then for a feature asking for a phone number, and passed over. The channel
+# turned out to have every feature already turned on: it was Google checking the session as an upload began, and it went away once a person
+# had used that window. So on Studio, as everywhere, a check's words stop everything; the exceptions made for them are gone.
+
+
 async def platform_words(page):
     """The first thing on the page that asks for a check in the platform's own voice."""
     for item in await page.get_by_text(HUMAN_LABELS).all():
@@ -152,7 +162,11 @@ async def what_asked(page):
         phrase = HUMAN_LABELS.search(await item.inner_text())
         place = await item.evaluate("""e => { const found = e.closest('[role="alert"],[role="alertdialog"],[role="dialog"],aside,nav,header,footer,main,[data-testid]');
           if (!found) return 'page'; const name = found.getAttribute('data-testid') || found.getAttribute('role') || found.tagName.toLowerCase(); return /^[A-Za-z_]{1,40}$/.test(name) ? name : 'other'; }""")
-        return {"sign": "words", "phrase": phrase[0] if phrase else None, "place": place}
+        seen = {"sign": "words", "phrase": phrase[0] if phrase else None, "place": place}
+        # A site built from elements of its own, as Studio is, also says which one held the words: only a name from the site's own code.
+        within = await item.evaluate("""e => { for (let n = e; n; n = n.parentElement || n.getRootNode().host) if (n.tagName.includes('-')) {
+          const name = n.tagName.toLowerCase(); return /^[a-z][a-z0-9-]{1,60}$/.test(name) ? name : 'other'; } return null; }""")
+        return {**seen, "within": within} if within else seen
     except Exception:
         return None
 
@@ -161,8 +175,9 @@ async def risk_check(page):
     if await challenge_shown(page):
         from .safety import pushed_back
         # Recorded where it is seen: a batch or a multi-step read catches the error below so it can report its other steps.
-        pushed_back(platform_at(page.url), "human_verification_required", await what_asked(page))
-        raise VpubError("human_verification_required", "The platform requires human verification.", f"Run auth login for this platform and complete the official verification, then {how_to_clear_a_stop()}; inspect any existing draft before retrying.")
+        platform = platform_at(page.url)
+        pushed_back(platform, "human_verification_required", await what_asked(page))
+        raise VpubError("human_verification_required", "The platform requires human verification.", how_to_pass_a_check(platform))
 
 
 async def identity(page, platform):
@@ -214,12 +229,14 @@ async def open_context(pw, platform, account, interactive=False, window=False):
     # Studio does not run under a headless browser, so YouTube's background browser is a real Chrome window:
     # off-screen, and on Windows also on its own hidden desktop (see hidden_desktop.py), so there is no taskbar icon either. A command that asks for a window gets the same.
     off_screen = (platform == "youtube" or window) and not interactive
+    # A window a person uses fills their screen. From a field run: a fixed 1000-pixel height, on Windows with display scaling, put the bottom of
+    # Studio under the taskbar, and its menu doesn't scroll, so its 设置 couldn't be reached.
+    size = {"no_viewport": True} if interactive else {"viewport": {"width": 1440, "height": 1000}}
     try:
         context = await pw.chromium.launch_persistent_context(
             str(path), channel="chrome", headless=not interactive and not off_screen,
-            args=["--window-position=-32000,-32000"] if off_screen else [],
-            viewport={"width": 1440, "height": 1000}, locale="en-US",
-            accept_downloads=False)
+            args=["--window-position=-32000,-32000"] if off_screen else ["--start-maximized"] if interactive else [],
+            locale="en-US", accept_downloads=False, **size)
         session = path.parent / (platform + "-browser-session.json")
         if session.exists():
             # Only our own dedicated session, never cookies from the host browser.
@@ -286,6 +303,8 @@ async def login(pw, payload):
                 await keep_session(context, platform, account)
                 remember_identity(platform, account, actual)
                 result = {"logged_in": True, "platform": platform, "account": account, "identity": actual, "method": "browser"}
+                if payload.get("keep_open"):
+                    result["window"] = await stay_open(context, job, waiting, actual, platform, account)
                 if (home() / "STOP.json").exists():
                     result["next"] = f"CrossCast is still stopped because of a platform's warning. Once its check is done, run {how_to_clear_a_stop()}."
                 return result
@@ -293,6 +312,35 @@ async def login(pw, payload):
         raise VpubError("login_timeout", "Login was not completed within 15 minutes; saved profile is retained.")
     finally:
         await close_context(context)
+
+
+KEEP_OPEN_SECONDS = 1500
+KEEP_OPEN_SAVE_SECONDS = 5
+
+
+async def stay_open(context, job, waiting, actual, platform, account):
+    """After a sign-in, the CrossCast window stays open until the person closes it, for up to KEEP_OPEN_SECONDS, so they can pass a check a platform
+    shows only once something starts there, as YouTube did when an upload began. CrossCast presses and reads nothing in it meanwhile. Returns how
+    the window ended. From a review: once the last window closes, Chrome has quit on Windows and Linux and the session can't be saved any more, so
+    it is saved every few seconds while the window is open, and the next command doesn't put back cookies from before the check."""
+    ends = time.monotonic() + KEEP_OPEN_SECONDS
+    if command_deadline is not None:
+        ends = min(ends, command_deadline - 60)
+    left = max(0, int(ends - time.monotonic()))
+    atomic_json(job, {"state": "LOGIN_PENDING", **waiting, "expires_epoch": time.time() + left, "window_opened": True, "identity": actual,
+                      "waiting_for": f"You to close the CrossCast Chrome window once you're done in it, within {left // 60} minutes, when it closes by itself.",
+                      "hint": "Signed in, and the CrossCast Chrome window stays open for the person. They do what the platform asks there, then close the "
+                              "window; CrossCast presses nothing in it."})
+    saved = time.monotonic()
+    while time.monotonic() < ends:
+        if not [page for page in context.pages if not page.is_closed()]:
+            return "closed"
+        if time.monotonic() - saved >= KEEP_OPEN_SAVE_SECONDS:
+            await keep_session(context, platform, account)
+            saved = time.monotonic()
+        await asyncio.sleep(2)
+    await keep_session(context, platform, account)
+    return "timed_out"
 
 
 async def any_challenge(pages):

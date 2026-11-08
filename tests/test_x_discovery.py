@@ -44,15 +44,18 @@ class Page:
         self.rows = rows
         self.url = 'https://studio.x.com/library/13_77/edit'
         self.waited_ids = []
+        self.paused = []  # Each pause asked for, in milliseconds, and how many reads of the posts had happened by then.
+        self.reads = 0
 
     async def goto(self, url, **kwargs):
         self.url = url
 
     async def wait_for_timeout(self, milliseconds):
-        pass
+        self.paused.append((milliseconds, self.reads))
 
     def locator(self, selector):
         if selector == 'main article':
+            self.reads += 1
             return Mock(all=AsyncMock(return_value=[Mock(evaluate=AsyncMock(return_value=item)) for item in self.rows]))
         if selector == 'a[href]':
             return Mock(evaluate_all=AsyncMock(return_value=[{'url': 'https://x.com' + item['href'], 'text': item['text'] or ''} for item in self.rows]))
@@ -141,6 +144,43 @@ class XDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('SUBMISSION_VERIFIED', result['state'])
         self.assertEqual(self.page.rows[0]['href'].split('/')[-1], result['id'])
         self.button.click.assert_awaited_once()
+
+    async def test_a_verify_waits_for_a_video_player_x_puts_in_late(self):
+        """From a field run: the first vpub verify on a cold browser read the post before X had put its video player in, so it read as having no video and stayed unconfirmed until a second run."""
+        late = row(video=False)
+        self.page.rows = [late]
+        reads = {'n': 0}
+        plain = self.page.locator
+
+        def locator(selector):
+            if selector == 'main article':
+                reads['n'] += 1
+                late['video'] = reads['n'] > 2
+            return plain(selector)
+        self.page.locator = locator
+        await self.submit()
+        result = await self.resume()
+        self.assertEqual('SUBMISSION_VERIFIED', result['state'])
+        self.assertEqual(late['href'].split('/')[-1], result['id'])
+        self.assertGreater(reads['n'], 2)
+
+    async def test_a_post_whose_player_never_comes_is_still_not_the_upload(self):
+        self.page.rows = [row(video=False)]
+        await self.submit()
+        result = await self.resume()
+        self.assertEqual('SUBMITTED_UNVERIFIED', result['state'])
+        self.assertNotIn('id', result)
+        # From a review: each new look comes half a second after the last, for X_PLAYER_SECONDS in all, so a cold browser has that long.
+        waits = [reads for milliseconds, reads in self.page.paused if milliseconds == 500]
+        self.assertEqual(backends.X_PLAYER_SECONDS * 2, len(waits))
+        self.assertEqual(list(range(waits[0], waits[0] + len(waits))), waits)
+
+    async def test_publishing_itself_does_not_wait_for_a_player(self):
+        """finish() reads again on its own, five seconds apart, so only a one-shot read waits."""
+        self.page.rows = [row(video=False)]
+        await self.submit()
+        await forms.finish(self.page, self.tx, self.tx.receipt['before_ids'])
+        self.assertNotIn(500, [milliseconds for milliseconds, _ in self.page.paused])
 
     async def test_same_text_different_video_is_not_the_upload(self):
         self.page.rows = [row(media='88')]
