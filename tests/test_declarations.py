@@ -55,6 +55,9 @@ class FakeControl:
     async def inner_text(self):
         return self.values["caption"]
 
+    async def evaluate(self, script, *args):
+        return False  # The description box holds no cursor.
+
 
 class DeclarationTests(unittest.TestCase):
     def setUp(self):

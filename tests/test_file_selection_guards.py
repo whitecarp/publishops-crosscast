@@ -44,6 +44,9 @@ class Locator:
     async def evaluate_all(self, script):
         return ['https://analytics.twitter.com/user/synthetic_owner/home']
 
+    async def evaluate(self, script, *args):
+        return False  # Douyin's description box holds no cursor, so nothing is pressed to close its suggestions.
+
     async def click(self, **kwargs):
         if self.page.kind != 'chooser':
             self.page.maybe_stop()

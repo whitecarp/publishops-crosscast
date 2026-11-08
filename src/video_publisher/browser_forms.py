@@ -14,7 +14,7 @@ from .core import VpubError, douyin_caption, stop_check
 from .browser_runtime import failure_message, look_until, risk_check, unique_visible, visible
 from .progress import stage
 from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, X_CHOSEN_TIME, YT_DONE_WINDOW, YT_EDIT_DRAFT, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style, studio_zone_offsets_agree,
-                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, x_chosen_time_says, x_new_works, x_new_posts, x_schedule_baseline, x_schedule_moment, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED, where_words_part)
+                               upload_file, wait_until, work_url, works, verify, verify_scheduled_x, x_chosen_time_says, x_new_works, x_new_posts, x_schedule_baseline, x_schedule_moment, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_card_words, douyin_cards_at, douyin_cards_titled, douyin_leave_caption, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED, where_words_part)
 
 X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
 YT_DIALOG = 'ytcp-uploads-dialog'
@@ -883,17 +883,63 @@ async def douyin_keep_draft(page, tx):
     return tx.save(state='PREVIEW_READY', phase='draft_saved', draft_offer_seen=seen, note='Pressed Douyin\'s 暂存离开 once; nothing was published. This is not read back as this draft. ' + note)
 
 
+DOUYIN_COVERS = (('landscape', '横封面4:3'), ('portrait', '竖封面3:4'))
+DOUYIN_SLOT_MS = 10000  # As long as the press a field run's covered 横封面4:3 slot ran out on.
+
+
+async def douyin_slot_refuses(page, editor, slot):
+    """Why a cover slot can't take a press, or None once it can. A trial press clicks nothing. When something lies over the slot, the
+    description's own list is closed once more, from the end of its words, in case one opened late, and the slot is tried again."""
+    from patchright.async_api import Error as BrowserError
+    for again in (False, True):
+        try:
+            await slot.click(trial=True, timeout=DOUYIN_SLOT_MS)
+            return None
+        except BrowserError as exc:
+            refused = failure_message(exc)
+        if again or 'intercepts pointer events' not in refused:
+            return refused
+        await douyin_leave_caption(page, editor, from_the_end=True)
+
+
+def douyin_slot_skipped(size, refused=None):
+    """The record of a 4:3 cover left out, with its video's own size: for a video taller than it is wide, whose 横封面4:3 slot isn't pressed
+    at all, or for a slot that couldn't take a press."""
+    if not refused:
+        return {'state': 'SKIPPED', 'video_size': list(size),
+                'note': f"The video is {size[0]}x{size[1]}, taller than it is wide, so Douyin's 横封面4:3 slot wasn't pressed and the planned 4:3 cover wasn't set."}
+    shape = f"The video is {size[0]}x{size[1]}. " if size else ""
+    return {'state': 'SKIPPED', 'video_size': list(size) if size else None, 'refused': refused,
+            'note': f"{shape}Douyin's 横封面4:3 slot couldn't take a press, even with the description's suggestions closed, so the planned 4:3 cover "
+                    "wasn't set and nothing was pressed there."}
+
+
 async def finish_douyin_form(page, tx, before):
     """Complete this already-uploaded form; never select the video again."""
     caption = douyin_caption(tx.options['description'], tx.options['tags'])
     title = page.locator('input[placeholder*="填写作品标题"]')
     editor = await unique_visible(page.locator('[contenteditable=true]'), 'Douyin description')
-    for role, label in [('landscape', '横封面4:3'), ('portrait', '竖封面3:4')]:
-        path = tx.cover(role)
-        if not path or tx.receipt.get(role+'_cover'):
-            continue
+    await douyin_leave_caption(page, editor)
+    # A cover an earlier pass set isn't set again; one it left out is looked at again.
+    planned =[(role, label, tx.cover(role)) for role, label in DOUYIN_COVERS if (tx.receipt.get(role + '_cover') or {}).get('state') != 'UI_ACCEPTED']
+    for role, label, path in [cover for cover in planned if cover[2]]:
         control = page.locator('[class^="coverControl-"]').filter(has=page.get_by_text(label, exact=True))
-        await control.locator('[class^="cover-"]:not([class^="cover-tip"])').click()
+        slot = control.locator('[class^="cover-"]:not([class^="cover-tip"])')
+        # From a field run: a 1080x1920 video's 横封面4:3 slot had something over it, and its press ran out and stopped the post. So a video taller
+        # than it is wide gets only its 竖封面3:4 cover, as the owner chose, though an earlier 1080x1920 video's slot had taken its 4:3 cover;
+        # and on any video, a 横封面4:3 slot that can't take a press is left out while the 竖封面3:4 one still goes on.
+        size = tx.video_size() if role == 'landscape' else None
+        if size and size[1] > size[0]:
+            tx.save(landscape_cover=douyin_slot_skipped(size))
+            continue
+        refused = await douyin_slot_refuses(page, editor, slot)
+        if refused and role == 'landscape':
+            tx.save(landscape_cover=douyin_slot_skipped(size, refused))
+            continue
+        if refused:
+            raise VpubError('cover_blocked', f"Douyin's 竖封面3:4 slot couldn't take a press, so nothing was published. {refused}",
+                            'vpub resume tries again, and vpub resume KEY --no-cover goes without one.')
+        await slot.click()
         await page.locator('[role=dialog]').first.wait_for(state='visible', timeout=20000)
         dialog = await unique_visible(page.locator('[role=dialog]'), 'Douyin cover editor')
         await dialog.get_by_text('上传封面', exact=True).wait_for(timeout=20000)

@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 from .core import VpubError, atomic_json, file_sha, home, now, presses_on_record, read_json, receipt_turn, snapshot_file, stop_check, wrong_file
 from .browser_runtime import failure_message, failure_record, look_until, plain_address, platform_at, risk_check, unique_visible, visible
 from .progress import stage
+from .video_shape import frame_size
 from .x_pages import own_posts, post_fields, post_row, post_time
 
 MANAGE = "https://creator.douyin.com/creator-micro/content/manage"
@@ -216,6 +217,10 @@ class Transaction:
             asset = self.plan.get('covers', {}).get('instagram', {}).get('portrait')
         return asset["path"] if asset else shared
 
+    def video_size(self):
+        """The video's width and height as its own file says, or None when that can't be read."""
+        return frame_size(self.plan.get("video"))
+
     async def submit(self, page, button, still_holds=None, again=False, uncover=None):
         """`again` is only for a press the page has shown did not publish anything. `uncover`, given what refused a trial press,
         may close what covers the button, once, and says what it was."""
@@ -352,10 +357,16 @@ def where_words_part(wanted, shown):
 # Douyin opens suggestions for an #topic or @name the cursor is at the end of, and Enter there picks one instead of starting a line.
 # A field run's caption had lines ending in @names, and the words on its form came out different from the plan's.
 # The next run closed the lists with Escape, and the form came back short of exactly the caption's three @, the one in the middle of a line
-# too: Douyin keeps a typed @ waiting for someone to be picked, past spaces, and takes it away when that is closed. So a plain @ can't be
-# typed there. The read-back then stops it before anything is published, and says which characters are missing.
+# too: Douyin keeps a typed @ waiting for someone to be picked, past spaces, and takes it away when that is closed.
+# A later run's lines ended in "@ZipZipPipe " with a space, and every @ stayed through that same Escape and went out as written: a name
+# whose words before the cursor end in a space is no longer waiting. So a line whose last #topic or @name is an @name ends in a space.
 DOUYIN_SUGGESTS = re.compile(r'[#@＃＠]')
+DOUYIN_NAME_LAST = re.compile(r'[@＠][^#@＃＠]*$')
 DOUYIN_SUGGESTIONS_MS = 500  # For a list that opens a moment after the words go in, as one that looks names up can.
+# The cursor to the end of the box's words, unless it is in the box already and that was asked for.
+DOUYIN_CURSOR_AT_END = """(e, unless_inside) => { if (unless_inside && e.contains(document.activeElement)) return;
+  e.focus(); const end = document.createRange(); end.selectNodeContents(e); end.collapse(false);
+  const chosen = getSelection(); chosen.removeAllRanges(); chosen.addRange(end); }"""
 
 
 async def douyin_close_suggestions(page, editor):
@@ -363,16 +374,26 @@ async def douyin_close_suggestions(page, editor):
     the words. The read-back after typing catches anything else."""
     await page.wait_for_timeout(DOUYIN_SUGGESTIONS_MS)
     await page.keyboard.press('Escape')
-    await editor.evaluate("""e => { if (e.contains(document.activeElement)) return;
-      e.focus(); const end = document.createRange(); end.selectNodeContents(e); end.collapse(false);
-      const chosen = getSelection(); chosen.removeAllRanges(); chosen.addRange(end); }""")
+    await editor.evaluate(DOUYIN_CURSOR_AT_END, True)
+
+
+async def douyin_leave_caption(page, editor, from_the_end=False):
+    """Before anything below the box is pressed: a list its words opened is closed once more, for one that opened late, and the cursor
+    leaves the box, so none opens again over the cover buttons. A field run's 9:16 video had its 横封面4:3 press taken by something over it,
+    and another's #tag suggestions had done that before. Escape goes only to the box, from the end of its words when it held no cursor."""
+    if from_the_end:
+        await editor.evaluate(DOUYIN_CURSOR_AT_END, False)
+    elif not await editor.evaluate('e => e.contains(document.activeElement)'):
+        return
+    await douyin_close_suggestions(page, editor)
+    await editor.evaluate('e => { if (e.contains(document.activeElement)) document.activeElement.blur(); }')
 
 
 async def douyin_type_caption(page, editor, caption):
     """A caption set in one go came out with a star at each new paragraph, on the card and, for a real video, on its public page, and the person never wrote those. So it is typed as a person would, a line at a time.
     A line with an #topic or @name in it has any suggestions closed before the next key, the last line too: a field run's suggestions for a last #tag stayed over the cover buttons below and took their click.
-    Closing them never picks anyone, and Escape kept the #; it takes an @ away, which the read-back then catches.
-    Every caller reads the words back afterwards."""
+    Closing them never picks anyone, and Escape kept the #. It takes away an @ still waiting for a pick, so a line whose last one is an @name gets
+    a space at its end first, which shows as nothing and which the read-back doesn't count. Every caller reads the words back afterwards."""
     await editor.click()
     await editor.press('ControlOrMeta+A')
     await editor.press('Backspace')
@@ -380,7 +401,7 @@ async def douyin_type_caption(page, editor, caption):
         if number:
             await page.keyboard.press('Enter')
         if line:
-            await page.keyboard.insert_text(line)
+            await page.keyboard.insert_text(line + ' ' if DOUYIN_NAME_LAST.search(line) and not line[-1].isspace() else line)
             if DOUYIN_SUGGESTS.search(line):
                 await douyin_close_suggestions(page, editor)
 
