@@ -9,7 +9,7 @@ import tempfile
 import time
 import types
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, call, patch
 from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -27,6 +27,10 @@ DASHBOARD = MENU + f"<div>小白白</div><div>抖音号：{OWNER}</div>"
 # The home page on a slow connection: 加载中… on every load of it, until the account shows a while later (see CreatorCenterTests.scan).
 LATE = MENU + "<div id='card'>加载中…</div>"
 QR = '<div><div>扫码登录</div><div>验证码登录</div><div>密码登录</div><div class="login-qrcode"><img alt="二维码" width="100" height="100"></div></div>'
+# What a signed-in page can carry that is no sign-in form (from a review): a QR code of its own, to upload from a phone, and menu items that mention
+# signing in among other words.
+OWN_QR = '<div class="upload-by-phone"><div class="qrcode-wrap"><img alt="二维码" width="80" height="80"></div><div>用抖音App扫码，在手机上传视频</div></div>'
+LOGIN_ITEMS = MENU.replace("</nav>", "<div>账号登录记录</div><div>手机号登录保护</div></nav>")
 SENT_TO_SIGN_IN = "<script>location.replace('/')</script>"
 SIGNED_IN = "Signed in; opening Creator Center's home page to read your 抖音号"
 SIGN_IN = rt.LOGIN_NOTES["login"]["hint"]
@@ -88,12 +92,12 @@ class CreatorCenterTests(SignIn, SharedBrowser):
     def paths(self):
         return [path for path, *_ in self.loads]
 
-    def scan(self, home_page, at=5, late=0):
+    def scan(self, home_page, at=5, late=0, upload=MENU + "<div>发布视频</div>"):
         """Once the QR code has loaded and the sign-in has waited `at` times, the person scans it, and Douyin takes the window to the upload page,
         signed in. A `late` home page shows the account only that many waits after each load of it."""
         async def person(context):
             if self.scanned is None and self.waits >= at and "/" in self.paths():
-                self.site = {HOME_PATH: home_page, UPLOAD_PATH: MENU + "<div>发布视频</div>"}
+                self.site = {HOME_PATH: home_page, UPLOAD_PATH: upload}
                 self.scanned = len(self.loads)
                 await self.page.goto(UPLOAD)
             homes = [looked for path, _, looked in self.loads[self.scanned:] if path == HOME_PATH] if self.scanned is not None else []
@@ -110,6 +114,30 @@ class CreatorCenterTests(SignIn, SharedBrowser):
         self.assertEqual([UPLOAD_PATH, HOME_PATH, HOME_PATH], self.paths()[self.scanned:])
         self.assertGreaterEqual(self.loads[self.scanned + 1][1] - self.loads[0][1], rt.DOUYIN_HOME_SECONDS)
         self.assertEqual({SIGNED_IN}, {hint.split(".")[0] for hint in self.signed_in_hints()})
+
+    async def test_a_signed_in_page_with_a_qr_code_of_its_own_and_login_in_its_menu_still_counts(self):
+        """From a review: such a page was taken for a sign-in form, and the person had to click 首页 again."""
+        result = await self.sign_in([self.page], self.scan(DASHBOARD, upload=LOGIN_ITEMS + OWN_QR))
+        self.assertEqual(OWNER, result["identity"])
+        self.assertEqual([UPLOAD_PATH, HOME_PATH, HOME_PATH], self.paths()[self.scanned:])
+        self.assertTrue(self.signed_in_hints())
+
+    async def test_a_menu_drawn_for_a_moment_before_the_sign_in_page_says_nothing(self):
+        """From a review: Douyin's signed-out home page could draw its menu before it moves on to the sign-in page, and the job said the person had
+        signed in before they had. Here the menu shows for two looks."""
+        self.site, scan, early = {HOME_PATH: MENU}, self.scan(DASHBOARD), []
+
+        async def person(context):
+            if self.waits == 2:
+                await self.page.goto("https://creator.douyin.com/")  # The sign-in page, where Douyin sends a signed-out visitor.
+            if self.scanned is None:
+                early.extend(self.signed_in_hints())
+            await scan(context)
+        result = await self.sign_in([self.page], person)
+        self.assertEqual(OWNER, result["identity"])
+        self.assertEqual([HOME_PATH, "/"], self.paths()[:self.scanned])
+        self.assertEqual([], early)
+        self.assertTrue(self.signed_in_hints())
 
     async def test_a_home_page_that_loads_late_is_waited_for_and_not_opened_again(self):
         """It is opened once and reloaded once, though each load takes well over 30 seconds to show the account."""
@@ -163,7 +191,9 @@ class CreatorCenterTests(SignIn, SharedBrowser):
 
     async def test_a_creator_center_page_showing_a_sign_in_form_or_a_check_is_left_alone(self):
         """Even at a Creator Center address and beside its menu."""
-        for shown, state in ((QR, "LOGIN_PENDING"), ("<div>扫码登录</div>", "LOGIN_PENDING"), ('<div class="qrcode-box"><canvas width="80" height="80"></canvas></div>', "LOGIN_PENDING"),
+        for shown, state in ((QR, "LOGIN_PENDING"), ("<div>扫码登录</div>", "LOGIN_PENDING"),
+                             ('<div role="dialog"><div class="qrcode-box"><canvas width="80" height="80"></canvas></div></div>', "LOGIN_PENDING"),
+                             ('<div><div class="qrcode-box"><canvas width="80" height="80"></canvas></div><div>打开抖音App，扫一扫登录</div></div>', "LOGIN_PENDING"),
                              ('<input type="password">', "LOGIN_PENDING"), ("<span>验证码登录</span>", "LOGIN_PENDING"), ("<button>登录</button>", "LOGIN_PENDING"),
                              ("<div>安全验证</div>", "VERIFICATION_REQUIRED")):
             with self.subTest(shown=shown):
@@ -196,11 +226,17 @@ class CreatorCenterTests(SignIn, SharedBrowser):
                 self.assertFalse(await rt.douyin_signed_in(types.SimpleNamespace(url=address)))
         for body, address, right in ((MENU, UPLOAD, True), (DASHBOARD, HOME, True), (MENU + "<div>加载中…</div>", HOME, True), ("<div>发布视频</div>", UPLOAD, False),
                                      # Words that only look like a sign-in, and a QR code that isn't shown, are no sign-in form.
-                                     (MENU + '<div>登录设备管理</div><a hidden>退出登录</a><div class="qrcode" style="display:none">x</div>', UPLOAD, True)):
+                                     (MENU + '<div>登录设备管理</div><a hidden>退出登录</a><div class="login-qrcode" style="display:none">x</div>', UPLOAD, True),
+                                     # Nor, from a review, menu items that mention signing in among other words, or a page's own QR code.
+                                     (LOGIN_ITEMS, UPLOAD, True), (MENU + OWN_QR, UPLOAD, True), (LOGIN_ITEMS + OWN_QR, HOME, True)):
             with self.subTest(body=body, address=address):
                 self.assertEqual(right, await self.signed_in(body, address))
-        for shown in ("<div>扫码登录</div>", "<div>手机号登录</div>", "<span>登录/注册</span>", "<button>登录</button>", '<input type="password">',
-                      '<img alt="二维码" width="10" height="10">', '<div class="qr-code-wrap">x</div>', "<div>安全验证</div>"):
+        for shown in ("<div>扫码登录</div>", "<div>密码登录</div>", "<div>手机号登录</div>", "<span>登录/注册</span>", "<button>登录</button>", "<div> 手机号 验证码登录 </div>",
+                      '<input type="password">',
+                      # A QR code in a sign-in form or a window, or one whose own words say 登录.
+                      '<div class="login-box"><img alt="二维码" width="10" height="10"></div>', '<div class="qrcode-login">x</div>',
+                      '<div role="dialog"><div class="qr-code-wrap">x</div></div>', '<dialog open><img alt="QR code" width="10" height="10"></dialog>',
+                      '<div><div>打开抖音App，扫一扫登录</div><div class="qr_code">x</div></div>', "<div>安全验证</div>"):
             with self.subTest(shown=shown):
                 self.assertFalse(await self.signed_in(MENU + shown))
 
@@ -294,7 +330,7 @@ class StandInTests(SignIn, unittest.IsolatedAsyncioTestCase):
         tab, said = Tab(self.clock, at_home=OWNER), {}
 
         async def ask(context):
-            if self.waits == 1:
+            if self.waits == 10:  # The menu has stayed, and the home page isn't open yet.
                 said.update(cli.status_selected(["douyin"])["douyin"])
         result = await self.sign_in([tab], ask)
         self.assertEqual("LOGIN_PENDING", said["state"])
@@ -314,8 +350,8 @@ class StandInTests(SignIn, unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(VpubError):
             await self.sign_in([tab], check_comes_and_goes)
         said = [(note["state"], note["hint"].split(".")[0]) for note in self.notes]
-        self.assertEqual([("LOGIN_PENDING", SIGNED_IN), ("VERIFICATION_REQUIRED", "The platform is asking for a check or account recovery"), ("LOGIN_PENDING", SIGNED_IN)],
-                         [step for at, step in enumerate(said) if not at or step != said[at - 1]])
+        self.assertEqual([("LOGIN_PENDING", SIGN_IN.split(".")[0]), ("LOGIN_PENDING", SIGNED_IN), ("VERIFICATION_REQUIRED", "The platform is asking for a check or account recovery"),
+                          ("LOGIN_PENDING", SIGNED_IN)], [step for at, step in enumerate(said) if not at or step != said[at - 1]])
 
     async def test_a_tab_still_showing_a_qr_code_does_not_undo_a_sign_in_on_another(self):
         signed, stray = Tab(self.clock, at_home=OWNER, slow=3), Tab(self.clock, follows=False)
@@ -326,6 +362,44 @@ class StandInTests(SignIn, unittest.IsolatedAsyncioTestCase):
         since = next(at for at, hint in enumerate(hints) if hint.startswith(SIGNED_IN))
         self.assertEqual({SIGNED_IN}, {hint.split(".")[0] for hint in hints[since:]})
         self.assertEqual([], stray.visits)
+
+    async def test_a_menu_shown_for_a_moment_neither_says_signed_in_nor_opens_the_home_page(self):
+        """From a review: a signed-out page could draw Creator Center's menu for a moment before it moves on to the sign-in page. Here it shows for
+        one look or two, a minute in and away from the home page. Once the person has signed in, the menu that stays does both a few seconds on."""
+        for looks in (1, 2):
+            with self.subTest(looks=looks):
+                self.clock = Clock()
+                tab, said = Tab(self.clock), []
+                tab.signed_in, tab.form = False, True
+
+                async def person(context):
+                    signed = self.clock.now >= 1100
+                    tab.signed_in, tab.at_home = signed or 1060 <= self.clock.now < 1060 + 2 * looks, OWNER if signed else None
+                    tab.form = not tab.signed_in
+                    said.append((self.clock.now, self.notes[-1]["hint"]))
+                result = await self.sign_in([tab], person)
+                self.assertEqual(OWNER, result["identity"])
+                self.assertEqual(2, len(tab.visits))
+                self.assertTrue(1100 + rt.DOUYIN_MENU_SECONDS <= tab.visits[1] < 1100 + rt.DOUYIN_MENU_SECONDS + 2)
+                self.assertGreater(min(moment for moment, hint in said if hint.startswith(SIGNED_IN)), 1100 + rt.DOUYIN_MENU_SECONDS)
+
+    async def test_a_note_that_fails_to_write_is_written_on_the_next_look(self):
+        """From a review: a note counted as told before it was written, so when writing 'Signed in' failed, it was never tried again and the job
+        file kept asking the person to complete the sign-in."""
+        tab, tries, write = Tab(self.clock, at_home=OWNER), [], rt.atomic_json
+
+        def busy_once(path, value):
+            if value.get("hint", "").startswith(SIGNED_IN):
+                tries.append(self.clock.now)
+                if len(tries) == 1:
+                    raise PermissionError("The job file is busy.")
+            write(path, value)
+        with patch.object(rt, "atomic_json", busy_once):
+            result = await self.sign_in([tab])
+        self.assertEqual(OWNER, result["identity"])
+        self.assertEqual(2, len(tries))
+        self.assertEqual(2, tries[1] - tries[0])
+        self.assertTrue(self.signed_in_hints())
 
     async def test_other_platforms_never_open_a_page_for_this(self):
         for platform in ("x", "youtube", "instagram"):
@@ -338,14 +412,32 @@ class StandInTests(SignIn, unittest.IsolatedAsyncioTestCase):
         self.signed_in.assert_not_awaited()
 
     async def test_a_reload_that_shows_the_account_late_is_watched_rather_than_reloaded_again(self):
-        """What it proves is unchanged: the account shows again on the load the reload brought. Other platforms' job file says what it always did."""
-        for platform, note in (("douyin", SIGNED_IN), ("x", SIGN_IN)):
+        """What it proves is unchanged: the account shows again on the load the reload brought."""
+        tab = Tab(self.clock, url=HOME, who=OWNER, slow=3)
+        result = await self.sign_in([tab])
+        self.assertEqual(OWNER, result["identity"])
+        self.assertEqual([call(wait_until="commit", timeout=60000)], tab.reload.await_args_list)
+        self.assertTrue(self.hints()[-1].startswith(SIGNED_IN))
+
+    async def test_other_platforms_prove_a_fresh_load_as_they_did_before(self):
+        """From a review: only Creator Center's slow home page needed its reloaded load watched. Elsewhere the account has to show again just
+        after the reloaded page's content loads, or the next look that shows it reloads again; which load a tab shows is never read, and the job
+        file says what it always did."""
+        for platform in ("x", "youtube", "instagram"):
             with self.subTest(platform=platform):
-                tab = Tab(self.clock, url=HOME, who=OWNER, slow=3)
+                tab = Tab(self.clock, url=HOME, who=OWNER, slow=1)
+
+                async def reload(**options):
+                    await tab.reloaded(**options)
+                    tab.slow = 0  # Only the first reloaded page shows the account late.
+                tab.reload.side_effect, tab.evaluate = reload, AsyncMock(side_effect=tab.evaluate)
                 result = await self.sign_in([tab], platform=platform)
                 self.assertEqual(OWNER, result["identity"])
-                tab.reload.assert_awaited_once()
-                self.assertTrue(self.hints()[-1].startswith(note))
+                self.assertEqual([call(wait_until="domcontentloaded")] * 2, tab.reload.await_args_list)
+                tab.evaluate.assert_not_awaited()
+                before = {"state": "LOGIN_PENDING", "platform": platform, "login_url": rt.URLS[platform], "window_opened": True, "hint": SIGN_IN}
+                self.assertEqual([before] * len(self.notes), [{key: value for key, value in note.items() if key != "expires_epoch"} for note in self.notes])
+        self.signed_in.assert_not_awaited()
 
     async def test_only_the_load_the_reload_brought_counts(self):
         """A tab that loads something else by itself afterwards, such as an earlier page brought back, is reloaded again before its account counts."""
@@ -362,11 +454,14 @@ class StandInTests(SignIn, unittest.IsolatedAsyncioTestCase):
     async def test_a_check_on_the_reloaded_page_means_a_new_reload_once_it_is_gone(self):
         """From a review: the person passed a check on the load the reload brought, the account then showed on that same load, and the sign-in was
         recorded there, though the next load could ask again. Now nothing is recorded until the account shows on a new reload, and the same goes
-        after a tab that couldn't be read, which could have been showing one. On every platform."""
+        after a tab that couldn't be read, which could have been showing one. Elsewhere each look that shows the account reloads, as it always did,
+        so a reloaded page that shows it late is tried on Douyin only."""
         for platform in ("douyin", "x", "youtube", "instagram"):
             # What shows (a check, or None for a tab that can't be read), from which wait after the reload to which, and how many reads the reloaded
             # page shows nothing for. The first wait after the reload comes just before the look right after it; each later one, before a pass's first look.
             for shown, start, end, slow in ((True, 1, 3, 0), (True, 1, 1, 0), (True, 2, 3, 6), (None, 1, 1, 0), (None, 2, 3, 6)):
+                if slow and platform != "douyin":
+                    continue
                 with self.subTest(platform=platform, shown=shown, start=start, end=end):
                     rt.identity_path(platform, "default").unlink(missing_ok=True)
                     tab, after, recorded = Tab(self.clock, url=HOME, who=OWNER, slow=slow), [], []
