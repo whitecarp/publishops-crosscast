@@ -101,9 +101,18 @@ def check(plan, confirmation, person_approved=False, *, draft_promotion=False):
     return None
 
 
+def also_show(plan):
+    """What a Bilibili plan does beyond its words and covers, said where the person is shown the plan: a topic can enter the video in a contest,
+    and each mention notifies that person."""
+    options = (plan.get('platforms') or {}).get('bilibili') or {}
+    shown = [what for field, what in (('topic', 'its topic, which can enter the video in a contest'),
+                                      ('mention_uids', 'the people in its mention_uids, who will be notified')) if options.get(field)]
+    return f" On Bilibili, also show {', and '.join(shown)}." if shown else ''
+
+
 def pending(plan, requirements):
     return {'ready': False, 'state': 'NEEDS_A_PERSON', 'platform_writes': 0,
             **requirements, 'review': plan, 'confirmation': plan['confirmation'],
-            'next': 'Stop and show this exact plan to the user: text, accounts, platforms, audience, AI labels and covers. '
+            'next': 'Stop and show this exact plan to the user: text, accounts, platforms, audience, AI labels and covers.' + also_show(plan) + ' '
                     'Wait for their yes. Only then use vpub publish PLAN --confirm ' + plan['confirmation'] + ' --person-approved. '
                     'The flags record the caller\'s attestation, not proof of a human response. Changed plans need a new code.'}

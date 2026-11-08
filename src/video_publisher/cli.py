@@ -163,6 +163,17 @@ def _publish_platform(plan, platform, snapshot_lock):
             return {"state": "NOT_STARTED", "code": e.code if isinstance(e, VpubError) else "snapshot_failed",
                     "message": e.message if isinstance(e, VpubError) else type(e).__name__,
                     "hint": "Nothing was uploaded to this platform. Check the files and free disk space, then create a fresh plan."}
+        # bili-cli's dry run for a Bilibili topic or mentions only reads but can take minutes, so it comes before the claim:
+        # a refusal or an interruption there leaves no record, and the video can go once the plan is right.
+        checked = doubtful = None
+        try:
+            checked = adapters.check_upload(platform, safe_plan, opts)
+        except Exception as e:
+            if not never_sent(e):
+                doubtful = e  # It may not have been only a dry run, so it is recorded below like a failed upload and never tried again.
+            else:
+                pushed_back(platform, e.code)
+                return {"state": "NOT_STARTED", "code": e.code, "message": e.message, "hint": e.hint}
         record = {"plan_hash": plan["confirmation"], "title": opts["title"], "identity": identity,
                   "options": opts, "approved_plan": plan, "upload_plan": safe_plan, "started_at": now()}
         if not ledger.claim(platform, account, plan["video_sha256"], record):
@@ -173,8 +184,10 @@ def _publish_platform(plan, platform, snapshot_lock):
             ledger.save(key, receipt["state"], record)
 
         try:
+            if doubtful is not None:
+                raise doubtful
             stop_check(platform)
-            receipt = adapters.publish(platform, safe_plan, opts, checkpoint)
+            receipt = adapters.publish(platform, {**safe_plan, "checked_upload": checked} if checked else safe_plan, opts, checkpoint)
             checkpoint(receipt)
             if receipt["state"] == "WAITING_FOR_USER":
                 adapters.email_reminder(key, platform, 1)
@@ -712,6 +725,9 @@ def parser():
     q.add_argument("--schedule", help="When it goes public, with a timezone, such as 2026-12-01T20:00:00+08:00. Goes with --visibility public.")
     q.add_argument("--draft-only", action="store_true", help="Upload to preview or save an unsent draft on any platform; never Share/Post or schedule.")
     q.add_argument("--ai-generated", choices=["yes", "no"], required=True, help="Whether the video contains AI-generated content. Every platform shows it, so ask the user when it's unclear.")
+    q.add_argument("--bilibili-topic", metavar="NAME", help="The topic it joins on Bilibili, by its exact name there. An activity topic also enters its contest. It can't be added after the upload.")
+    q.add_argument("--bilibili-cover43", metavar="IMAGE", help="Bilibili's 4:3 cover for its phone feed, JPG or PNG, used as it is. Without one, Bilibili makes its own from the landscape cover.")
+    q.add_argument("--bilibili-mention", action="append", metavar="UID", help="Someone to @mention in Bilibili's description, by UID; repeat for up to 10. The description must hold @ and their current nickname, then a space.")
     q.add_argument("--folder", help="Where to keep its files. Default: a folder named after the video, beside it.")
     q = sub.add_parser("go", help="Publish a prepared folder: fit the covers, check it, post it and read it back.", description="Publish a prepared folder: fit the covers, check it, post it and read it back. Safe to run again: what already went out is skipped, never repeated.")
     q.add_argument("folder")

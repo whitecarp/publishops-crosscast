@@ -21,12 +21,18 @@ from bili_cli.main import _hoist_global_flags, app
 import video_publisher
 from video_publisher import widgets_bilibili
 from video_publisher import adapters, cli, direct_messages_bili
-from video_publisher.core import VpubError, atomic_json, read_json
+from video_publisher.core import MENTIONS_MOST, VpubError, atomic_json, read_json
 
 BV = "BV1ab411c7mD"
+# A contest entry: a topic, the 4:3 cover and two people mentioned, which its dry run checks first.
+CONTEST = adapters.bilibili_upload({"video": "video.mp4", "cover": "cover.jpg", "cover43": "cover43.jpg"},
+                                   {"title": "T", "description": "@甲 @乙 D", "ai_generated": True, "tags": ["a"], "visibility": "public",
+                                    "season_id": 7, "topic": "话题", "mention_uids": [111, 222]})
 
 # Every bili command line CrossCast builds, with synthetic values.
 CALLS = [
+    CONTEST,
+    ["--dry-run", *CONTEST],
     ["auth", "status"],
     ["auth", "status", "--wait", "30"],
     ["auth", "login"],
@@ -34,6 +40,8 @@ CALLS = [
      "--cover", "cover.jpg", "--tid", "21", "--private", "--schedule", "2030-01-01T00:00:00+08:00"],
     ["upload", "video", "video.mp4", "--title", "T", "--desc", "D", "--no-ai-declare", "--tag", "a"],
     ["upload", "status", BV],
+    # The archive view, which verify reads for the topic and contest an upload joined.
+    ["upload", "status", BV, "--raw"],
     ["upload", "stats", BV],
     ["upload", "list", "--status", "published", "--page", "1", "--size", "20"],
     ["video", "info", BV],
@@ -110,6 +118,10 @@ class IncludedCopyTests(unittest.TestCase):
         self.assertEqual((danmaku.VOTE_QUESTION_MAX, danmaku.VOTE_OPTION_MAX, danmaku.RATING_TITLE_MAX), (widgets_bilibili.QUESTION_MOST, widgets_bilibili.OPTION_MOST, widgets_bilibili.RATING_TITLE_MOST))
         self.assertEqual((set(danmaku.RATING_SKINS), set(danmaku.FOLLOW_STYLES)), (widgets_bilibili.SKINS, widgets_bilibili.STYLES))
         self.assertEqual((danmaku.FOLLOW_X_RANGE, danmaku.FOLLOW_Y_RANGE, danmaku.MIN_COMPONENT_MS / 1000), (widgets_bilibili.X_RANGE, widgets_bilibili.Y_RANGE, widgets_bilibili.SHOWS_AT_LEAST))
+
+    def test_a_plan_mentions_no_more_people_than_bili_cli_takes(self):
+        from bili_cli.commands import upload
+        self.assertEqual(upload.DESC_MENTIONS_MAX, MENTIONS_MOST)
 
     def test_the_helpers_crosscast_reuses_are_still_there(self):
         self.assertEqual(["video_id"], list(inspect.signature(_own_video).parameters))

@@ -19,6 +19,8 @@ PRESETS = {
     "x": {"landscape": (1920, 1080)},
 }
 BACKGROUND = "#151923"
+# Covers past this aren't opened to be fitted. Bilibili's 4:3 cover goes up unfitted and is held to the same limit and no other, since no size Bilibili refuses is known.
+MOST_PIXELS = 40000000
 # A 9:16 cover whose central 3:4 area holds everything that matters, so Instagram's full frame and Douyin's crop both keep it.
 CANVAS = (1080, 1920)
 SAFE = (0, 240, 1080, 1440)
@@ -76,7 +78,7 @@ def portrait(source, boxes, output):
     before = file_sha(source)
     try:
         with Image.open(source) as opened:
-            if opened.width * opened.height > 40000000:
+            if opened.width * opened.height > MOST_PIXELS:
                 raise VpubError("invalid_cover", "Cover exceeds the 40-megapixel processing limit.")
             image = ImageOps.exif_transpose(opened).convert("RGB")
     except (OSError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
@@ -103,6 +105,21 @@ def portrait(source, boxes, output):
             "size": list(CANVAS), "safe_area": {"left": SAFE[0], "top": SAFE[1], "width": SAFE[2], "height": SAFE[3]}, "parts": parts,
             "soft_parts": [number for number, part in enumerate(parts, 1) if part["scale"] > SOFT_ABOVE], "source_sha256": before, "platform_writes": 0,
             "next": "Look at the result before using it: text must read clearly and nothing important may be cut. Then use it as the --portrait cover, in vpub prepare or covers prepare."}
+
+
+def check_cover43(path):
+    """Bilibili's 4:3 cover goes up as it is, with no fitting, so it has to be 4:3 already. A landscape given by mistake would show squeezed or cut in its phone feed."""
+    try:
+        with Image.open(path) as opened:
+            wide, tall = opened.size
+    except (OSError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
+        raise VpubError("invalid_cover", f"Can't read Bilibili's 4:3 cover: {path}") from exc
+    if wide * tall > MOST_PIXELS:
+        raise VpubError("invalid_cover", f"Bilibili's 4:3 cover is {wide}x{tall}, over the 40-megapixel limit CrossCast keeps every cover to.",
+                        "Use a smaller copy of the same artwork, such as 1200x900; CrossCast doesn't resize it. Nothing was uploaded.")
+    if abs(wide * 3 - tall * 4) > tall * 4 / 100:
+        raise VpubError("invalid_cover", f"Bilibili's 4:3 cover is {wide}x{tall}, which isn't 4:3.",
+                        "Use the 4:3 artwork made for Bilibili's phone feed, such as 1200x900, or leave it out and Bilibili makes one from the landscape cover. Nothing was uploaded.")
 
 
 def check_supplied(cover, portrait, platforms):
@@ -198,6 +215,10 @@ def prepare(manifest, source, out_dir, output, portrait=None):
     value["video"] = str((path.parent / value["video"]).resolve())
     value.pop("cover", None)
     value["covers"] = {}
+    # Bilibili's 4:3 cover is used as it is, not fitted, so it only moves along with the plan.
+    cover43 = (variants.get("bilibili") or {}).get("cover43")
+    if cover43:
+        value["covers"]["bilibili"] = {"cover43": str((path.parent / cover43).resolve())}
     assets = []
     with scratch(directory.parent) as tmp:
         staging = Path(tmp)
@@ -221,7 +242,7 @@ def prepare(manifest, source, out_dir, output, portrait=None):
             target = staging / filename
             try:
                 with Image.open(job["source"]) as opened:
-                    if opened.width * opened.height > 40000000:
+                    if opened.width * opened.height > MOST_PIXELS:
                         raise VpubError("invalid_cover", "Cover exceeds the 40-megapixel processing limit.")
                     image = ImageOps.exif_transpose(opened).convert("RGBA")
                     image = ImageOps.contain(image, tuple(job["size"]), Image.Resampling.LANCZOS)

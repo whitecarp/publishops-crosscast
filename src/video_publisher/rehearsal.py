@@ -178,9 +178,14 @@ def dry_run(plan, media=None):
             stop_check(platform)
         except VpubError as error:
             blockers.append({"platform": platform, "code": error.code, "message": error.message, "hint": error.hint})
+    bilibili = plan["platforms"].get("bilibili") or {}
+    # A rehearsal asks no platform anything, and these depend on what Bilibili says.
+    asked_later = {"bilibili_note": "Whether Bilibili has the topic by its exact name, and finds each mentioned person's @nickname in the description, is asked of bili-cli's "
+                                    "own dry run just before the upload. If not, the upload stops there and nothing is sent."} if bilibili.get("topic") or bilibili.get("mention_uids") else {}
     return {"mode": "LOCAL_REHEARSAL", "ready": False if blockers else None,
             "ready_to_publish": False if blockers else None,
             "state": "LOCAL_BLOCKERS" if blockers else "LIVE_CHECK_REQUIRED",
             "sign_ins": accounts, "blockers": blockers, "will_skip": will_skip(plan), "media_check": media,
             "platform_requests": 0, "platform_writes": 0,
-            "note": "No login, account identity, permissions or playback were verified. Saved sign-in files may be stale. Publishing checks the live account; separate auth status calls are optional."}
+            "note": "No login, account identity, permissions or playback were verified. Saved sign-in files may be stale. Publishing checks the live account; separate auth status calls are optional.",
+            **asked_later}
