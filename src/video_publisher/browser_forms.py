@@ -13,7 +13,7 @@ from .categories import STUDIO_CATEGORIES
 from .core import DOUYIN_TOO_LONG, VpubError, douyin_caption, douyin_caption_units, stop_check
 from .browser_runtime import failure_message, look_until, risk_check, unique_visible, visible
 from .progress import stage
-from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, X_CHOSEN_TIME, YT_DONE_WINDOW, YT_EDIT_DRAFT, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style, studio_zone_offsets_agree,
+from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, X_CHOSEN_TIME, YT_DONE_WINDOW, YT_EDIT_DRAFT, YT_ZH_SCHEDULE_HEADING, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style, studio_zone_offsets_agree,
                                upload_file, wait_until, work_url, works, verify, verify_scheduled_x, x_chosen_time_says, x_new_works, x_new_posts, x_schedule_baseline, x_schedule_moment, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_cards_at, douyin_cards_titled, douyin_form_differs, douyin_leave_caption, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
 
 X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
@@ -2325,8 +2325,15 @@ async def yt_press_publish(page, tx, done):
     elif answer == 'confirmed':
         # Its first two lines, such as Video scheduled and when it goes public, which a read-back can compare with the plan.
         window = await yt_done_window(page)
-        lines = [line.strip() for line in (await window.inner_text()).splitlines() if line.strip()][:2] if window else []
-        tx.save(studio_confirmation=' '.join(lines)[:200])
+        lines = [line.strip() for line in (await window.inner_text()).splitlines() if line.strip()] if window else []
+        if lines[:1] == [YT_ZH_SCHEDULE_HEADING]:
+            evidence = lines[:2]
+            for label, link in zip(lines, lines[1:]):
+                if label == '视频链接':
+                    evidence.extend((label, link))
+            tx.save(studio_confirmation='\n'.join(evidence)[:400])
+        else:
+            tx.save(studio_confirmation=' '.join(lines[:2])[:200])
     elif not answer:
         tx.save(after_press=await page.evaluate(YT_OPEN_DIALOGS))
 

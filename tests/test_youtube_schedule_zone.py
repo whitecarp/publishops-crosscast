@@ -61,6 +61,16 @@ class ScheduleZoneTests(yt.FormCase):
         self.assertEqual("UTC", result["schedule"]["timezone"])
         self.assertEqual(1, len(page.clicks("#done-button")))
 
+    def test_chinese_confirmation_keeps_the_actual_time_and_work_link_after_one_save(self):
+        page = yt.FakeStudio(scheduler_text="America/New_York", visibility_text="已排定时间", form_stays=True,
+                             confirmation=f"已安排好视频发布时间\n视频将于 2030年11月4日 10:00 设为公开\n0:02\nTitle\n视频链接\nhttps://youtu.be/{yt.VIDEO}\n关闭")
+        _, result = self.run_form(page, self.plan(schedule="2030-11-04T15:00:00+00:00"))
+        self.assertEqual("SUBMISSION_VERIFIED", result["state"])
+        self.assertIn(f"视频链接\nhttps://youtu.be/{yt.VIDEO}", result["studio_confirmation"])
+        self.assertEqual("2030-11-04T10:00:00-05:00", result["schedule"]["local"])
+        self.assertEqual([], result["readback_differs"])
+        self.assertEqual(1, len(page.clicks("#done-button")))
+
     def test_resume_chinese_draft_saves_once_and_reads_back_previous_local_day(self):
         plan = self.plan(schedule="2030-11-11T12:00:00+08:00")
         tx = yt.Transaction("youtube", yt.CHANNEL, plan)

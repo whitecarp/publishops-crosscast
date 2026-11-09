@@ -216,6 +216,42 @@ class ScheduledPublicationRegression(unittest.TestCase):
 
     WINDOW = 'Video scheduled\nYour video will be set to public on January 3, 2030 at 12:00 PM\n1:16\nTitle\nUploaded Jan 2, 2030'
 
+    ZH_WINDOW = f'已安排好视频发布时间\n视频将于 2030年1月3日 12:00 设为公开\n0:02\nTitle\n视频链接\nhttps://youtu.be/{VIDEO}\n关闭'
+
+    def chinese_receipt(self):
+        receipt = self.receipt(True)
+        receipt.update(final_submit_attempted=True, final_presses=1, draft_id=VIDEO)
+        receipt['schedule'].update(timezone='UTC', local=receipt['schedule']['at'])
+        return receipt
+
+    def test_chinese_scheduled_status_requires_a_dated_confirmation_for_the_same_video(self):
+        dialog = {'tag': 'TP-YT-PAPER-DIALOG', 'parent': 'YTCP-DIALOG', 'text': self.ZH_WINDOW}
+        for evidence in ({'after_press': [dialog]}, {'studio_confirmation': self.ZH_WINDOW}):
+            with self.subTest(evidence=list(evidence)):
+                result = verify_video({**self.chinese_receipt(), **evidence}, visibility='已排定时间')
+                self.assertEqual('SUBMISSION_VERIFIED', result['state'])
+                self.assertEqual(1, result['final_presses'])
+                self.assertEqual([], result['readback_differs'])
+
+    def test_chinese_scheduled_status_rejects_missing_conflicting_or_unbound_evidence(self):
+        dialog = {'tag': 'TP-YT-PAPER-DIALOG', 'parent': 'YTCP-DIALOG', 'text': self.ZH_WINDOW}
+        wrong_time = self.ZH_WINDOW.replace('12:00', '13:00')
+        wrong_local = {**self.chinese_receipt()['schedule'], 'at': '2030-01-03T13:00:00+00:00',
+                       'local': '2030-01-03T13:00:00+00:00'}
+        for change in ({}, {'after_press': [{**dialog, 'parent': 'OTHER'}]},
+                       {'studio_confirmation': self.ZH_WINDOW.replace(VIDEO, 'aaaaaaaaaaa')},
+                       {'studio_confirmation': self.ZH_WINDOW.replace('视频链接', 'Title')},
+                       {'studio_confirmation': 'Description\n' + self.ZH_WINDOW},
+                       {'studio_confirmation': wrong_time},
+                       {'studio_confirmation': self.ZH_WINDOW.replace('1月3日', '1月4日')},
+                       {'studio_confirmation': wrong_time, 'after_press': [dialog]},
+                       {'final_submit_attempted': False, 'after_press': [dialog]},
+                       {'schedule': wrong_local, 'after_press': [dialog]}):
+            with self.subTest(change=change):
+                result = verify_video({**self.chinese_receipt(), **change}, visibility='已排定时间')
+                self.assertEqual('SUBMITTED_UNVERIFIED', result['state'])
+                self.assertIn('visibility', result['readback_differs'])
+
     def test_a_box_that_says_only_scheduled_is_read_with_studios_own_window(self):
         """From a field run: the video's page said only Scheduled, and Studio's window at the press gave the date and time."""
         for kept in ({'after_press': [{'tag': 'TP-YT-PAPER-DIALOG', 'parent': 'YTCP-DIALOG', 'text': self.WINDOW, 'buttons': ['Close']}]},
