@@ -13,7 +13,7 @@ from .categories import STUDIO_CATEGORIES
 from .core import DOUYIN_TOO_LONG, VpubError, douyin_caption, douyin_caption_units, stop_check
 from .browser_runtime import failure_message, look_until, risk_check, unique_visible, visible
 from .progress import stage
-from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, X_CHOSEN_TIME, YT_DONE_WINDOW, YT_EDIT_DRAFT, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style, studio_zone_offsets_agree,
+from .browser_backends import (STUDIO_DATES, STUDIO_TIMES, X_CHOSEN_TIME, YT_DONE_WINDOW, YT_EDIT_DRAFT, YT_ZH_SCHEDULE_HEADING, choose_file, choose_in_picker, normalize, studio_offsets, studio_read, studio_style, studio_zone_offsets_agree,
                                upload_file, wait_until, work_url, works, verify, verify_scheduled_x, x_chosen_time_says, x_new_works, x_new_posts, x_schedule_baseline, x_schedule_moment, douyin_card_stamp, douyin_card_status, douyin_new_works, douyin_cards_at, douyin_cards_titled, douyin_form_differs, douyin_leave_caption, douyin_scheduled_card, douyin_type_caption, DOUYIN_SCHEDULED)
 
 X_CLOCK = re.compile(r'\d{1,2}:\d{2}\s*[AP]M', re.I)
@@ -2132,7 +2132,9 @@ async def yt_set_time(page, clock, wanted):
 
 # A channel left on Studio's default shows "Time zone / Default set to local time zone (GMT+0800)",
 # in a collapsed part that inner_text() leaves out. Local there means the browser's own zone.
-YT_LOCAL_ZONE = re.compile(r'(?:local time ?zone|本地时区|当地时区|本地時區|當地時區)[^()]*\(\s*(GMT\s*[+\-−]\s*\d{1,2}(?::?\d{2})?)\s*\)', re.I)
+YT_LOCAL_ZONE = re.compile(
+    r'(?:(?:local time ?zone|本地时区|当地时区|本地時區|當地時區)[^()]*\(\s*GMT'
+    r'|默认设置为本地时区\s*\(\s*格林尼治标准时间)\s*([+\-−]\s*(?:[01]?\d|2[0-3])(?::?[0-5]\d)?)\s*\)', re.I)
 BROWSER_ZONE = '() => Intl.DateTimeFormat().resolvedOptions().timeZone'
 
 
@@ -2183,7 +2185,7 @@ def yt_schedule_zone(text, when, local_zone=None):
 
 async def yt_schedule_local(page, when):
     scheduler = await unique_visible(page.locator(f'{YT_DIALOG} ytcp-visibility-scheduler'), 'YouTube schedule time zone')
-    shown = await scheduler.inner_text()
+    shown = (await scheduler.inner_text()).replace('格林尼治标准时间', 'GMT')
     names, unreadable = studio_zone_names(shown)
     if names or unreadable:
         return yt_schedule_zone(shown, when)
@@ -2192,7 +2194,7 @@ async def yt_schedule_local(page, when):
     if len(default) != 1:
         return yt_schedule_zone(shown, when)
     zone = await page.evaluate(BROWSER_ZONE)
-    return yt_schedule_zone(f'{shown}\n({next(iter(default))})', when, zone if isinstance(zone, str) else None)
+    return yt_schedule_zone(f'{shown}\n(GMT{next(iter(default))})', when, zone if isinstance(zone, str) else None)
 
 
 async def yt_schedule(page, when):
@@ -2323,15 +2325,22 @@ async def yt_press_publish(page, tx, done):
     elif answer == 'confirmed':
         # Its first two lines, such as Video scheduled and when it goes public, which a read-back can compare with the plan.
         window = await yt_done_window(page)
-        lines = [line.strip() for line in (await window.inner_text()).splitlines() if line.strip()][:2] if window else []
-        tx.save(studio_confirmation=' '.join(lines)[:200])
+        lines = [line.strip() for line in (await window.inner_text()).splitlines() if line.strip()] if window else []
+        if lines[:1] == [YT_ZH_SCHEDULE_HEADING]:
+            evidence = lines[:2]
+            for label, link in zip(lines, lines[1:]):
+                if label == '视频链接':
+                    evidence.extend((label, link))
+            tx.save(studio_confirmation='\n'.join(evidence)[:400])
+        else:
+            tx.save(studio_confirmation=' '.join(lines[:2])[:200])
     elif not answer:
         tx.save(after_press=await page.evaluate(YT_OPEN_DIALOGS))
 
 
-async def yt_finish_draft(page, tx):
-    """Back into this attempt's own draft and press Publish again, after a read-back showed the last press left a draft. It goes by the video's ID, changes no field, and uploads nothing."""
-    video_id, options = tx.receipt['id'], tx.options
+async def yt_finish_draft(page, tx, video_id):
+    """Reopen the independently observed draft by its recorded ID, without selecting a file."""
+    options = tx.options
     await page.goto(f'https://studio.youtube.com/video/{video_id}/edit', wait_until='domcontentloaded', timeout=60000)
     button = await look_until(page, lambda: visible(page.get_by_text(YT_EDIT_DRAFT)), 30000)
     if not button:
@@ -2361,7 +2370,16 @@ async def publish_youtube(page, tx):
     """One upload through Studio's own form. Studio shows the video's ID as soon as the upload starts, so it is saved first."""
     options = tx.options
     if tx.receipt.get('still_a_draft'):
-        return await yt_finish_draft(page, tx)
+        draft_id = tx.receipt.get('draft_id')
+        video_id = tx.receipt.get('id') or draft_id
+        if not isinstance(video_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{11}', video_id) or draft_id not in (None, video_id):
+            raise VpubError('wrong_work', 'The saved receipt does not identify one YouTube draft. Nothing was opened or uploaded.')
+        if tx.receipt.get('id') or tx.receipt.get('metadata_readback') is True:
+            return await yt_finish_draft(page, tx, video_id)
+        # An early verify can find the draft before audience, disclosure and other details were checked.
+        # Reopen it through the normal details form below. Never fall back to the file picker for it.
+        if not tx.resuming or not tx.receipt.get('media_selected'):
+            raise VpubError('inspect_existing_draft', 'This draft has incomplete upload evidence. No file was selected.')
     tx.save(expected_text=options['description'], visibility=options['visibility'])
     if options.get('create_missing_playlists'):
         from .youtube_studio import ensure_playlists

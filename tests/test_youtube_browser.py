@@ -106,6 +106,8 @@ class Element:
             return "" if self.page.polls <= self.page.uploading_polls else None
 
     async def evaluate(self, script):
+        if self.key == "ytcp-visibility-scheduler" and script == "e => e.textContent":
+            return self.page.scheduler_tooltip
         return True
 
     async def evaluate_all(self, script):
@@ -181,6 +183,7 @@ class FakeStudio:
         self.listeners, self.studio_sends, self.ticks, self.left_at = {}, {}, 0, []
         self.playlists, self.ticked, self.picker_open, self.refuse_tick = [], set(), False, False
         self.date_text, self.time_text, self.scheduler_text, self.refuse_schedule = "2026年10月31日", "18:00", "", False
+        self.scheduler_tooltip, self.browser_zone = None, None
         self.warnings, self.warning_open, self.published, self.form_stays = 0, False, False, False
         self.press_does_nothing, self.is_draft, self.checks_label = False, False, "检查完毕"
         self.publish_after_ticks, self.stop_after_ticks = None, None
@@ -199,6 +202,8 @@ class FakeStudio:
         return Element(self, "edit-draft") if pattern is browser_forms.YT_EDIT_DRAFT else MagicMock(all=AsyncMock(return_value=[]))
 
     async def evaluate(self, script):
+        if script == browser_forms.BROWSER_ZONE:
+            return self.browser_zone
         return [{"tag": "TP-YT-PAPER-DIALOG", "buttons": ["Publish"]}]
 
     async def goto(self, url, **options):
@@ -682,6 +687,28 @@ class ResumeTests(Temporary):
         self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
         self.assertTrue(result["still_a_draft"])
         self.assertEqual(([], []), (page.clicks("edit-draft"), page.clicks("#done-button")))
+
+    def test_confirmed_draft_needs_one_valid_recorded_id_before_navigation(self):
+        for saved_id, draft_id in ((None, None), (None, "../not-a-video"), (VIDEO, "aaaaaaaaaaa")):
+            with self.subTest(saved_id=saved_id, draft_id=draft_id):
+                tx = Transaction("youtube", CHANNEL, self.plan(), resume=True)
+                tx.save(id=saved_id, draft_id=draft_id, still_a_draft=True, media_selected=True)
+                page = self.draft_page()
+                with self.assertRaises(VpubError) as caught:
+                    asyncio.run(browser_forms.publish_youtube(page, tx))
+                self.assertEqual("wrong_work", caught.exception.code)
+                self.assertEqual([], page.log)
+
+    def test_readback_of_an_early_draft_does_not_skip_audience_checks(self):
+        self.stopped_after_its_id()
+        tx = Transaction("youtube", CHANNEL, self.plan(), resume=True)
+        tx.save(still_a_draft=True)
+        page = FakeStudio(missing={"VIDEO_MADE_FOR_KIDS"})
+        with patch("video_publisher.youtube_studio.drafts_named", new=AsyncMock(return_value=[page.locator("ytcp-video-row")])):
+            result = asyncio.run(execute(page, "youtube", CHANNEL, {"action": "resume", "plan": self.plan()}))
+        self.assertEqual("audience_unverified", result["error"]["code"])
+        self.assertEqual([], page.selected_files())
+        self.assertEqual([], page.clicks("#done-button"))
 
     def test_resume_presses_nothing_when_the_work_is_no_draft(self):
         permissions = self.observe_submits()

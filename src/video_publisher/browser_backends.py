@@ -776,9 +776,13 @@ def studio_read(styles, text):
     return style[1](re.fullmatch(style[0], normalize(text))) if style else None
 
 
+STUDIO_OFFSET = re.compile(r"(?:GMT|UTC|格林尼治标准时间)\s*([+\-−])\s*(\d{1,2})(?::?(\d{2}))?")
+
+
 def studio_moments(text):
     """Every date and every time mentioned in a Studio summary such as "Scheduled for ...", as numbers."""
-    rest = normalize(text)
+    # The 05:00 in a zone label such as GMT-05:00 is not a scheduled time of day.
+    rest = STUDIO_OFFSET.sub(" ", normalize(text))
     dates = {read(m) for pattern, read, _ in STUDIO_DATES for m in re.finditer(pattern, rest)} - {None}
     times = set()
     for pattern, read, _ in STUDIO_TIMES:
@@ -790,7 +794,7 @@ def studio_moments(text):
 def studio_offsets(text):
     """The GMT offsets Studio's scheduler names, in minutes."""
     return {(-1 if sign in "-−" else 1) * (int(hours) * 60 + int(minutes or 0))
-            for sign, hours, minutes in re.findall(r"GMT\s*([+\-−])\s*(\d{1,2})(?::?(\d{2}))?", text or "")}
+            for sign, hours, minutes in STUDIO_OFFSET.findall(text or "")}
 
 
 def studio_zone_offsets_agree(offsets, local, current):
@@ -851,14 +855,47 @@ YT_VISIBILITY_LOOK = 10000
 YT_VISIBILITY_WANTED = {"public": "Public", "scheduled": "Scheduled, with this attempt's date and time", "private": "Private", "unlisted": "Unlisted"}
 # Studio's own window once a Save has gone through. A field run's said "Video scheduled" and "Your video will be set to public on
 # November 6, 2026 at 12:00 PM", while the video's page said only Scheduled, with no date or time to compare.
-YT_DONE_WINDOW = re.compile(r'\bVideo (scheduled|published)\b')
+YT_ZH_SCHEDULE_HEADING = '已安排好视频发布时间'
+YT_DONE_WINDOW = re.compile(r'\bVideo (scheduled|published)\b|^\s*' + YT_ZH_SCHEDULE_HEADING + r'(?:\s|$)')
 YT_SET_PUBLIC = re.compile(r'will be set to public on ([A-Z][a-z]+) (\d{1,2}), (\d{4}) at (1[0-2]|[1-9]):([0-5]\d) ?([AP]M)')
-YT_SCHEDULED_WORD = re.compile(r'\s*Scheduled\s*')
+YT_ZH_SET_PUBLIC = re.compile(r'视频将于\s*(\d{4})年(\d{1,2})月(\d{1,2})日\s+([01]?\d|2[0-3]):([0-5]\d)\s*设为公开')
+YT_SCHEDULED_WORD = re.compile(r'\s*(?:Scheduled|已排定时间)\s*')
 MONTH_NAMES = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
 
 
-def youtube_window_schedule(receipt):
+def youtube_zh_window_schedule(receipt):
+    """Match the dated confirmation and its video link when the details page only says 已排定时间."""
+    video_id = receipt.get('id')
+    schedule = receipt.get('schedule') or {}
+    if (not video_id or receipt.get('draft_id') not in (None, video_id)
+            or receipt.get('final_submit_attempted') is not True or not schedule.get('timezone')):
+        return None
+    try:
+        local = datetime.fromisoformat(schedule['local'])
+    except (KeyError, TypeError, ValueError):
+        return None
+    expected = ((local.year, local.month, local.day), (local.hour, local.minute))
+    windows = [receipt.get('studio_confirmation')]
+    windows.extend(part.get('text') for part in receipt.get('after_press') or []
+                   if isinstance(part, dict) and part.get('tag') == 'TP-YT-PAPER-DIALOG' and part.get('parent') == 'YTCP-DIALOG')
+    moments = set()
+    for text in windows:
+        lines = [line.strip() for line in text.splitlines() if line.strip()] if isinstance(text, str) else []
+        if lines[:1] != [YT_ZH_SCHEDULE_HEADING]:
+            continue
+        found = YT_ZH_SET_PUBLIC.fullmatch(lines[1]) if len(lines) > 1 else None
+        links = [link for label, link in zip(lines, lines[1:]) if label == '视频链接']
+        if not found or links != [f'https://youtu.be/{video_id}']:
+            return None
+        year, month, day, hour, minute = map(int, found.groups())
+        moments.add(((year, month, day), (hour, minute)))
+    return expected if moments == {expected} else None
+
+
+def youtube_window_schedule(receipt, shown):
     """The date and time Studio's own window gave, after the press, for the video going public: ((year, month, day), (hour, minute)), or None."""
+    if normalize(shown) == '已排定时间':
+        return youtube_zh_window_schedule(receipt)
     kept = [receipt.get('studio_confirmation')] + [part.get('text') for part in receipt.get('after_press') or [] if isinstance(part, dict)]
     for words in kept:
         found = YT_SET_PUBLIC.search(normalize(words)) if isinstance(words, str) else None
@@ -904,7 +941,7 @@ async def verify_youtube(page, receipt):
             elif isinstance(shown, str) and YT_SCHEDULED_WORD.fullmatch(shown):
                 # A field run's box said only Scheduled. Before its time, the date and time it doesn't show are the ones Studio's own
                 # window gave at the press. Either way it isn't a draft, which has no visibility setting at all.
-                from_window = not passed and youtube_window_schedule(receipt) == (tuple(schedule["date"]), tuple(schedule["time"]))
+                from_window = not passed and youtube_window_schedule(receipt, shown) == (tuple(schedule["date"]), tuple(schedule["time"]))
                 seen["visibility"] = "scheduled" if from_window else "scheduled_without_its_time"
         if receipt.get("playlists"):
             listed = normalize(await page.locator("ytcp-video-metadata-playlists").first.inner_text())
@@ -933,7 +970,7 @@ async def verify_youtube(page, receipt):
     words = normalize(shown)[:200] if "visibility" in differs and isinstance(shown, str) and shown.strip() else None
     visibility_note = ("" if "visibility" not in differs else
                        (" Studio's visibility box says only 'Scheduled', with no date or time, and "
-                        + ("no window from Studio at the press gave them." if youtube_window_schedule(receipt) is None else
+                        + ("no window from Studio at the press gave them." if youtube_window_schedule(receipt, shown) is None else
                            "the time Studio's own window gave at the press isn't this attempt's.")) if schedule and not passed and words and YT_SCHEDULED_WORD.fullmatch(words) else
                        f" Studio's visibility box says '{words}', and this attempt expected {YT_VISIBILITY_WANTED.get(expected['visibility'], expected['visibility'])}." if words else
                        " Studio's visibility box didn't fill in, so its setting couldn't be read.")
