@@ -31,9 +31,19 @@ TERMINAL = """nodes => {
   const cards = document.querySelectorAll('[class^="video-card-content-"]');
   return !cards.length || ends[0].innerText.trim() === '没有更多作品';
 }"""
-PLATFORM_ALERT = """node => !node.closest('[class^="video-card-content-"],article,[role="dialog"],.semi-modal-content')"""
+GONE_SNAPSHOT = r"""(nodes, expectedURL) => {
+  if (location.href !== expectedURL) return 'wrong_page';
+  const eligible = nodes.filter(node => node.isConnected && [...node.getClientRects()].some(rect => rect.width > 0 && rect.height > 0)
+      && getComputedStyle(node).visibility === 'visible'
+      && !node.closest('[hidden],[aria-hidden="true"],[class^="video-card-content-"],article,[role="dialog"],.semi-modal-content'));
+  if (!eligible.length) return 'no_platform_alert';
+  if (eligible.length !== 1) return 'ambiguous_alerts';
+  return /^(?:该)?(?:作品|视频)已(?:被)?删除[。！]?$/.test(eligible[0].innerText.trim())
+      ? 'deleted_notice' : 'unrecognized_alert';
+}"""
 HOME_CONFIRM_SECONDS = 120
 HOME_CONFIRMED = {}  # id(page) -> (account, when, page): the dedicated browser is locked to this run meanwhile.
+GONE_WAIT_SECONDS = 10
 
 
 async def guard(page):
@@ -152,7 +162,7 @@ async def card_id(page, target, card, handle, words):
         await detail.close()
 
 
-async def own_list(page, target):
+async def own_list(page, target, diagnostics=None):
     await guard(page)
     await page.goto(bb.MANAGE, wait_until='domcontentloaded', timeout=60000)
     cards = page.locator(bb.DOUYIN_CARD)
@@ -165,6 +175,12 @@ async def own_list(page, target):
     await owner(page, target)
     count = await cards.count()
     complete = await ends.evaluate_all(TERMINAL)
+    checks = diagnostics if diagnostics is not None else {}
+    checks.update(rows=count, resolved=0, private_unresolved=0, list=[])
+    if not complete:
+        checks['list'].append('terminal_or_filter_unconfirmed')
+    if count > 100:
+        checks['list'].append('read_limit')
     matches, seen, held, observed, finished = [], set(), [], [], False
     try:
         # A bounded read with any unresolved/private/hidden card is incomplete.
@@ -172,6 +188,7 @@ async def own_list(page, target):
             card = cards.nth(index)
             if not await card.is_visible():
                 complete = False
+                checks['list'].append('hidden_card')
                 continue
             name = await rt.unique_visible(card.locator(bb.DOUYIN_NAME), 'work card title')
             words = (await name.inner_text()).strip()
@@ -182,6 +199,9 @@ async def own_list(page, target):
             await same_card(page, target, card, handle, words)
             if not wid or wid in seen:
                 complete = False
+                checks['list'].append('unresolved_id' if not wid else 'duplicate_id')
+                if not wid and await card.get_by_text('私密', exact=True).count():
+                    checks['private_unresolved'] += 1
             if wid:
                 seen.add(wid)
             if wid == target['id']:
@@ -199,9 +219,17 @@ async def own_list(page, target):
                     if exc.code not in {'wrong_work', 'layout_changed'}:
                         raise
                     complete = False
+                    checks['list'].append('card_changed')
                     break
-        complete = bool(complete and count <= 100 and count == await cards.count()
-                        and len(seen) == count and await ends.evaluate_all(TERMINAL))
+        checks['resolved'] = len(seen)
+        final_count = await cards.count()
+        terminal = await ends.evaluate_all(TERMINAL)
+        if count != final_count:
+            checks['list'].append('row_count_changed')
+        if not terminal:
+            checks['list'].append('terminal_or_filter_unconfirmed')
+        complete = bool(complete and count <= 100 and count == final_count
+                        and len(seen) == count and terminal)
         if matches:
             await same_card(page, target, *matches[0])
         # Keep only the actual target handle alive until the caller finishes.
@@ -214,26 +242,61 @@ async def own_list(page, target):
                 await handle.dispose()
 
 
-async def exact_gone(page, target):
+def exact_page_failure(url, target):
+    """Fixed reason codes only; never expose arbitrary URLs, query values or page text."""
+    address = urlsplit(url)
+    if address.scheme != 'https' or address.netloc != 'www.douyin.com':
+        return 'wrong_origin'
+    if address.path != f"/video/{target['id']}":
+        return 'wrong_path'
+    if address.query or address.fragment:
+        return 'query_or_fragment'
+    return None
+
+
+async def exact_gone(page, target, diagnostics=None):
+    checks = diagnostics if diagnostics is not None else {}
     await guard(page)
     await page.goto(target['url'], wait_until='domcontentloaded', timeout=60000)
-    await guard(page)
-    address = urlsplit(page.url)
-    if (address.scheme != 'https' or address.netloc != 'www.douyin.com'
-            or address.path != f"/video/{target['id']}" or address.query or address.fragment):
-        return False
-    alerts = [node for node in await page.locator('[role="alert"]').all() if await node.is_visible()
-              and await node.evaluate(PLATFORM_ALERT)]
-    return len(alerts) == 1 and bool(GONE.fullmatch((await alerts[0].inner_text()).strip()))
+    # DOMContentLoaded precedes client-rendered notices. Re-read with a bound,
+    # checking the exact URL, platform checks and STOP on every iteration.
+    for attempt in range(GONE_WAIT_SECONDS * 2 + 1):
+        await guard(page)
+        failure = exact_page_failure(page.url, target)
+        if failure:
+            checks['exact_page'] = failure
+            return False
+        # Read membership, ancestry, text and URL in one DOM snapshot. A locator
+        # checked before an await can otherwise adopt a new, user-authored alert.
+        checks['exact_page'] = await page.locator('[role="alert"]').evaluate_all(GONE_SNAPSHOT, target['url'])
+        stop_check('douyin')
+        if checks['exact_page'] == 'deleted_notice':
+            return True
+        if checks['exact_page'] == 'wrong_page':
+            return False
+        if attempt < GONE_WAIT_SECONDS * 2:
+            await page.wait_for_timeout(500)
+    return False
+
+
+def readback_note(checks, confirmed):
+    # Only our own codes and counts reach the receipt; no private titles, DOM,
+    # query strings, credentials or arbitrary exception text.
+    status = 'Deletion verified.' if confirmed else 'Deletion is unconfirmed; verify only.'
+    reasons = ','.join(sorted(set(checks.get('list', [])))) or 'complete'
+    return (f"{status} Read-back: exact_page={checks.get('exact_page', 'not_read')}; list={reasons}; "
+            f"rows={checks['rows']}; resolved={checks['resolved']}; private_unresolved={checks['private_unresolved']}.")
 
 
 async def readback(page, target, writes=0):
-    gone = await exact_gone(page, target)
-    matches, complete = await own_list(page, target)
+    checks = {}
+    gone = await exact_gone(page, target, checks)
+    matches, complete = await own_list(page, target, checks)
     try:
         return evidence(target, present=bool(matches), owned=bool(matches), page_gone=gone and not matches,
                         list_absent=not matches and complete, list_complete=complete, fresh=True,
-                        platform_writes=writes)
+                        platform_writes=writes,
+                        note=readback_note(checks, gone and not matches and complete))
     finally:
         if matches:
             await matches[0][1].dispose()
@@ -243,6 +306,10 @@ async def execute(page, actual, target, operation, receipt_path):
     validate(actual, target, operation)
     writes, retained, held = 0, None, []
     try:
+        if operation == 'verify':
+            # Verify needs one fresh scan after the exact-page read, not two
+            # scans opening every card's popup. It never reaches delete controls.
+            return await readback(page, target)
         matches, complete = await own_list(page, target)
         if not matches:
             return await readback(page, target)

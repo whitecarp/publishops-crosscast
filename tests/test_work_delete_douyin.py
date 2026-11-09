@@ -2,7 +2,7 @@
 from urllib.parse import urlsplit
 import unittest
 
-from test_work_delete_youtube import FakeYouTube, Node, OfflineCase, walk
+from test_work_delete_youtube import FakeYouTube, Locator, Node, OfflineCase, walk
 from video_publisher import work_delete_douyin as route, work_delete_state as state
 from video_publisher.core import VpubError, home, read_json
 
@@ -10,6 +10,22 @@ from video_publisher.core import VpubError, home, read_json
 OWNER = 'Recorded.Owner'
 WORK = '7700000000000000000'
 OTHER = '7700000000000000001'
+
+
+class AlertLocator(Locator):
+    async def evaluate_all(self, script, expected_url):
+        if script != route.GONE_SNAPSHOT:
+            raise AssertionError('Unexpected alert script')
+        # Flow fixture only. The production JS has separate executable fixtures.
+        if self.page.url != expected_url:
+            return 'wrong_page'
+        eligible = [node for node in self.find() if node.connected and node.visible
+                    and node.attrs.get('platform', True)]
+        if not eligible:
+            return 'no_platform_alert'
+        if len(eligible) != 1:
+            return 'ambiguous_alerts'
+        return 'deleted_notice' if route.GONE.fullmatch(eligible[0].words().strip()) else 'unrecognized_alert'
 
 
 class Popup:
@@ -72,6 +88,11 @@ class HomeContext:
 
 
 class FakeDouyin(FakeYouTube):
+    def locator(self, selector):
+        if selector == '[role="alert"]':
+            return AlertLocator(self, lambda: self.select(selector, list(walk(self.nodes))))
+        return super().locator(selector)
+
     @property
     def context(self):
         return HomeContext(self)
