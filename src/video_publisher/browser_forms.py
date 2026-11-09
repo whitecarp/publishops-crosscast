@@ -2132,7 +2132,9 @@ async def yt_set_time(page, clock, wanted):
 
 # A channel left on Studio's default shows "Time zone / Default set to local time zone (GMT+0800)",
 # in a collapsed part that inner_text() leaves out. Local there means the browser's own zone.
-YT_LOCAL_ZONE = re.compile(r'(?:local time ?zone|本地时区|当地时区|本地時區|當地時區)[^()]*\(\s*(GMT\s*[+\-−]\s*\d{1,2}(?::?\d{2})?)\s*\)', re.I)
+YT_LOCAL_ZONE = re.compile(
+    r'(?:(?:local time ?zone|本地时区|当地时区|本地時區|當地時區)[^()]*\(\s*GMT'
+    r'|默认设置为本地时区\s*\(\s*格林尼治标准时间)\s*([+\-−]\s*(?:[01]?\d|2[0-3])(?::?[0-5]\d)?)\s*\)', re.I)
 BROWSER_ZONE = '() => Intl.DateTimeFormat().resolvedOptions().timeZone'
 
 
@@ -2183,7 +2185,7 @@ def yt_schedule_zone(text, when, local_zone=None):
 
 async def yt_schedule_local(page, when):
     scheduler = await unique_visible(page.locator(f'{YT_DIALOG} ytcp-visibility-scheduler'), 'YouTube schedule time zone')
-    shown = await scheduler.inner_text()
+    shown = (await scheduler.inner_text()).replace('格林尼治标准时间', 'GMT')
     names, unreadable = studio_zone_names(shown)
     if names or unreadable:
         return yt_schedule_zone(shown, when)
@@ -2192,7 +2194,7 @@ async def yt_schedule_local(page, when):
     if len(default) != 1:
         return yt_schedule_zone(shown, when)
     zone = await page.evaluate(BROWSER_ZONE)
-    return yt_schedule_zone(f'{shown}\n({next(iter(default))})', when, zone if isinstance(zone, str) else None)
+    return yt_schedule_zone(f'{shown}\n(GMT{next(iter(default))})', when, zone if isinstance(zone, str) else None)
 
 
 async def yt_schedule(page, when):

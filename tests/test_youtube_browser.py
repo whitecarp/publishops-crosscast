@@ -106,6 +106,8 @@ class Element:
             return "" if self.page.polls <= self.page.uploading_polls else None
 
     async def evaluate(self, script):
+        if self.key == "ytcp-visibility-scheduler" and script == "e => e.textContent":
+            return self.page.scheduler_tooltip
         return True
 
     async def evaluate_all(self, script):
@@ -181,6 +183,7 @@ class FakeStudio:
         self.listeners, self.studio_sends, self.ticks, self.left_at = {}, {}, 0, []
         self.playlists, self.ticked, self.picker_open, self.refuse_tick = [], set(), False, False
         self.date_text, self.time_text, self.scheduler_text, self.refuse_schedule = "2026年10月31日", "18:00", "", False
+        self.scheduler_tooltip, self.browser_zone = None, None
         self.warnings, self.warning_open, self.published, self.form_stays = 0, False, False, False
         self.press_does_nothing, self.is_draft, self.checks_label = False, False, "检查完毕"
         self.publish_after_ticks, self.stop_after_ticks = None, None
@@ -199,6 +202,8 @@ class FakeStudio:
         return Element(self, "edit-draft") if pattern is browser_forms.YT_EDIT_DRAFT else MagicMock(all=AsyncMock(return_value=[]))
 
     async def evaluate(self, script):
+        if script == browser_forms.BROWSER_ZONE:
+            return self.browser_zone
         return [{"tag": "TP-YT-PAPER-DIALOG", "buttons": ["Publish"]}]
 
     async def goto(self, url, **options):

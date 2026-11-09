@@ -61,6 +61,22 @@ class ScheduleZoneTests(yt.FormCase):
         self.assertEqual("UTC", result["schedule"]["timezone"])
         self.assertEqual(1, len(page.clicks("#done-button")))
 
+    def test_resume_chinese_draft_saves_once_and_reads_back_previous_local_day(self):
+        plan = self.plan(schedule="2030-11-11T12:00:00+08:00")
+        tx = yt.Transaction("youtube", yt.CHANNEL, plan)
+        tx.save(media_selected=True, upload_filename="crosscast-test.mp4", draft_id=yt.VIDEO,
+                state="PREPARATION_INCOMPLETE", phase="blocked")
+        page = yt.FakeStudio(scheduler_text="时区", scheduler_tooltip=DefaultLocalZoneTests.ZH_DEFAULT,
+                             browser_zone="America/New_York", visibility_text="已安排\n2030年11月10日 23:00")
+        with patch("video_publisher.youtube_studio.drafts_named", new=AsyncMock(return_value=[page.locator("ytcp-video-row")])):
+            result = immediate(yt.execute(page, "youtube", yt.CHANNEL, {"action": "resume", "plan": plan}))
+        self.assertEqual("SUBMISSION_VERIFIED", result["state"])
+        self.assertEqual(yt.VIDEO, result["id"])
+        self.assertEqual("2030-11-10T23:00:00-05:00", result["schedule"]["local"])
+        self.assertEqual([], result["readback_differs"])
+        self.assertEqual([], page.selected_files())
+        self.assertEqual(1, len(page.clicks("#done-button")))
+
     def test_old_offset_wall_time_in_readback_cannot_verify_new_named_zone_schedule(self):
         page = yt.FakeStudio(scheduler_text="America/New_York", visibility_text="Scheduled\n2030年11月4日 11:00")
         _, result = self.run_form(page, self.plan(schedule="2030-11-04T15:00:00+00:00"))
@@ -228,6 +244,8 @@ class DefaultLocalZoneTests(unittest.TestCase):
     """A real channel on Studio's default zone showed "Default set to local time zone (GMT+0800)" only in a collapsed part."""
 
     DEFAULT = "Nov 5, 2030Time zoneDefault set to local time zone (GMT+0800)"
+    ZH_SHOWN = "2026年11月10日\n时区\n视频在发布之前将处于私享状态\n设为首映"
+    ZH_DEFAULT = "默认设置为本地时区 (格林尼治标准时间 -0500) "
 
     def local(self, shown, hidden, browser):
         scheduler = MagicMock(inner_text=AsyncMock(return_value=shown), evaluate=AsyncMock(return_value=hidden))
@@ -238,6 +256,33 @@ class DefaultLocalZoneTests(unittest.TestCase):
     def test_default_local_zone_uses_the_browser_zone_rules(self):
         moment, selected = self.local("Nov 5, 2030\nTime zone", self.DEFAULT, "Asia/Shanghai")
         self.assertEqual(("2030-11-04T23:00:00+08:00", "Asia/Shanghai"), (moment.isoformat(), selected))
+
+    def test_simplified_chinese_default_uses_the_named_browser_zone(self):
+        moment, selected = self.local(self.ZH_SHOWN, self.ZH_DEFAULT, "America/New_York")
+        self.assertEqual(("2030-11-04T10:00:00-05:00", "America/New_York"), (moment.isoformat(), selected))
+
+    def test_chinese_offset_requires_one_local_default_and_consistent_zone(self):
+        for hidden, browser in (
+            ("格林尼治标准时间 -0500", "America/New_York"),
+            (self.ZH_DEFAULT.replace("-0500", "-0460"), "America/New_York"),
+            (self.ZH_DEFAULT, None),
+            (self.ZH_DEFAULT, "Asia/Shanghai"),
+            (self.ZH_DEFAULT + self.DEFAULT, "America/New_York"),
+        ):
+            with self.subTest(hidden=hidden, browser=browser), self.assertRaises(VpubError) as caught:
+                self.local(self.ZH_SHOWN, hidden, browser)
+            self.assertEqual("schedule_unverified", caught.exception.code)
+
+    def test_chinese_offset_conflicts_are_checked_before_and_after_save(self):
+        with self.assertRaises(VpubError) as caught:
+            self.local("时区 America/New_York (格林尼治标准时间 +0800)", self.ZH_DEFAULT, "America/New_York")
+        self.assertEqual("schedule_unverified", caught.exception.code)
+        schedule = {"at": "2030-11-04T15:00:00+00:00", "local": "2030-11-04T10:00:00-05:00",
+                    "timezone": "America/New_York"}
+        for offset, expected in (("-0500", True), ("+0800", False)):
+            with self.subTest(offset=offset):
+                self.assertIs(expected, browser_backends.youtube_schedule_zone_agrees(
+                    f"已安排\n2030年11月4日 10:00 (格林尼治标准时间 {offset})", schedule))
 
     def test_default_local_zone_refuses_a_browser_zone_that_disagrees_with_the_offset(self):
         with self.assertRaises(VpubError) as caught:
