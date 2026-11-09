@@ -695,9 +695,20 @@ class ResumeTests(Temporary):
                 tx.save(id=saved_id, draft_id=draft_id, still_a_draft=True, media_selected=True)
                 page = self.draft_page()
                 with self.assertRaises(VpubError) as caught:
-                    asyncio.run(browser_forms.yt_finish_draft(page, tx))
+                    asyncio.run(browser_forms.publish_youtube(page, tx))
                 self.assertEqual("wrong_work", caught.exception.code)
                 self.assertEqual([], page.log)
+
+    def test_readback_of_an_early_draft_does_not_skip_audience_checks(self):
+        self.stopped_after_its_id()
+        tx = Transaction("youtube", CHANNEL, self.plan(), resume=True)
+        tx.save(still_a_draft=True)
+        page = FakeStudio(missing={"VIDEO_MADE_FOR_KIDS"})
+        with patch("video_publisher.youtube_studio.drafts_named", new=AsyncMock(return_value=[page.locator("ytcp-video-row")])):
+            result = asyncio.run(execute(page, "youtube", CHANNEL, {"action": "resume", "plan": self.plan()}))
+        self.assertEqual("audience_unverified", result["error"]["code"])
+        self.assertEqual([], page.selected_files())
+        self.assertEqual([], page.clicks("#done-button"))
 
     def test_resume_presses_nothing_when_the_work_is_no_draft(self):
         permissions = self.observe_submits()

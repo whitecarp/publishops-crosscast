@@ -2331,12 +2331,8 @@ async def yt_press_publish(page, tx, done):
         tx.save(after_press=await page.evaluate(YT_OPEN_DIALOGS))
 
 
-async def yt_finish_draft(page, tx):
+async def yt_finish_draft(page, tx, video_id):
     """Reopen the independently observed draft by its recorded ID, without selecting a file."""
-    draft_id = tx.receipt.get('draft_id')
-    video_id = tx.receipt.get('id') or draft_id
-    if not isinstance(video_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{11}', video_id) or draft_id not in (None, video_id):
-        raise VpubError('wrong_work', 'The saved receipt does not identify one YouTube draft. Nothing was opened or uploaded.')
     options = tx.options
     await page.goto(f'https://studio.youtube.com/video/{video_id}/edit', wait_until='domcontentloaded', timeout=60000)
     button = await look_until(page, lambda: visible(page.get_by_text(YT_EDIT_DRAFT)), 30000)
@@ -2367,7 +2363,16 @@ async def publish_youtube(page, tx):
     """One upload through Studio's own form. Studio shows the video's ID as soon as the upload starts, so it is saved first."""
     options = tx.options
     if tx.receipt.get('still_a_draft'):
-        return await yt_finish_draft(page, tx)
+        draft_id = tx.receipt.get('draft_id')
+        video_id = tx.receipt.get('id') or draft_id
+        if not isinstance(video_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{11}', video_id) or draft_id not in (None, video_id):
+            raise VpubError('wrong_work', 'The saved receipt does not identify one YouTube draft. Nothing was opened or uploaded.')
+        if tx.receipt.get('id') or tx.receipt.get('metadata_readback') is True:
+            return await yt_finish_draft(page, tx, video_id)
+        # An early verify can find the draft before audience, disclosure and other details were checked.
+        # Reopen it through the normal details form below. Never fall back to the file picker for it.
+        if not tx.resuming or not tx.receipt.get('media_selected'):
+            raise VpubError('inspect_existing_draft', 'This draft has incomplete upload evidence. No file was selected.')
     tx.save(expected_text=options['description'], visibility=options['visibility'])
     if options.get('create_missing_playlists'):
         from .youtube_studio import ensure_playlists
