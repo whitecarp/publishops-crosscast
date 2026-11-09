@@ -621,6 +621,7 @@ q { quotes: "\201C" "\201D"; }
   .matrix td, .matrix tbody tr:last-child > td { width: auto; padding: 0; border: 0; text-align: center; }
   .matrix tbody tr.mx-group { display: block; padding: 0; border-bottom: 1px solid var(--rule); }
   .matrix .mx-group th, .matrix tbody tr.mx-group:last-child > th { display: block; padding: 8px 16px 6px; border: 0; }
+  .matrix td .ev-label { display: block; margin-top: 5px; font-size: 11px; line-height: 1.25; color: var(--ink-3); hyphens: auto; overflow-wrap: anywhere; }
 
   /* the platform table becomes one block per platform; ARIA roles keep table semantics */
   .scope-wrap { background: none; border: 0; border-radius: 0; overflow: visible; }
