@@ -2332,8 +2332,12 @@ async def yt_press_publish(page, tx, done):
 
 
 async def yt_finish_draft(page, tx):
-    """Back into this attempt's own draft and press Publish again, after a read-back showed the last press left a draft. It goes by the video's ID, changes no field, and uploads nothing."""
-    video_id, options = tx.receipt['id'], tx.options
+    """Reopen the independently observed draft by its recorded ID, without selecting a file."""
+    draft_id = tx.receipt.get('draft_id')
+    video_id = tx.receipt.get('id') or draft_id
+    if not isinstance(video_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{11}', video_id) or draft_id not in (None, video_id):
+        raise VpubError('wrong_work', 'The saved receipt does not identify one YouTube draft. Nothing was opened or uploaded.')
+    options = tx.options
     await page.goto(f'https://studio.youtube.com/video/{video_id}/edit', wait_until='domcontentloaded', timeout=60000)
     button = await look_until(page, lambda: visible(page.get_by_text(YT_EDIT_DRAFT)), 30000)
     if not button:

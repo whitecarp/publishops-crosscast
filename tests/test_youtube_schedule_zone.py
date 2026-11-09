@@ -65,17 +65,20 @@ class ScheduleZoneTests(yt.FormCase):
         plan = self.plan(schedule="2030-11-11T12:00:00+08:00")
         tx = yt.Transaction("youtube", yt.CHANNEL, plan)
         tx.save(media_selected=True, upload_filename="crosscast-test.mp4", draft_id=yt.VIDEO,
-                state="PREPARATION_INCOMPLETE", phase="blocked")
-        page = yt.FakeStudio(scheduler_text="时区", scheduler_tooltip=DefaultLocalZoneTests.ZH_DEFAULT,
+                state="SUBMITTED_UNVERIFIED", phase="readback_pending", still_a_draft=True,
+                expected_text=plan["options"]["description"], visibility="private")
+        page = yt.FakeStudio(is_draft=True, scheduler_text="时区", scheduler_tooltip=DefaultLocalZoneTests.ZH_DEFAULT,
                              browser_zone="America/New_York", visibility_text="已安排\n2030年11月10日 23:00")
-        with patch("video_publisher.youtube_studio.drafts_named", new=AsyncMock(return_value=[page.locator("ytcp-video-row")])):
-            result = immediate(yt.execute(page, "youtube", yt.CHANNEL, {"action": "resume", "plan": plan}))
+        page.text.update({"#title-textarea #textbox": plan["options"]["title"],
+                          "#description-textarea #textbox": plan["options"]["description"]})
+        result = immediate(yt.execute(page, "youtube", yt.CHANNEL, {"action": "resume", "plan": plan}))
         self.assertEqual("SUBMISSION_VERIFIED", result["state"])
         self.assertEqual(yt.VIDEO, result["id"])
         self.assertEqual("2030-11-10T23:00:00-05:00", result["schedule"]["local"])
         self.assertEqual([], result["readback_differs"])
         self.assertEqual([], page.selected_files())
         self.assertEqual(1, len(page.clicks("#done-button")))
+        self.assertEqual(1, result["final_presses"])
 
     def test_old_offset_wall_time_in_readback_cannot_verify_new_named_zone_schedule(self):
         page = yt.FakeStudio(scheduler_text="America/New_York", visibility_text="Scheduled\n2030年11月4日 11:00")

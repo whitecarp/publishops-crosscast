@@ -688,6 +688,17 @@ class ResumeTests(Temporary):
         self.assertTrue(result["still_a_draft"])
         self.assertEqual(([], []), (page.clicks("edit-draft"), page.clicks("#done-button")))
 
+    def test_confirmed_draft_needs_one_valid_recorded_id_before_navigation(self):
+        for saved_id, draft_id in ((None, None), (None, "../not-a-video"), (VIDEO, "aaaaaaaaaaa")):
+            with self.subTest(saved_id=saved_id, draft_id=draft_id):
+                tx = Transaction("youtube", CHANNEL, self.plan(), resume=True)
+                tx.save(id=saved_id, draft_id=draft_id, still_a_draft=True, media_selected=True)
+                page = self.draft_page()
+                with self.assertRaises(VpubError) as caught:
+                    asyncio.run(browser_forms.yt_finish_draft(page, tx))
+                self.assertEqual("wrong_work", caught.exception.code)
+                self.assertEqual([], page.log)
+
     def test_resume_presses_nothing_when_the_work_is_no_draft(self):
         permissions = self.observe_submits()
         self.pressed_and_left_a_draft()
