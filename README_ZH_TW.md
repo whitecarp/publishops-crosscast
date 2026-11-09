@@ -86,7 +86,7 @@ vpub auth login douyin   # 每個平台登入一次
 改標題、簡介、封面和章節，各平台不一樣。不是 CrossCast 發的舊作品，認領後也能改。
 
 ### 🗑️ 刪除一條已發布作品
-刪除前用 `vpub delete RECEIPT_KEY --dry-run` 預覽，並逐條取得使用者明確同意。YouTube、抖音、Instagram、X 四條瀏覽器路線已實作但尚未實測；B站不支援。命令、批准與驗證限制見[指南](docs/GUIDE_ZH_TW.md#刪除一條已發布作品)。
+刪除前用 `vpub delete RECEIPT_KEY --dry-run` 預覽，並逐條取得使用者明確同意。YouTube、抖音、Instagram、X 四條瀏覽器路線已實作，也都在真實帳號上試過，但 CrossCast 還沒有一次自己刪掉作品並確認刪除成功；B站不支援。命令、批准與驗證限制見[指南](docs/GUIDE_ZH_TW.md#刪除一條已發布作品)。
 
 ### 💬 回留言和私訊
 讀留言、只用留言者的語言回覆，看 @ 提及，發單則私訊，按讚和收藏，還能置頂、隱藏或刪除留言。每次只做你說的那一則，不群發。

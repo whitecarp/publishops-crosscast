@@ -22,6 +22,16 @@ def metric_changes(previous, current):
     return changes
 
 
+# A field test asked three platforms the same question and got three kinds of answer, none saying what it could see.
+# includes: True shows them, False never does, None may miss some.
+WORK_SCOPE={'bilibili':({'published':True,'scheduled':False,'in_review':False},'Published works only; scheduled and in-review works are excluded.'),
+            'douyin':({'published':True,'scheduled':None,'in_review':None},"The first visible page of Creator Center's works; works in review or waiting for their time may not show."),
+            'youtube':({'published':True,'scheduled':True,'in_review':False},"The first visible page of Studio's own video list, scheduled and private videos included."),
+            'instagram':({'published':True,'scheduled':False,'in_review':False},"Posts on the first visible page of the profile."),
+            'x':({'published':True,'scheduled':False,'in_review':False},"Posts on the first visible page of the profile; scheduled posts don't show there.")}
+WORK_SCOPE_HINT='For everything CrossCast itself published, scheduled and in-review posts included, use vpub status.'
+
+
 def works(platform, limit=20, cursor=None):
     platform_check(platform);stop_check(platform)
     if not 1<=limit<=50: raise VpubError('invalid_limit','Work limit must be 1–50.')
@@ -37,11 +47,14 @@ def works(platform, limit=20, cursor=None):
         total=data.get('counts',{}).get('published')
         more=page*limit<total if isinstance(total,int) else len(data.get('items',[]))==limit
         result={'identity':owner,'items':items,'next_cursor':str(page+1) if more else None,'complete':page==1 and not more,
-                'source':'bili_cli_creator_list','scope':'Published works only; scheduled/review works are excluded.','reported_total':total}
+                'source':'bili_cli_creator_list','reported_total':total}
     else:
         if cursor: raise VpubError('unsupported_cursor','This browser work list exposes the visible first page only.')
         result=adapters.browser_call(platform,'works','default')
         result.update(items=result['items'][:limit],next_cursor=None,complete=False,source='cli_browser_visible_works')
+    if result.get('source') in {'bili_cli_creator_list','cli_browser_visible_works'}:
+        includes,scope=WORK_SCOPE[platform]
+        result.update(includes=includes,scope=scope,scope_hint=WORK_SCOPE_HINT)
     return {**result,'platform':platform,'observed_at':now(),'platform_writes':0}
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 from copy import deepcopy
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -26,6 +27,40 @@ UNFINISHED_STATES = {"WAITING_FOR_PUBLIC", "REMOVE_UNVERIFIED", "INCOMPLETE", "I
 UNSAFE_OUTPUT = re.compile("[\x7f-\x9f؜​‎‏ -‮⁠-⁩\ud800-\udfff﻿]")
 # Commands whose --out saves the JSON result. For the others, --out names the file the command produces.
 SAVES_RESULT = {"dm", "read-all", "collection", "playlist", "messages", "engage", "ops", "comments", "stats", "report", "works", "status", "cleanup", "widgets"}
+
+
+def installed_from():
+    """Where this copy came from, as pip recorded it, so a test build and a release with the same version can be told apart.
+    A local folder is named only as one: doctor's output gets shared in feedback."""
+    try:
+        from importlib import metadata
+        info = json.loads(metadata.distribution("publishops-crosscast").read_text("direct_url.json") or "null")
+    except Exception:
+        return None
+    if not isinstance(info, dict):
+        return None
+    url = str(info.get("url") or "")
+    commit = (info.get("vcs_info") or {}).get("commit_id")
+    return {"source": url if url.startswith(("https://", "http://")) else "a local folder", **({"commit": commit} if commit else {})}
+
+
+def delete_guard_options(q):
+    q.add_argument('--dry-run',action='store_true',help="Show the exact target and its confirmation code; nothing is deleted.")
+    q.add_argument('--confirm',help="The code from this exact delete's --dry-run.")
+    q.add_argument('--person-approved',action='store_true',help="The person saw the dry run and said yes.")
+
+
+def guarded_delete(args, kind, *target):
+    """Deleting a collection or playlist asks for what vpub delete does: a dry run, its code and the person's yes.
+    Returns the dry run's answer, or None once the code and the yes are both there."""
+    code = hashlib.sha256('\0'.join(map(str, (kind, *target, args.request_id))).encode()).hexdigest()[:12]
+    if args.dry_run:
+        return {'state': 'DRY_RUN', 'deletes': kind, 'target': list(target), 'request_id': args.request_id, 'confirm': code, 'platform_writes': 0,
+                'next': f'Show the person what this {kind} holds; only after their yes, run it again with --confirm {code} --person-approved.'}
+    if args.confirm != code or not args.person_approved:
+        raise VpubError('needs_person', f"Deleting a {kind} needs this exact delete's code from --dry-run and the person's yes. Nothing was deleted.",
+                        'Run it with --dry-run, show the person, then add --confirm CODE --person-approved.')
+    return None
 
 
 def only_a_preview(old, opts):
@@ -92,9 +127,12 @@ def _publish_platform(plan, platform, snapshot_lock):
             ledger.forget_preview(key)
             old = None
         if old:
+            # The same way forward vpub status gives. A field run that ran go again was told only to verify an attempt that had pressed nothing.
+            from .overview import next_step
+            command, note = next_step(old, False)
             return {"state": "SKIPPED_EXISTING", "key": key,
-                    "previous_state": old["state"], "receipt": old["data"].get("receipt"),
-                    "hint": "Use verify; existing/uncertain attempts are never automatically resubmitted."}
+                    "previous_state": old["state"], "receipt": old["data"].get("receipt"), "next_command": command,
+                    "hint": f"This file was already tried here, so it isn't sent again. {note}"}
         try:
             from .rehearsal import require_local_prerequisites
             require_local_prerequisites({**plan, "platforms": {platform: opts}})
@@ -125,6 +163,17 @@ def _publish_platform(plan, platform, snapshot_lock):
             return {"state": "NOT_STARTED", "code": e.code if isinstance(e, VpubError) else "snapshot_failed",
                     "message": e.message if isinstance(e, VpubError) else type(e).__name__,
                     "hint": "Nothing was uploaded to this platform. Check the files and free disk space, then create a fresh plan."}
+        # bili-cli's dry run for a Bilibili topic or mentions only reads but can take minutes, so it comes before the claim:
+        # a refusal or an interruption there leaves no record, and the video can go once the plan is right.
+        checked = doubtful = None
+        try:
+            checked = adapters.check_upload(platform, safe_plan, opts)
+        except Exception as e:
+            if not never_sent(e):
+                doubtful = e  # It may not have been only a dry run, so it is recorded below like a failed upload and never tried again.
+            else:
+                pushed_back(platform, e.code)
+                return {"state": "NOT_STARTED", "code": e.code, "message": e.message, "hint": e.hint}
         record = {"plan_hash": plan["confirmation"], "title": opts["title"], "identity": identity,
                   "options": opts, "approved_plan": plan, "upload_plan": safe_plan, "started_at": now()}
         if not ledger.claim(platform, account, plan["video_sha256"], record):
@@ -135,8 +184,10 @@ def _publish_platform(plan, platform, snapshot_lock):
             ledger.save(key, receipt["state"], record)
 
         try:
+            if doubtful is not None:
+                raise doubtful
             stop_check(platform)
-            receipt = adapters.publish(platform, safe_plan, opts, checkpoint)
+            receipt = adapters.publish(platform, {**safe_plan, "checked_upload": checked} if checked else safe_plan, opts, checkpoint)
             checkpoint(receipt)
             if receipt["state"] == "WAITING_FOR_USER":
                 adapters.email_reminder(key, platform, 1)
@@ -161,6 +212,9 @@ def _publish_platform(plan, platform, snapshot_lock):
             record.update(error={"code": code,
                                  "message": e.message if isinstance(e, VpubError) else type(e).__name__})
             ledger.save(key, state, record)
+            if state == "PREPARATION_INCOMPLETE" and not receipt.get("final_submit_attempted"):
+                return {**receipt, "key": key, "state": state, "code": code, "next_command": f"vpub resume {key}",
+                        "hint": "It stopped before its final press, so nothing was submitted. vpub resume picks it up again and never presses twice."}
             return {**receipt, "key": key, "state": state, "code": code,
                     "hint": "Inspect/verify the original work; do not create another submission."}
     finally:
@@ -296,6 +350,40 @@ def _publish_browser_batch(plan, platforms, snapshot_lock):
     return results
 
 
+def left_to_finish(results):
+    """Works that are up and verified with part of their plan still to land, such as chapters on a video the platform is still processing.
+    A field run read ok: false beside all_submissions_verified: true as a failed publish, so this says which is which. ok itself keeps its meaning."""
+    left = {}
+    for platform, result in results.items():
+        if not isinstance(result, dict) or result.get("state") != "SUBMISSION_VERIFIED" or not part_left_undone(result):
+            continue
+        season = result.get("season")
+        parts = [name for name, field in (("chapters", "chapters_state"), ("widgets", "widgets_state")) if result.get(field) not in {None, "VERIFIED"}]
+        if isinstance(season, dict) and season.get("added") is False:
+            parts.append("collection")
+        reason = result.get("next") or result.get("widgets_next")
+        left[platform] = {"published": True, "parts": parts,
+                          "note": reason if isinstance(reason, str) and reason.strip() else
+                          "The work itself is published and verified. Only these parts aren't on it yet; vpub verify adds them once the platform is ready. Never upload it again."}
+        if result.get("key"):
+            left[platform]["next_command"] = f"vpub verify {result['key']}"
+    return left
+
+
+def under_review(results):
+    """Works the platform has taken and is still reviewing. A field run's Douyin post went in and was under review, and ok: false
+    beside it could read as a failed upload to someone who might then upload it again."""
+    found = {}
+    for platform, result in results.items():
+        if isinstance(result, dict) and result.get("state") == "SUBMITTED_UNVERIFIED" and result.get("platform_status") == "UNDER_REVIEW":
+            # A field run's plan had chapters, and nothing here said when they would go on.
+            then = " Its planned chapters go on then too." if result.get("pending_chapters") else ""
+            found[platform] = {"submitted": True, "note": f"{platform.capitalize()} has it and is reviewing it. Check it with vpub verify once the review is done; never upload it again.{then}"}
+            if result.get("key"):
+                found[platform]["next_command"] = f"vpub verify {result['key']}"
+    return found
+
+
 def publish_plan(plan, confirm, workers=1, *, reviewed=False):
     from .overview import DRAFTS
     from threading import Lock
@@ -333,6 +421,12 @@ def publish_plan(plan, confirm, workers=1, *, reviewed=False):
                    for p, v in results.items() if p not in drafts)
     # Stopping before publishing is where a draft plan finishes: null, not true, when no platform was meant to publish.
     answer = {"all_submissions_verified": verified if len(drafts) < len(results) else None, "results": results}
+    left = left_to_finish(results)
+    if left:
+        answer["left_to_finish"] = left
+    reviewing = under_review(results)
+    if reviewing:
+        answer["under_review"] = reviewing
     if drafts:
         ended = {p: results[p].get("previous_state") if results[p]["state"] == "SKIPPED_EXISTING" else results[p]["state"] for p in drafts}
         answer["all_drafts_ready"] = all(state in DRAFTS for state in ended.values())
@@ -401,7 +495,7 @@ def doctor():
                        "fix": "python -m pip uninstall -y bili-agent, then install CrossCast again in this environment."})
     if stop["active"]:
         issues.append({"code": "stopped", "message": stop["message"], "fix": stop["hint"]})
-    return {"version": __version__, "python": sys.version.split()[0], "dependencies": modules,
+    return {"version": __version__, "installed_from": installed_from(), "python": sys.version.split()[0], "dependencies": modules,
             "bili_cli_version": included_bili_version(), "google_chrome": chrome, "paid_api_addon": addon, "ready": not issues, "issues": issues,
             "next": issues[0]["fix"] if issues else "Use the saved preferences below; ask only for unknown choices. Sign in only to selected platforms: vpub onboard --platforms PLATFORMS. Then prepare: vpub prepare VIDEO --platforms PLATFORMS --language LANGUAGE --visibility VISIBILITY --ai-generated AI_STATUS. Replace placeholders with the user's choices: VISIBILITY is public or private; AI_STATUS is yes or no. Omit --platforms only when platforms are saved.",
             "preferences": choices,
@@ -440,7 +534,7 @@ def template(video, content_language="und", ai_generated=True):
 # The order a newcomer needs them in. A new command goes here too, and a test holds that to it.
 HELP_GROUPS = (
     ("Start here", ("doctor", "onboard", "auth", "setup")),
-    ("Publish a video", ("prepare", "go", "init", "metadata", "covers", "plan", "publish", "status", "verify", "resume", "receipts")),
+    ("Publish a video", ("prepare", "go", "init", "metadata", "covers", "plan", "publish", "status", "verify", "resume", "dismiss", "receipts")),
     ("After posting", ("works", "stats", "edit", "edit-work", "delete", "comments", "messages", "engage", "dm", "collection", "playlist", "widgets", "ops", "adopt")),
     ("Safety and housekeeping", ("safety", "stop", "cleanup", "preferences", "capabilities")),
     ("Special cases", ("instagram", "browser")),
@@ -526,13 +620,14 @@ def parser():
         if action in ('create','rename'):q.add_argument('--title',required=True)
         if action=='create':q.add_argument('--cover');q.add_argument('--description')
         if action in ('create','rename','delete'):q.add_argument('--request-id',required=True)
+        if action=='delete':delete_guard_options(q)
         q.add_argument('--out')
     q=cl.add_parser('verify');q.add_argument('key');q.add_argument('--out')
     for action in ('add','remove'):
         q=cl.add_parser(action);q.add_argument('platform',choices=['douyin','instagram','x','bilibili']);q.add_argument('collection');q.add_argument('work');q.add_argument('--request-id',required=True);q.add_argument('--out')
-    wg=sub.add_parser('widgets',help="Add Bilibili's link, follow, vote and rating widgets to your own video.").add_subparsers(dest='action',required=True)
+    wg=sub.add_parser('widgets',help="Add Bilibili's link, follow, vote, rating and reserve widgets to your own video.").add_subparsers(dest='action',required=True)
     q=wg.add_parser('list',help="What Bilibili lists on a video.");q.add_argument('work');q.add_argument('--page',type=int,default=1);q.add_argument('--out')
-    q=wg.add_parser('add',help="A file's widgets on a video that's already public. Sends only what isn't there.");q.add_argument('work');q.add_argument('file',help='JSON list of widgets.');q.add_argument('--dry-run',action='store_true');q.add_argument('--again',action='store_true',help="Send again what may have gone, once you've seen it isn't there.");q.add_argument('--out')
+    q=wg.add_parser('add',help="A file's widgets on a video that's already public. Sends only what isn't there.");q.add_argument('work');q.add_argument('file',help='JSON list of widgets.');q.add_argument('--dry-run',action='store_true');q.add_argument('--again',action='store_true',help="Send again what may have gone, once you've seen it isn't there.");q.add_argument('--person-approved',action='store_true',help="The person saw the dry run and said yes. A reserve widget needs it.");q.add_argument('--out')
     q=wg.add_parser('verify',help="Only reads, and compares with what was asked for.");q.add_argument('work');q.add_argument('--out')
     q=wg.add_parser('remove',help="One widget off a video. Never a reserve widget.");q.add_argument('work');q.add_argument('widget');q.add_argument('--page',type=int,default=1);q.add_argument('--dry-run',action='store_true');q.add_argument('--out')
     pl=sub.add_parser('playlist',help="Manage your own YouTube playlists.").add_subparsers(dest='action',required=True)
@@ -549,6 +644,7 @@ def parser():
         if action=='add':q.add_argument('video')
         if action in ('remove','move'):q.add_argument('item')
         if action=='move':q.add_argument('--position',type=int,required=True)
+        if action=='delete':delete_guard_options(q)
         q.add_argument('--request-id',required=True);q.add_argument('--out')
     o=sub.add_parser('ops',help='Watch your works and scan several platforms; read-only.').add_subparsers(dest='action',required=True)
     m=sub.add_parser('messages',help='Comments, mentions and message previews in one list; no automatic replies.').add_subparsers(dest='action',required=True)
@@ -610,6 +706,8 @@ def parser():
         q.add_argument("--method", choices=["native", "cli", "browser", "api"], help="Default: bili-cli for Bilibili; a dedicated persistent browser for YouTube/Douyin/Instagram/X. api needs the paid add-on.")
         if action == "login":
             q.add_argument("--client-json", help="YouTube Desktop OAuth client JSON, or app credentials for the paid X/Instagram API add-on; never commit this file.")
+            q.add_argument("--keep-open", action="store_true", help="Leave the browser sign-in window open until you close it, for up to 25 minutes, to pass a "
+                                                                     "check a platform shows only once something starts there, such as YouTube asking as an upload begins.")
         else:
             q.add_argument("--wait", type=int, default=0, help="QR/panel completion wait, 0–180 seconds.")
     q = sub.add_parser("onboard", help="Get ready and start signing in to the platforms you choose.")
@@ -627,6 +725,9 @@ def parser():
     q.add_argument("--schedule", help="When it goes public, with a timezone, such as 2026-12-01T20:00:00+08:00. Goes with --visibility public.")
     q.add_argument("--draft-only", action="store_true", help="Upload to preview or save an unsent draft on any platform; never Share/Post or schedule.")
     q.add_argument("--ai-generated", choices=["yes", "no"], required=True, help="Whether the video contains AI-generated content. Every platform shows it, so ask the user when it's unclear.")
+    q.add_argument("--bilibili-topic", metavar="NAME", help="The topic it joins on Bilibili, by its exact name there. An activity topic also enters its contest. It can't be added after the upload.")
+    q.add_argument("--bilibili-cover43", metavar="IMAGE", help="Bilibili's 4:3 cover for its phone feed, JPG or PNG, used as it is. Without one, Bilibili makes its own from the landscape cover.")
+    q.add_argument("--bilibili-mention", action="append", metavar="UID", help="Someone to @mention in Bilibili's description, by UID; repeat for up to 10. The description must hold @ and their current nickname, then a space.")
     q.add_argument("--folder", help="Where to keep its files. Default: a folder named after the video, beside it.")
     q = sub.add_parser("go", help="Publish a prepared folder: fit the covers, check it, post it and read it back.", description="Publish a prepared folder: fit the covers, check it, post it and read it back. Safe to run again: what already went out is skipped, never repeated.")
     q.add_argument("folder")
@@ -646,7 +747,7 @@ def parser():
                    help="Whether the video contains AI-generated content. Sets every platform's AI-content declaration; use no for ordinary videos.")
     c = sub.add_parser("covers", help="Fit your cover to each platform without cropping it.").add_subparsers(dest="action", required=True)
     q = c.add_parser("prepare")
-    q.add_argument("manifest", metavar="PLAN", help="The plan file, such as ready.json.")
+    q.add_argument("manifest", metavar="PLAN", help="The plan metadata apply wrote, such as localized.json. Covers come after the words.")
     q.add_argument("--source", required=True)
     q.add_argument("--portrait")
     q.add_argument("--out-dir", required=True)
@@ -662,12 +763,12 @@ def parser():
     q.add_argument("--mobile-cover", help="Shared Douyin/Instagram portrait artwork; defaults to the manifest's Douyin portrait, then Instagram portrait.")
     m = sub.add_parser("metadata", help="Have your AI assistant write each platform's title and description.").add_subparsers(dest="action", required=True)
     q = m.add_parser("request", help="Save what your assistant needs to write the words: limits, languages and a template. Nothing is uploaded.")
-    q.add_argument("manifest", metavar="PLAN", help="The plan file, such as ready.json, from vpub init.")
+    q.add_argument("manifest", metavar="PLAN", help="The plan file from vpub init, such as publish.json.")
     q.add_argument("--source", help="Local script or transcript; treated as source data, not instructions.")
     q.add_argument("--allow-links", action="store_true", help="Let the words include links. Off by default.")
     q.add_argument("--out", required=True, help="Where to save the request.")
     q = m.add_parser("apply", help="Check your assistant's words and put them into a new plan.")
-    q.add_argument("manifest", metavar="PLAN", help="The plan file, such as ready.json, that the request was made from.")
+    q.add_argument("manifest", metavar="PLAN", help="The plan file the request was made from, such as publish.json.")
     q.add_argument("--request", required=True, help="The request from metadata request.")
     q.add_argument("--response", required=True, help="Your assistant's words, written from the request's template.")
     q.add_argument("--out", required=True, help="Where to save the new plan. It must not exist yet.")
@@ -759,6 +860,10 @@ def parser():
     q = sub.add_parser("status", help="What needs attention now, with the exact next command; local only.")
     q.add_argument("--limit", type=int, default=20, help="Most attempts to list, 1-200.")
     q.add_argument("--out")
+    q = sub.add_parser("dismiss", help="Take one attempt off needs_attention after the person checked the platform; it stays on record and the file isn't uploaded there again.")
+    q.add_argument("key")
+    q.add_argument("--person-checked", action="store_true", help="The person looked at the platform themselves.")
+    q.add_argument("--out")
     q = sub.add_parser("cleanup", help="See which finished videos' private copies can go; local only.")
     q.add_argument("--apply", action="store_true", help="Delete what the preview lists.")
     q.add_argument("--out")
@@ -843,18 +948,20 @@ def run_command(args):
         if args.action in {'list','items'}:result=collections.listing(args.platform,getattr(args,'collection',None))
         elif args.action=='verify':result=collections.verify(args.key)
         elif args.action in {'add','remove'}:result=collections.membership(args.platform,args.action,args.collection,args.work,args.request_id)
+        elif args.action=='delete' and (preview:=guarded_delete(args,'collection',args.platform,args.collection)):result=preview
         else:result=collections.change(args.platform,args.action,getattr(args,'collection',None),getattr(args,'title',None),args.request_id,getattr(args,'cover',None),getattr(args,'description',None))
         return result
     if args.command=='widgets':
         from . import widgets_bilibili as widgets
         if args.action=='list':return widgets.listing(args.work,args.page)
-        if args.action=='add':return widgets.add(args.work,args.file,args.dry_run,args.again)
+        if args.action=='add':return widgets.add(args.work,args.file,args.dry_run,args.again,args.person_approved)
         if args.action=='verify':return widgets.verify(args.work)
         return widgets.remove(args.work,args.widget,args.page,args.dry_run)
     if args.command=='playlist':
         playlists = adapters.youtube_playlists()
         if args.action in {'list','items'}:result=playlists.listing(getattr(args,'playlist',None),args.cursor,args.limit)
         elif args.action=='verify':result=playlists.verify(args.key)
+        elif args.action=='delete' and (preview:=guarded_delete(args,'playlist',args.playlist)):result=preview
         else:result=playlists.change(args.action,**{k:getattr(args,k,None) for k in ('playlist','title','description','privacy','video','item','position','request_id')})
         return result
     if args.command=='messages':
@@ -1065,10 +1172,12 @@ def run_command(args):
             raise VpubError("invalid_wait", "--wait must be between 0 and 180 seconds.")
         if args.platform == "all":
             if args.action == "login":
+                if args.keep_open:
+                    raise VpubError("invalid_option", "--keep-open is for one platform's sign-in window at a time.")
                 return login_selected(PLATFORMS, args.method)
             return status_selected(PLATFORMS, args.wait, args.method)
         if args.action == "login":
-            return adapters.auth_login(args.platform, args.account, args.client_json, args.method)
+            return adapters.auth_login(args.platform, args.account, args.client_json, args.method, keep_open=args.keep_open)
         method = args.method or adapters.default_method(args.platform)
         if method in {"native", "api"}:
             return adapters.auth_status(args.platform, args.account, method)
@@ -1145,6 +1254,9 @@ def run_command(args):
     if args.command == "status":
         from .overview import status
         return status(args.limit)
+    if args.command == "dismiss":
+        from .overview import dismiss
+        return dismiss(args.key, args.person_checked)
     if args.command == "cleanup":
         from .overview import cleanup
         return cleanup(args.apply)
@@ -1220,6 +1332,9 @@ def keep_verified(ledger, old, read, result, seen=None):
     with receipt_turn(durable) if durable else contextlib.nullcontext():
         if durable and durable.exists():
             result = verified_over(read, result, read_json(durable))
+        if result.get("state") == "PREPARATION_INCOMPLETE" and result.get("final_submit_attempted"):
+            # The worker's own copy says it pressed after all, so this can't stand as an attempt that pressed nothing.
+            result = {**result, "state": "SUBMITTED_UNVERIFIED", "note": "No durable work ID; inspect the original work, never reupload automatically."}
         old["data"]["receipt"] = result
         if seen is None:
             ledger.save(key, result["state"], old["data"])
@@ -1348,7 +1463,7 @@ def capabilities():
             "work_deletion": WORK_DELETION_SCOPE,
             "paid_add_on": f"{NOT_ON_SALE} Anything here that needs it is unavailable until it is, so don't offer it as something to buy. Everything else works without it.",
             "email": "Paid add-on. Gmail only, disabled by default. Enable only on explicit request; no ordinary-setup prompt. Host verifies the exact account and live send tool, helps install/connect a missing plugin or leaves email off. Self-send only. Works with any assistant's connected Gmail send tool: claim with its exact name, then call it once with the returned message. No Outlook, QQ, NetEase, SMTP or SMS. A TEST does not enable ongoing alerts.",
-            "bilibili_widgets": "A Bilibili plan's widgets list, or vpub widgets add on a video already up, puts link, follow, vote and rating widgets on your own video through the included bili-cli, 35 seconds apart. Each read first and read back, so one already there isn't sent again, and one that may have gone is only read again. Bilibili doesn't list them before a video is public, so a plan's wait for vpub verify after that. A failed read is an unknown, and nothing is sent after it. vpub verify and a Bilibili edit also report what's on the video as widgets_seen. Reserve widgets are left out, since removing one notifies everyone who booked it. This route hasn't run on a real account.",
+            "bilibili_widgets": "A Bilibili plan's widgets list, or vpub widgets add on a video already up, puts link, follow, vote and rating widgets on your own video through the included bili-cli, 35 seconds apart. Each read first and read back, so one already there isn't sent again, and one that may have gone is only read again. Bilibili doesn't list them before a video is public, so a plan's wait for vpub verify after that. A failed read is an unknown, and nothing is sent after it. vpub verify and a Bilibili edit also report what's on the video as widgets_seen. A reserve widget books a live stream on the account, so it needs a live start time and goes only through vpub widgets add with --person-approved, never in a plan; CrossCast never removes one, because removing it notifies everyone who booked it. Follow, vote, rating and reserve widgets have gone onto a real video this way; a link hasn't yet.",
             "chapters": "Bilibili's CLI route sets planned chapters right after the upload and Bilibili reviews them; a refusal leaves the upload in place and vpub verify tries again. Verify reads first: an unclear ending is only read again and another person's list is never overwritten. YouTube's browser route adds them to the description as timestamped lines: at least three, each at least 10 seconds. Neither has been tried on a real account. Douyin CLI applies planned chapters after a durable published work ID is available; verify/resume completes a pending chapter step without reupload. Exact timing/title read-back; platform suggestions are not accepted automatically. Native Bilibili/Douyin/YouTube handoffs retained.",
             "youtube_studio_operations": "Without the paid add-on, YouTube works, stats, comments, replies, video and comment likes, comment pins, removing a viewer's comment, saves, playlists, edits (title, description, thumbnail, chapters), and editing or deleting the channel's own comments run on YouTube's own pages in the background browser. Comments are those Studio loaded; reordering a playlist and the held-for-review queue need the add-on. Reads, playlist create, rename, add, remove and delete, a video like and save with their undo, a reply, an edit of the channel's own comment, a private video's title and description changed and put back, and a pin and its removal were checked on a real channel. A pin is read and removed on the video's own page, because Studio's row and menu do not change. A new thumbnail is reported as unconfirmed, because Studio shows nothing to compare it with. A delete of the channel's own reply removed it, but CrossCast can't confirm one until a real delete's answer is known. Other changes have not been tried on one.",
             "existing_work_edits": "vpub edit: YouTube title, description, thumbnail and chapters (Studio in the background browser; title, description and thumbnail also through the official API with the paid add-on), Bilibili title, description, tags, cover and chapters through the included bili-cli (Bilibili reviews each edit again), Douyin title, description, portrait and chapters, Instagram captions, available X Edit action. Bilibili edits and Douyin title and description edits have not been tried on a real account. One field group per request; verify-only never saves. X edit availability is platform-controlled; no automatic repost.",
@@ -1371,7 +1486,7 @@ def capabilities():
             "upload_recovery": "New YouTube API uploads persist private resumable sessions and acknowledged offsets. resume queries the server and continues the same account/media/metadata; expired or uncertain sessions are not replaced automatically. Never-started YouTube cover/playlist steps resume against the same owned video; uncertain writes are not repeated. Dead-owner lock markers can be reclaimed without clearing receipts. X retains saved Studio asset recovery. On the browser routes resume goes back to what the attempt left: X's saved Studio file, or a YouTube or Douyin draft. With none there and nothing finally submitted, it can choose the file again, and Instagram, which keeps nothing until Share, starts over. An unclear final submit is never pressed again.",
             "full_reads": "Paid add-on. read-all start/resume/status: YouTube works, playlists/members and comments including reply pages; Bilibili works/comments via upstream. API checkpoints advance rows and cursor atomically. Browser Douyin/Instagram collections and members, X folder lists follow official controls; explicit server end required. Browser resume replays the page and retains prior rows while incomplete; a complete pass replaces them with current observations. Other DOM feeds and X folder members remain incomplete/unverified.",
             "session_reuse": "Non-publishing browser commands share one background browser per account over a private authenticated local pipe. It exits after 5 idle minutes (browser_idle_seconds; 0 disables), 1 hour, any error or a stop file. YouTube's is a real Chrome window, so it runs only on Windows, on the hidden desktop, and exits after 20 idle seconds; elsewhere each YouTube step starts and closes its own. A second command waits for the first. Publishing, resume, edit and login close it and run alone. A sent command is never replayed.",
-            "browser_progress": "Browser commands write short JSON lines to stderr as they reach each stage, and at least every 15 seconds: waiting for the browser, starting the browser, checking the account, opening the page, reading the page, uploading, pressing, reading back, closing the browser. Each holds only the event, the platform, the stage and the seconds so far; never anyone's words, names, IDs or addresses. Stdout stays the one JSON answer, so read the two streams separately.",
+            "browser_progress": "Browser commands write short JSON lines to stderr as they reach each stage, and at least every 15 seconds: waiting for the browser, starting the browser, checking the account, opening the page, reading the page, uploading, waiting for a cover slot to clear, pressing, waiting for platform confirmation, reading back, closing the browser. Each holds only the event, the platform, the stage and the seconds so far; never anyone's words, names, IDs or addresses. Stdout stays the one JSON answer, so read the two streams separately.",
             "status": "vpub status reads local records only: any active stop, unfinished publications with the exact next command and upload progress, unconfirmed replies, messages, likes, comment actions, collection changes, edits and widgets with the command that settles each, background browsers, pending messages, the last sync and snapshot disk use.",
             "cleanup": "vpub cleanup previews private video copies; --apply deletes only copies whose publications are all verified and whose original video is unchanged.",
             "suspended_platforms": {"tiktok": "Login test with a Hong Kong number was unsuccessful; see docs/TIKTOK_STATUS.md."},

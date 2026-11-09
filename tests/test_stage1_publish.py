@@ -264,6 +264,63 @@ class XFormTests(Form):
         self.assertEqual(([], 1), (self.uploads, len(self.final)))
         self.assertEqual((True, "https://studio.x.com/library/13_77/edit"), (result["reused_media"], result["media_url"]))
 
+    def library(self, body):
+        """Library as a test needs it. The file's own page and everything else stay as this copy has them."""
+        plain = self.studio
+
+        async def studio(route, path):
+            if path.endswith("/edit") or path == "/schedule" or not self.studio_open:
+                return await plain(route, path)
+            await self.page_at(route, f'<a href="https://analytics.twitter.com/user/{self.studio_account}/home">account</a><button>Upload Media</button>{body}')
+        self.studio = studio
+
+    def resumed(self):
+        """An attempt whose browser closed after choosing its file and before the file had a page of its own, as a field run's did at Loading 73%."""
+        first = Transaction("x", OWNER, self.plan)
+        first.save(media_selected=True, upload_filename=self.clip_in_studio, phase="blocked", state="PREPARATION_INCOMPLETE")
+        return Transaction("x", OWNER, self.plan, resume=True, prior_receipt=first.receipt)
+
+    async def test_a_resume_whose_file_never_reached_the_library_uploads_it_once_more(self):
+        """From a field run: the browser closed at Loading 73% on a 61 MB file, Library then held no file of its name, and each resume looked for that name and never found it."""
+        with patch.object(browser_forms, "X_LIBRARY_LOOK_SECONDS", 1):
+            result = await browser_forms.publish_x(self.page, self.resumed())
+        self.assertEqual(("SUBMISSION_VERIFIED", 1), (result["state"], result["lost_uploads"]))
+        self.assertEqual(([1], 1), (self.uploads, len(self.final)))
+        self.assertIs(True, result["lost_look"]["reloaded"])
+
+    async def test_a_resume_whose_file_is_in_the_library_opens_it_with_no_new_upload(self):
+        """Choosing the file again would make two tiles of one name, which get no click."""
+        name = self.clip_in_studio
+        self.library(f"""<div onclick="location.href = '/library/1_2/edit?name={name}'">{name}</div><input type="file" accept="video/mp4" onchange="fetch('/upload', {{method: 'POST', body: '{{}}'}})">""")
+        result = await browser_forms.publish_x(self.page, self.resumed())
+        self.assertEqual("SUBMISSION_VERIFIED", result["state"])
+        self.assertEqual(([], 1), (self.uploads, len(self.final)))
+        self.assertNotIn("lost_uploads", result)
+
+    async def test_a_tile_still_loading_is_not_clicked_until_its_file_is_up(self):
+        """From a field run: the new tile said Loading 73% thirty seconds into a 61 MB upload, and the file had a page of its own only at 100%."""
+        going_up = ("fetch('/upload', {method: 'POST', body: '{}'}); const name = this.files[0].name;"
+                    " const going = document.createElement('p'); going.textContent = 'Loading 40%'; document.body.append(going);"
+                    " const tile = document.createElement('div'); tile.textContent = name; document.body.append(tile);"
+                    " tile.onclick = () => { if (going.isConnected) { fetch('/wrong', {method: 'POST', body: '{}'}); return; } location.href = '/library/1_2/edit?name=' + encodeURIComponent(name); };"
+                    " setTimeout(() => { going.textContent = 'Loading 80%'; }, 2000); setTimeout(() => going.remove(), 4000);")
+        self.library(f'<input type="file" accept="video/mp4" onchange="{going_up}">')
+        result = await self.publish()
+        self.assertEqual("SUBMISSION_VERIFIED", result["state"])
+        self.assertEqual(([1], [], 1), (self.uploads, self.wrong_presses, len(self.final)))
+        self.assertIn("loading", result["open_look"])
+
+    async def test_a_handle_right_after_a_slash_still_reads_as_its_words(self):
+        """From a field run: X put its own link around @ZipZipPipe written straight after a slash, the page read a line break on each side of it, and a post that had gone out stayed SUBMITTED_UNVERIFIED."""
+        self.plan["options"]["post_text"] = "OC:@上善无形/@ZipZipPipe CC BY-NC-SA 4.0"
+        self.own_words = 'OC:@上善无形/<div><a href="/ZipZipPipe">@ZipZipPipe</a></div> CC BY-NC-SA 4.0'
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
+
+    async def test_other_words_beside_a_handle_still_do_not_read_as_its_words(self):
+        self.plan["options"]["post_text"] = "OC:@上善无形/@ZipZipPipe CC BY-NC-SA 4.0"
+        self.own_words = 'OC:@上善无形/<div><a href="/ZipZipPipe">@ZipZipPipe</a></div> CC BY-SA 4.0'
+        self.assertEqual("SUBMITTED_UNVERIFIED", (await self.publish())["state"])
+
     async def test_a_page_that_goes_on_to_another_file_is_not_taken_for_this_one(self):
         """From a review: the file it landed on would have replaced this attempt's address."""
         self.plan["options"]["existing_media_url"] = "https://studio.x.com/library/13_77/edit"
@@ -510,6 +567,7 @@ class InstagramFormTests(Form):
     def prepare(self):
         super().prepare()
         self.offers_label = True
+        self.offers_new_post = True
         self.label_turns_on = True
         self.never_shows = False
         self.label_presses = 0
@@ -521,6 +579,17 @@ class InstagramFormTests(Form):
         self.share_row = '<div><div><span>Share to</span></div><div><span>Facebook</span><input type="checkbox" role="switch" style="width:10px;height:10px"></div></div>'
         self.caption_head = f'<a href="/{OWNER}/">{OWNER}</a> <time>3d</time>'
         self.comments = ""
+        self.words = dict(self.ENGLISH)
+        self.notice = None
+
+    ENGLISH = {"new_post": "New post", "picker": "Select from computer", "crop": "Select crop", "original": "Original", "next": "Next", "label": "Add AI label", "share": "Share"}
+    # The first two are what a field run's zh-hk page showed; the rest are Instagram's usual words there.
+    CHINESE = {"new_post": "新帖子", "picker": "從電腦選擇", "crop": "選取裁剪", "original": "原始", "next": "下一步", "label": "加上 AI 標籤", "share": "分享"}
+
+    def in_chinese(self):
+        self.words = dict(self.CHINESE)
+        self.share_row = self.share_row.replace("Share to", "分享至")
+        self.shared_words = "<p>已分享你的 Reels。</p>"
 
     async def handle(self, route):
         url = urlsplit(route.request.url)
@@ -544,18 +613,93 @@ class InstagramFormTests(Form):
         await self.page_at(route, f"""{self.check}<main>{grid}</main>{self.composer()}""")
 
     def composer(self):
+        w = self.words
         keep = "" if self.keeps_text else "this.value = '';"
         turn = "this.setAttribute('aria-checked', 'true');" if self.label_turns_on else ""
-        label = f"""<div><span>Add AI label</span><div role="switch" aria-checked="false" style="width:10px;height:10px" onclick="fetch('/label', {{method: 'POST', body: '{{}}'}}); {turn}"></div></div>""" if self.offers_label else ""
+        label = f"""<div><span>{w['label']}</span><div role="switch" aria-checked="false" style="width:10px;height:10px" onclick="fetch('/label', {{method: 'POST', body: '{{}}'}}); {turn}"></div></div>""" if self.offers_label else ""
         label = self.label_row if self.label_row is not None else label
         to_edit = "window.editComes = true" if self.edit_late else "showPart(2)"
         to_caption = "setTimeout(() => showPart(3), 300)" if self.caption_late else "showPart(3)"
-        return f"""<svg aria-label="New post" width="10" height="10" onclick="showPart(0)"></svg>
-          <div class="step" hidden><button>Select from computer</button><input type="file" accept="video/mp4" onchange="fetch('/upload', {{method: 'POST', body: '{{}}'}}); showPart(1)"></div>
-          <div class="step" hidden><svg aria-label="Select crop" width="10" height="10"></svg><span>Original</span><button onclick="{to_edit}">Next</button></div>
-          <div class="step" hidden><div role="button">Select from computer</div><button onclick="{to_caption}">Next</button></div>
-          <div class="step" hidden><textarea oninput="{keep}"></textarea>{label}{self.share_row}<footer><a href="https://www.threads.net/">Threads</a></footer><button onclick="fetch('/share', {{method: 'POST', body: JSON.stringify({{text: document.querySelector('textarea').value}})}}).then(() => document.getElementById('done').hidden = false)">Share</button><div id="done" hidden>{self.shared_words}</div></div>
-          <script>function showPart(number) {{ document.querySelectorAll('.step').forEach((part, index) => part.hidden = index !== number); }}</script>"""
+        new_post = f'<svg aria-label="{w["new_post"]}" width="10" height="10" onclick="showPart(0)"></svg>' if self.offers_new_post else ""
+        # A notice over the crop step, which has to be closed with its own button first.
+        to_crop = "document.getElementById('notice').hidden = false" if self.notice else "showPart(1)"
+        notice = f"""<div id="notice" role="dialog" hidden><p>{self.notice[0]}</p><button onclick="this.parentElement.hidden = true; showPart(1)">{self.notice[1]}</button></div>""" if self.notice else ""
+        # The steps sit in the composer's own window, as on the real page.
+        return f"""{new_post}{notice}<div role="dialog">
+          <div class="step" hidden><button>{w['picker']}</button><input type="file" accept="video/mp4" onchange="fetch('/upload', {{method: 'POST', body: '{{}}'}}); {to_crop}"></div>
+          <div class="step" hidden><svg aria-label="{w['crop']}" width="10" height="10"></svg><span>{w['original']}</span><button onclick="{to_edit}">{w['next']}</button></div>
+          <div class="step" hidden><div role="button">{w['picker']}</div><button onclick="{to_caption}">{w['next']}</button></div>
+          <div class="step" hidden><textarea oninput="{keep}"></textarea>{label}{self.share_row}<footer><a href="https://www.threads.net/">Threads</a></footer><button onclick="fetch('/share', {{method: 'POST', body: JSON.stringify({{text: document.querySelector('textarea').value}})}}).then(() => document.getElementById('done').hidden = false)">{w['share']}</button><div id="done" hidden>{self.shared_words}</div></div>
+          </div><script>function showPart(number) {{ document.querySelectorAll('.step').forEach((part, index) => part.hidden = index !== number); }}</script>"""
+
+    async def test_a_composer_in_chinese_shares_through_its_own_words(self):
+        """From a field run: the account showed Instagram in zh-hk, and only the English words were looked for, so its first step was never found."""
+        self.in_chinese()
+        result = await self.publish()
+        await self.page.evaluate("1")
+        self.assertEqual("SUBMISSION_VERIFIED", result["state"])
+        self.assertEqual(1, self.label_presses)
+        self.assertEqual(1, len(self.final))
+
+    async def test_a_chinese_share_to_switch_that_is_on_shares_nothing(self):
+        self.in_chinese()
+        self.share_row = self.share_row.replace('role="switch"', 'role="switch" checked')
+        await self.refused("shares_elsewhere")
+
+    async def test_a_longer_name_that_holds_a_known_word_is_not_taken_for_it(self):
+        """下一步驟 holds 下一步, and a press on the wrong control could skip a step."""
+        self.in_chinese()
+        self.words["next"] = "下一步驟"
+        real = browser_forms.wait_until
+
+        async def briefly(page, predicate, *, seconds=120, label="page state"):
+            return await real(page, predicate, seconds=2, label=label)
+        with patch.object(browser_forms, "wait_until", briefly):
+            await self.refused("processing_timeout")
+
+    async def unknown_crop_word(self, part, word):
+        self.in_chinese()
+        self.words[part] = word
+        with self.assertRaises(VpubError) as caught:
+            await self.publish()
+        self.assertEqual("layout_changed", caught.exception.code)
+        self.assertIn("while choosing the original crop", caught.exception.message)
+        self.assertIn("gives its language as", caught.exception.message)
+        self.assertIn("English", caught.exception.hint)
+        self.assertNotIn(word, caught.exception.message)
+        self.assertEqual([], self.final)
+
+    async def test_a_crop_control_whose_words_are_not_known_says_which_step_and_shares_nothing(self):
+        await self.unknown_crop_word("crop", "選擇比例")
+
+    async def test_an_original_choice_whose_words_are_not_known_says_which_step_and_shares_nothing(self):
+        await self.unknown_crop_word("original", "保留比例")
+
+    async def test_a_crop_control_not_on_the_list_is_found_by_the_character_for_crop(self):
+        """From a field run: the zh-hk composer chose the file, then found none of the listed crop words."""
+        self.in_chinese()
+        self.words["crop"] = "剪裁"
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
+
+    async def test_an_original_choice_not_on_the_list_is_found_by_its_shape(self):
+        self.in_chinese()
+        self.words["original"] = "原比例"
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
+
+    async def test_the_reels_notice_in_another_language_is_closed_with_its_own_button(self):
+        self.in_chinese()
+        self.notice = ("影片帖子現在會以 Reels 形式分享", "確定")
+        self.assertEqual("SUBMISSION_VERIFIED", (await self.publish())["state"])
+
+    async def test_an_unknown_ai_label_says_the_language_and_how_to_avoid_it(self):
+        self.in_chinese()
+        self.words["label"] = "AI 資訊"
+        with self.assertRaises(VpubError) as caught:
+            await self.publish()
+        self.assertEqual("declaration_unverified", caught.exception.code)
+        self.assertIn("gives its language as", caught.exception.message)
+        self.assertIn("English", caught.exception.hint)
+        self.assertEqual([], self.final)
 
     async def test_an_ai_video_turns_the_platforms_own_label_on_before_sharing(self):
         await self.publish()
@@ -572,6 +716,16 @@ class InstagramFormTests(Form):
     async def test_no_label_control_stops_before_sharing(self):
         self.offers_label = False
         await self.refused("declaration_unverified")
+
+    async def test_no_new_post_button_says_which_control_and_uploads_nothing(self):
+        """From a field run: after a sign-in made elsewhere, its error could only say waiting for locator(…)."""
+        self.offers_new_post = False
+        with patch.object(browser_forms, "INSTAGRAM_NEW_POST_SECONDS", 1), self.assertRaises(VpubError) as caught:
+            await self.publish()
+        self.assertEqual("layout_changed", caught.exception.code)
+        self.assertIn("New post button", caught.exception.message)
+        self.assertIn("gives its language as", caught.exception.message)
+        self.assertEqual([], self.uploads)
 
     async def test_a_label_that_will_not_turn_on_stops_before_sharing(self):
         self.label_turns_on = False

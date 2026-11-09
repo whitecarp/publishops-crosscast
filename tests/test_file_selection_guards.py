@@ -13,6 +13,15 @@ class SelectionReached(Exception):
     """End the fake route at its first file selection, before any later step."""
 
 
+class Guard:
+    """The guard on a Douyin cover slot's press, as the real page answers when nothing else is on top: the press may go, and went through."""
+    async def evaluate(self, script, *args):
+        return {'shown': True, 'ready': True, 'passed': ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'], 'held': None, 'in_the_way': None}
+
+    async def dispose(self):
+        pass
+
+
 class Locator:
     def __init__(self, page):
         self.page = page
@@ -44,6 +53,12 @@ class Locator:
     async def evaluate_all(self, script):
         return ['https://analytics.twitter.com/user/synthetic_owner/home']
 
+    async def evaluate(self, script, *args, **kwargs):
+        return False  # Douyin's description box holds no cursor, so nothing is pressed to close its suggestions.
+
+    async def evaluate_handle(self, script, *args, **kwargs):
+        return Guard()
+
     async def click(self, **kwargs):
         if self.page.kind != 'chooser':
             self.page.maybe_stop()
@@ -58,9 +73,25 @@ class Locator:
     set_files = set_input_files
 
 
+class Mouse:
+    """A Douyin cover slot is pressed with the pointer where it rests, as a click on it would press it."""
+    def __init__(self, page):
+        self.page = page
+
+    async def move(self, x, y):
+        pass
+
+    async def down(self):
+        self.page.maybe_stop()
+
+    async def up(self):
+        pass
+
+
 class Page:
     def __init__(self, kind, stop_late):
         self.kind, self.stop_late, self.selections = kind, stop_late, 0
+        self.mouse = Mouse(self)
         self.url = ('https://creator.douyin.com/creator-micro/content/publish'
                     if kind in {'douyin', 'collection'} else 'https://studio.x.com/library/1_2/edit')
 

@@ -27,9 +27,13 @@ class VpubError(Exception):
         self.code, self.message, self.hint = code, message, hint
 
 
+class NothingSent(VpubError):
+    """A refusal from a step that sends nothing, such as bili-cli's own dry run of an upload, so the same attempt can be made again once the plan is put right."""
+
+
 def never_sent(exc):
-    """bili-cli held this write back to keep its own spacing, so nothing reached the platform, whatever the receipt said just before."""
-    return isinstance(exc, VpubError) and exc.code == HELD_BACK
+    """bili-cli held this write back to keep its own spacing, or a step that sends nothing refused it, so nothing reached the platform, whatever the receipt said just before."""
+    return isinstance(exc, NothingSent) or (isinstance(exc, VpubError) and exc.code == HELD_BACK)
 
 
 def part_left_undone(receipt):
@@ -284,9 +288,71 @@ def douyin_caption(description, tags):
     return "\n\n".join(p for p in (description, " ".join("#" + t.lstrip("#") for t in tags)) if p)
 
 
+# A line whose last #topic or @name is an @name is typed with a space at its end, as field runs showed it keeps the @ (douyin_type_caption).
+# A review found the 1000-unit checks counted the plan's words without those spaces, so a caption at the limit would have been typed and then
+# cut by Douyin. Every check counts what is typed.
+DOUYIN_NAME_LAST = re.compile(r'[@＠][^#@＃＠]*$')
+DOUYIN_TOO_LONG = ("Douyin description plus hashtags exceeds 1000 UTF-16 units as typed, counting the space typed at the end of each line whose "
+                   "last #topic or @name is an @name.")
+
+
+def douyin_typed_lines(caption):
+    """The caption's lines as they are typed into Douyin's description box."""
+    return [line + ' ' if DOUYIN_NAME_LAST.search(line) and not line[-1].isspace() else line for line in caption.split('\n')]
+
+
+def douyin_caption_units(caption):
+    """The UTF-16 units Douyin's box holds once the caption is typed, each line break one."""
+    return len('\n'.join(douyin_typed_lines(caption)).encode('utf-16-le')) // 2
+
+
+# bili-cli's own limit on the people one description mentions (DESC_MENTIONS_MAX); a test holds the two together.
+MENTIONS_MOST = 10
+# Said to whoever writes the words. bili-cli puts a mention whose @nickname it can't find at the start of the description, which would change the approved words.
+# bili-cli only takes the ordinary @ and space, and a real contest entry on 2026-11-05 mixed them up with their full-width look-alikes.
+MENTION_HOW = ("Bilibili's description must hold each person in mention_uids where the mention goes, written as the ordinary half-width @ (not the full-width ＠), "
+               "their current Bilibili nickname, then an ordinary space (not a full-width one); bili user info UID gives the nickname. "
+               "Without that, bili-cli would put the mention at the start, so CrossCast stops before anything is uploaded.")
+
+
+def bilibili_topic(value):
+    """The topic a Bilibili upload joins, by the exact name Bilibili gives it. An activity topic also enters its contest, and no topic can be added after the upload."""
+    if not isinstance(value, str) or not value.strip() or value != value.strip() or len(value) > 100 or any(c in value for c in "\r\n\x00"):
+        raise VpubError("invalid_topic", "Write the Bilibili topic as its exact name, on one line.",
+                        "Copy it from the topic or contest page. A topic can't be added after the upload, so get it right first.")
+    return value
+
+
+def mention_uids(value):
+    """The people a Bilibili description mentions for real, by UID: a nickname can change, a UID doesn't."""
+    if (not isinstance(value, list) or not 1 <= len(value) <= MENTIONS_MOST
+            or any(type(uid) is not int or uid <= 0 for uid in value) or len(set(value)) != len(value)):
+        raise VpubError("invalid_mention", f"Use 1 to {MENTIONS_MOST} different Bilibili UIDs, the number in each person's space link.")
+    return value
+
+
+def mentions_written(description, uids):
+    """Only a check that there are enough @names. Whether each is that person's current nickname, only Bilibili can say, so the upload asks bili-cli's own dry run first."""
+    if len(set(re.findall(r"@\S+", description))) < len(uids):
+        wide = " A full-width ＠ doesn't count, so write the ordinary @." if re.search(r"＠\S", description) else ""
+        raise VpubError("invalid_mention", "Bilibili's description has fewer @nicknames than mention_uids has people." + wide, MENTION_HOW)
+
+
 def how_to_clear_a_stop():
     """A field run cleared a stop from an ordinary window and it stayed: an app installed from the Store can have its own private AppData, so the same command looked in another folder, found no stop and said so."""
     return f"vpub stop --clear, with VPUB_HOME set to {home()} if you run it in another window"
+
+def how_to_pass_a_check(platform):
+    """What a person does about a platform's check. From a field run: YouTube asked only as an upload began, so the sign-in window, which closes as
+    soon as it sees the account, never showed it, and the person passed it by starting an upload in the CrossCast window."""
+    if platform == "youtube":
+        # Said to whoever reads it, usually an assistant: the check, any upload to let it show and deleting that upload are the person's, and the
+        # stop is cleared only once the person says the check is done.
+        return ("Run vpub auth login youtube --keep-open, which leaves the CrossCast window open for the person for up to 25 minutes. The person passes "
+                "YouTube's check there. YouTube can ask only once something starts, so if nothing shows, the person can start an upload of any short "
+                "clip in that window, pass the check, delete that clip in Studio and close the window. Once the person says the check is done, run "
+                f"{how_to_clear_a_stop()}; inspect any existing draft before retrying.")
+    return f"Run auth login for this platform and complete the official verification, then {how_to_clear_a_stop()}; inspect any existing draft before retrying."
 
 
 def stop_check(platform=None, signing_in=False):
@@ -310,8 +376,11 @@ def stop_check(platform=None, signing_in=False):
             if index == 0 and signing_in and isinstance(signal, dict) and signal.get("source") == "safety" and signal.get("platform") == platform:
                 continue
             if index == 0 and isinstance(signal, dict) and signal.get("source") == "safety":
+                # From a review: YouTube's check showed only as an upload began, and its plain sign-in window closed before then.
+                passing = how_to_pass_a_check("youtube") if signal.get("platform") == "youtube" and signal.get("code") == "human_verification_required" else \
+                    f"{signal.get('platform')}'s own sign-in window still opens with vpub auth login. vpub status says more. Only a person clears the stop: {how_to_clear_a_stop()}."
                 raise VpubError("stopped", f"CrossCast is stopped because {signal.get('platform')} objected ({signal.get('code')}), and a platform's objection stops every platform. Stop file: {path}",
-                                f"{signal.get('platform')}'s own sign-in window still opens with vpub auth login. vpub status says more. Only a person clears the stop: {how_to_clear_a_stop()}.")
+                                passing)
             raise VpubError("stopped", f"Publication stop file exists: {path}",
                             "Inspect the stop reason. Only the operator may clear it" + (f": {how_to_clear_a_stop()}." if index == 0 else "."))
 
@@ -333,6 +402,9 @@ def shared_portrait(covers):
                 raise VpubError("invalid_cover", "The shared portrait must be a local file path.")
             return value
     return None
+
+
+DRAFT_KEEPS = "A draft keeps the title, description, tags and cover. Choose its schedule, chapters, collection, widgets, topic, 4:3 cover or mentions when it is published."
 
 
 def load_plan(path, selected=None):
@@ -365,7 +437,7 @@ def load_plan(path, selected=None):
         if not isinstance(v, dict):
             raise VpubError("invalid_manifest", "Each platform needs an object.")
         permitted = {"account", "title", "description", "tags", "visibility", "ai_generated", "schedule", "content_language", "metadata_language", "metadata_mode", "chapters", "duration_seconds"}
-        permitted |= {"tid", "expected_uid", "method", "season_id", "submission_mode", "widgets"} if platform == "bilibili" else set()
+        permitted |= {"tid", "expected_uid", "method", "season_id", "submission_mode", "widgets", "topic", "mention_uids"} if platform == "bilibili" else set()
         permitted |= {"category_id", "made_for_kids", "expected_channel_id", "method", "playlist_ids", "playlist_titles", "create_missing_playlists", "submission_mode"} if platform == "youtube" else set()
         permitted |= {"method", "expected_identity", "submission_mode", "collection_title"} if platform == "douyin" else set()
         permitted |= {"method", "expected_identity", "submission_mode"} if platform in {"x", "instagram"} else set()
@@ -399,6 +471,10 @@ def load_plan(path, selected=None):
                 raise VpubError("invalid_playlist", "create_missing_playlists is true or false, on the browser route, with playlist_titles.")
         if platform == "bilibili" and "season_id" in v and (type(v["season_id"]) is not int or v["season_id"] <= 0):
             raise VpubError("invalid_collection", "Use the exact collection ID from vpub collection list bilibili.")
+        if platform == "bilibili" and "topic" in v:
+            bilibili_topic(v["topic"])
+        if platform == "bilibili" and "mention_uids" in v:
+            mention_uids(v["mention_uids"])
         if platform == "douyin" and v.get("method", "browser") not in {"native", "browser"}:
             raise VpubError("invalid_method", "Douyin method must be native or browser.")
         if platform == "douyin" and "expected_identity" in v:
@@ -406,6 +482,8 @@ def load_plan(path, selected=None):
                 raise VpubError("invalid_identity", "Use the Douyin account ID observed in the creator dashboard, not the display name.")
         if platform == "bilibili" and v.get("method", "cli") not in {"native", "cli"}:
             raise VpubError("invalid_method", "Bilibili method must be native or cli.")
+        if platform == "bilibili" and v.get("method", "cli") != "cli" and ("topic" in v or "mention_uids" in v):
+            raise VpubError("invalid_method", "A Bilibili topic or mentions go through the CLI route.")
         if platform in {"x", "instagram"} and v.get("method", "browser") not in {"native", "browser", "api"}:
             raise VpubError("invalid_method", "X/Instagram method must be browser, api or native.")
         if platform in {"x", "instagram"} and v.get("method") == "api" and v.get("submission_mode", "publish") != "publish":
@@ -417,8 +495,8 @@ def load_plan(path, selected=None):
         if platform in {"bilibili", "douyin"} and v.get("submission_mode") == "draft_only":
             if v.get("method") == "native":
                 raise VpubError("invalid_submission_mode", f"{platform} draft_only needs CrossCast's own route.")
-            if v.get("schedule") or v.get("chapters") or v.get("season_id") or v.get("collection_title") or v.get("widgets"):
-                raise VpubError("invalid_submission_mode", "A draft keeps the title, description, tags and cover. Choose its schedule, chapters, collection or widgets when it is published.")
+            if v.get("schedule") or v.get("chapters") or v.get("season_id") or v.get("collection_title") or v.get("widgets") or v.get("topic") or v.get("mention_uids"):
+                raise VpubError("invalid_submission_mode", DRAFT_KEEPS)
         if platform == "douyin" and "collection_title" in v:
             value = v["collection_title"]
             if not isinstance(value, str) or not value.strip() or value != value.strip() or len(value) > 20 or v.get("method", "browser") != "browser":
@@ -441,6 +519,8 @@ def load_plan(path, selected=None):
             raise VpubError("invalid_title", "YouTube titles cannot contain < or >.")
         if not isinstance(desc, str) or "\x00" in desc or len(desc) > (2000 if platform != "youtube" else 5000):
             raise VpubError("invalid_description", f"Invalid {platform} description.")
+        if platform == "bilibili" and "mention_uids" in v:
+            mentions_written(desc, v["mention_uids"])
         if platform == "youtube" and len(desc.encode("utf-8")) > 5000:
             raise VpubError("invalid_description", "YouTube description exceeds 5000 UTF-8 bytes.")
         if platform == "youtube" and ("<" in desc or ">" in desc):
@@ -451,8 +531,8 @@ def load_plan(path, selected=None):
             raise VpubError("invalid_tags", "Bilibili requires 1–10 tags.")
         if platform == "youtube" and sum(len(t) + 1 for t in tags) > 500:
             raise VpubError("invalid_tags", "YouTube tags exceed the 500-character budget.")
-        if platform == "douyin" and len(douyin_caption(desc, tags).encode("utf-16-le")) // 2 > 1000:
-            raise VpubError("invalid_description", "Douyin description plus hashtags exceeds 1000 UTF-16 units.")
+        if platform == "douyin" and douyin_caption_units(douyin_caption(desc, tags)) > 1000:
+            raise VpubError("invalid_description", DOUYIN_TOO_LONG)
         visibility = v.get("visibility")
         supported = {"bilibili": {"public", "private"}, "youtube": {"public", "private", "unlisted"}, "douyin": {"public", "private"},
                      "x": {"account"}, "instagram": {"account"}}
@@ -533,16 +613,27 @@ def load_plan(path, selected=None):
         raise VpubError("invalid_cover", "covers maps supported platforms to landscape/portrait files.")
     for platform in plans:
         variants = supplied_covers.get(platform, {})
-        if not isinstance(variants, dict) or set(variants) - {"landscape", "portrait"}:
-            raise VpubError("invalid_cover", "Use landscape and/or portrait cover roles.")
+        # cover43 is Bilibili's 4:3 cover for its phone feed, uploaded as it is beside the landscape one.
+        if not isinstance(variants, dict) or set(variants) - {"landscape", "portrait", *(["cover43"] if platform == "bilibili" else [])}:
+            raise VpubError("invalid_cover", "Use landscape and/or portrait cover roles, and cover43 only for Bilibili's 4:3 cover.")
         if variants and platform == "x" and plans[platform]["method"] == "native":
             raise VpubError("unsupported_cover", "This route cannot set custom covers.")
         if "portrait" in variants and platform in {"youtube", "bilibili", "x"}:
             raise VpubError("unsupported_cover", "This platform uses one landscape thumbnail in this workflow.")
+        if "cover43" in variants and plans[platform]["method"] != "cli":
+            raise VpubError("unsupported_cover", "Bilibili's 4:3 cover goes through the CLI route.")
+        if "cover43" in variants and plans[platform].get("submission_mode") == "draft_only":
+            raise VpubError("invalid_submission_mode", DRAFT_KEEPS)
         for role, filename in variants.items():
             asset = manifest_file(path, filename, "invalid_cover", "Each cover role needs a local file path.")
             if not asset.is_file() or asset.suffix.lower() not in {".jpg", ".jpeg", ".png"} or not asset.stat().st_size:
+                if role == "cover43":
+                    raise VpubError("invalid_cover", f"Bilibili's 4:3 cover must be a complete JPG or PNG, and there isn't one at {asset}.",
+                                    "Put the file back, or take cover43 out of the plan, then run it again. Nothing was uploaded.")
                 raise VpubError("invalid_cover", "Each cover must be a complete JPG or PNG.")
+            if role == "cover43":
+                from .covers import check_cover43
+                check_cover43(asset)
             covers.setdefault(platform, {})[role] = {"path": str(asset), "sha256": file_sha(asset)}
     payload = {"schema_version": 1, "video": str(vp), "video_sha256": file_sha(vp),
                "video_bytes": vp.stat().st_size, "cover": str(cover) if cover else None,

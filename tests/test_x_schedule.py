@@ -5,11 +5,12 @@ import os
 from pathlib import Path
 import re
 import tempfile
+import time
 import unittest
 from unittest.mock import AsyncMock, patch
 from urllib.parse import urlsplit
 
-from video_publisher import browser_backends, browser_forms, cli, x_pages
+from video_publisher import browser_backends, browser_forms, browser_runtime, cli, x_pages
 from video_publisher.core import VpubError, atomic_json, home, load_plan
 from shared_chrome import ChromeCase, async_playwright
 
@@ -198,6 +199,72 @@ class OpeningMediaTests(ChromeCase):
     async def test_a_resume_has_no_new_upload_to_wait_for(self):
         with patch.object(browser_forms, "X_FIRST_CLICK_SECONDS", 1000):
             self.assertEqual("PREVIEW_READY", (await browser_forms.publish_x(self.page, self.Tx()))["state"])
+
+    def library_with_label(self, script, tile_waits=True):
+        """Library with a loading label that the script drives. While the label shows, a click on the tile does nothing, as a click on a file still going up got no form."""
+        library = type(self).LIBRARY.replace("<p onclick=\"", "<p onclick=\"if (document.getElementById('going')) return; ") if tile_waits else type(self).LIBRARY
+        return library + f"""<p id="going">Loading 10%</p><script>{script}</script>"""
+
+    @staticmethod
+    def cut(first):
+        """wait_until with the usual wait for the form cut to `first` seconds and every other wait as asked, and the seconds asked."""
+        real, asked = browser_forms.wait_until, []
+
+        async def soon(page, predicate, *, seconds=120, label="page state"):
+            asked.append(seconds)
+            return await real(page, predicate, seconds=first if seconds >= 600 else seconds, label=label)
+        return soon, asked
+
+    async def test_a_file_still_going_up_is_waited_for_while_its_number_moves(self):
+        """From a field run: a 61 MB file's tile said Loading 73% thirty seconds in, and leaving before 100% lost the upload. The label outlasts the usual wait here."""
+        self.LIBRARY = self.library_with_label("let done = 10; const timer = setInterval(() => { done += 5; const going = document.getElementById('going');"
+                                               " if (done > 90) { going.remove(); clearInterval(timer); } else { going.textContent = 'Loading ' + done + '%'; } }, 500);")
+        tx = self.Tx()
+        soon, asked = self.cut(4)
+        with patch.object(browser_forms, "wait_until", soon), patch.object(browser_forms, "X_LOADING_WAIT_SECONDS", 37), patch.object(browser_forms, "X_LOADING_CLEAR_SECONDS", 1):
+            self.assertEqual("PREVIEW_READY", (await browser_forms.publish_x(self.page, tx))["state"])
+        self.assertIn(37, asked)
+        self.assertGreaterEqual(tx.receipt["open_look"]["loading_moves"], 1)
+        self.assertEqual(1, tx.receipt["open_look"]["clicks"])
+
+    async def test_a_number_that_stays_put_stops_holding_the_click_back(self):
+        """From a review: a label stuck at one number may not be this upload at all, and must not stop every click for good. One at 100 holds nothing back."""
+        for number, held in ((73, True), (100, False)):
+            with self.subTest(number=number):
+                self.LIBRARY = type(self).LIBRARY + f'<p id="going">Loading {number}%</p>'
+                tx = self.Tx()
+                with patch.object(browser_forms, "X_LOADING_STALL_SECONDS", 2), patch.object(browser_forms, "X_LOADING_CLEAR_SECONDS", 1):
+                    self.assertEqual("PREVIEW_READY", (await browser_forms.publish_x(self.page, tx))["state"])
+                look = tx.receipt["open_look"]
+                self.assertEqual(1, look["clicks"])
+                if held:
+                    self.assertGreaterEqual(look["first_click_at"], 2)
+                    self.assertNotIn("loading_moves", look)
+                else:
+                    self.assertEqual(0, look["first_click_at"])
+                    self.assertNotIn("loading", look)
+
+    async def test_a_wait_that_would_outlast_its_command_ends_with_its_own_answer(self):
+        """From a review: the worker cuts a command off at 30 minutes, which would close the browser mid-upload with nothing recorded."""
+        self.LIBRARY = self.library_with_label("let done = 10; setInterval(() => { done = done % 90 + 7; document.getElementById('going').textContent = 'Loading ' + done + '%'; }, 400);")
+        tx = self.Tx()
+        with patch.object(browser_runtime, "command_deadline", time.monotonic() + 15), patch.object(browser_forms, "X_COMMAND_MARGIN_SECONDS", 0), self.assertRaises(VpubError) as caught:
+            await browser_forms.publish_x(self.page, tx)
+        self.assertEqual("upload_too_slow", caught.exception.code)
+        # From a review: the receipt keeps the message and not the hint, so the message says what can be done.
+        self.assertIn("vpub resume uploads it again from the start", caught.exception.message)
+
+    async def test_a_file_whose_form_once_showed_is_not_chosen_again(self):
+        """Only a file never opened can have been lost: one whose form showed is in Library, and choosing it again would make two tiles of one name. This Tx has no file to choose."""
+        self.LIBRARY = self.LIBRARY.replace(">clip.mp4</p>", "></p>")
+        tx = self.Tx()
+        tx.receipt["open_look"] = {"clicks": 1}
+        soon, _ = self.cut(1)
+        with patch.object(browser_forms, "wait_until", soon), self.assertRaises(VpubError) as caught:
+            await browser_forms.publish_x(self.page, tx)
+        self.assertEqual("processing_timeout", caught.exception.code)
+        self.assertIn("never uploads it again", caught.exception.message)
+        self.assertNotIn("lost_uploads", tx.receipt)
 
     def test_a_bigger_file_is_left_alone_for_longer(self):
         self.assertEqual(browser_forms.X_FIRST_CLICK_SECONDS + 56.5, browser_forms.x_first_click_hold(113_000_000))
@@ -575,6 +642,7 @@ class ReadBackTests(unittest.IsolatedAsyncioTestCase):
 
     def page(self, body):
         page = AsyncMock()
+        page.url = "https://x.com/" + OWNER  # A page that can be checked for a platform's check, as each look in a read-back does.
         page.locator = lambda selector: AsyncMock(inner_text=AsyncMock(return_value=body), all=AsyncMock(return_value=[]))
         page.get_by_text = lambda *a, **k: AsyncMock(all=AsyncMock(return_value=[]))
         return page
@@ -592,6 +660,21 @@ class ReadBackTests(unittest.IsolatedAsyncioTestCase):
         result, read = await self.after_its_time([{"id": "1", "text": "My title"}, {"id": "2", "text": "My title"}])
         self.assertEqual("found", result["id"])
         self.assertEqual("2", read.await_args.args[3]["id"])
+
+    async def test_after_its_time_a_post_whose_player_comes_late_still_settles_it(self):
+        """From a field run: on a cold browser X showed a post before its video player, so a single read saw no video."""
+        moment = datetime.now(timezone.utc) - timedelta(minutes=5)
+        receipt = {**self.receipt(schedule={"at": moment.isoformat()}), "media_url": "https://studio.x.com/library/13_77/edit"}
+        post = {"id": "2", "text": "My title", "published_at": moment.isoformat(), "media_id": "77"}
+        page = self.page("")
+        with patch.object(browser_backends, "works", new=AsyncMock()), patch.object(browser_backends, "risk_check", new=AsyncMock()) as checked, \
+                patch.object(browser_backends, "own_posts", new=AsyncMock(side_effect=[[{**post, "has_video": False}], [{**post, "has_video": True}]])), \
+                patch.object(browser_backends, "verify", new=AsyncMock(return_value={"state": "SUBMISSION_VERIFIED", "id": "found"})) as read:
+            result = await browser_backends.verify_scheduled_x(page, OWNER, receipt)
+        self.assertEqual("found", result["id"])
+        self.assertEqual("2", read.await_args.args[3]["id"])
+        page.wait_for_timeout.assert_awaited_once_with(500)
+        checked.assert_awaited_once()
 
     async def test_the_words_it_was_given_decide_when_it_has_them(self):
         result, read = await self.after_its_time([{"id": "2", "text": "My post text"}], expected_text="My post text")

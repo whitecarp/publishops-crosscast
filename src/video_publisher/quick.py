@@ -8,7 +8,7 @@ from pathlib import Path
 import shutil
 import tempfile
 
-from .core import VpubError, atomic_json, digest, file_sha, read_json, when_the_file_is_free
+from .core import DRAFT_KEEPS, MENTION_HOW, VpubError, atomic_json, bilibili_topic, digest, file_sha, mention_uids, read_json, when_the_file_is_free
 from .runtime_scratch import scratch as runtime_scratch
 
 
@@ -68,6 +68,8 @@ def fill(work, args, video, folder, show_first=None):
             if name == "youtube":
                 options["visibility"] = "private"  # YouTube keeps a scheduled video private until its time.
         atomic_json(manifest, value)
+    if bilibili_choices(args, value):
+        atomic_json(manifest, value)
     if args.cover or args.portrait:
         check_supplied(args.cover, args.portrait, value["platforms"])
         atomic_json(work / "covers.json", {name: str(Path(path).resolve()) for name, path in (("cover", args.cover), ("portrait", args.portrait)) if path})
@@ -84,7 +86,11 @@ def fill(work, args, video, folder, show_first=None):
                     for line in job['host_instructions']]
     publishing = {}
     for name, options in value['platforms'].items():
-        publishing[name] = {field: options[field] for field in ('visibility', 'ai_generated', 'made_for_kids', 'schedule', 'submission_mode') if field in options}
+        publishing[name] = {field: options[field] for field in ('visibility', 'ai_generated', 'made_for_kids', 'schedule', 'submission_mode', 'topic', 'mention_uids') if field in options}
+        if name == 'bilibili' and value.get('covers', {}).get('bilibili', {}).get('cover43'):
+            publishing[name]['cover43'] = value['covers']['bilibili']['cover43']
+        if options.get('mention_uids'):
+            publishing[name]['mention_note'] = MENTION_HOW
         if options['visibility'] == 'account':
             publishing[name]['visibility_note'] = 'Follows the account audience; public if the account is public. --visibility does not make this platform private.'
         if name == 'instagram':
@@ -98,6 +104,34 @@ def fill(work, args, video, folder, show_first=None):
             "publishing": publishing, **review,
             'review_note': 'First publication on each platform and saved show-first require review. Stop, show the plan and wait for the person to say yes, then use --confirm CODE --person-approved. This is caller attestation, not independent proof of consent; preferences never authorize publishing.',
             "next": f'Write the words into copy.json, then run: vpub go "{folder}"'}
+
+
+def bilibili_choices(args, value):
+    """Bilibili's topic, 4:3 cover and mentions, put into the plan where a written one carries them, and checked now, before anyone writes words around them.
+    Returns whether there were any."""
+    topic, cover43, mentions = args.bilibili_topic, args.bilibili_cover43, args.bilibili_mention or []
+    if topic is None and cover43 is None and not mentions:
+        return False
+    options = value["platforms"].get("bilibili")
+    if options is None:
+        raise VpubError("bilibili_not_chosen", "--bilibili-topic, --bilibili-cover43 and --bilibili-mention are for Bilibili, which isn't in --platforms.",
+                        "Add bilibili to --platforms, or leave them out.")
+    if args.draft_only:
+        raise VpubError("invalid_submission_mode", DRAFT_KEEPS)
+    if topic is not None:
+        options["topic"] = bilibili_topic(topic)
+    if mentions:
+        if not all(uid.strip().isascii() and uid.strip().isdigit() for uid in mentions):
+            raise VpubError("invalid_mention", "Give each person's Bilibili UID, the number in their space link, not their nickname.")
+        options["mention_uids"] = mention_uids([int(uid) for uid in mentions])
+    if cover43 is not None:
+        from .covers import check_cover43
+        image = Path(cover43).resolve()
+        if not image.is_file() or image.suffix.lower() not in {".jpg", ".jpeg", ".png"} or not image.stat().st_size:
+            raise VpubError("invalid_cover", f"Bilibili's 4:3 cover must be a complete JPG or PNG, and there isn't one at {image}.")
+        check_cover43(image)
+        value.setdefault("covers", {}).setdefault("bilibili", {})["cover43"] = str(image)
+    return True
 
 
 def unwritten(words):
@@ -161,6 +195,7 @@ def go(folder, confirm=None, dry_run=False, workers=1, *, person_approved=False)
                         f'Write them in "{folder / "copy.json"}" and run this again. request.json beside it has the limits and instructions.')
     ready = build(folder, words)
     show_first = review_required(folder)
+    from .publication_review import also_show
     if dry_run:
         from . import cli
         answer = step("publish", ready, "--dry-run")
@@ -172,7 +207,7 @@ def go(folder, confirm=None, dry_run=False, workers=1, *, person_approved=False)
             what = ("save it unpublished, as a draft or preview" if len(drafts) == len(answer.get("platforms", {}))
                     else f"publish it, with {', '.join(drafts)} saved only as a draft" if drafts else "publish it")
             if show_first or answer.get('text_flags'):
-                answer['next'] = f'Nothing was uploaded. Stop, show this plan and any flagged text to the user, and wait for their yes. Only after approval for its configured audience, to {what}, run: vpub go "{folder}" --confirm {answer["confirmation"]} --person-approved'
+                answer['next'] = f'Nothing was uploaded. Stop and show this plan and any flagged text to the user.{also_show(answer)} Wait for their yes. Only after approval for its configured audience, to {what}, run: vpub go "{folder}" --confirm {answer["confirmation"]} --person-approved'
             else:
                 answer["next"] = f'Nothing was uploaded. To {what}, run: vpub go "{folder}"'
         return answer
@@ -186,9 +221,9 @@ def go(folder, confirm=None, dry_run=False, workers=1, *, person_approved=False)
                 'review_required': show_first, 'review_reasons': plan.get('review_reasons', []),
                 'first_publication_platforms': plan.get('first_publication_platforms', []), 'review': plan,
                 "confirmation": plan["confirmation"], "platform_writes": 0,
-                "next": f'Stop and show the user this plan, including its text, audience, AI labels, covers and any flagged text. Wait for their yes. Only then: vpub go "{folder}" --confirm {plan["confirmation"]} --person-approved. This attests their approval; the CLI cannot verify who supplied it. Otherwise change copy.json or publish.json and run vpub go again.'}
+                "next": f'Stop and show the user this plan, including its text, audience, AI labels, covers and any flagged text.{also_show(plan)} Wait for their yes. Only then: vpub go "{folder}" --confirm {plan["confirmation"]} --person-approved. This attests their approval; the CLI cannot verify who supplied it. Otherwise change copy.json or publish.json and run vpub go again.'}
     answer = step("publish", ready, "--confirm", confirm or plan["confirmation"], "--workers", workers,
                   *(['--person-approved'] if person_approved is True else []))
     if answer.get('state') == 'NEEDS_A_PERSON':
-        answer['next'] = f'Stop and show this exact plan to the user. Wait for their yes. Only then: vpub go "{folder}" --confirm {answer["confirmation"]} --person-approved. This is caller attestation, not independent proof of consent.'
+        answer['next'] = f'Stop and show this exact plan to the user.{also_show(plan)} Wait for their yes. Only then: vpub go "{folder}" --confirm {answer["confirmation"]} --person-approved. This is caller attestation, not independent proof of consent.'
     return answer

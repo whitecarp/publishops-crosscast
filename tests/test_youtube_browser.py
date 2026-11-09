@@ -54,6 +54,8 @@ class Element:
             return False
         if self.key == "edit-draft":
             return self.page.is_draft
+        if self.key == browser_forms.YT_DONE_LOCATOR:
+            return self.page.saved and self.page.confirmation is not None
         return self.page.picker_open if self.key.startswith(browser_forms.YT_PLAYLISTS) else True
 
     async def all(self):
@@ -129,6 +131,8 @@ class Element:
         return self.page.time_text if "#time-of-day-container" in self.key else self.page.text.get(self.key, "")
 
     async def inner_text(self, **options):
+        if self.key == browser_forms.YT_DONE_LOCATOR:
+            return self.page.confirmation
         if "ytcp-video-metadata-visibility" in self.key:
             if self.page.visibility_blank_reads:
                 self.page.visibility_blank_reads -= 1
@@ -181,6 +185,7 @@ class FakeStudio:
         self.press_does_nothing, self.is_draft, self.checks_label = False, False, "检查完毕"
         self.publish_after_ticks, self.stop_after_ticks = None, None
         self.readback_address, self.readback_failure = None, None
+        self.confirmation = None  # The words of Studio's own window after the press, if it shows one.
         self.keyboard = MagicMock(press=AsyncMock())
         self.url = "https://studio.youtube.com/channel/" + CHANNEL
         self.link = f"https://youtu.be/{VIDEO}"
@@ -378,6 +383,14 @@ class FormTests(FormCase):
         self.assertEqual(1, result["final_presses"])
         self.assertIn("after_press", result)
 
+    def test_studios_own_window_after_the_press_is_its_answer_and_its_words_are_kept(self):
+        """From a field run: the Schedule button stayed on screen behind Studio's Video scheduled window for the whole wait."""
+        page = FakeStudio(form_stays=True, confirmation="Video scheduled\nYour video will be set to public on November 6, 2026 at 12:00 PM\n1:16\nMy title")
+        tx, result = self.run_form(page)
+        self.assertEqual(1, result["final_presses"])
+        self.assertNotIn("after_press", result)
+        self.assertEqual("Video scheduled Your video will be set to public on November 6, 2026 at 12:00 PM", result["studio_confirmation"])
+
     def test_a_missing_final_button_alone_never_proves_publication(self):
         page = FakeStudio(visibility_text="")
         tx, result = self.run_form(page)
@@ -488,6 +501,7 @@ class FormTests(FormCase):
         with self.assertRaises(VpubError) as caught:
             self.run_form(page, plan)
         self.assertEqual("cover_unavailable", caught.exception.code)
+        self.assertIn(f"vpub resume {'a' * 64} --no-cover", caught.exception.hint)
         self.assertEqual([], page.clicks("#done-button"))
 
     def test_the_thumbnail_is_sent_when_the_channel_allows_it(self):
@@ -497,6 +511,22 @@ class FormTests(FormCase):
         _, result = self.run_form(page, {**self.plan(), "cover": str(cover), "cover_sha256": file_sha(cover)})
         self.assertIn(("files", "input#file-loader", str(cover)), page.log)
         self.assertFalse(result["cover"]["remote_pixels_verified"])
+
+    def test_a_check_as_the_thumbnail_goes_in_stops_before_the_next_press(self):
+        """From a review: Google's check can come as the thumbnail goes in, and the presses after it would only meet its window."""
+        cover = self.root / "cover.jpg"
+        cover.write_bytes(b"cover")
+        page = FakeStudio()
+
+        async def check(page):
+            if any(entry[0] == "files" and "file-loader" in entry[1] for entry in page.log):
+                raise VpubError("human_verification_required", "The platform requires human verification.")
+        with patch.object(browser_forms, "risk_check", check), self.assertRaises(VpubError) as caught:
+            self.run_form(page, {**self.plan(), "cover": str(cover), "cover_sha256": file_sha(cover)})
+        self.assertEqual("human_verification_required", caught.exception.code)
+        self.assertEqual([], page.clicks("radio"))
+        self.assertEqual([], page.clicks("#done-button"))
+        self.assertNotEqual("UI_ACCEPTED", (read_json(page.receipt_path).get("cover") or {}).get("state"))
 
     def test_draft_only_uploads_and_never_clicks_final_save(self):
         page = FakeStudio(uploading_polls=1)
@@ -792,6 +822,20 @@ class ReadBackTests(Temporary):
         self.assertEqual("SUBMISSION_VERIFIED", result["state"])
         self.assertEqual([], result["readback_differs"])
 
+    def test_a_save_that_outlasted_its_wait_is_verified_from_the_draft_id(self):
+        # A field run's final Save timed out, leaving only draft_id, though Studio later showed the video saved.
+        receipt = {key: value for key, value in self.receipt.items() if key != "id"} | {"draft_id": VIDEO}
+        result = self.verify(self.studio(), receipt)
+        self.assertEqual(("SUBMISSION_VERIFIED", VIDEO), (result["state"], result["id"]))
+
+    def test_a_draft_id_that_does_not_read_back_keeps_no_work_id(self):
+        receipt = {key: value for key, value in self.receipt.items() if key != "id"} | {"draft_id": VIDEO}
+        page = FakeStudio(text={"#title-textarea #textbox": "clip.mp4", "#description-textarea #textbox": ""}, visibility_text="Private")
+        result = self.verify(page, receipt)
+        self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
+        self.assertNotIn("id", result)
+        self.assertEqual(VIDEO, result["draft_id"])
+
     def test_a_visibility_that_fills_in_after_the_title_is_waited_for(self):
         page = self.studio()
         page.visibility_blank_reads = 2
@@ -800,7 +844,29 @@ class ReadBackTests(Temporary):
     def test_a_visibility_that_never_fills_in_stays_unverified(self):
         page = self.studio()
         page.visibility_text = ""
-        self.assertEqual(["visibility"], self.verify(page)["readback_differs"])
+        result = self.verify(page)
+        self.assertEqual(["visibility"], result["readback_differs"])
+        self.assertIsNone(result["visibility_seen"])
+        self.assertIn("didn't fill in", result["note"])
+
+    def test_a_video_removed_by_its_uploader_says_so(self):
+        """From a field run: after the video was deleted by hand in Studio, verify could only say its visibility box didn't fill in."""
+        from video_publisher import work_delete_youtube
+        for panel, removed in (("This video has been removed by the uploader", True), ("Video unavailable", False)):
+            with self.subTest(panel=panel):
+                page = self.studio()
+                page.text["#title-textarea #textbox"] = ""
+                page.text[work_delete_youtube.GONE_PANEL] = panel
+                result = self.verify(page, {**self.receipt, "key": "k" * 64})
+                self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
+                self.assertEqual(removed, result.get("removed_by_uploader", False))
+                self.assertEqual(removed, "vpub dismiss " + "k" * 64 + " --person-checked" in result["note"])
+
+    def test_a_visibility_that_fills_in_late_is_still_read(self):
+        """From a field run: a box read too soon makes the visibility look different, and a slower connection can take longer than the three seconds one channel took."""
+        page = self.studio()
+        page.visibility_blank_reads = 12
+        self.assertEqual("SUBMISSION_VERIFIED", self.verify(page)["state"])
 
     def test_a_difference_stays_unverified_and_names_the_field(self):
         for key, value, field in [("#title-textarea #textbox", "Another", "title"), ("#description-textarea #textbox", "Another", "description")]:
@@ -1045,6 +1111,18 @@ class HiddenDesktopTests(Temporary):
             adapters.browser_call("douyin", "publish", "default")
         hidden.assert_not_called()
         plain.assert_called_once()
+
+    def test_a_window_a_person_uses_fills_their_screen(self):
+        """From a field run: a fixed 1000-pixel height, on Windows with display scaling, hid the bottom of Studio and its 设置 under the taskbar."""
+        launch = AsyncMock(return_value=MagicMock(add_cookies=AsyncMock()))
+        pw = MagicMock()
+        pw.chromium.launch_persistent_context = launch
+        asyncio.run(browser_runtime.open_context(pw, "youtube", "default", interactive=True))
+        options = launch.call_args.kwargs
+        self.assertEqual((False, ["--start-maximized"], True), (options["headless"], options["args"], options["no_viewport"]))
+        self.assertNotIn("viewport", options)
+        asyncio.run(browser_runtime.open_context(pw, "youtube", "default"))
+        self.assertEqual({"width": 1440, "height": 1000}, launch.call_args.kwargs["viewport"])
 
     def test_a_command_that_asks_for_a_window_gets_one_off_screen(self):
         launch = AsyncMock(return_value=MagicMock(add_cookies=AsyncMock()))

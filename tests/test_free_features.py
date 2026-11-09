@@ -836,8 +836,10 @@ class FakeDouyin:
                 self.title, self.caption = data["title"], data["caption"]
             return await route.fulfill(status=200, content_type="application/json", body="{}")
         if url.path == "/creator-micro/content/post/video" and not self.elsewhere:
+            # Saved words come back a line at a time, as field reads of real edit pages showed, since their lines are read back too.
+            words = self.caption.replace("\n", "<br>")
             return await route.fulfill(status=200, content_type="text/html; charset=utf-8", body=f"""<!doctype html><body>
-              <input placeholder="填写作品标题，为作品获得更多流量" value="{self.title}"><div contenteditable="true" id="c">{self.caption}</div>
+              <input placeholder="填写作品标题，为作品获得更多流量" value="{self.title}"><div contenteditable="true" id="c">{words}</div>
               <button id="go">发布</button><script>document.getElementById('go').onclick = async () => {{
                 await fetch('/save', {{method: 'POST', body: JSON.stringify({{title: document.querySelector('input').value, caption: document.getElementById('c').innerText}})}});
                 location.href = '/creator-micro/content/manage'; }};</script>""")
@@ -879,7 +881,7 @@ class DouyinTextTests(ChromeCase):
         self.assertEqual("EDIT_SUBMITTED_UNVERIFIED", (await self.edit())["state"])
 
     async def test_matching_text_writes_nothing(self):
-        self.site.title, self.site.caption = "New title", "New text #one"
+        self.site.title, self.site.caption = "New title", "New text\n\n#one"
         result = await self.edit()
         self.assertEqual(("EDIT_VERIFIED", 0), (result["state"], result["platform_writes"]))
         self.assertEqual([], self.site.saves)

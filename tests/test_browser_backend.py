@@ -163,6 +163,27 @@ class BrowserSafetyTests(unittest.TestCase):
         for platform in ['x','douyin','instagram']:
             with self.assertRaises(VpubError): work_url(platform,'tester','https://example.com')
 
+    def test_a_window_kept_open_is_only_for_one_dedicated_browser_sign_in(self):
+        """From a field run: a person passed YouTube's check in the CrossCast window, which only a browser sign-in opens."""
+        with self.assertRaises(VpubError) as caught:
+            adapters.auth_login('bilibili','default',keep_open=True)
+        self.assertEqual('invalid_option',caught.exception.code)
+        with self.assertRaises(VpubError) as caught:
+            cli.execute(cli.parser().parse_args(['auth','login','all','--keep-open']))
+        self.assertEqual('invalid_option',caught.exception.code)
+        with patch('video_publisher.auth_jobs.start',return_value={'state':'STARTING'}) as start:
+            cli.execute(cli.parser().parse_args(['auth','login','youtube','--keep-open']))
+        start.assert_called_once_with('youtube','default',keep_open=True)
+
+    def test_a_window_kept_open_is_the_browsers_even_with_the_youtube_add_on(self):
+        """From a review: with the YouTube API add-on installed, YouTube's usual sign-in isn't the browser's, and --keep-open means the browser's window."""
+        with patch.object(adapters,'addon_installed',return_value=True), patch('video_publisher.auth_jobs.start',return_value={'state':'STARTING'}) as start:
+            adapters.auth_login('youtube','default',keep_open=True)
+            with self.assertRaises(VpubError) as caught:
+                adapters.auth_login('youtube','default',method='api',keep_open=True)
+        start.assert_called_once_with('youtube','default',keep_open=True)
+        self.assertEqual('invalid_option',caught.exception.code)
+
     def test_default_routes_and_explicit_native_fallback(self):
         self.assertEqual(['cli','browser','browser','browser','browser'],
                          [adapters.default_method(p) for p in cli.PLATFORMS])

@@ -2,7 +2,7 @@
 from copy import deepcopy
 from pathlib import Path
 import re
-from .core import Ledger, VpubError, X_POST_LIMIT, atomic_json, digest, douyin_caption, file_sha, home, now, publication_lock, read_json, receipt_turn, stop_check, title_limit, x_post_text, x_weighted_length
+from .core import DOUYIN_TOO_LONG, Ledger, VpubError, X_POST_LIMIT, atomic_json, digest, douyin_caption, douyin_caption_units, file_sha, home, now, publication_lock, read_json, receipt_turn, stop_check, title_limit, x_post_text, x_weighted_length
 from .language_policy import route
 from .safety import check_public_text, public_text_flags
 
@@ -76,8 +76,8 @@ def validate_patch(platform, value, verifying=False, ai_generated=True):
             raise VpubError('description_too_long','Bilibili descriptions allow at most 2000 characters.')
         if platform=='douyin':
             p['caption']=douyin_caption(p['description'],p.get('tags',[]))
-            if len(p['caption'].encode('utf-16-le'))//2>1000:
-                raise VpubError('description_too_long','Douyin description plus hashtags exceeds 1000 UTF-16 units.')
+            if douyin_caption_units(p['caption'])>1000:
+                raise VpubError('description_too_long',DOUYIN_TOO_LONG)
     if 'portrait' in p:
         if platform!='douyin': raise VpubError('unsupported_edit','Shared Instagram cover is handed to the user; this command updates the Douyin cover.')
         f=Path(p['portrait']).resolve()
@@ -218,7 +218,8 @@ def run(key, patch_path, dry_run=False, verify_only=False, person_approved=False
             row=ledger.get(key)
             if not row: raise VpubError('receipt_required','Use the key of an existing recorded publication.')
             record=row['data'];receipt=record.get('receipt',{});work_id=receipt.get('id')
-            if not work_id: raise VpubError('work_id_required','Verify the existing work ID first; never infer an ID from a title or upload again.')
+            if not work_id: raise VpubError('work_id_required','Verify the existing work ID first; never infer an ID from a title or upload again.',
+                                            'Run vpub verify on this receipt key: a full read-back records the ID. For a work you adopted with vpub ops adopt, use vpub edit-work PLATFORM WORK_ID instead.')
             patch=validate_patch(row['platform'],read_json(patch_path),verify_only,record.get('options',{}).get('ai_generated',True))
             actual=record.get('identity',{}).get('identity') or receipt.get('identity')
             result=send(row['platform'],row['account'],actual,receipt,key,patch,dry_run,verify_only,person_approved)

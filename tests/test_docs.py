@@ -6,7 +6,7 @@ import re
 import shlex
 import unittest
 
-from video_publisher import __version__, cli
+from video_publisher import __version__, cli, progress
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = [*sorted(ROOT.glob("README*.md")), *sorted((ROOT / "docs").glob("*.md")), ROOT / "CONTRIBUTING.md", ROOT / "NOTICE.md",
@@ -110,8 +110,10 @@ class DocsTests(unittest.TestCase):
         self.assertEqual([], problems)
 
     def test_the_skill_stays_short_enough_to_read_every_time(self):
-        """An assistant reads it in every fresh conversation, on its user's own quota. The detail belongs in references/details.md."""
-        self.assertLess(len((ROOT / "skills/publishops-crosscast/SKILL.md").read_bytes()), 8000)
+        """An assistant reads it in every fresh conversation, on its user's own quota. The detail belongs in references/details.md.
+        It's counted with Windows line endings, as the Windows checks check it out: a skill that passed here at 7977 bytes failed there at 8036."""
+        data = (ROOT / "skills/publishops-crosscast/SKILL.md").read_bytes().replace(b"\r\n", b"\n")
+        self.assertLess(len(data) + data.count(b"\n"), 8000)
 
     def test_feedback_excludes_both_data_homes_and_sign_in_files(self):
         paths = [ROOT / "skills/publishops-crosscast/SKILL.md", *sorted((ROOT / "docs").glob("GUIDE*.md"))]
@@ -141,6 +143,16 @@ class DocsTests(unittest.TestCase):
         self.assertEqual(names, {name for _, group in cli.HELP_GROUPS for name in group})
         self.assertLess(words.index("doctor"), words.index("Paid add-on"))
         self.assertIn("publish", words)
+
+    def test_every_stage_a_browser_command_writes_is_listed_where_readers_look(self):
+        """The help agents read and both operations guides give the stages as a complete list. From round 1's final check, they missed the
+        wait for a cover slot to clear, and the wait for platform confirmation before it."""
+        listed = {"help": cli.capabilities()["browser_progress"],
+                  **{name: (ROOT / "docs" / name).read_text(encoding="utf-8") for name in ("OPERATIONS.md", "OPERATIONS_EN.md")}}
+        for where, words in listed.items():
+            for stage in sorted(progress.STAGES):
+                with self.subTest(where=where, stage=stage):
+                    self.assertIn(stage if where == "help" else f"`{stage}`", words)
 
     def test_every_word_on_the_site_is_in_every_language(self):
         page = (ROOT / "docs/index.html").read_text(encoding="utf-8")

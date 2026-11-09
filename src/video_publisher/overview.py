@@ -8,7 +8,7 @@ import shutil
 import sys
 
 from . import adapters
-from .core import PLATFORMS, Ledger, VpubError, digest, file_sha, home, how_to_clear_a_stop, part_left_undone, publication_lock, read_json, stop_check
+from .core import PLATFORMS, Ledger, VpubError, digest, file_sha, home, how_to_clear_a_stop, now, part_left_undone, publication_lock, read_json, stop_check
 from .process_lock import alive, released
 
 FINISHED = {"SUBMISSION_VERIFIED", "EXISTING_VERIFIED", "AGENT_REPORTED_VERIFIED", "AGENT_REPORTED_DELETED"}
@@ -51,7 +51,7 @@ def stop_state():
         detail = detail if isinstance(detail, dict) else {}
         return {"active": True, "message": exc.message, "reason": detail.get("reason") or detail.get("code"),
                 "platform": detail.get("platform"), "at": detail.get("at"),
-                "hint": f"Inspect the reason. Only the operator may clear a stop, with {how_to_clear_a_stop()}."}
+                "hint": (f"{detail['hint']} " if isinstance(detail.get("hint"), str) else "") + f"Inspect the reason. Only the operator may clear a stop, with {how_to_clear_a_stop()}."}
     return {"active": False}
 
 
@@ -91,7 +91,17 @@ def next_step(row, busy):
     if method == "cli" and not receipt.get("id"):
         return "vpub works bilibili --limit 20", "Read the existing works, then check Bilibili's creator center (including review and draft views). If you identify this exact upload, record its ID with vpub adopt. An incomplete or empty list cannot prove it was never uploaded: keep UNKNOWN if unsure. Do not re-encode, reset the record or upload again to evade the duplicate guard."
     if state == "WAITING_FOR_USER":
+        if platform == "youtube":
+            # From a field run: YouTube asked only as an upload began, after a plain sign-in window had already closed.
+            return "vpub auth login youtube --keep-open", (f"The person passes YouTube's check in the window that stays open for up to 25 minutes; if nothing shows, "
+                                                           f"they can start an upload of any short clip there and delete it after, then close the window. Once the person "
+                                                           f"says the check is done, clear the stop and run vpub resume {key}.")
         return f"vpub auth login {platform}", f"Complete the official sign-in or verification, then run vpub resume {key}."
+    # From a review: a plain resume here would only send the same thumbnail to the same request again.
+    stopped = (receipt.get("error") or {}).get("code")
+    if stopped == "cover_unavailable":
+        return None, (f"This channel doesn't offer the planned custom thumbnail yet; YouTube Studio's settings say why, under the channel's feature "
+                      f"eligibility. The person either turns it on there and then runs vpub resume {key}, or runs vpub resume {key} --no-cover to finish without it.")
     if state in {"IN_PROGRESS", "PREPARATION_INCOMPLETE"} or state.startswith("UPLOAD") or (method == "api" and not receipt.get("id")):
         return f"vpub resume {key}", "The command stopped before finishing. Resume checks the saved state and never submits twice."
     if receipt.get("still_a_draft"):
@@ -120,6 +130,10 @@ def attempt(row, busy):
             "updated_at": row["updated_at"], "next_command": command, "note": note}
     if part_left_undone(receipt):
         item.update({name: receipt[name] for name in ("chapters_state", "widgets_state", "season") if name in receipt})
+        # The receipt's own reason a part is waiting, such as chapters on a Douyin work still in review, says when to run it. A field run saw only the general note.
+        reason = receipt.get("next") or receipt.get("widgets_next")
+        if isinstance(reason, str) and reason.strip():
+            item["note"] = reason
     done = progress(row)
     return {**item, "progress": done} if done else item
 
@@ -234,6 +248,26 @@ def read_rows():
         ledger.close()
 
 
+def dismiss(key, person_checked=False):
+    """Take one attempt off needs_attention once the person has looked at the platform themselves. A field test's failed
+    attempts stayed there for good with no way out. The record stays, and the same file still isn't uploaded there again."""
+    if not person_checked:
+        raise VpubError("needs_person", "Dismiss an attempt only after the person has checked the platform by hand. Nothing changed.",
+                        "Run it again with --person-checked once they have.")
+    with publication_lock():
+        ledger = Ledger()
+        try:
+            old = ledger.get(key)
+            if not old:
+                raise VpubError("not_found", "No attempt has this key. Nothing changed.", "Copy the key from vpub status.")
+            ledger.save(key, old["state"], {**old["data"], "dismissed": {"at": now(), "by": "person_checked"}})
+        finally:
+            ledger.close()
+    # The record's own state goes under its own name: as this answer's state, an unfinished one made a dismiss that worked report ok: false.
+    return {"key": key, "state": "DISMISSED", "record_state": old["state"], "dismissed": True,
+            "note": "Off needs_attention. The record stays, and this file still isn't uploaded to this platform again."}
+
+
 def human_size(count):
     for unit in ("B", "KB", "MB"):
         if count < 1024:
@@ -335,7 +369,8 @@ def status(limit=20):
     rows = read_rows()
     busy = workspace_busy()
     drafts = [row for row in rows if row["state"] in DRAFTS]
-    attention = [row for row in rows if row["state"] not in FINISHED | DRAFTS or part_left_undone(row["data"].get("receipt") or {})]
+    attention = [row for row in rows if (row["state"] not in FINISHED | DRAFTS or part_left_undone(row["data"].get("receipt") or {}))
+                 and not row["data"].get("dismissed")]
     folders = snapshot_folders(rows, check_hash=False)
     reclaimable = sum(item["bytes"] for item in folders if "kept_because" not in item)
     stop = stop_state()
@@ -350,7 +385,8 @@ def status(limit=20):
             "platforms": {p: {"default_method": adapters.default_method(p), "sign_in": sign_in(p)} for p in PLATFORMS},
             "publications": {"total": len(rows), "by_state": dict(Counter(row["state"] for row in rows)),
                              "needs_attention_total": len(attention),
-                             "needs_attention": [attempt(row, busy) for row in attention[:limit]],
+                             "needs_attention": [{**attempt(row, busy), "after_checking_by_hand": f"vpub dismiss {row['key']} --person-checked"}
+                                                 for row in attention[:limit]],
                              "drafts": [attempt(row, busy) for row in drafts[:limit]]},
             "actions": {"unconfirmed_total": len(actions), "unconfirmed": actions[:limit]},
             "deletions": {"total": len(deletions), "items": deletions[:limit]},

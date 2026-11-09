@@ -64,7 +64,13 @@ async def instagram_delete(page, identity, payload, comment):
     finally:
         page.remove_listener('request', heard)
     answers = await write_answers(requests, comment['id'])
-    return {'state': 'COMMENT_UNVERIFIED', 'platform_writes': 1, 'gone_from_page': gone, 'write_answers': answers, 'acknowledged': acknowledged(answers, DELETE_REQUEST, delete_answered)}
+    known = acknowledged(answers, DELETE_REQUEST, delete_answered)
+    result = {'state': 'COMMENT_UNVERIFIED', 'platform_writes': 1, 'gone_from_page': gone, 'write_answers': answers, 'acknowledged': known}
+    if gone and not known:
+        # How a field run's delete ended: it left the page, and the answer couldn't count, because no real delete had shown CrossCast its type yet.
+        result['note'] = ("It left the page after the one press, but CrossCast can't confirm it yet: it doesn't yet know what Instagram answers when a delete works. "
+                          "write_answers shows what Instagram sent this time, which is what's needed to learn it. Look at the post on Instagram, and never press Delete again.")
+    return result
 
 
 async def execute(page, platform, identity, payload):

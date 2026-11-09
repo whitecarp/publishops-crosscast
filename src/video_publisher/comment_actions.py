@@ -95,6 +95,10 @@ def edited_words(text, old, language, written_by):
 
 def mutate(platform, work, comment_id, kind, desired=True, dry_run=False, test_id=None, written_by='ai', language='auto'):
     if kind not in SUPPORTED.get(platform, set()):
+        if platform == 'instagram' and kind in {'pin', 'hide', 'remove'}:
+            # A field run checked: Instagram's website itself offers none of these for comments.
+            raise VpubError('unsupported_operation', f"Instagram's website has no {kind} control for comments, so CrossCast can't do it there.",
+                            'Do it in the Instagram app if needed.')
         raise VpubError('unsupported_operation', 'This comment action is not supported on this platform.')
     if kind=='moderate':
         if desired not in {'published','heldForReview'}:raise VpubError('invalid_action','Choose published or heldForReview. Rejection/author bans are not implicit actions.')

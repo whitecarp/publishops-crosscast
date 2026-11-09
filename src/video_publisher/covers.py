@@ -19,6 +19,8 @@ PRESETS = {
     "x": {"landscape": (1920, 1080)},
 }
 BACKGROUND = "#151923"
+# Covers past this aren't opened to be fitted. Bilibili's 4:3 cover goes up unfitted and is held to the same limit and no other, since no size Bilibili refuses is known.
+MOST_PIXELS = 40000000
 # A 9:16 cover whose central 3:4 area holds everything that matters, so Instagram's full frame and Douyin's crop both keep it.
 CANVAS = (1080, 1920)
 SAFE = (0, 240, 1080, 1440)
@@ -29,6 +31,8 @@ SMALLEST_SIDE = 100
 # Below this the parts would float in a band of background, which is a letterboxed landscape in all but name.
 LEAST_FILL = 0.6
 SOFT_ABOVE = 2.5
+# What load_plan says first of a plan with no words at all: vpub init leaves every title empty and YouTube's category unset.
+WORDS_UNWRITTEN = {"category_required", "invalid_title"}
 
 
 def parse_box(value, width, height):
@@ -74,7 +78,7 @@ def portrait(source, boxes, output):
     before = file_sha(source)
     try:
         with Image.open(source) as opened:
-            if opened.width * opened.height > 40000000:
+            if opened.width * opened.height > MOST_PIXELS:
                 raise VpubError("invalid_cover", "Cover exceeds the 40-megapixel processing limit.")
             image = ImageOps.exif_transpose(opened).convert("RGB")
     except (OSError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
@@ -103,6 +107,21 @@ def portrait(source, boxes, output):
             "next": "Look at the result before using it: text must read clearly and nothing important may be cut. Then use it as the --portrait cover, in vpub prepare or covers prepare."}
 
 
+def check_cover43(path):
+    """Bilibili's 4:3 cover goes up as it is, with no fitting, so it has to be 4:3 already. A landscape given by mistake would show squeezed or cut in its phone feed."""
+    try:
+        with Image.open(path) as opened:
+            wide, tall = opened.size
+    except (OSError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
+        raise VpubError("invalid_cover", f"Can't read Bilibili's 4:3 cover: {path}") from exc
+    if wide * tall > MOST_PIXELS:
+        raise VpubError("invalid_cover", f"Bilibili's 4:3 cover is {wide}x{tall}, over the 40-megapixel limit CrossCast keeps every cover to.",
+                        "Use a smaller copy of the same artwork, such as 1200x900; CrossCast doesn't resize it. Nothing was uploaded.")
+    if abs(wide * 3 - tall * 4) > tall * 4 / 100:
+        raise VpubError("invalid_cover", f"Bilibili's 4:3 cover is {wide}x{tall}, which isn't 4:3.",
+                        "Use the 4:3 artwork made for Bilibili's phone feed, such as 1200x900, or leave it out and Bilibili makes one from the landscape cover. Nothing was uploaded.")
+
+
 def check_supplied(cover, portrait, platforms):
     """The covers someone named, before anyone writes words around them. prepare still checks them when it fits them."""
     if not cover:
@@ -122,11 +141,40 @@ def check_supplied(cover, portrait, platforms):
             raise VpubError('portrait_required', 'The shared portrait must have a portrait aspect ratio.')
 
 
+def words_first(manifest, value, error):
+    """Covers are fitted to a plan whose words are written. A field run's skill listed covers before metadata, and on a new YouTube plan
+    covers prepare stopped on the category; with that set, the empty title would have stopped it next.
+    From a review: only a plan with no words at all gets this answer. One whose words a person wrote keeps its own error and hint, because
+    metadata request would rewrite those words from the root title alone. A folder from vpub prepare gets its words through copy.json and vpub go."""
+    platforms = value.get("platforms") if isinstance(value, dict) else None
+    if error.code not in WORDS_UNWRITTEN or not isinstance(platforms, dict) or not all(isinstance(o, dict) for o in platforms.values()):
+        return error
+    titles = [value.get("title"), *(options.get("title") for options in platforms.values())]
+    if any(isinstance(title, str) and title.strip() for title in titles) or any("metadata_mode" in options for options in platforms.values()):
+        return error
+    plan = Path(manifest)
+    message = f"Covers come after the words, and this plan has none yet, so nothing was fitted. {error.message}"
+    if (plan.parent / "copy.json").is_file():
+        return VpubError("copy_not_written", message, f'Write the words in "{plan.parent / "copy.json"}", then run vpub go "{plan.parent}". It fits the covers once the words are in. {error.hint}'.strip())
+    request, localized = plan.with_name("request.json"), plan.with_name("localized.json")
+    ask = (f'Use the request already at "{request}"' if request.exists()
+           else f'Run vpub metadata request "{plan}" --source SCRIPT_OR_SUMMARY.txt --out "{request}"')
+    return VpubError("copy_not_written", message,
+                     f'{ask}, write the answer in its template as RESPONSE.json, run vpub metadata apply "{plan}" --request "{request}" --response RESPONSE.json --out "{localized}", '
+                     f'then run vpub covers prepare on "{localized}". {error.hint}'.strip())
+
+
 def prepare(manifest, source, out_dir, output, portrait=None):
     path, source = Path(manifest).resolve(), Path(source).resolve()
     directory, output = Path(out_dir).resolve(), Path(output).resolve()
     original = read_json(path)
-    load_plan(path)
+    try:
+        load_plan(path)
+    except VpubError as error:
+        answer = words_first(path, original, error)
+        if answer is error:
+            raise
+        raise answer from None
     from .publication_review import carry_choice
     carry_choice(path, output, original)
     portrait = Path(portrait).resolve() if portrait else None
@@ -167,6 +215,10 @@ def prepare(manifest, source, out_dir, output, portrait=None):
     value["video"] = str((path.parent / value["video"]).resolve())
     value.pop("cover", None)
     value["covers"] = {}
+    # Bilibili's 4:3 cover is used as it is, not fitted, so it only moves along with the plan.
+    cover43 = (variants.get("bilibili") or {}).get("cover43")
+    if cover43:
+        value["covers"]["bilibili"] = {"cover43": str((path.parent / cover43).resolve())}
     assets = []
     with scratch(directory.parent) as tmp:
         staging = Path(tmp)
@@ -190,7 +242,7 @@ def prepare(manifest, source, out_dir, output, portrait=None):
             target = staging / filename
             try:
                 with Image.open(job["source"]) as opened:
-                    if opened.width * opened.height > 40000000:
+                    if opened.width * opened.height > MOST_PIXELS:
                         raise VpubError("invalid_cover", "Cover exceeds the 40-megapixel processing limit.")
                     image = ImageOps.exif_transpose(opened).convert("RGBA")
                     image = ImageOps.contain(image, tuple(job["size"]), Image.Resampling.LANCZOS)

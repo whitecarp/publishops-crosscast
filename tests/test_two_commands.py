@@ -30,6 +30,9 @@ class TwoCommandTests(unittest.TestCase):
         tool = patch("video_publisher.rehearsal.shutil.which", return_value="ffmpeg.exe")
         tool.start()
         self.addCleanup(tool.stop)
+        runs = patch("video_publisher.rehearsal.ffmpeg_problem", return_value=None)
+        runs.start()
+        self.addCleanup(runs.stop)
         # These workflows belong to a returning customer; first-run review has
         # separate coverage. This prior publication is unrelated to final.mp4.
         ledger = Ledger()
@@ -367,7 +370,11 @@ class TwoCommandTests(unittest.TestCase):
         value = json.loads(manifest.read_text(encoding="utf-8"))
         value["platforms"]["youtube"].update(chapters=chapters, duration_seconds=300)
         manifest.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
-        self.assertIn("chapters", self.refused("invalid_metadata", self.go).hint)
+        # From a field run: the first plan hit this twice, and the hint named the whole set of fields but not the file or what was missing.
+        hint = self.refused("invalid_metadata", self.go).hint
+        self.assertIn("In copy.json, youtube needs exactly these fields", hint)
+        self.assertIn("(missing: chapters)", hint)
+        self.assertIn("the same start times", hint)
         self.write_copy(chapters=[{"start_seconds": chapter["start_seconds"], "title": "Part " + chapter["title"]} for chapter in chapters])
         self.assertTrue(self.go()["all_submissions_verified"])
 
@@ -381,6 +388,7 @@ class TwoCommandTests(unittest.TestCase):
         self.write_copy(visibility="private")
         error = self.refused("invalid_metadata", self.go)
         self.assertIn("needs exactly these fields", error.hint)
+        self.assertIn("not allowed: visibility", error.hint)
         self.assertEqual([], self.sent)
 
     def test_something_flagged_stops_until_a_person_says_so(self):
@@ -453,6 +461,81 @@ class TwoCommandTests(unittest.TestCase):
             result = run("go", self.work)
         self.assertEqual(["draft_only"], seen)
         self.assertIsNone(result["all_submissions_verified"])
+
+    def contest(self, *more):
+        """A Bilibili contest entry: its topic, 4:3 cover and two people mentioned. On 2026-11-05 a real one had to go round vpub for want of these."""
+        self.cover43 = self.picture("cover43.png", (1200, 900))
+        return self.prepare("--bilibili-topic", "AI MV 大赛", "--bilibili-cover43", self.cover43, "--bilibili-mention", "111", "--bilibili-mention", "222", *more, platforms="bilibili")
+
+    def test_bilibilis_topic_43_cover_and_mentions_go_into_the_plan_and_the_words_brief(self):
+        answer = self.contest()
+        bilibili = answer["publishing"]["bilibili"]
+        self.assertEqual(("AI MV 大赛", [111, 222], str(self.cover43)), (bilibili["topic"], bilibili["mention_uids"], bilibili["cover43"]))
+        # Whoever writes the words is told where each @nickname goes.
+        for note in (bilibili["mention_note"], answer["targets"]["bilibili"]["mention_note"]):
+            self.assertIn("the ordinary half-width @ (not the full-width ＠), their current Bilibili nickname, then an ordinary space", note)
+        self.assertEqual([111, 222], answer["targets"]["bilibili"]["mention_uids"])
+        self.write_copy(description="谢谢 @小白 和 @Example 帮忙")
+        with patch.object(adapters, "bili", side_effect=AssertionError("No platform access")):
+            rehearsal = self.go("--dry-run")
+        self.assertEqual(0, rehearsal["platform_writes"])
+        self.assertEqual(("AI MV 大赛", [111, 222]), (rehearsal["platforms"]["bilibili"]["topic"], rehearsal["platforms"]["bilibili"]["mention_uids"]))
+        self.assertEqual(self.cover43, Path(rehearsal["covers"]["bilibili"]["cover43"]["path"]))
+        self.assertIn("bili-cli's own dry run just before the upload", rehearsal["bilibili_note"])
+        self.assertEqual([], self.sent)
+
+    def test_go_hands_them_to_bili_and_the_receipt_keeps_the_contest(self):
+        self.contest("--cover", self.picture("wide.png", (1600, 900)))
+        self.write_copy(description="谢谢 @小白 和 @Example 帮忙")
+        topic, calls = {"id": 1340873, "name": "AI MV 大赛", "mission_id": 4071698, "activity": 1}, []
+        def bili(args, timeout=210, program=None):
+            calls.append(list(args))
+            if args[:1] == ["--dry-run"]:
+                return {"dry_run": True, "params": {"topic": topic}, "meta": {"desc": "谢谢 @小白 和 @Example 帮忙"}}
+            return {"bvid": "BV1xx411c7mD", "topic": topic} if args[:2] == ["upload", "video"] else {"items": []}
+        with patch.object(adapters, "preflight", return_value={"identity": "owner"}), patch.object(adapters, "bili", side_effect=bili):
+            answer = run("go", self.work)
+        result = answer["results"]["bilibili"]
+        self.assertEqual(("SUBMISSION_VERIFIED", {"name": "AI MV 大赛", "id": 1340873, "mission_id": 4071698}), (result["state"], result["topic"]))
+        upload = calls[1]
+        self.assertEqual(["--dry-run", *upload], calls[0])
+        self.assertEqual(["--topic", "AI MV 大赛", "--cover43", upload[upload.index("--cover43") + 1], "--desc-at", "111", "--desc-at", "222"], upload[-8:])
+        # The 4:3 cover goes up as it is: the attempt's own copy of the approved file, not one fitted like the landscape.
+        self.assertEqual(self.cover43.read_bytes(), Path(upload[upload.index("--cover43") + 1]).read_bytes())
+
+    def test_a_missing_43_cover_is_refused_before_anything_uploads(self):
+        self.refused("invalid_cover", self.prepare, "--bilibili-cover43", self.folder / "missing.png", platforms="bilibili")
+        self.assertFalse(self.work.exists())
+        self.contest()
+        self.write_copy(description="谢谢 @小白 和 @Example 帮忙")
+        self.cover43.unlink()
+        self.assertIn(str(self.cover43), self.refused("invalid_cover", self.go).message)
+        self.assertEqual([], self.sent)
+
+    def test_bilibilis_choices_are_checked_before_any_words_are_written(self):
+        self.refused("invalid_cover", self.prepare, "--bilibili-cover43", self.picture("wide.png", (1600, 1000)), platforms="bilibili")
+        huge = self.folder / "huge43.png"
+        Image.new("1", (8000, 6000)).save(huge)  # 4:3, but past the 40 megapixels every cover is held to.
+        self.assertIn("40-megapixel", self.refused("invalid_cover", self.prepare, "--bilibili-cover43", huge, platforms="bilibili").message)
+        self.refused("invalid_mention", self.prepare, "--bilibili-mention", "小白", platforms="bilibili")
+        self.refused("invalid_topic", self.prepare, "--bilibili-topic", " AI MV 大赛", platforms="bilibili")
+        self.refused("bilibili_not_chosen", self.prepare, "--bilibili-topic", "AI MV 大赛", platforms="youtube")
+        self.refused("invalid_submission_mode", self.prepare, "--draft-only", "--bilibili-topic", "AI MV 大赛", platforms="bilibili", visibility=None)
+        self.assertFalse(self.work.exists())
+
+    def test_words_without_each_at_nickname_stop_before_any_upload(self):
+        self.contest()
+        self.write_copy(description="谢谢 @小白 帮忙")
+        self.assertIn("then an ordinary space", self.refused("invalid_mention", self.go).hint)
+        self.assertEqual([], self.sent)
+
+    def test_the_person_is_shown_the_topic_and_who_will_be_notified_before_saying_yes(self):
+        self.contest()
+        self.write_copy(title="联系我 13812345678", description="谢谢 @小白 和 @Example 帮忙")
+        answer = self.go()
+        self.assertEqual("NEEDS_A_PERSON", answer["state"])
+        self.assertIn("On Bilibili, also show its topic, which can enter the video in a contest, and the people in its mention_uids, who will be notified.", answer["next"])
+        self.assertEqual([], self.sent)
 
 
 if __name__ == "__main__":

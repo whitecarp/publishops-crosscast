@@ -212,14 +212,16 @@ class FirstRunMessageTests(LocalTests):
         self.assertIn('defaults to false', answer['publishing']['youtube']['audience_note'])
 
     def test_plan_metavars_and_portrait_limits_are_in_help(self):
-        for command in (('plan',), ('publish',), ('covers', 'prepare'), ('instagram', 'prepare'),
-                        ('metadata', 'request'), ('metadata', 'apply')):
+        # Each names the plan it takes in the documented order: init writes publish.json, metadata apply localized.json, covers prepare ready.json.
+        # From a review: metadata's help once named ready.json as init's plan, which put covers before the words.
+        for command, example in ((('plan',), 'ready.json'), (('publish',), 'ready.json'), (('covers', 'prepare'), 'localized.json'), (('instagram', 'prepare'), 'ready.json'),
+                                 (('metadata', 'request'), 'publish.json'), (('metadata', 'apply'), 'publish.json')):
             output = io.StringIO()
             with self.subTest(command=command), redirect_stdout(output), self.assertRaises(SystemExit) as exit:
                 cli.parser().parse_args([*command, '--help'])
             self.assertEqual(0, exit.exception.code)
             self.assertIn('PLAN', output.getvalue())
-            self.assertIn('ready.json', output.getvalue())
+            self.assertIn(example, output.getvalue())
         output = io.StringIO()
         with redirect_stdout(output), self.assertRaises(SystemExit):
             cli.parser().parse_args(['covers', 'portrait', '--help'])
