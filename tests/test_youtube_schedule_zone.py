@@ -85,6 +85,14 @@ class ScheduleZoneTests(yt.FormCase):
         self.assertIn("visibility", result["readback_differs"])
         self.assertEqual(1, len(page.clicks("#done-button")))
 
+    def test_offset_in_readback_cannot_supply_the_scheduled_hour(self):
+        page = yt.FakeStudio(scheduler_text="America/New_York",
+                             visibility_text="已安排\n2030年11月4日 09:00 (格林尼治标准时间 -05:00)")
+        _, result = self.run_form(page, self.plan(schedule="2030-11-04T10:00:00+00:00"))
+        self.assertEqual([5, 0], result["schedule"]["time"])
+        self.assertEqual("SUBMITTED_UNVERIFIED", result["state"])
+        self.assertIn("visibility", result["readback_differs"])
+
     def test_postsave_explicit_offset_or_named_zone_conflict_stays_unverified(self):
         for index, suffix in enumerate(("GMT+08:00", "UTC+08:00", "Asia/Shanghai", "UTC\nAsia/Shanghai")):
             with self.subTest(suffix=suffix):

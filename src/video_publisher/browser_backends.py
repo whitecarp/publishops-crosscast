@@ -776,9 +776,13 @@ def studio_read(styles, text):
     return style[1](re.fullmatch(style[0], normalize(text))) if style else None
 
 
+STUDIO_OFFSET = re.compile(r"(?:GMT|UTC|格林尼治标准时间)\s*([+\-−])\s*(\d{1,2})(?::?(\d{2}))?")
+
+
 def studio_moments(text):
     """Every date and every time mentioned in a Studio summary such as "Scheduled for ...", as numbers."""
-    rest = normalize(text)
+    # The 05:00 in a zone label such as GMT-05:00 is not a scheduled time of day.
+    rest = STUDIO_OFFSET.sub(" ", normalize(text))
     dates = {read(m) for pattern, read, _ in STUDIO_DATES for m in re.finditer(pattern, rest)} - {None}
     times = set()
     for pattern, read, _ in STUDIO_TIMES:
@@ -790,7 +794,7 @@ def studio_moments(text):
 def studio_offsets(text):
     """The GMT offsets Studio's scheduler names, in minutes."""
     return {(-1 if sign in "-−" else 1) * (int(hours) * 60 + int(minutes or 0))
-            for sign, hours, minutes in re.findall(r"GMT\s*([+\-−])\s*(\d{1,2})(?::?(\d{2}))?", text or "")}
+            for sign, hours, minutes in STUDIO_OFFSET.findall(text or "")}
 
 
 def studio_zone_offsets_agree(offsets, local, current):
@@ -813,7 +817,6 @@ def youtube_schedule_passed(schedule):
 
 def youtube_schedule_zone_agrees(shown, schedule):
     """Check the approved instant in its trusted zone; display offsets follow the pre-Save rule."""
-    shown = shown.replace('格林尼治标准时间', 'GMT')
     # UTC+01:00 is an offset label, not a second named zone called UTC.
     shown = re.sub(r'(?<![\w/])UTC(?=\s*[+\-−])', 'GMT', shown)
     # An IANA key such as Etc/GMT+5 is a name, not a GMT+5 display.
