@@ -102,8 +102,17 @@ async def empty_list(page):
     section = page.locator('ytcp-video-section-content')
     if await section.count() != 1 or not await section.evaluate_all(LIST_CLEAN):
         return False
-    panels = section.locator('.no-content').filter(has_text=EMPTY)
-    return await panels.count() == 1 and await panels.is_visible()
+    panel = section.locator('.no-content')
+    if await panel.count() != 1 or not await panel.is_visible():
+        return False
+    # Studio can show an upload button alongside the empty-list heading.
+    heading = panel.locator('.no-content-header')
+    count = await heading.count()
+    if count == 0:
+        # Older layouts put the whole message directly in the panel.
+        return await panel.filter(has_text=EMPTY).count() == 1
+    return (count == 1 and await heading.is_visible()
+            and bool(EMPTY.fullmatch((await heading.inner_text()).strip())))
 
 
 async def own_list(page, target):

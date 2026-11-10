@@ -1,5 +1,6 @@
 """A missing/loading player is not deletion; only the exact platform error is."""
-from test_work_delete_youtube import OfflineCase,FakeYouTube,Node,CHANNEL,VIDEO
+from test_work_delete_youtube import OfflineCase, FakeYouTube, Node, CHANNEL, VIDEO, OTHER
+from video_publisher import work_delete_state as state
 from video_publisher import work_delete_youtube as route
 from video_publisher.core import VpubError
 
@@ -10,6 +11,42 @@ class StudioAbsenceTests(OfflineCase):
         self.seed('youtube',VIDEO,CHANNEL)
         self.page=FakeYouTube(self.target)
         self.page.deleted=True
+
+    async def test_last_short_empty_heading_with_upload_prompt_verifies_without_writes(self):
+        self.page.pages['upload'] = [[(OTHER, 'Retained video')]]
+        for heading, button in [('No content available', 'Upload videos'),
+                                ('没有可显示的内容', '上传视频'), ('沒有可顯示的內容', '上傳影片')]:
+            with self.subTest(heading=heading):
+                self.page.empty_panels = [Node('empty', children=[
+                    Node('empty_header', heading), Node('button', button)])]
+                result = await route.execute(self.page, CHANNEL, self.target, 'verify', self.path)
+                self.assertTrue(state.verified(result, self.target), result)
+                self.assertEqual(0, result['platform_writes'])
+                self.assert_unpressed()
+
+        self.page.pages['upload'] = [[(None, 'Unresolved draft')]]
+        result = await route.execute(self.page, CHANNEL, self.target, 'verify', self.path)
+        self.assertFalse(result['list_complete'])
+        self.assertFalse(state.verified(result, self.target))
+        self.assert_unpressed()
+
+    async def test_ambiguous_hidden_and_misleading_empty_panels_remain_incomplete(self):
+        label = 'No content available'
+        heading = Node('empty_header', label)
+        for panels in ([Node('empty', children=[Node('empty_header', 'Loading'), Node('button', label)])],
+                       [Node('empty', children=[Node('empty_header', label, visible=False)])],
+                       [Node('empty', children=[heading, heading])],
+                       [Node('empty', children=[heading]), Node('empty', 'Loading')],
+                       [Node('empty', children=[heading], visible=False)],
+                       [Node('empty', 'No content available yet')]):
+            with self.subTest(panels=panels):
+                self.page.empty_panels = panels
+                result = await route.execute(self.page, CHANNEL, self.target, 'verify', self.path)
+                self.assertTrue(result['page_gone'])
+                self.assertFalse(result['list_absent'])
+                self.assertFalse(result['list_complete'])
+                self.assertEqual(0, result['platform_writes'])
+                self.assert_unpressed()
 
     async def test_observed_uploader_removed_phrase_is_specific(self):
         self.page.gone_text='此视频已被上传者移除'
