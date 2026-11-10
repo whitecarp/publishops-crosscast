@@ -1,7 +1,7 @@
 """Free Creator Center deletion of one exact owned card, with no write retries."""
 import re
 import time
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, urljoin, urlsplit
 
 from . import browser_backends as bb, browser_runtime as rt, work_delete_state as state
 from .core import VpubError, stop_check
@@ -31,9 +31,19 @@ TERMINAL = """nodes => {
   const cards = document.querySelectorAll('[class^="video-card-content-"]');
   return !cards.length || ends[0].innerText.trim() === '没有更多作品';
 }"""
-PLATFORM_ALERT = """node => !node.closest('[class^="video-card-content-"],article,[role="dialog"],.semi-modal-content')"""
+GONE_SNAPSHOT = r"""(nodes, expectedURL) => {
+  if (location.href !== expectedURL) return 'wrong_page';
+  const eligible = nodes.filter(node => node.isConnected && [...node.getClientRects()].some(rect => rect.width > 0 && rect.height > 0)
+      && getComputedStyle(node).visibility === 'visible'
+      && !node.closest('[hidden],[aria-hidden="true"],[class^="video-card-content-"],article,[role="dialog"],.semi-modal-content'));
+  if (!eligible.length) return 'no_platform_alert';
+  if (eligible.length !== 1) return 'ambiguous_alerts';
+  return /^(?:该)?(?:作品|视频)已(?:被)?删除[。！]?$/.test(eligible[0].innerText.trim())
+      ? 'deleted_notice' : 'unrecognized_alert';
+}"""
 HOME_CONFIRM_SECONDS = 120
 HOME_CONFIRMED = {}  # id(page) -> (account, when, page): the dedicated browser is locked to this run meanwhile.
+GONE_WAIT_SECONDS = 10
 
 
 async def guard(page):
@@ -152,7 +162,92 @@ async def card_id(page, target, card, handle, words):
         await detail.close()
 
 
-async def own_list(page, target):
+PRIVATE_EDIT_MENU = 'ul.semi-dropdown-menu[class*="edit-menu-"] > li.semi-dropdown-item'
+
+
+async def private_editor_id(page, target, card, handle, words):
+    """Read the editor opened by this retained card. No title-based search or save."""
+    label = card.get_by_text('编辑作品', exact=True)
+    if await label.count() != 1 or not await label.is_visible():
+        return None
+    item = page.locator(PRIVATE_EDIT_MENU).filter(has_text=re.compile(r'^\s*编辑作品\s*$'))
+    opened_trigger = card.locator('[class*="edit-btn-"].semi-dropdown-showing')
+    showing = page.locator('.semi-dropdown-showing')
+    if await rt.visible(item) or await showing.count():
+        return None
+    await same_card(page, target, card, handle, words)
+    await guard(page)
+    await label.hover(timeout=5000)
+    if not await rt.look_until(page, lambda: rt.visible(item), 3000):
+        return None
+    held = []
+    try:
+        if await opened_trigger.count() != 1 or await showing.count() != 1:
+            return None
+        edit = await retain(item, 'private card edit menu item', held)
+        await guard(page)
+        await same_card(page, target, card, handle, words)
+        await same_node(item, edit, 'original edit menu item')
+        if (not await opened_trigger.is_visible() or await showing.count() != 1
+                or (await edit.inner_text()).strip() != '编辑作品'):
+            return None
+        links = item.locator('a[href]')
+        link_count = await links.count()
+        if link_count:
+            if link_count != 1 or not await links.is_visible():
+                return None
+            href = await links.get_attribute('href')
+            await same_node(item, edit, 'original edit menu item')
+            if not href or not await opened_trigger.is_visible() or await showing.count() != 1:
+                return None
+            # Release this card's hover menu before proceeding to another card.
+            await guard(page)
+            await same_card(page, target, card, handle, words)
+            await card.locator(bb.DOUYIN_NAME).hover(timeout=5000)
+            return private_editor_work(urljoin(page.url, href))
+        # Only a child editor keeps the original list and retained cards intact.
+        async with page.expect_popup(timeout=bb.POPUP_MS) as opened:
+            await edit.click(timeout=5000)
+        detail = await opened.value
+        if await detail.opener() is not page:
+            return None
+        try:
+            await detail.wait_for_url(re.compile(r'/creator-micro/content/post/video\?'), wait_until='commit', timeout=10000)
+            await guard(detail)
+            wid = private_editor_work(detail.url)
+            if not wid:
+                return None
+            title, caption = await bb.douyin_editor_boxes(detail, wid)
+            shown = bb.douyin_card_says(await title.input_value(), await caption.inner_text())
+            await guard(detail)
+            if bb.douyin_card_words(words) in shown and private_editor_work(detail.url) == wid:
+                return wid
+            return None
+        finally:
+            await detail.close()
+    except Exception as exc:
+        if type(exc).__name__ != 'TimeoutError':
+            raise
+        await guard(page)
+        return None
+    finally:
+        for node in held:
+            await node.dispose()
+
+
+def private_editor_work(url):
+    try:
+        fields = parse_qsl(urlsplit(url).query, keep_blank_values=True, strict_parsing=True, max_num_fields=2)
+        wid = bb.douyin_editor_work(url)
+    except ValueError:
+        return None
+    if (wid and re.fullmatch(r'[0-9]{10,25}', wid)
+            and set(fields) == {('mid', wid), ('enter_from', 'edit_item')}):
+        return wid
+    return None
+
+
+async def own_list(page, target, diagnostics=None, *, verify_private=False):
     await guard(page)
     await page.goto(bb.MANAGE, wait_until='domcontentloaded', timeout=60000)
     cards = page.locator(bb.DOUYIN_CARD)
@@ -165,23 +260,42 @@ async def own_list(page, target):
     await owner(page, target)
     count = await cards.count()
     complete = await ends.evaluate_all(TERMINAL)
+    checks = diagnostics if diagnostics is not None else {}
+    checks.update(rows=count, resolved=0, private_unresolved=0, list=[])
+    if not complete:
+        checks['list'].append('terminal_or_filter_unconfirmed')
+    if count > 100:
+        checks['list'].append('read_limit')
     matches, seen, held, observed, finished = [], set(), [], [], False
     try:
-        # A bounded read with any unresolved/private/hidden card is incomplete.
+        # Absence requires every card in the bounded read to have a distinct ID.
         for index in range(min(count, 100)):
             card = cards.nth(index)
             if not await card.is_visible():
                 complete = False
+                checks['list'].append('hidden_card')
                 continue
             name = await rt.unique_visible(card.locator(bb.DOUYIN_NAME), 'work card title')
             words = (await name.inner_text()).strip()
             handle = await card.element_handle()
             held.append(handle)
             observed.append((card, handle, words))
-            wid = await card_id(page, target, card, handle, words)
+            if verify_private and await card.get_by_text('私密', exact=True).count():
+                wid = await private_editor_id(page, target, card, handle, words)
+                if private_editor_work(page.url):
+                    # In-place navigation replaced the inventory and its bindings.
+                    checks['list'].append('editor_replaced_list')
+                    checks['private_unresolved'] += 1
+                    checks['resolved'] = len(seen)
+                    return [], False
+            else:
+                wid = await card_id(page, target, card, handle, words)
             await same_card(page, target, card, handle, words)
             if not wid or wid in seen:
                 complete = False
+                checks['list'].append('unresolved_id' if not wid else 'duplicate_id')
+                if not wid and await card.get_by_text('私密', exact=True).count():
+                    checks['private_unresolved'] += 1
             if wid:
                 seen.add(wid)
             if wid == target['id']:
@@ -199,9 +313,17 @@ async def own_list(page, target):
                     if exc.code not in {'wrong_work', 'layout_changed'}:
                         raise
                     complete = False
+                    checks['list'].append('card_changed')
                     break
-        complete = bool(complete and count <= 100 and count == await cards.count()
-                        and len(seen) == count and await ends.evaluate_all(TERMINAL))
+        checks['resolved'] = len(seen)
+        final_count = await cards.count()
+        terminal = await ends.evaluate_all(TERMINAL)
+        if count != final_count:
+            checks['list'].append('row_count_changed')
+        if not terminal:
+            checks['list'].append('terminal_or_filter_unconfirmed')
+        complete = bool(complete and count <= 100 and count == final_count
+                        and len(seen) == count and terminal)
         if matches:
             await same_card(page, target, *matches[0])
         # Keep only the actual target handle alive until the caller finishes.
@@ -214,26 +336,61 @@ async def own_list(page, target):
                 await handle.dispose()
 
 
-async def exact_gone(page, target):
+def exact_page_failure(url, target):
+    """Fixed reason codes only; never expose arbitrary URLs, query values or page text."""
+    address = urlsplit(url)
+    if address.scheme != 'https' or address.netloc != 'www.douyin.com':
+        return 'wrong_origin'
+    if address.path != f"/video/{target['id']}":
+        return 'wrong_path'
+    if address.query or address.fragment:
+        return 'query_or_fragment'
+    return None
+
+
+async def exact_gone(page, target, diagnostics=None):
+    checks = diagnostics if diagnostics is not None else {}
     await guard(page)
     await page.goto(target['url'], wait_until='domcontentloaded', timeout=60000)
-    await guard(page)
-    address = urlsplit(page.url)
-    if (address.scheme != 'https' or address.netloc != 'www.douyin.com'
-            or address.path != f"/video/{target['id']}" or address.query or address.fragment):
-        return False
-    alerts = [node for node in await page.locator('[role="alert"]').all() if await node.is_visible()
-              and await node.evaluate(PLATFORM_ALERT)]
-    return len(alerts) == 1 and bool(GONE.fullmatch((await alerts[0].inner_text()).strip()))
+    # DOMContentLoaded precedes client-rendered notices. Re-read with a bound,
+    # checking the exact URL, platform checks and STOP on every iteration.
+    for attempt in range(GONE_WAIT_SECONDS * 2 + 1):
+        await guard(page)
+        failure = exact_page_failure(page.url, target)
+        if failure:
+            checks['exact_page'] = failure
+            return False
+        # Read membership, ancestry, text and URL in one DOM snapshot. A locator
+        # checked before an await can otherwise adopt a new, user-authored alert.
+        checks['exact_page'] = await page.locator('[role="alert"]').evaluate_all(GONE_SNAPSHOT, target['url'])
+        stop_check('douyin')
+        if checks['exact_page'] == 'deleted_notice':
+            return True
+        if checks['exact_page'] == 'wrong_page':
+            return False
+        if attempt < GONE_WAIT_SECONDS * 2:
+            await page.wait_for_timeout(500)
+    return False
 
 
-async def readback(page, target, writes=0):
-    gone = await exact_gone(page, target)
-    matches, complete = await own_list(page, target)
+def readback_note(checks, confirmed):
+    # Only our own codes and counts reach the receipt; no private titles, DOM,
+    # query strings, credentials or arbitrary exception text.
+    status = 'Deletion verified.' if confirmed else 'Deletion is unconfirmed; verify only.'
+    reasons = ','.join(sorted(set(checks.get('list', [])))) or 'complete'
+    return (f"{status} Read-back: exact_page={checks.get('exact_page', 'not_read')}; list={reasons}; "
+            f"rows={checks['rows']}; resolved={checks['resolved']}; private_unresolved={checks['private_unresolved']}.")
+
+
+async def readback(page, target, writes=0, *, verify_private=False):
+    checks = {}
+    gone = await exact_gone(page, target, checks)
+    matches, complete = await own_list(page, target, checks, verify_private=verify_private)
     try:
         return evidence(target, present=bool(matches), owned=bool(matches), page_gone=gone and not matches,
                         list_absent=not matches and complete, list_complete=complete, fresh=True,
-                        platform_writes=writes)
+                        platform_writes=writes,
+                        note=readback_note(checks, gone and not matches and complete))
     finally:
         if matches:
             await matches[0][1].dispose()
@@ -243,6 +400,10 @@ async def execute(page, actual, target, operation, receipt_path):
     validate(actual, target, operation)
     writes, retained, held = 0, None, []
     try:
+        if operation == 'verify':
+            # Verify needs one fresh scan after the exact-page read, not two
+            # scans opening every card's popup. It never reaches delete controls.
+            return await readback(page, target, verify_private=True)
         matches, complete = await own_list(page, target)
         if not matches:
             return await readback(page, target)
@@ -291,7 +452,7 @@ async def execute(page, actual, target, operation, receipt_path):
         await final_control.click(timeout=15000)
         await page.wait_for_timeout(3000)
         await guard(page)
-        return await readback(page, target, writes)
+        return await readback(page, target, writes, verify_private=True)
     except Exception as exc:
         if type(exc).__name__ != 'TimeoutError':
             raise
