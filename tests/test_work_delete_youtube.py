@@ -1,4 +1,5 @@
 """Synthetic pages only: no browser profile, network, screenshots or platform API."""
+from copy import deepcopy
 import json
 import os
 from pathlib import Path
@@ -269,6 +270,7 @@ class FakeYouTube:
         self.url, self.nodes, self.events = '', [], []
         self.pages = {'upload': [[(VIDEO, 'Approved')]], 'short': [[]]}
         self.pager, self.clean, self.empty_panel = True, True, True
+        self.empty_panels = [Node('empty', 'No content available')]
         self.gone_text, self.deleted = 'This video has been removed by the uploader.', False
         self.final_timeout, self.keep_target, self.navigation_timeout = False, False, False
         self.risk, self.on_delete_menu, self.on_options = False, None, None
@@ -287,7 +289,8 @@ class FakeYouTube:
             return [n for n in nodes if n.kind == 'title' and n.attrs.get('href') == href]
         mapping = {'body': 'body', 'ytcp-video-row': 'row', 'a#video-title': 'title',
                    '#navigate-after': 'next', 'ytcp-video-section-content': 'section',
-                   '.no-content': 'empty', 'ytcp-checkbox-lit#confirm-checkbox': 'tick'}
+                   '.no-content': 'empty', '.no-content-header': 'empty_header',
+                   'ytcp-checkbox-lit#confirm-checkbox': 'tick'}
         if selector not in mapping:
             raise AssertionError('Unexpected selector: ' + selector)
         return [n for n in nodes if n.kind == mapping[selector]]
@@ -328,7 +331,7 @@ class FakeYouTube:
                 Node('title', title, attrs={'href': href}),
                 Node('options', 'Options', attrs={'role': 'button'}, action=lambda wid=wid: self.options(wid))]))
         if not rows and self.empty_panel:
-            rows.append(Node('empty', 'No content available'))
+            rows.extend(deepcopy(self.empty_panels))
         children = [Node('section', children=rows)]
         if self.pager:
             children.append(Node('next', attrs={'aria-disabled': str(self.index == len(self.pages[self.tab]) - 1).lower()}, action=self.next_page))
