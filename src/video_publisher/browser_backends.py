@@ -162,7 +162,8 @@ class Transaction:
         self.path = home() / "browser-receipts" / (plan["confirmation"] + "-" + platform + ".json")
         if self.path.exists() and not resume:
             raise VpubError("attempt_exists", "This independent browser attempt already has a durable receipt.", "Inspect/verify that attempt. Never reset it to upload or submit again.")
-        self.receipt = {"state": "PREPARING", "method": "browser", "platform": platform,
+        from .audit import code_stamp
+        self.receipt = {"code": code_stamp(), "state": "PREPARING", "method": "browser", "platform": platform,
                         "identity": identity, "title": self.options["title"], "phase": "initial",
                         "video_sha256": plan["video_sha256"], "final_submit_attempted": False,
                         "media_selected": False, "started_at": now()}
@@ -183,7 +184,8 @@ class Transaction:
         for key in ("review_url", "draft_url", "media_url"):
             if changes.get(key):
                 changes[key] = plain_address(changes[key])
-        self.receipt.update(changes, updated_at=now())
+        from .audit import stamped
+        self.receipt = stamped({**self.receipt, **changes, "updated_at": now()}, self.receipt)
         with receipt_turn(self.path):
             atomic_json(self.path, self.receipt)
         return dict(self.receipt)

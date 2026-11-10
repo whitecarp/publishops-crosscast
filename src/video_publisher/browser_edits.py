@@ -87,7 +87,10 @@ async def execute(page, platform, identity, payload):
             result.update(x_edit_readback_note(x_attempted))
         if platform=='x' and x_attempted: result['final_submit_attempted']=True
         # A check only reads. What it means for a save already tried is for edits.send to record, so a check cut off here leaves that save on record.
-        if not payload.get('verify_only'): atomic_json(output,result)
+        if not payload.get('verify_only'):
+            from .audit import stamped
+            result = stamped(result, read_json(output) if output.exists() else None)
+            atomic_json(output, result)
         return result
     async def submit(button,still_holds=None):
         nonlocal x_attempted

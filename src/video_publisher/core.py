@@ -671,25 +671,31 @@ class Ledger:
                 for r in self.db.execute(f"SELECT * FROM publications {where} ORDER BY updated_at DESC", values)]
 
     def claim(self, platform, account, sha, data):
+        from .audit import stamped
         key = self.key(platform, account, sha)
         try:
             self.db.execute("INSERT INTO publications VALUES (?,?,?,?,?,?,?)",
-                            (key, platform, account, sha, "IN_PROGRESS", json.dumps(data), now()))
+                            (key, platform, account, sha, "IN_PROGRESS", json.dumps(stamped(data, None)), now()))
             self.db.commit()
             return key
         except sqlite3.IntegrityError:
             self.db.rollback()
             return None
 
+    def _serialized_update(self, key, data):
+        from .audit import stamped
+        previous = self.get(key)
+        return json.dumps(stamped(data, previous["data"] if previous else {}), ensure_ascii=False)
+
     def save(self, key, state, data):
         self.db.execute("UPDATE publications SET state=?,data=?,updated_at=? WHERE key=?",
-                        (state, json.dumps(data, ensure_ascii=False), now(), key))
+                        (state, self._serialized_update(key, data), now(), key))
         self.db.commit()
 
     def save_unless_changed(self, key, state, data, seen):
         """Saves only if the record is still as it was when read, and says whether it did."""
         saved = self.db.execute("UPDATE publications SET state=?,data=?,updated_at=? WHERE key=? AND updated_at=?",
-                                (state, json.dumps(data, ensure_ascii=False), now(), key, seen))
+                                (state, self._serialized_update(key, data), now(), key, seen))
         self.db.commit()
         return saved.rowcount == 1
 

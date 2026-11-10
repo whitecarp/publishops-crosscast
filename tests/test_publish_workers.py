@@ -93,6 +93,33 @@ class PublishWorkersTests(unittest.TestCase):
 
         return self.await_fake(tx.submit(SimpleNamespace(url="https://x.com/compose/post"), button, still_holds))
 
+    def test_build_identity_survives_publish_resume_and_verify(self):
+        plan = self.plan(("x",))
+        def open_tx(platform, prepared, opts, resume=False):
+            tx = browser_backends.Transaction(platform, "x-owner", {**prepared, "options": opts}, resume)
+            return tx.save(state="SUBMITTED_UNVERIFIED", id="12345678901")
+        self.publish.side_effect = lambda p, plan, opts, checkpoint: open_tx(p, plan, opts)
+        first, second, third = ({"source_digest": c * 64} for c in "abc")
+        with patch("video_publisher.audit.code_stamp", return_value=first):
+            self.run_plan(plan)
+        row = self.rows()["x"]
+        path = core.home() / "browser-receipts" / "fixture-x.json"
+        def check(latest):
+            for record in (self.rows()["x"]["data"], core.read_json(path)):
+                self.assertEqual(first, record["code"])
+                self.assertEqual(latest, record.get("code_last"))
+        check(None)
+        def resume(platform, action, account, **payload):
+            self.assertEqual("resume", action)
+            return open_tx(platform, payload["plan"], payload["plan"]["options"], True)
+        with patch("video_publisher.audit.code_stamp", return_value=second), patch.object(adapters, "browser_call", side_effect=resume):
+            cli.run_command(cli.parser().parse_args(["resume", row["key"]]))
+        check(second)
+        verified = {"state": "SUBMISSION_VERIFIED", "method": "browser", "id": "12345678901"}
+        with patch("video_publisher.audit.code_stamp", return_value=third), patch.object(adapters, "verify", return_value=verified):
+            cli.run_command(cli.parser().parse_args(["verify", row["key"]]))
+        check(third)
+
     def test_default_serial_and_two_workers_have_bounded_overlap(self):
         timings = {}
         for workers in (1, 2):

@@ -150,7 +150,8 @@ def begin_press(path, target):
             raise VpubError('deletion_already_attempted', 'This deletion is no longer ready; nothing else was pressed.',
                             f"vpub delete {target['key']} --verify-only")
         stop_check(target['platform'])
-        saved.update(state='DELETE_PENDING', delete_attempted=True, attempted_at=now())
+        from .audit import code_stamp
+        saved.update(state='DELETE_PENDING', delete_attempted=True, attempted_at=now(), press_code=code_stamp())
         _bound(path, expected=binding)
         atomic_json(path, saved)
     return saved
@@ -172,7 +173,9 @@ def save_result(path, target, evidence=None, error=None):
         # A failed later read cannot undo a prior independently confirmed deletion.
         if saved.get('state') == 'DELETED_VERIFIED':
             return saved
-        saved.update(state='DELETED_VERIFIED' if verified(evidence, target) else 'DELETE_PENDING', updated_at=now())
+        from .audit import code_stamp
+        saved.update(state='DELETED_VERIFIED' if verified(evidence, target) else 'DELETE_PENDING', updated_at=now(),
+                     readback_code=code_stamp())
         if evidence is not None:
             saved['evidence'] = evidence
         if error is not None:

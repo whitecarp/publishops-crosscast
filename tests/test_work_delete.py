@@ -73,7 +73,7 @@ class WorkDeletionTests(unittest.TestCase):
                 key, _ = self.seed(platform)
                 code = self.code(key)
                 self.assertEqual(64, len(code))
-                with patch.object(wd, 'backend') as backend:
+                with patch.object(wd, 'backend') as backend, patch('video_publisher.audit.code_stamp', side_effect=AssertionError('refusal stamped')):
                     for supplied, person in ((None, False), (code, False), ('other', True)):
                         with self.assertRaises(VpubError) as error:
                             wd.run(key, confirm=supplied, person_approved=person)
@@ -129,6 +129,39 @@ class WorkDeletionTests(unittest.TestCase):
                     answer = wd.run(key, verify_only=True)
                 self.assertEqual(['verify'], [call.args[1] for call in back.call_args_list])
                 self.assertTrue(answer['deleted'])
+
+    def test_distinct_creation_press_and_readback_builds_preserve_target_and_approval(self):
+        key, _ = self.seed()
+        code = self.code(key)
+        path = state.receipt_path(key)
+        create, press, read, later = ({"source_digest": c * 64} for c in "abcd")
+
+        def backend(target, operation, path):
+            if operation == "inspect":
+                return self.owned(target)
+            with patch("video_publisher.audit.code_stamp", return_value=press):
+                state.begin_press(path, target)
+            return self.deleted(target, list_complete=False)
+
+        with patch("video_publisher.audit.code_stamp", side_effect=[create, read]), patch.object(wd, "backend", side_effect=backend):
+            self.assertEqual("DELETE_PENDING", wd.run(key, confirm=code, person_approved=True)["state"])
+        before = state.read_receipt(path)
+        self.assertEqual((create, press, read), tuple(before[k] for k in ("code", "press_code", "readback_code")))
+        self.assertEqual({"confirm_matched": True, "person_approved": True, "at": before["created_at"]}, before["approval"])
+        with patch("video_publisher.audit.code_stamp", return_value=later), patch.object(wd, "backend", side_effect=lambda t, op, p: self.deleted(t)):
+            self.assertEqual("DELETED_VERIFIED", wd.run(key, verify_only=True)["state"])
+        after = state.read_receipt(path)
+        for field in ("target", "code", "press_code", "approval", "attempted_at", "publication_receipt"):
+            self.assertEqual(before[field], after[field])
+        self.assertEqual(later, after["readback_code"])
+
+        legacy = {k: v for k, v in before.items() if k not in ("code", "press_code", "readback_code", "approval")}
+        atomic_json(path, legacy)
+        with patch("video_publisher.audit.code_stamp", return_value=later), patch.object(wd, "backend", side_effect=lambda t, op, p: self.deleted(t)):
+            wd.run(key, verify_only=True)
+        restored = state.read_receipt(path)
+        self.assertEqual(later, restored["readback_code"])
+        self.assertTrue({"approval", "code", "press_code"}.isdisjoint(restored))
 
     def test_each_proof_field_is_strict_and_target_bound(self):
         key, row = self.seed()

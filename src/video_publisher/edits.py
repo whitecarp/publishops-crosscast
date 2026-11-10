@@ -138,7 +138,12 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
                             'If a person has looked at the work and the change is not there, add --person-approved to try once more.')
     preserved = ({'preserved_description_sha256': saved['preserved_description_sha256']}
                  if platform == 'bilibili' and saved.get('preserved_description_sha256') else {})
-    def checkpoint(data): atomic_json(path,{'key':key,'edit_id':edit_id,'at':now(),**preserved,**data})
+    from .audit import stamped
+    def checkpoint(data):
+        previous = read_json(path) if path.exists() else None
+        entry = stamped({'key': key, 'edit_id': edit_id, 'at': now(), **preserved, **data}, previous)
+        atomic_json(path, entry)
+        return entry
     # The record keeps that the flag was given, for a person to read later. It is someone's word, not proof that a person looked.
     approved={'person_approved':True} if person_approved and not verify_only else {}
     if not verify_only: checkpoint({'state':'EDIT_PREPARING','id':work_id,**approved})
@@ -171,8 +176,8 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
         result={**result,**x_edit_readback_note(x_attempted)}
     if x_attempted: result['final_submit_attempted']=True
     result={**result,**approved,**flagged}
-    checkpoint(result)
-    return result
+    entry = checkpoint(result)
+    return {k: v for k, v in entry.items() if k in result or k in ("code", "code_last")}
 
 
 def run_adopted(platform, work, patch_path, dry_run=False, verify_only=False, person_approved=False):
@@ -208,7 +213,8 @@ def keep_resume_in_step(record, platform, work, owner, changes):
         with receipt_turn(durable):
             saved=read_json(durable)
             if saved.get('id')==work and saved.get('identity')==owner:
-                atomic_json(durable,{**saved,**changes})
+                from .audit import stamped
+                atomic_json(durable, stamped({**saved, **changes}, saved))
 
 
 def run(key, patch_path, dry_run=False, verify_only=False, person_approved=False):
@@ -225,13 +231,18 @@ def run(key, patch_path, dry_run=False, verify_only=False, person_approved=False
             result=send(row['platform'],row['account'],actual,receipt,key,patch,dry_run,verify_only,person_approved)
             if dry_run: return result
             edit_id=digest([key,patch])
-            record.setdefault('edits',[]).append({'edit_id':edit_id,'patch':patch,'result':result,'at':now(),'previous_receipt':deepcopy(receipt)})
+            record.setdefault('edits',[]).append({'edit_id':edit_id,'patch':patch,'result':result,'at':now(),
+                'previous_receipt':deepcopy(receipt), **{k: result[k] for k in ('code','code_last') if k in result}})
             confirmed=result.get('state')=='EDIT_VERIFIED' and 'description' in patch
             changes=found_after_edit(row['platform'],patch,result) if confirmed else {}
             if confirmed:
                 record['options'].update({k:v for k,v in patch.items() if k!='expected_identity'})
                 if row['platform']=='x': record['options']['post_text']=changes['expected_text']
-                record['receipt'].update(changes)
+                if receipt.get('method') == 'browser':
+                    from .audit import stamped
+                    record['receipt'] = stamped({**receipt, **changes}, receipt)
+                else:
+                    receipt.update(changes)
             ledger.save(key,row['state'],record)
             if confirmed: keep_resume_in_step(record,row['platform'],work_id,actual,changes)
             return {'key':key,**result}

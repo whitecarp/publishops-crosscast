@@ -207,8 +207,10 @@ class DeletionCoexistenceTests(unittest.TestCase):
         args = cli.parser().parse_args(['verify', before['key']])
         with patch.object(cli.adapters, 'verify', return_value=result):
             self.assertEqual(result['state'], cli.run_command(args)['state'])
-        self.assertEqual(result, self.row(before['key'])['data']['receipt'])
-        self.assertEqual(result, read_json(durable))
+        from video_publisher.audit import code_stamp
+        expected = {**result, 'code_last': code_stamp()}
+        self.assertEqual(expected, self.row(before['key'])['data']['receipt'])
+        self.assertEqual(expected, read_json(durable))
 
     def test_delete_interrupt_json_directs_to_verify_without_clearing_stop(self):
         before = self.row(self.native.key)

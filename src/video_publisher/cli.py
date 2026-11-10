@@ -33,8 +33,8 @@ def installed_from():
     """Where this copy came from, as pip recorded it, so a test build and a release with the same version can be told apart.
     A local folder is named only as one: doctor's output gets shared in feedback."""
     try:
-        from importlib import metadata
-        info = json.loads(metadata.distribution("publishops-crosscast").read_text("direct_url.json") or "null")
+        from .audit import direct_url
+        info = direct_url()
     except Exception:
         return None
     if not isinstance(info, dict):
@@ -462,6 +462,7 @@ def skill_file():
 
 
 def doctor():
+    from .audit import code_stamp
     from .overview import chrome_path, stop_state
     from .preferences import read as preferences
     addon = adapters.addon_installed()
@@ -495,7 +496,7 @@ def doctor():
                        "fix": "python -m pip uninstall -y bili-agent, then install CrossCast again in this environment."})
     if stop["active"]:
         issues.append({"code": "stopped", "message": stop["message"], "fix": stop["hint"]})
-    return {"version": __version__, "installed_from": installed_from(), "python": sys.version.split()[0], "dependencies": modules,
+    return {"version": __version__, "installed_from": installed_from(), "source_digest": code_stamp()["source_digest"], "python": sys.version.split()[0], "dependencies": modules,
             "bili_cli_version": included_bili_version(), "google_chrome": chrome, "paid_api_addon": addon, "ready": not issues, "issues": issues,
             "next": issues[0]["fix"] if issues else "Use the saved preferences below; ask only for unknown choices. Sign in only to selected platforms: vpub onboard --platforms PLATFORMS. Then prepare: vpub prepare VIDEO --platforms PLATFORMS --language LANGUAGE --visibility VISIBILITY --ai-generated AI_STATUS. Replace placeholders with the user's choices: VISIBILITY is public or private; AI_STATUS is yes or no. Omit --platforms only when platforms are saved.",
             "preferences": choices,
@@ -1330,8 +1331,12 @@ def keep_verified(ledger, old, read, result, seen=None):
     plan_hash = old['data'].get('plan_hash') or old['data'].get('approved_plan', {}).get('confirmation')
     durable = home() / 'browser-receipts' / (plan_hash+'-'+old['platform']+'.json') if result.get('method') == 'browser' and plan_hash else None
     with receipt_turn(durable) if durable else contextlib.nullcontext():
-        if durable and durable.exists():
-            result = verified_over(read, result, read_json(durable))
+        if durable:
+            from .audit import stamped
+            saved = read_json(durable) if durable.exists() else None
+            if saved is not None:
+                result = verified_over(read, result, saved)
+            result = stamped(result, saved)
         if result.get("state") == "PREPARATION_INCOMPLETE" and result.get("final_submit_attempted"):
             # The worker's own copy says it pressed after all, so this can't stand as an attempt that pressed nothing.
             result = {**result, "state": "SUBMITTED_UNVERIFIED", "note": "No durable work ID; inspect the original work, never reupload automatically."}

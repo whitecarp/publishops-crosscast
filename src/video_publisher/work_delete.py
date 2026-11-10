@@ -112,7 +112,11 @@ def run(key, *, dry_run=False, confirm=None, person_approved=False, verify_only=
                 with receipt_turn(path):
                     if state.read_receipt(path, missing_ok=True) is not None:
                         raise VpubError('deletion_already_attempted', 'A deletion record appeared during inspection; it was preserved. Only verify again.')
-                    atomic_json(path, {'state': 'DELETE_READY', 'target': target, 'created_at': now(),
+                    from .audit import code_stamp
+                    created = now()
+                    atomic_json(path, {'state': 'DELETE_READY', 'target': target, 'created_at': created,
+                                       'code': code_stamp(), 'approval': {'confirm_matched': confirm == code,
+                                       'person_approved': person_approved, 'at': created},
                                        'delete_attempted': False, 'publication_receipt': deepcopy(row['data']['receipt'])})
             stop_check(target['platform'])
             try:

@@ -22,6 +22,8 @@ class PublishCheckpointDedupTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.home = Path(temporary.name)
         self.start_patch(patch.dict(os.environ, VPUB_HOME=str(self.home)))
+        self.build = {"source_digest": "a" * 64}
+        self.start_patch(patch("video_publisher.audit.code_stamp", return_value=self.build))
         self.receipt = {
             "state": "SUBMISSION_VERIFIED", "method": "browser", "platform": "x",
             "identity": "fixture_owner", "id": "fixture_work", "final_submit_attempted": True,
@@ -80,6 +82,7 @@ class PublishCheckpointDedupTests(unittest.TestCase):
 
     def assert_record(self, result, row, receipt, failed=False):
         expected_record = {
+            "code": self.build,
             "plan_hash": self.plan["confirmation"], "title": self.options["title"],
             "identity": self.identity, "options": self.options,
             "approved_plan": self.plan, "upload_plan": self.plan,
