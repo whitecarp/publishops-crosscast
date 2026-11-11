@@ -41,6 +41,13 @@ class JournalTests(unittest.TestCase):
                 cli.main()
         return result.exception.code, output.getvalue()
 
+    def test_edit_unavailable_and_prepared_survive_export(self):
+        from video_publisher.audit_export import project_event
+        for state in ['EDIT_UNAVAILABLE', 'EDIT_PREPARED']:
+            row = project_event({'type': 'transition', 'state': state, 'receipt_state': state}, lambda x: None)
+            self.assertEqual(state, row['state'])
+            self.assertEqual(state, row['receipt_state'])
+
     def test_publish_approval_alias_is_recorded_without_its_confirmation(self):
         args = cli.parser().parse_args(["publish", "PRIVATE-plan", "--person-approved", "--confirm", "PRIVATE-code"])
         journal.command_start(args)

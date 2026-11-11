@@ -98,3 +98,5 @@ A browser command can take a minute or more. It writes short `browser_progress` 
 The Codex client chooses its progress wording. The skill's display name is PublishOps CrossCast; do not promise an exact progress sentence or a custom client UI.
 
 `vpub init --ai-generated yes|no` (default `yes`) sets every platform's AI-content declaration. Ordinary videos use `no` and are published without an AI label; on X the declaration is a line in the post text, because no native label control has been found in Media Studio. Ask the user when it is unclear; do not guess.
+
+On `lock_marker_unreadable`, do not automatically retry or touch the marker. Tell the owner to diagnose it using the fixed hint; unreadable is not proof of an active command.

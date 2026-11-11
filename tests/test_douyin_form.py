@@ -878,6 +878,20 @@ class CoverOnANewPostTests(Base):
         self.assertFalse(cover['remote_pixels_verified'])
         self.assertEqual(['publish'], [write['word'] for write in self.writes])
 
+    async def test_a_loading_preview_that_disappears_is_not_a_saved_cover(self):
+        before = "const slot = document.querySelector('.cover-b'); slot.replaceChildren(); slot.style.backgroundImage='url(offline-before.png)';"
+        with patch.object(browser_forms, 'DOUYIN_PREVIEW_SECONDS', 2), self.assertRaises(VpubError) as caught:
+            await self.saved_preview_post("const slot=document.querySelector('.cover-b'); slot.style.backgroundImage='url(loading.png)'; setTimeout(()=>slot.style.backgroundImage='url(offline-before.png)',400)", before)
+        self.assertEqual('cover_unverified', caught.exception.code)
+        self.assertEqual([], self.writes)
+
+    async def test_hover_picture_alone_cannot_confirm_a_cover_save(self):
+        before = "document.querySelector('.cover-b').replaceChildren(); const s=document.createElement('style'); s.textContent='.cover-b{background-image:url(old.png)} .cover-b:hover{background-image:url(hover.png)}'; document.head.append(s);"
+        with patch.object(browser_forms, 'DOUYIN_PREVIEW_SECONDS', 1), self.assertRaises(VpubError) as caught:
+            await self.saved_preview_post("", before)
+        self.assertEqual('cover_unverified', caught.exception.code)
+        self.assertEqual([], self.writes)
+
     async def test_its_window_gets_as_long_as_an_edits_and_then_nothing_goes_out(self):
         """From a field run's first real post: a 30-second wait after 完成 ended it, with the video uploaded and nothing pressed."""
         with patch.object(browser_edits, "DOUYIN_COVER_SECONDS", 1), self.assertRaises(VpubError) as caught:
