@@ -33,6 +33,7 @@ vpub go final-crosscast
 - **Covers:** use the right episode's production artwork. Bilibili needs `--cover` or ffmpeg on PATH; other platforms can choose a thumbnail. Douyin/Instagram share a portrait cover. Without image generation, inspect and recompose with `vpub covers portrait SOURCE --box x,y,width,height --out FILE`. Keep Instagram's video ratio; its cover is changed on the phone.
 - **Text checks:** go stops on `text_flags`. Explain them, wait for the user's yes, then use `--confirm CODE --person-approved`. Edits can flag text too. `unsafe_text` refuses secrets: rewrite without them.
 - **Waiting:** commands take minutes; follow stderr, never stop/restart. On `busy` or `browser_busy`, wait and retry; never delete locks or share the profile with another process.
+- **Unreadable marker:** on `lock_marker_unreadable`, do not automatically retry or touch the marker. Tell the owner to diagnose it using the fixed hint; unreadable is not proof of an active command.
 - **Evidence:** a click or zero exit code is not proof. `SUBMITTED_UNVERIFIED` stays uncertain. `vpub status` lists unfinished work and exact next commands. `vpub verify KEY` uploads nothing, but can finish planned chapters/widgets.
 
 ## Signing in

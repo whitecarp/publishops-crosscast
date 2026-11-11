@@ -245,7 +245,64 @@ print(json.dumps(results))
         self.assertNotIn('PRIVATE', json.dumps(result))
         self.assertEqual(b'PRIVATE LOSS FILE', denied_file.read_bytes())
 
-    def test_stuck_lock_only_spends_one_long_wait_for_a_whole_command(self):
+    def test_unreadable_loss_directory_is_not_reported_complete(self):
+        from video_publisher import audit_export as exp
+        journal.append('stage', lambda _: dict(stage='uploading'))
+        with patch.object(exp.os, 'scandir', side_effect=PermissionError('PRIVATE')):
+            result = exp.export_data()
+        self.assertTrue(result['integrity']['loss_folder_unreadable'])
+        self.assertFalse(result['integrity']['loss_records_complete'])
+        self.assertNotIn('PRIVATE', json.dumps(result))
+        folder = self.directory / 'losses'
+        folder.write_bytes(b'not a folder')
+        result = exp.export_data()
+        self.assertTrue(result['integrity']['loss_folder_unreadable'])
+        self.assertFalse(result['integrity']['loss_records_complete'])
+        self.assertEqual(b'not a folder', folder.read_bytes())
+
+    def test_deep_and_oversized_loss_records_leave_other_evidence_exportable(self):
+        from video_publisher import audit_export as exp
+        journal.append('stage', lambda _: dict(stage='uploading'))
+        folder = self.directory / 'losses'; folder.mkdir()
+        (folder / ('a' * 32 + '.json')).write_text('[' * 2000 + '0' + ']' * 2000)
+        (folder / ('b' * 32 + '.json')).write_bytes(b'X' * (exp.LOSS_MAX_BYTES + 1))
+        (folder / ('c' * 32 + '.json')).write_text(json.dumps(dict(
+            v=1,id='c' * 32,run=None,reason='lock_timeout',at='0001-01-01T00:00:00+23:00')))
+        result = exp.export_data()
+        self.assertEqual(3, result['integrity']['unreadable_loss_records'])
+        self.assertFalse(result['integrity']['loss_records_complete'])
+        self.assertEqual(1, len(result['events']))
+
+    def test_unreadable_file_and_its_report_are_one_loss_with_two_distinct_diagnostics(self):
+        from video_publisher.audit_export import export_data
+        with patch.object(journal, 'brief_lock', side_effect=core.VpubError('audit_busy', 'busy')):
+            self.assertFalse(journal.append('stage', lambda _: {}))
+        loss_id = journal.last_append_result()['loss_id']
+        (self.directory / 'losses' / (loss_id + '.json')).write_bytes(b'{')
+        self.assertTrue(journal.append('stage', lambda _: dict(stage='uploading')))
+        result = export_data()
+        self.assertEqual(1, result['integrity']['dropped_events'])
+        self.assertEqual(1, result['integrity']['unreadable_loss_records'])
+        self.assertEqual(1, result['integrity']['unplaced_dropped_events'])
+        self.assertFalse(result['integrity']['loss_records_complete'])
+        self.assertEqual(1, len(result['losses']))
+        self.assertTrue(result['losses'][0]['file_unreadable'])
+        self.assertEqual('file_unreadable', result['losses'][0]['reason'])
+
+    def test_loss_reporter_run_is_sanitized_for_ids_and_legacy_counts(self):
+        from video_publisher import audit_export as exp
+        journal.append('stage', lambda _: dict(stage='uploading'))
+        for raw_run in ['PRIVATE PATH', {'private': 'PRIVATE'}, ['PRIVATE']]:
+            event = dict(type='stage', seq=1, run=raw_run, at='2026-11-11T12:00:00Z',
+                         stage='uploading', dropped_before=2, dropped_ids=['a' * 32])
+            with patch.object(exp, 'events_from', return_value=([event], dict(ok=True, head='0' * 64))):
+                result = exp.export_data()
+            self.assertEqual(2, result['integrity']['dropped_events'])
+            self.assertIsNone(result['losses'][0]['run'])
+            self.assertEqual([], result['runs'])
+            self.assertNotIn('PRIVATE', json.dumps(result))
+
+    def test_stuck_lock_only_spends_one_long_wait_per_process_and_home(self):
         from video_publisher.audit_export import export_data
         with core.brief_lock(self.directory / 'journal.lock', 'busy', 'busy', 1), \
              patch.object(journal, 'LOCK_WAIT_SECONDS', 0.4):

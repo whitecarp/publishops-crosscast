@@ -17,7 +17,7 @@ import tempfile
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from video_publisher import browser_backends, browser_edits, browser_forms, browser_runtime, cli, edits, progress, video_shape
 from video_publisher.core import DOUYIN_NAME_LAST, VpubError, atomic_json, douyin_caption, douyin_caption_units, home, load_plan
@@ -843,6 +843,23 @@ class CoverOnANewPostTests(Base):
         self.assertEqual('cover_unverified', caught.exception.code)
         self.assertEqual([], self.writes)
         self.assertNotEqual('UI_ACCEPTED', self.tx.receipt.get('portrait_cover', {}).get('state'))
+        facts = self.tx.receipt['cover_preview_check']
+        self.assertEqual({'img': 1}, facts['slot_tags'])
+        self.assertEqual(1, facts['max_share'])
+        self.assertTrue(facts['readable'])
+        self.assertNotIn('src', json.dumps(facts))
+
+    async def test_unreadable_saved_preview_has_a_fixed_stop_and_no_private_exception(self):
+        from patchright.async_api import Error as BrowserError
+        slot = MagicMock()
+        slot.evaluate = AsyncMock(side_effect=BrowserError('PRIVATE browser address'))
+        with self.assertRaises(VpubError) as caught:
+            with patch.object(browser_forms, 'wait_until', side_effect=BrowserError('PRIVATE browser address')):
+                await browser_forms.douyin_wait_saved_preview(self.page, slot, [], self.tx, 'portrait')
+        self.assertEqual('cover_unverified', caught.exception.code)
+        self.assertEqual({'role': 'portrait', 'readable': False}, self.tx.receipt['cover_preview_check'])
+        self.assertNotIn('PRIVATE', caught.exception.message)
+        self.assertEqual(browser_forms.DOUYIN_COVER_AGAIN, caught.exception.hint)
 
     async def test_only_the_other_slots_preview_changing_does_not_prove_this_save(self):
         before = "const other = document.createElement('div'); other.id = 'other-cover'; other.style.cssText = 'width:40px;height:30px'; document.body.append(other);"

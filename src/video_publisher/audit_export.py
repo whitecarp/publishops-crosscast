@@ -5,14 +5,18 @@ from datetime import datetime, timezone
 from hashlib import sha256
 import hmac
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
+import stat
 
 from .core import PLATFORMS, VpubError, atomic_json, home
 from . import audit_journal as journal
 
 HEX = re.compile(r"^[a-f0-9]{64}$")
+RUN_ID = re.compile(r"^[a-f0-9]{32}$")
+LOSS_MAX_BYTES = 16 * 1024
 REF = re.compile(r"^[a-f0-9]{16}$")
 STATES = set("PREPARING IN_PROGRESS UNKNOWN PREPARATION_INCOMPLETE PREVIEW_READY WAITING_FOR_USER SUBMITTED_UNVERIFIED SUBMISSION_VERIFIED AGENT_REPORTED_VERIFIED SKIPPED_EXISTING NOT_STARTED DELETE_READY DELETE_PENDING DELETED_VERIFIED DELETE_PREVIEW EDIT_PREPARING EDIT_SUBMITTING EDIT_SUBMITTED_UNVERIFIED EDIT_VERIFIED EDIT_MISMATCH PENDING_WORK_ID PENDING SUBMITTED VERIFIED FAILED NOT_SUPPORTED forgotten".split())
 CODES = set("stopped interrupted confirmation_required deletion_already_attempted deletion_not_allowed deletion_target_unverified deletion_target_changed unsupported_delete attempt_exists already_submitted press_blocked cover_blocked wrong_account wrong_work owner_unverified needs_person human_verification_required injected_fault fault_injection_refused backend_timeout browser_timeout readback_failed schedule_unverified identity_mismatch busy lock_marker_unreadable file_not_found invalid_file internal_error submission_unverified preparation_incomplete inspect_existing_edit receipt_missing stopped_before_press draft_only".split())
@@ -219,17 +223,37 @@ def export_data(root=None,*,since=None,until=None,times='relative',exact_sizes=F
     durable_losses=[]
     known_loss_ids=set()
     unreadable_losses=0
-    folder=safe_path(root,root/'audit/losses')
-    for file in sorted(folder.glob('*.json')) if folder.exists() else []:
+    unreadable_ids=set()
+    loss_folder_unreadable=False
+    files=[]
+    try:
+        folder=safe_path(root,root/'audit/losses')
+        with os.scandir(folder) as entries:
+            files=sorted(Path(entry.path) for entry in entries if entry.name.endswith('.json'))
+    except FileNotFoundError:
+        pass  # No loss folder has been created yet.
+    except OSError:
+        loss_folder_unreadable=True
+    for file in files:
         try:
-            item=read_object(root,file)
+            safe_path(root,file)
+            info=file.lstat()
+            if not stat.S_ISREG(info.st_mode) or info.st_size>LOSS_MAX_BYTES:
+                raise ValueError('invalid_loss_size_or_kind')
+            with file.open('rb') as stream:
+                data=stream.read(LOSS_MAX_BYTES+1)
+            if len(data)>LOSS_MAX_BYTES: raise ValueError('invalid_loss_size')
+            item=obj(json.loads(data))
             if (item.get('v')!=1 or not hexval(item.get('id'),re.compile(r'^[a-f0-9]{32}$'))
                 or file.stem!=item['id'] or item.get('reason') not in journal.LOSS_REASONS
                 or item.get('run') is not None and not hexval(item['run'],re.compile(r'^[a-f0-9]{32}$'))
                 or not timestamp(item.get('at'))):
                 raise ValueError('invalid_loss_record')
-        except (OSError, ValueError, VpubError):
+        except Exception:
+            # One damaged private record must not suppress all usable evidence;
+            # never copy its path, payload or exception into the export.
             unreadable_losses+=1
+            if hexval(file.stem,RUN_ID): unreadable_ids.add(file.stem)
             continue
         known_loss_ids.add(item['id'])
         if (not start or timestamp(item['at'])>=start) and (not stop or timestamp(item['at'])<=stop):
@@ -243,6 +267,7 @@ def export_data(root=None,*,since=None,until=None,times='relative',exact_sizes=F
     losses_by_id={item['id']:dict(id=item['id'],run=item.get('run'),at=when(item['at']),reason=item['reason'],persistent=True) for item in durable_losses}
     legacy_losses=Counter()
     for e in chosen:
+        run=hexval(e.get('run'),RUN_ID)
         ids=e.get('dropped_ids',[])
         ids=list(dict.fromkeys(i for i in ids if hexval(i,re.compile(r'^[a-f0-9]{32}$')))) if isinstance(ids,list) else []
         count=integer(e.get('dropped_before')) or 0
@@ -250,15 +275,17 @@ def export_data(root=None,*,since=None,until=None,times='relative',exact_sizes=F
             # A readable file supplies the loss's actual time. Without one,
             # the in-window reporter is the only surviving timing evidence.
             if i in known_loss_ids: continue
-            losses_by_id.setdefault(i,dict(id=i,run=e.get('run'),at=None,reported_at=when(e['at']),
-                                          time_unplaced=True,reason='unpersisted',persistent=False))
-        legacy_losses[e.get('run')]+=max(0,count-len(ids))
+            unreadable=i in unreadable_ids
+            losses_by_id.setdefault(i,dict(id=i,run=run,at=None,reported_at=when(e['at']),
+                time_unplaced=True,reason='file_unreadable' if unreadable else 'unpersisted',
+                persistent=unreadable,file_unreadable=unreadable))
+        legacy_losses[run]+=max(0,count-len(ids))
     loss_counts=Counter(item['run'] for item in losses_by_id.values())
     loss_counts.update(legacy_losses)
     gap_runs=set();previous_seq=0
     for e in raw:
         seq=integer(e.get('seq'))
-        if seq!=previous_seq+1: gap_runs.add(e.get('run'))
+        if seq!=previous_seq+1: gap_runs.add(hexval(e.get('run'),RUN_ID))
         previous_seq=seq or previous_seq
     saltfile=safe_path(root,root/'audit/salt')
     salt=saltfile.read_bytes() if saltfile.exists() else None
@@ -300,7 +327,7 @@ def export_data(root=None,*,since=None,until=None,times='relative',exact_sizes=F
             parts={k:choice(receipt.get(k),STATES) for k in ('chapters_state','widgets_state')},edits=edits,dismissed=boolean(data.get('dismissed')),fault=choice(obj(receipt.get('fault')).get('point'),FAULTS),
             observations=[dict(seen=e['seen'],t=e['at']) for e in events if e['type']=='observation' and e.get('ref')==ref(key)],
             t_started=when(data.get('started_at')),t_updated=when(row.get('updated_at')),t_verified=when(receipt.get('verified_at')),day=utc(timestamp(data.get('started_at')))[:10] if timestamp(data.get('started_at')) else None,
-            history_complete=bool(chain['ok'] and not chain.get('not_ended') and not start and not stop and not sum(loss_counts.values()) and not unreadable_losses and not any(e['dropped_before'] for e in events)
+            history_complete=bool(chain['ok'] and not chain.get('not_ended') and not start and not stop and not sum(loss_counts.values()) and not unreadable_losses and not loss_folder_unreadable and not any(e['dropped_before'] for e in events)
                 and any(e.get('ref')==ref(key) and e.get('operation')=='claim' for e in events))))
         d=read_object(root,root/'work-deletions'/(key+'.json')) if hexval(key) else {}
         if d:
@@ -322,8 +349,9 @@ def export_data(root=None,*,since=None,until=None,times='relative',exact_sizes=F
       builds=builds,publications=publications,deletions=deletions,runs=runs,events=events,losses=list(losses_by_id.values()),counts=count_events(events),
       integrity=dict(first_seq=events[0]['seq'] if events else None,last_seq=events[-1]['seq'] if events else None,head=chain.get('head'),chain_ok=chain['ok'],first_bad_seq=chain.get('first_bad_seq'),
         events_outside_a_command=sum(e['run'] is None for e in events),dropped_events=sum(loss_counts.values()),dropped_count_is_lower_bound=True,
-        unplaced_dropped_events=sum(not item['persistent'] for item in losses_by_id.values())+sum(legacy_losses.values()),
-        unreadable_loss_records=unreadable_losses,loss_records_complete=unreadable_losses==0))
+        unplaced_dropped_events=sum(bool(item.get('time_unplaced')) for item in losses_by_id.values())+sum(legacy_losses.values()),
+        unreadable_loss_records=unreadable_losses,loss_folder_unreadable=loss_folder_unreadable,
+        loss_records_complete=unreadable_losses==0 and not loss_folder_unreadable))
 
 def export_file(out,**kwargs):
     result=export_data(**kwargs)

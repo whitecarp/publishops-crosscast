@@ -649,6 +649,7 @@ An error code alone never shows that nothing was written: a command with several
 | `attempt_exists` | This attempt at a reply has ended, or another got there first, so nothing more was sent | `comments verify-reply`; never send again |
 | `attempt_replaced` | A newer attempt took this message, like or comment action over, or this one had already ended, so it pressed nothing | Read the newest attempt's receipt |
 | `attempt_busy` | Another step was moving this attempt on at that moment, and nothing was sent | Try again shortly |
+| `lock_marker_unreadable` | A lock marker could not be read; this does not prove another command is running | Do not retry automatically or change/remove the marker. Ask the owner to diagnose the format, ownership, permissions or Windows pending-delete state named by the hint |
 | `browser_step_timeout` | A step in the background browser ran out of time, and the message names the step | Read the receipt before anything else |
 | `existing_draft_requires_attention` | Douyin's upload page is offering a kept draft, so no video was chosen | Continue or discard it on that page, then run it again |
 | `ok: false`, exit 4 | The command ran but its work isn't finished: a change left waiting or unconfirmed, a platform's refusal, or chapters or a collection that did not land on a work that did | Follow the next command `vpub status` gives |

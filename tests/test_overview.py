@@ -264,6 +264,23 @@ class StatusTests(OverviewFixture):
             self.assertTrue((home() / "publisher.lock").exists())
         self.assertFalse(overview.workspace_busy())
 
+    def test_unreadable_workspace_marker_is_unknown_not_running(self):
+        key = self.row('IN_PROGRESS')
+        marker = home() / 'publisher.lock'
+        marker.write_bytes(b'offline marker')
+        original = Path.read_text
+        def denied(path, *args, **kwargs):
+            if path == marker: raise PermissionError('PRIVATE')
+            return original(path, *args, **kwargs)
+        with patch.object(Path, 'read_text', denied):
+            result = overview.status()
+        self.assertIsNone(result['workspace_busy'])
+        self.assertEqual('lock_marker_unreadable', result['workspace_lock_error'])
+        item = next(i for i in result['publications']['needs_attention'] if i['key'] == key)
+        self.assertIsNone(item['next_command'])
+        self.assertNotEqual('Running now.', item['note'])
+        self.assertEqual(b'offline marker', marker.read_bytes())
+
     def test_upload_progress_comes_from_the_durable_receipts(self):
         browser = self.row("IN_PROGRESS", sha="browser")
         atomic_json(home() / "browser-receipts" / "plan-browser-x.json",

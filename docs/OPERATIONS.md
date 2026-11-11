@@ -650,6 +650,7 @@ vpub receipts
 | `attempt_exists` | 這次回覆的嘗試已結束，或另一次嘗試先完成，因此沒有再送出 | `comments verify-reply`；不要重送 |
 | `attempt_replaced` | 較新的嘗試接手了這則私訊、按讚或留言操作，或這次已結束，因此沒有按下 | 查看最新一次嘗試的回執 |
 | `attempt_busy` | 當下另一個步驟正在更新這次嘗試，沒有送出任何內容 | 稍後再試 |
+| `lock_marker_unreadable` | 鎖標記無法讀取，不代表另一個指令正在執行 | 不要自動重試或修改、刪除標記。請擁有者依提示檢查格式、擁有權、權限或 Windows 等待刪除狀態 |
 | `browser_step_timeout` | 背景瀏覽器的某一步逾時，訊息會寫明是哪一步 | 先看回執，再決定下一步 |
 | `existing_draft_requires_attention` | 抖音上傳頁正提供一份留下的草稿，因此沒有選擇影片 | 在該頁面繼續或放棄草稿，再執行一次 |
 | `ok: false`，結束碼 4 | 指令已執行，但工作沒有完成：變更仍在等待或未確認、平台拒絕，或作品已發布但章節或合集沒有成功 | 依 `vpub status` 提供的下一個指令處理 |

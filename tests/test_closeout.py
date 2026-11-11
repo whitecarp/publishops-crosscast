@@ -89,3 +89,13 @@ class ProcessLockTests(unittest.TestCase):
                 self.fail('undecodable marker admitted a command')
         self.assertEqual('lock_marker_unreadable', caught.exception.code)
         self.assertEqual(b'\xff\xfe\x00', marker.read_bytes())
+        self.assertIn('encoding error', caught.exception.hint)
+
+    def test_directory_marker_has_a_type_hint_and_is_preserved(self):
+        marker = home() / 'publisher.lock'
+        marker.mkdir()
+        with self.assertRaises(VpubError) as caught:
+            with publication_lock(): self.fail('directory marker admitted a command')
+        self.assertEqual('lock_marker_unreadable', caught.exception.code)
+        self.assertIn('directory', caught.exception.hint)
+        self.assertTrue(marker.is_dir())

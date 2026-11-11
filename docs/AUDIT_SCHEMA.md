@@ -43,6 +43,8 @@ helper's 200 ms polling granularity). After a lock give-up, later appends in the
 same process and data folder make one immediate acquisition attempt until a
 durable append succeeds; success restores the initial wait. Forty events behind
 a continuously stuck lock therefore spend one long acquisition wait, not forty.
+This bound is per process and home, not per CLI command: each new browser worker
+can pay its own initial wait, and a successful append re-arms that process.
 Local filesystem/write/fsync time is additional. The offline
 contract tests three writers at once and the study shape of one parent plus
 two workers with events 250 ms apart: all 24 attempted events must be written,
@@ -62,6 +64,15 @@ unobservable. An individually unreadable or malformed loss file increments
 not stop export of the usable evidence. That count is not silently converted
 into a dropped-event count: the record's contents and time could not be read.
 `loss_records_complete` describes the files found, not complete loss capture.
+An inaccessible or non-directory loss folder sets `loss_folder_unreadable: true`
+and `loss_records_complete: false`. Individual files are bounded to 16 KiB;
+oversized, deeply nested or otherwise unreadable records stay counted as
+unreadable while the usable evidence is exported.
+If an event reports the id of an unreadable file, `losses` counts that event once
+with `file_unreadable: true`, `reason: file_unreadable`, and unknown original time.
+The same file remains in `unreadable_loss_records`: this is a file-quality count,
+not an extra dropped event. Never add it to `dropped_events` or treat a matched
+report as evidence that the damaged file's unseen contents were complete.
 These records account for caught give-ups, not attempts interrupted by power
 loss, and do not make `loss_complete` true. Bounded exports count dated durable
 loss records in the requested interval. An unpersisted id reported by an event

@@ -68,7 +68,18 @@ def hold(path, error_code, message):
             marker = path.read_text(encoding='utf-8')
         except FileNotFoundError:
             marker = None
-        except (OSError, UnicodeError):
+        except UnicodeError:
+            raise VpubError('lock_marker_unreadable', 'The command lock marker is not valid UTF-8.',
+                            'Keep the marker in place. Ask the owner to inspect its format and origin; '
+                            'an encoding error does not establish a permissions fault.') from None
+        except OSError:
+            # Windows may report access denied, rather than IsADirectoryError,
+            # for a directory at the marker path. Metadata is only diagnostic.
+            try: is_directory = path.is_dir()
+            except OSError: is_directory = False
+            if is_directory:
+                raise VpubError('lock_marker_unreadable', 'The command lock marker is a directory, not a file.',
+                                'Keep it in place. Ask the owner to inspect how the marker path became a directory.') from None
             raise VpubError('lock_marker_unreadable', 'The command lock marker could not be read.',
                             'Ask the owner to check this marker\'s ownership and permissions. On Windows, '
                             'a pending deletion can also deny access until its open handle closes. '

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
 from datetime import datetime, timezone
@@ -997,16 +998,41 @@ DOUYIN_SAVED_PREVIEW = """slot => {
 }"""
 
 
-async def douyin_wait_saved_preview(page, slot, before):
+DOUYIN_PREVIEW_FACTS = """slot => {
+  const {r, share, inControl} = (""" + DOUYIN_SLOT_PARTS + ")(slot, " + DOUYIN_POINT + """ );
+  const items = root => [root, ...root.querySelectorAll('*')].filter(e =>
+    e.matches('img, picture, canvas, svg, video') || /url\\(/.test(getComputedStyle(e).backgroundImage || ''));
+  const count = list => { const result = {}; for (const e of list) {
+    const tag = ['img','picture','canvas','svg','video'].includes(e.localName) ? e.localName : 'background';
+    result[tag] = (result[tag] || 0) + 1;
+  } return result; };
+  const own = items(slot), box = slot.closest('[class^="coverControl-"]') || slot;
+  return {readable:true, slot_tags:count(own), box_tags:count(items(box)),
+    max_share:Math.max(0,...own.map(e => share(e,r.left,r.top,r.right,r.bottom))),
+    in_control:own.some(inControl), slot_in_window:r.left>=0 && r.top>=0 && r.right<=innerWidth && r.bottom<=innerHeight};
+}"""
+
+
+async def douyin_wait_saved_preview(page, slot, before, tx, role):
+    from patchright.async_api import Error as BrowserError
     async def saved():
         after = await slot.evaluate(DOUYIN_SAVED_PREVIEW, timeout=DOUYIN_SLOT_MS)
         return bool(after) and after != before
     try:
         await wait_until(page, saved, seconds=DOUYIN_PREVIEW_SECONDS, label='Douyin saved cover preview')
     except VpubError as exc:
-        if exc.code == 'processing_timeout':
-            raise VpubError('cover_unverified', 'Cover editor closed without a changed cover preview.', DOUYIN_COVER_AGAIN) from None
-        raise
+        if exc.code != 'processing_timeout': raise
+    except BrowserError:
+        pass
+    else:
+        return
+    try:
+        facts = await slot.evaluate(DOUYIN_PREVIEW_FACTS, timeout=1000)
+    except BrowserError:
+        facts = {'readable': False}
+    tx.save(cover_preview_check={'role': role, **facts})
+    raise VpubError('cover_unverified', 'Cover editor closed without a confirmed changed preview. '
+                    + json.dumps(facts, sort_keys=True), DOUYIN_COVER_AGAIN) from None
 
 # What lies over a slot, seen from inside it without pressing anything: at the slot's centre, where Playwright presses, and on a grid over
 # its box, as offsets from its padding box, which a press's position is measured from, nearest the centre first. From a review, the centre
@@ -1935,7 +1961,7 @@ async def douyin_covers_now(page, tx, editor):
                 raise VpubError('cover_not_ready', f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so nothing was published. {await douyin_cover_stuck(page, fonts, traffic())}", DOUYIN_COVER_AGAIN) from None
         finally:
             traffic(stop=True)
-        await douyin_wait_saved_preview(page, slot, before_preview)
+        await douyin_wait_saved_preview(page, slot, before_preview, tx, role)
         # A stop's account of what lay over this slot is done with once its cover is on.
         if (tx.receipt.get('cover_slot_covered') or {}).get('role') == role:
             tx.receipt.pop('cover_slot_covered')
