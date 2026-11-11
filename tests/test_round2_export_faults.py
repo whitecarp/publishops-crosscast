@@ -88,6 +88,32 @@ class ExportTests(unittest.TestCase):
         with self.assertRaises(core.VpubError): export.export_data(since='2020-01-01')
         with self.assertRaises(core.VpubError): export.export_file(core.home()/'config.json')
 
+    def test_window_excludes_untouched_earlier_publications_in_existing_ledger(self):
+        # The study reuses its one data folder, which already has publications.
+        # A historical receipt must not enter a phase export without an event
+        # referring to it inside that phase. All stores here are temporary.
+        with patch.object(journal, 'utc', return_value='2026-11-10T00:00:00.000Z'):
+            old_key, _ = self.seed('douyin')
+        with patch.object(journal, 'utc', return_value='2026-11-19T00:00:00.000Z'):
+            current_key, _ = self.seed('youtube')
+            journal.command_start(SimpleNamespace(command='verify', key=current_key))
+            journal.command_end(SimpleNamespace(key=current_key), journal.STARTED, 0, None, {})
+        self.addCleanup(setattr, journal, 'RUN', None)
+        before = {p: p.read_bytes() for p in core.home().rglob('*') if p.is_file()}
+        with patch.object(adapters, 'browser_call', side_effect=AssertionError('network')):
+            all_rows = export.export_data(times='exact')
+            out = Path(self.temp.name) / 'phase-export.json'
+            args = cli.parser().parse_args(['audit', 'export', '--since',
+                '2026-11-19T00:00:00Z', '--until', '2026-11-20T00:00:00Z', '--out', str(out)])
+            cli.run_command(args)
+            phase = json.loads(out.read_text(encoding='utf-8'))
+        self.assertEqual({p['platform'] for p in all_rows['publications']}, {'douyin', 'youtube'})
+        self.assertEqual([p['platform'] for p in phase['publications']], ['youtube'])
+        old_ref = next(p['ref'] for p in all_rows['publications'] if p['platform'] == 'douyin')
+        self.assertNotIn(old_ref, json.dumps(phase))
+        self.assertNotIn(old_key, json.dumps(phase))
+        self.assertEqual({p: p.read_bytes() for p in core.home().rglob('*') if p.is_file()}, before)
+
     def test_observation_only_changes_journal_and_failure_is_not_success(self):
         key,_=self.planted();db=core.home()/'publications.sqlite3';before=db.read_bytes()
         self.assertTrue(export.observe(key,'once')['recorded']);self.assertEqual(db.read_bytes(),before)
