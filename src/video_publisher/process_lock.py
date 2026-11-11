@@ -68,7 +68,7 @@ def hold(path, error_code, message):
             marker = path.read_text(encoding='utf-8')
         except FileNotFoundError:
             marker = None
-        except OSError:
+        except (OSError, UnicodeError):
             raise VpubError('lock_marker_unreadable', 'The command lock marker could not be read.',
                             'Ask the owner to check this marker\'s ownership and permissions. On Windows, '
                             'a pending deletion can also deny access until its open handle closes. '

@@ -16,9 +16,9 @@ files are refused. Export destinations must be outside VPUB_HOME.
 | deletions | Publication pseudonym, state, attempted boolean, proof booleans, fixed error/fault words, code stamps, times |
 | runs | 32-hex command id, closed command/action/flags, build index, optional declared session and purpose, exit and duration, stages, slot spans, concurrency, ended flag and loss fields |
 | events | Closed command_start/end, transition, call, stage, span, fault, observation projections; seq, previous digest, run, time/day, dropped_before |
-| losses | Deduplicated 32-hex loss id, command id or null, relative/exact report time, closed reason and persistent boolean; no exception text or path |
+| losses | Deduplicated 32-hex loss id, command id or null, relative/exact original time or null, optional reported_at and time_unplaced, closed reason and persistent boolean; no exception text or path |
 | counts | Integer counts by closed state/code/point or exit code; unknown network read/write totals are null |
-| integrity | Sequence bounds, raw-chain head, chain_ok, first_bad_seq, outside-command count, dropped count and lower-bound flag |
+| integrity | Sequence bounds, raw-chain head, chain_ok, first_bad_seq, outside-command count, dropped count and lower-bound flag, unplaced_dropped_events, unreadable_loss_records and loss_records_complete |
 
 Strings copied from text, names, addresses, work ids, raw ledger keys, media/plan
 hashes and paths never pass through. Unknown state/code vocabulary becomes
@@ -38,8 +38,12 @@ sequence_gap, chain_ok and loss_complete (false: the dropped counter is a lower
 bound: hard process death and a wholly unwritable destination cannot be excluded). A gap without an identifiable
 command is reported globally rather than assigned to an invented command.
 
-Journal lock acquisition waits at most 10 seconds (with the lock helper's
-200 ms polling granularity); local write/fsync time is additional. The offline
+Journal lock acquisition initially waits at most 10 seconds (with the lock
+helper's 200 ms polling granularity). After a lock give-up, later appends in the
+same process and data folder make one immediate acquisition attempt until a
+durable append succeeds; success restores the initial wait. Forty events behind
+a continuously stuck lock therefore spend one long acquisition wait, not forty.
+Local filesystem/write/fsync time is additional. The offline
 contract tests three writers at once and the study shape of one parent plus
 two workers with events 250 ms apart: all 24 attempted events must be written,
 without relaxing the assertion. Each unsuccessful append reports a closed
@@ -53,11 +57,19 @@ replacement is recoverable and is not counted as a missing event.
 If the entire destination is unwritable, a process-local fallback remains and
 the diagnostic says `loss_persisted: false`; it is exported after a later
 successful append in that process. A crash before fallback persistence remains
-unobservable. Malformed loss files stop export rather than being ignored.
+unobservable. An individually unreadable or malformed loss file increments
+`integrity.unreadable_loss_records`, sets `loss_records_complete` false, and does
+not stop export of the usable evidence. That count is not silently converted
+into a dropped-event count: the record's contents and time could not be read.
+`loss_records_complete` describes the files found, not complete loss capture.
 These records account for caught give-ups, not attempts interrupted by power
 loss, and do not make `loss_complete` true. Bounded exports count dated durable
-loss records in the requested interval; an unpersisted id without an original
-failure timestamp can only be recovered by the unbounded fallback export.
+loss records in the requested interval. An unpersisted id reported by an event
+inside the window also counts once, with `at: null`, `time_unplaced: true` and
+the reporter's `reported_at`; it increments `unplaced_dropped_events`. Its actual
+loss may precede the window. A readable durable record with a known time outside
+the window is excluded even when a later event repeats its id. Unreadable records
+prevent `history_complete` from being true. No source evidence is repaired.
 
 Press counters are durable attempts written before a click, not proof the click
 reached the platform. Calls count adapter invocations, not HTTP requests. Person

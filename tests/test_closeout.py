@@ -80,3 +80,12 @@ class ProcessLockTests(unittest.TestCase):
         # The failed attempt still releases its kernel guard.
         with patch.object(process_lock, 'alive', return_value=False), publication_lock():
             pass
+
+    def test_non_utf8_marker_is_reported_and_preserved(self):
+        marker = home() / 'publisher.lock'
+        marker.write_bytes(b'\xff\xfe\x00')
+        with self.assertRaises(VpubError) as caught:
+            with publication_lock():
+                self.fail('undecodable marker admitted a command')
+        self.assertEqual('lock_marker_unreadable', caught.exception.code)
+        self.assertEqual(b'\xff\xfe\x00', marker.read_bytes())
