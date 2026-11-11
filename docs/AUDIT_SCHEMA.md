@@ -16,6 +16,7 @@ files are refused. Export destinations must be outside VPUB_HOME.
 | deletions | Publication pseudonym, state, attempted boolean, proof booleans, fixed error/fault words, code stamps, times |
 | runs | 32-hex command id, closed command/action/flags, build index, optional declared session and purpose, exit and duration, stages, slot spans, concurrency, ended flag and loss fields |
 | events | Closed command_start/end, transition, call, stage, span, fault, observation projections; seq, previous digest, run, time/day, dropped_before |
+| losses | Deduplicated 32-hex loss id, command id or null, relative/exact report time, closed reason and persistent boolean; no exception text or path |
 | counts | Integer counts by closed state/code/point or exit code; unknown network read/write totals are null |
 | integrity | Sequence bounds, raw-chain head, chain_ok, first_bad_seq, outside-command count, dropped count and lower-bound flag |
 
@@ -34,8 +35,29 @@ historical snapshots. A bounded window may omit starts/ends. `history_complete`
 requires a visible claim, an unbounded interval and no detected loss; silent
 process-death losses still cannot be excluded. Every run includes dropped_events,
 sequence_gap, chain_ok and loss_complete (false: the dropped counter is a lower
-bound, process-local and may disappear on crash). A gap without an identifiable
+bound: hard process death and a wholly unwritable destination cannot be excluded). A gap without an identifiable
 command is reported globally rather than assigned to an invented command.
+
+Journal lock acquisition waits at most 10 seconds (with the lock helper's
+200 ms polling granularity); local write/fsync time is additional. The offline
+contract tests three writers at once and the study shape of one parent plus
+two workers with events 250 ms apart: all 24 attempted events must be written,
+without relaxing the assertion. Each unsuccessful append reports a closed
+diagnostic reason and attempts to fsync its own unique `audit/losses` record,
+independently of the contended journal lock. A worker's final failed append is
+therefore exported even after that worker exits without another successful
+append. Later `dropped_before` reports are deduplicated against these records;
+legacy counters remain supported. A durable line followed by a failed head
+replacement is recoverable and is not counted as a missing event.
+
+If the entire destination is unwritable, a process-local fallback remains and
+the diagnostic says `loss_persisted: false`; it is exported after a later
+successful append in that process. A crash before fallback persistence remains
+unobservable. Malformed loss files stop export rather than being ignored.
+These records account for caught give-ups, not attempts interrupted by power
+loss, and do not make `loss_complete` true. Bounded exports count dated durable
+loss records in the requested interval; an unpersisted id without an original
+failure timestamp can only be recovered by the unbounded fallback export.
 
 Press counters are durable attempts written before a click, not proof the click
 reached the platform. Calls count adapter invocations, not HTTP requests. Person

@@ -7,7 +7,7 @@ import json
 import os
 import re
 import sqlite3
-from threading import Lock
+from threading import Lock, local
 import time
 import uuid
 
@@ -17,7 +17,45 @@ ZERO = "0" * 64
 RUN = None
 STARTED = time.monotonic()
 _losses = {}
+_loss_ids = {}
 _loss_lock = Lock()
+_append_diagnostic = local()
+LOCK_WAIT_SECONDS = 10.0
+LOSS_REASONS = frozenset({'home_unavailable', 'lock_timeout', 'journal_read_failed',
+                          'projection_failed', 'journal_write_failed', 'head_write_failed'})
+
+
+def last_append_result():
+    """Thread-local closed diagnostics; never include exception text or paths."""
+    return dict(getattr(_append_diagnostic, 'result', {}))
+
+
+def _report_loss(directory, reason):
+    """One independently fsynced file per give-up, with no shared journal lock.
+
+    Worker exit cannot erase a saved loss. If the whole destination is
+    unwritable, retain the process-local fallback and report persistence false.
+    No exception text, path, account, command argument or content is saved.
+    """
+    loss_id = uuid.uuid4().hex
+    persisted = False
+    try:
+        folder = directory / 'losses'
+        folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+        value = dict(v=1, id=loss_id, run=RUN if isinstance(RUN,str) and re.fullmatch(r'[a-f0-9]{32}',RUN) else None, at=utc(), reason=reason)
+        with (folder / (loss_id + '.json')).open('x', encoding='utf-8') as stream:
+            json.dump(value, stream, separators=(',', ':'))
+            stream.write('\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+        persisted = True
+    except Exception:
+        pass
+    with _loss_lock:
+        _losses[directory] = _losses.get(directory, 0) + 1
+        _loss_ids.setdefault(directory, []).append(loss_id)
+    _append_diagnostic.result = dict(written=False, reason=reason, loss_id=loss_id,
+                                     loss_persisted=persisted)
 ACTIONS = frozenset("auth login status chat_unlock publish verify resume edit works list stats comments collections operations operations_batch work_delete delete_work direct_messages comment_management engagement upload video read whoami archive favorites season search".split())
 OPERATIONS = frozenset("inspect delete verify read list add remove status edit update create rename move save like unlike reply pin hide sync".split())
 
@@ -70,9 +108,15 @@ def record_ref(directory, key):
 def append(kind, build):
     """Construct fields inside the guard so projection errors cannot affect a caller."""
     directory = None
+    phase = 'home_unavailable'
+    durable = False
+    missed = 0
+    missed_ids = []
     try:
         directory = home() / "audit"
-        with brief_lock(directory / "journal.lock", "audit_busy", "Audit journal busy", 0.8):
+        phase = 'lock_timeout'
+        with brief_lock(directory / "journal.lock", "audit_busy", "Audit journal busy", LOCK_WAIT_SECONDS):
+            phase = 'journal_read_failed'
             path = directory / "journal.jsonl"
             head_path = directory / "head.json"
             head = json.loads(head_path.read_bytes()) if head_path.exists() else [0, ZERO, 0]
@@ -88,23 +132,38 @@ def append(kind, build):
                         head = [item["seq"], digest(line), stream.tell()]
                 if size != head[2]:
                     raise ValueError("audit tail missing")
+            phase = 'projection_failed'
             fields = build(lambda key: record_ref(directory, key))
             with _loss_lock:
                 missed = _losses.get(directory, 0)
+                missed_ids = list(_loss_ids.get(directory, []))
             event = dict(seq=head[0]+1, prev=head[1], at=utc(), type=kind, run=RUN,
-                         dropped_before=missed, **fields)
+                         dropped_before=missed, dropped_ids=missed_ids, **fields)
             line = (json.dumps(event, ensure_ascii=True, separators=(",", ":"), allow_nan=False)+"\n").encode()
+            phase = 'journal_write_failed'
             with path.open("ab") as stream:
                 stream.write(line)
                 stream.flush()
                 os.fsync(stream.fileno())
+            durable = True
+            phase = 'head_write_failed'
             atomic_json(head_path, [event["seq"], digest(line), size + len(line)])
             with _loss_lock:
                 _losses[directory] = _losses.get(directory, 0) - missed
+                _loss_ids[directory] = [i for i in _loss_ids.get(directory, []) if i not in missed_ids]
+            missed, missed_ids = 0, []
+            _append_diagnostic.result = dict(written=True, reason=None)
             return True
     except Exception:
-        with _loss_lock:
-            _losses[directory] = _losses.get(directory, 0) + 1
+        if durable:
+            # The line is already durable. A failed head replacement is repaired
+            # by the next writer; it must not be reported as a missing event.
+            with _loss_lock:
+                _losses[directory] = max(0, _losses.get(directory, 0) - missed)
+                _loss_ids[directory] = [i for i in _loss_ids.get(directory, []) if i not in missed_ids]
+            _append_diagnostic.result = dict(written=True, reason='head_repair_needed')
+            return True
+        _report_loss(directory, phase)
         return False
 
 

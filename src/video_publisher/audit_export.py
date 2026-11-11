@@ -213,12 +213,39 @@ def export_data(root=None,*,since=None,until=None,times='relative',exact_sizes=F
     start,stop=timestamp(since),timestamp(until)
     if since and not start or until and not stop or start and stop and stop<start: raise VpubError('audit_window_invalid','Use ordered ISO times with an explicit time zone.')
     raw,chain=events_from(root)
+    # Independent loss files survive a worker's last failed append and exit.
+    # Reject malformed evidence; never silently turn it into zero loss.
+    durable_losses=[]
+    folder=safe_path(root,root/'audit/losses')
+    for file in sorted(folder.glob('*.json')) if folder.exists() else []:
+        item=read_object(root,file)
+        if (item.get('v')!=1 or not hexval(item.get('id'),re.compile(r'^[a-f0-9]{32}$'))
+            or file.stem!=item['id'] or item.get('reason') not in journal.LOSS_REASONS
+            or item.get('run') is not None and not hexval(item['run'],re.compile(r'^[a-f0-9]{32}$'))
+            or not timestamp(item.get('at'))):
+            raise VpubError('audit_export_invalid','Invalid audit loss record.')
+        if (not start or timestamp(item['at'])>=start) and (not stop or timestamp(item['at'])<=stop):
+            durable_losses.append(item)
     chosen=[e for e in raw if timestamp(e.get('at')) and (not start or timestamp(e['at'])>=start) and (not stop or timestamp(e['at'])<=stop)]
-    origin=min((timestamp(e['at']) for e in chosen),default=None)
+    origin=min((timestamp(e['at']) for e in [*chosen,*durable_losses]),default=None)
     def when(value):
         dt=timestamp(value)
         return utc(dt) if times=='exact' else round((dt-origin).total_seconds(),6) if dt and origin else None
     events=[p for e in chosen if (p:=project_event(e,when)) is not None]
+    losses_by_id={item['id']:dict(id=item['id'],run=item.get('run'),at=when(item['at']),reason=item['reason'],persistent=True) for item in durable_losses}
+    legacy_losses=Counter()
+    for e in chosen:
+        ids=e.get('dropped_ids',[])
+        ids=list(dict.fromkeys(i for i in ids if hexval(i,re.compile(r'^[a-f0-9]{32}$')))) if isinstance(ids,list) else []
+        count=integer(e.get('dropped_before')) or 0
+        for i in ids[:count]:
+            # Do not import losses outside a requested window merely because a
+            # later successful append reported them again.
+            if start or stop: continue
+            losses_by_id.setdefault(i,dict(id=i,run=e.get('run'),at=when(e['at']),reason='unpersisted',persistent=False))
+        legacy_losses[e.get('run')]+=max(0,count-len(ids))
+    loss_counts=Counter(item['run'] for item in losses_by_id.values())
+    loss_counts.update(legacy_losses)
     gap_runs=set();previous_seq=0
     for e in raw:
         seq=integer(e.get('seq'))
@@ -264,7 +291,7 @@ def export_data(root=None,*,since=None,until=None,times='relative',exact_sizes=F
             parts={k:choice(receipt.get(k),STATES) for k in ('chapters_state','widgets_state')},edits=edits,dismissed=boolean(data.get('dismissed')),fault=choice(obj(receipt.get('fault')).get('point'),FAULTS),
             observations=[dict(seen=e['seen'],t=e['at']) for e in events if e['type']=='observation' and e.get('ref')==ref(key)],
             t_started=when(data.get('started_at')),t_updated=when(row.get('updated_at')),t_verified=when(receipt.get('verified_at')),day=utc(timestamp(data.get('started_at')))[:10] if timestamp(data.get('started_at')) else None,
-            history_complete=bool(chain['ok'] and not chain.get('not_ended') and not start and not stop and not any(e['dropped_before'] for e in events)
+            history_complete=bool(chain['ok'] and not chain.get('not_ended') and not start and not stop and not sum(loss_counts.values()) and not any(e['dropped_before'] for e in events)
                 and any(e.get('ref')==ref(key) and e.get('operation')=='claim' for e in events))))
         d=read_object(root,root/'work-deletions'/(key+'.json')) if hexval(key) else {}
         if d:
@@ -273,19 +300,19 @@ def export_data(root=None,*,since=None,until=None,times='relative',exact_sizes=F
               error_code=choice(obj(d.get('error')).get('code'),CODES),code=build(d.get('code')),press_code=build(d.get('press_code')),readback_code=build(d.get('readback_code')),fault=choice(obj(d.get('fault')).get('point'),FAULTS),
               t_created=when(d.get('created_at')),t_attempted=when(d.get('attempted_at')),t_updated=when(d.get('updated_at')),day=utc(timestamp(d.get('created_at')))[:10] if timestamp(d.get('created_at')) else None))
     runs=[]
-    for rid in sorted({e['run'] for e in events if e['run']}):
+    for rid in sorted({e['run'] for e in events if e['run']}|{r for r in loss_counts if r}):
         es=[e for e in events if e['run']==rid];s=next((e for e in es if e['type']=='command_start'),{});end=next((e for e in reversed(es) if e['type']=='command_end'),{})
         code=build(s.get('code'));spans=[e for e in es if e['type']=='span']
         runs.append(dict(run=rid,awl_run_id=s.get('awl_run_id'),command=s.get('command'),action=s.get('action'),flags=s.get('flags',{}),build=builds.index(code) if code else None,session=s.get('session'),purpose=s.get('purpose'),
           exit_code=end.get('exit_code'),ok=end.get('ok'),seconds=end.get('seconds'),error_code=end.get('error_code'),ended=bool(end),t_start=s.get('at'),t_end=end.get('at'),
           platforms=end.get('platforms',{}),stages=[[e['platform'],e['action'],e['stage'],e['at']] for e in es if e['type']=='stage'],
           spans=[[e['platform'],e['slot'],e['t_start'],e['t_end'],e['state']] for e in spans],concurrency=concurrency(spans,obj(s.get('flags')).get('workers'),end.get('seconds')),
-          dropped_events=sum(e['dropped_before'] for e in es),sequence_gap=rid in gap_runs,chain_ok=chain['ok'],loss_complete=False))
+          dropped_events=loss_counts[rid],sequence_gap=rid in gap_runs,chain_ok=chain['ok'],loss_complete=False))
     return dict(schema='crosscast-audit/1',site=hmac.new(salt,b'crosscast-audit-site','sha256').hexdigest()[:8] if salt else None,
       window=dict(since=utc(start),until=utc(stop),days=sorted({e['day'] for e in events if e['day']}),origin=utc(origin) if times=='exact' else None),times=times,
-      builds=builds,publications=publications,deletions=deletions,runs=runs,events=events,counts=count_events(events),
+      builds=builds,publications=publications,deletions=deletions,runs=runs,events=events,losses=list(losses_by_id.values()),counts=count_events(events),
       integrity=dict(first_seq=events[0]['seq'] if events else None,last_seq=events[-1]['seq'] if events else None,head=chain.get('head'),chain_ok=chain['ok'],first_bad_seq=chain.get('first_bad_seq'),
-        events_outside_a_command=sum(e['run'] is None for e in events),dropped_events=sum(e['dropped_before'] for e in events),dropped_count_is_lower_bound=True))
+        events_outside_a_command=sum(e['run'] is None for e in events),dropped_events=sum(loss_counts.values()),dropped_count_is_lower_bound=True))
 
 def export_file(out,**kwargs):
     result=export_data(**kwargs)

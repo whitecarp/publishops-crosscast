@@ -74,12 +74,100 @@ class JournalTests(unittest.TestCase):
 
     def test_lock_timeout_is_bounded_and_reported_on_next_event(self):
         journal.append("stage", lambda _: {"stage": "uploading"})
-        with core.brief_lock(self.directory / "journal.lock", "busy", "busy", 1):
+        with core.brief_lock(self.directory / "journal.lock", "busy", "busy", 1), patch.object(journal, 'LOCK_WAIT_SECONDS', 0.2):
             start = time.monotonic()
-            journal.append("stage", lambda _: {"stage": "pressing"})
+            self.assertFalse(journal.append("stage", lambda _: {"stage": "pressing"}))
             self.assertLess(time.monotonic() - start, 1.2)
+            self.assertEqual('lock_timeout', journal.last_append_result()['reason'])
+            self.assertTrue(journal.last_append_result()['loss_persisted'])
         journal.append("stage", lambda _: {"stage": "reading back"})
         self.assertEqual(1, self.events()[-1]["dropped_before"])
+        from video_publisher.audit_export import export_data
+        exported = export_data()
+        self.assertEqual(1, exported['integrity']['dropped_events'])
+        self.assertEqual(1, len(exported['losses']))
+
+    def test_last_worker_loss_survives_exit_without_another_successful_append(self):
+        from video_publisher.audit_export import export_data
+        code = """import json
+from video_publisher import audit_journal as j
+j.RUN='a'*32
+j.LOCK_WAIT_SECONDS=0.2
+ok=j.append('stage',lambda _:dict(stage='uploading'))
+print(json.dumps(dict(ok=ok,**j.last_append_result())))
+"""
+        with core.brief_lock(self.directory / 'journal.lock', 'busy', 'busy', 1):
+            child = subprocess.run([sys.executable, '-c', code], capture_output=True, timeout=10)
+        self.assertEqual(0, child.returncode, child.stderr)
+        result = json.loads(child.stdout)
+        self.assertFalse(result['ok'])
+        self.assertTrue(result['loss_persisted'])
+        exported = export_data()
+        self.assertEqual(1, exported['integrity']['dropped_events'])
+        self.assertEqual('a'*32, exported['runs'][0]['run'])
+        self.assertEqual(1, exported['runs'][0]['dropped_events'])
+        self.assertFalse(exported['runs'][0]['ended'])
+        self.assertEqual('lock_timeout', exported['losses'][0]['reason'])
+
+    def test_three_writer_study_shape_loses_no_events(self):
+        journal.RUN = 'b'*32
+        code = """import json,time
+from video_publisher import audit_journal as j
+j.RUN='b'*32
+results=[]
+for i in range(8):
+    ok=j.append('stage',lambda _:dict(stage='uploading'))
+    results.append(dict(attempt=i,ok=ok,**j.last_append_result()))
+    time.sleep(0.25)
+print(json.dumps(results))
+"""
+        children = [subprocess.Popen([sys.executable, '-c', code], stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(2)]
+        parent = []
+        for i in range(8):
+            ok = journal.append('stage', lambda _: dict(stage='reading back'))
+            parent.append(dict(attempt=i, ok=ok, **journal.last_append_result()))
+            time.sleep(0.25)
+        results = [parent]
+        for child in children:
+            out, err = child.communicate(timeout=40)
+            self.assertEqual(0, child.returncode, err.decode())
+            results.append(json.loads(out))
+        from video_publisher.audit_export import export_data
+        exported = export_data()
+        written = journal.verify_chain(self.directory)['records']
+        lost = exported['integrity']['dropped_events']
+        diagnostic = json.dumps(dict(written=written, reported_lost=lost, writers=results))
+        print('study_shape_diagnostic: ' + diagnostic)
+        self.assertEqual(24, written + lost, diagnostic)
+        self.assertEqual(24, written, diagnostic)
+        self.assertTrue(all(a['ok'] for writer in results for a in writer), diagnostic)
+        self.assertTrue(exported['integrity']['chain_ok'])
+
+    def test_projection_failure_reports_only_closed_reason_and_survives_export(self):
+        from video_publisher.audit_export import export_data
+        def fail(_):
+            raise ValueError('PRIVATE secret https://private.invalid/account')
+        self.assertFalse(journal.append('stage', fail))
+        result = export_data()
+        self.assertEqual(1, result['integrity']['dropped_events'])
+        self.assertEqual('projection_failed', result['losses'][0]['reason'])
+        self.assertNotIn('PRIVATE', json.dumps(result))
+        self.assertNotIn('private.invalid', json.dumps(result))
+
+    def test_loss_write_failure_falls_back_without_changing_callers(self):
+        from video_publisher.audit_export import export_data
+        original = Path.open
+        def deny_loss(path, *args, **kwargs):
+            if 'losses' in path.parts:
+                raise PermissionError()
+            return original(path, *args, **kwargs)
+        with patch.object(Path, 'open', deny_loss), patch.object(journal, 'brief_lock', side_effect=core.VpubError('audit_busy','busy')):
+            self.assertFalse(journal.append('stage', lambda _: {}))
+        self.assertFalse(journal.last_append_result()['loss_persisted'])
+        self.assertTrue(journal.append('stage', lambda _: dict(stage='uploading')))
+        result = export_data()
+        self.assertEqual(1, result['integrity']['dropped_events'])
+        self.assertFalse(result['losses'][0]['persistent'])
 
     def test_missing_end_is_visible_and_chain_tampering_fails(self):
         start = journal.command_start(SimpleNamespace(command="doctor"))
@@ -99,21 +187,37 @@ class JournalTests(unittest.TestCase):
         self.assertEqual([], journal.verify_chain(self.directory)["not_ended"])
 
     def test_concurrent_processes_append_gapless_chain(self):
-        code = "from video_publisher.audit_journal import append; [append('stage',lambda _:dict(stage='uploading')) for _ in range(8)]"
+        code = """import json
+from video_publisher import audit_journal as j
+results=[]
+for i in range(8):
+    ok=j.append('stage',lambda _:dict(stage='uploading'))
+    results.append(dict(attempt=i,ok=ok,**j.last_append_result()))
+print(json.dumps(results))
+"""
         children = [subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(3)]
+        results = []
         for child in children:
             out, err = child.communicate(timeout=20)
             self.assertEqual(0, child.returncode, err.decode())
-        self.assertEqual(24, journal.verify_chain(self.directory)["records"])
+            results.append(json.loads(out))
+        lost = sum(not attempt['ok'] for writer in results for attempt in writer)
+        written = journal.verify_chain(self.directory)["records"]
+        diagnostic = json.dumps(dict(written=written, reported_lost=lost, writers=results))
+        print('concurrent_append_diagnostic: ' + diagnostic)
+        self.assertEqual(24, written + lost, diagnostic)
+        self.assertEqual(24, written, diagnostic)
         self.assertTrue(journal.verify_chain(self.directory)["ok"])
 
     def test_recover_fsynced_line_after_head_write_failure(self):
         journal.append("stage", lambda _: {"stage": "uploading"})
         with patch.object(journal, "atomic_json", side_effect=PermissionError()):
-            journal.append("stage", lambda _: {"stage": "pressing"})
+            self.assertTrue(journal.append("stage", lambda _: {"stage": "pressing"}))
+            self.assertEqual('head_repair_needed', journal.last_append_result()['reason'])
         journal.append("stage", lambda _: {"stage": "reading back"})
         self.assertTrue(journal.verify_chain(self.directory)["ok"])
         self.assertEqual([1, 2, 3], [r["seq"] for r in self.events()])
+        self.assertEqual([0, 0, 0], [r['dropped_before'] for r in self.events()])
 
     def test_salt_stability_and_strict_projection(self):
         key = "a" * 64
