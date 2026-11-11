@@ -981,8 +981,26 @@ DOUYIN_SLOT_PARTS = r"""(slot, point) => {
       && b.left + 1 < c.x && c.x < b.right - 1 && b.top + 1 < c.y && c.y < b.bottom - 1; };
   const own = (e, under) => !!e && target.contains(e) && ((!!under && e.contains(under))
     || (!inControl(e) && share(e, r.left, r.top, r.right, r.bottom) >= 0.5 && picture(e)));
-  return {r, root, target, round, share, tokens, inControl, box, bare, reach, own};
+  return {r, root, target, round, share, tokens, inControl, box, bare, reach, own, picture};
 }"""
+DOUYIN_PREVIEW_SECONDS = 15
+DOUYIN_SAVED_PREVIEW = """slot => {
+  const {r, share, inControl, picture} = (""" + DOUYIN_SLOT_PARTS + ")(slot, " + DOUYIN_POINT + """ );
+  return [slot, ...slot.querySelectorAll('*')].some(e => !inControl(e)
+    && share(e, r.left, r.top, r.right, r.bottom) >= 0.5 && picture(e));
+}"""
+
+
+async def douyin_wait_saved_preview(page, slot):
+    async def saved():
+        return await slot.evaluate(DOUYIN_SAVED_PREVIEW, timeout=DOUYIN_SLOT_MS)
+    try:
+        await wait_until(page, saved, seconds=DOUYIN_PREVIEW_SECONDS, label='Douyin saved cover preview')
+    except VpubError as exc:
+        if exc.code == 'processing_timeout':
+            raise VpubError('cover_unverified', 'Cover editor closed without a saved cover preview.') from None
+        raise
+
 # What lies over a slot, seen from inside it without pressing anything: at the slot's centre, where Playwright presses, and on a grid over
 # its box, as offsets from its padding box, which a press's position is measured from, nearest the centre first. From a review, the centre
 # is open as Playwright's own check has it: where the slot, or the button or link that holds it, or something inside either is on top. And
@@ -1901,9 +1919,7 @@ async def douyin_covers_now(page, tx, editor):
                 raise VpubError('cover_not_ready', f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so nothing was published. {await douyin_cover_stuck(page, fonts, traffic())}", DOUYIN_COVER_AGAIN) from None
         finally:
             traffic(stop=True)
-        saved = await control.locator('img').count() > 0
-        if not saved:
-            raise VpubError('cover_unverified', 'Cover editor closed without a saved cover preview.')
+        await douyin_wait_saved_preview(page, slot)
         # A stop's account of what lay over this slot is done with once its cover is on.
         if (tx.receipt.get('cover_slot_covered') or {}).get('role') == role:
             tx.receipt.pop('cover_slot_covered')
