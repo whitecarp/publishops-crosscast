@@ -131,7 +131,7 @@ def project_event(v,when):
         from .progress import STAGES
         r.update(platform=choice(v.get('platform'),PLATFORMS),action=choice(v.get('action'),journal.ACTIONS),stage=choice(v.get('stage'),STAGES))
     elif kind=='span':
-        r.update(platform=choice(v.get('platform'),PLATFORMS),slot=v.get('slot') if v.get('slot') in (0,1) else None,t_start=number(v.get('t_start')),t_end=number(v.get('t_end')),state=choice(v.get('state'),STATES),code=choice(v.get('code'),CODES))
+        r.update(platform=choice(v.get('platform'),PLATFORMS),slot=v.get('slot') if type(v.get('slot')) is int and v['slot'] in (0,1) else None,t_start=number(v.get('t_start')),t_end=number(v.get('t_end')),state=choice(v.get('state'),STATES),code=choice(v.get('code'),CODES))
     elif kind=='fault': r.update(point=choice(v.get('point'),FAULTS),ref=hexval(v.get('ref'),REF),platform=choice(v.get('platform'),PLATFORMS),fired=boolean(v.get('fired')))
     else: r.update(ref=hexval(v.get('ref'),REF),platform=choice(v.get('platform'),PLATFORMS),seen=choice(v.get('seen'),SEEN),by='person')
     return r
@@ -158,7 +158,7 @@ def count_events(events):
         if t=='command_end':
             ended.add(e.get('run'))
             for identity,state in by_run[e.get('run')].items(): outcome(identity,state)
-            code=str(e['exit_code']);counts['commands_by_exit_code'][code]=counts['commands_by_exit_code'].get(code,0)+1
+            code=str(e['exit_code']) if e['exit_code'] is not None else 'other';counts['commands_by_exit_code'][code]=counts['commands_by_exit_code'].get(code,0)+1
             if e.get('error_code') in {'stopped','interrupted','human_verification_required'}:
                 counts['stops_by_code'][e['error_code']]=counts['stops_by_code'].get(e['error_code'],0)+1
             before,after=starts.get(e.get('run'),{}).get('before'),e.get('after')
@@ -182,7 +182,7 @@ def count_events(events):
             for identity in list(pending):
                 if identity[1]==k: pending.remove(identity);settled[identity]='person'
         if t=='fault' and e.get('fired'):
-            p=e.get('point');counts['faults_fired_by_point'][p]=counts['faults_fired_by_point'].get(p,0)+1
+            p=e.get('point') or 'other';counts['faults_fired_by_point'][p]=counts['faults_fired_by_point'].get(p,0)+1
     # A transient pre-click UNKNOWN followed by verification in the same
     # command is ordinary progress, not an uncertain command outcome. For
     # commands lacking an end, use only the latest retained state per attempt.
@@ -207,6 +207,7 @@ def concurrency(spans,workers,wall):
        idle_by_slot=[round(union-busy[i],6) for i in range(workers or 1)],all_verified=bool(usable) and all(s.get('state')=='SUBMISSION_VERIFIED' for s in usable))
 
 def export_data(root=None,*,since=None,until=None,times='relative',exact_sizes=False):
+    if times not in {'relative','exact'}: raise VpubError('audit_window_invalid','Choose relative or exact times.')
     root=Path(root or home()).resolve()
     start,stop=timestamp(since),timestamp(until)
     if since and not start or until and not stop or start and stop and stop<start: raise VpubError('audit_window_invalid','Use ordered ISO times with an explicit time zone.')

@@ -76,6 +76,8 @@ class ExportTests(unittest.TestCase):
         clean=export.project_event(forged,lambda _:None)
         self.assertEqual(clean['state'],'other');self.assertIsNone(clean['ref'])
         self.assertNotIn('secret',json.dumps(clean))
+        self.assertIsNone(export.project_event({'type':'span','slot':True},lambda _:None)['slot'])
+        with self.assertRaises(core.VpubError): export.export_data(times='PRIVATE_CANARY')
 
     def test_window_exact_times_and_output_never_overwrites_input(self):
         self.planted();a=export.export_data(times='exact')
@@ -200,6 +202,26 @@ class FaultTests(unittest.TestCase):
         for call in [lambda:cli.run_command(cli.parser().parse_args(['resume',key])),lambda:edits.run(key,'MUST_NOT_READ'),lambda:wd.run(key,verify_only=True)]:
             with patch.object(adapters,'browser_call',side_effect=AssertionError('contact')),self.assertRaises(core.VpubError) as e: call()
             self.assertEqual(e.exception.code,'fault_injection_refused')
+
+    def test_external_delete_has_same_one_press_and_verified_outcome(self):
+        self.arm('external');key,_=self.seed('youtube',options={'method':'browser','visibility':'private','account':'default'})
+        confirm=self.code(key);calls=[]
+        def fake(target,operation,path):
+            calls.append(operation)
+            if operation=='inspect':return self.owned(target)
+            ds.begin_press(path,target);return self.deleted(target,platform_writes=1)
+        with patch.object(wd,'backend',side_effect=fake): answer=wd.run(key,confirm=confirm,person_approved=True)
+        self.assertEqual(answer['state'],'DELETED_VERIFIED');self.assertEqual(calls,['inspect','delete'])
+        self.assertEqual(core.read_json(ds.receipt_path(key))['fault']['point'],'external')
+
+    def test_external_resume_arms_the_worker_from_current_gate(self):
+        self.arm('external');key,_=self.seed('youtube',options={'method':'browser','visibility':'private','account':'default'})
+        def fake(platform,action,account,**payload):
+            self.assertEqual((platform,action),('youtube','resume'));self.assertEqual(payload['plan']['_fault'],'external')
+            return {'state':'SUBMISSION_VERIFIED','fault':{'point':'external','at':core.now()}}
+        with patch.object(cli,'check_upload_copy'),patch.object(adapters,'browser_call',side_effect=fake):
+            answer=cli.run_command(cli.parser().parse_args(['resume',key]))
+        self.assertEqual(answer['state'],'SUBMISSION_VERIFIED')
 
     def test_fire_saves_label_before_event_and_has_no_platform_calls(self):
         self.arm('before_press');order=[]
