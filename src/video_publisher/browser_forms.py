@@ -1016,12 +1016,14 @@ DOUYIN_PREVIEW_FACTS = """slot => {
 async def douyin_wait_saved_preview(page, slot, before, tx, role):
     from patchright.async_api import Error as BrowserError
     async def saved():
-        await douyin_pointer_away(page)
+        if not await douyin_pointer_away(page):
+            return False
         after = await slot.evaluate(DOUYIN_SAVED_PREVIEW, timeout=DOUYIN_SLOT_MS)
         if not after or after == before:
             return False
         await page.wait_for_timeout(1000)
-        await douyin_pointer_away(page)
+        if not await douyin_pointer_away(page):
+            return False
         return after == await slot.evaluate(DOUYIN_SAVED_PREVIEW, timeout=DOUYIN_SLOT_MS)
     try:
         await wait_until(page, saved, seconds=DOUYIN_PREVIEW_SECONDS, label='Douyin saved cover preview')
@@ -1930,8 +1932,8 @@ async def douyin_covers_now(page, tx, editor):
         # preview or placeholder must not certify that this save changed it.
         from patchright.async_api import Error as BrowserError
         try:
-            await douyin_pointer_away(page)
-            before_preview = await slot.evaluate(DOUYIN_SAVED_PREVIEW, timeout=DOUYIN_SLOT_MS) if await slot.count() == 1 else None
+            away = await douyin_pointer_away(page)
+            before_preview = await slot.evaluate(DOUYIN_SAVED_PREVIEW, timeout=DOUYIN_SLOT_MS) if away and await slot.count() == 1 else None
         except BrowserError:
             before_preview = None
         opened = await douyin_slot_window(page, tx, editor, slot, role, label, size, tall_too)

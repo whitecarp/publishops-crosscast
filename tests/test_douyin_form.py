@@ -892,6 +892,24 @@ class CoverOnANewPostTests(Base):
         self.assertEqual('cover_unverified', caught.exception.code)
         self.assertEqual([], self.writes)
 
+    async def test_unsettled_pointer_stops_before_cover_snapshot(self):
+        with patch.object(browser_forms, 'douyin_pointer_away', new=AsyncMock(return_value=False)), self.assertRaises(VpubError) as caught:
+            await self.post()
+        self.assertEqual('cover_unverified', caught.exception.code)
+        self.assertEqual([], self.writes)
+
+    async def test_unsettled_pointer_cannot_confirm_either_post_save_look(self):
+        slot = MagicMock()
+        facts = {'readable': True}
+        slot.evaluate = AsyncMock(side_effect=lambda script, **kwargs: facts if script == browser_forms.DOUYIN_PREVIEW_FACTS else ['changed'])
+        for moves in ([False], [True, False]):
+            async def one_look(page, check, **kwargs):
+                self.assertFalse(await check())
+                raise VpubError('processing_timeout', 'offline timeout')
+            with patch.object(browser_forms, 'douyin_pointer_away', new=AsyncMock(side_effect=moves)), patch.object(browser_forms, 'wait_until', new=one_look), self.assertRaises(VpubError) as caught:
+                await browser_forms.douyin_wait_saved_preview(self.page, slot, ['old'], self.tx, 'portrait')
+            self.assertEqual('cover_unverified', caught.exception.code)
+
     async def test_its_window_gets_as_long_as_an_edits_and_then_nothing_goes_out(self):
         """From a field run's first real post: a 30-second wait after 完成 ended it, with the video uploaded and nothing pressed."""
         with patch.object(browser_edits, "DOUYIN_COVER_SECONDS", 1), self.assertRaises(VpubError) as caught:
