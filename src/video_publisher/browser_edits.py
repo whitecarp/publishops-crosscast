@@ -91,6 +91,8 @@ async def execute(page, platform, identity, payload):
             from .audit import stamped
             result = stamped(result, read_json(output) if output.exists() else None)
             atomic_json(output, result)
+            from .audit_journal import transition, edit_group
+            transition('edit', payload.get('audit_key'), platform, result, group=edit_group(patch))
         return result
     async def submit(button,still_holds=None):
         nonlocal x_attempted

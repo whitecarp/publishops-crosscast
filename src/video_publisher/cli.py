@@ -1516,25 +1516,36 @@ def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     args = None
+    started = None
+    error = None
+    value = None
+    exit_code = 3
     try:
         args = parser().parse_args()
+        from . import audit_journal
+        started = audit_journal.command_start(args)
         value = execute(args)
         ok = finished(value)
         print(one_line({"ok": ok, "data": value}))
-        raise SystemExit(0 if ok else 4)
+        exit_code = 0 if ok else 4
+        raise SystemExit(exit_code)
     except VpubError as e:
+        exit_code, error = 2, e.code
         print(one_line({"ok": False, "error": {"code": e.code, "message": e.message, "hint": e.hint}}))
         raise SystemExit(2)
     except FileNotFoundError as e:
+        exit_code, error = 2, 'file_not_found'
         print(json.dumps({"ok": False, "error": {"code": "file_not_found", "message": f"File not found: {e.filename}",
                                                  "hint": "Check the path and run the command again."}}, ensure_ascii=False))
         raise SystemExit(2)
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        exit_code, error = 2, 'invalid_file'
         where = f" at line {e.lineno}, column {e.colno}" if isinstance(e, json.JSONDecodeError) else ""
         print(json.dumps({"ok": False, "error": {"code": "invalid_file", "message": f"A file could not be read as UTF-8 JSON or text{where}.",
                                                  "hint": "Fix the file and run the command again."}}))
         raise SystemExit(2)
     except KeyboardInterrupt:
+        error = 'interrupted'
         deleting = getattr(args, 'command', None) == 'delete'
         hint = ("Deletion may already have reached the platform. Inspect the exact post and its deletion receipt. Never repeat Delete."
                 if deleting else "Inspect the existing receipts before continuing; an interrupted upload may already have been submitted. Do not upload it again.")
@@ -1546,8 +1557,12 @@ def main():
         print(json.dumps({"ok": False, "error": {"code": "interrupted", "message": "Publication or command interrupted.", "hint": hint}}))
         raise SystemExit(3)
     except Exception as e:
+        error = 'internal_error'
         # OAuth exceptions may embed tokens/URLs: never serialize their bodies.
         print(json.dumps({"ok": False, "error": {"code": "internal_error",
                                                  "message": type(e).__name__,
                                                  "hint": "Check setup/receipts. An interrupted upload must not be blindly retried."}}))
         raise SystemExit(3)
+    finally:
+        if started is not None:
+            audit_journal.command_end(args, started, exit_code, error, value)

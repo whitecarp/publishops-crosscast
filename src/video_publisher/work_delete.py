@@ -118,6 +118,8 @@ def run(key, *, dry_run=False, confirm=None, person_approved=False, verify_only=
                                        'code': code_stamp(), 'approval': {'confirm_matched': confirm == code,
                                        'person_approved': person_approved, 'at': created},
                                        'delete_attempted': False, 'publication_receipt': deepcopy(row['data']['receipt'])})
+                    from .audit_journal import transition
+                    transition('deletion', target['key'], target['platform'], state.read_receipt(path), operation='create')
             stop_check(target['platform'])
             try:
                 if verify_only:

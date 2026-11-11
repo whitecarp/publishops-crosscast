@@ -185,9 +185,17 @@ class Transaction:
             if changes.get(key):
                 changes[key] = plain_address(changes[key])
         from .audit import stamped
+        previous = dict(self.receipt)
         self.receipt = stamped({**self.receipt, **changes, "updated_at": now()}, self.receipt)
         with receipt_turn(self.path):
             atomic_json(self.path, self.receipt)
+            if (any(previous.get(k) != self.receipt.get(k) for k in
+                    ('state', 'phase', 'final_presses', 'media_selected', 'still_a_draft', 'error'))
+                    or changes.get('phase') == 'selecting_media'):
+                from .audit_journal import transition
+                from .core import Ledger
+                key = Ledger.key(self.platform, self.options.get('account', 'default'), self.plan['video_sha256'])
+                transition('browser', key, self.platform, self.receipt)
         return dict(self.receipt)
 
     def media_name(self):

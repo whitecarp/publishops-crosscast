@@ -108,6 +108,13 @@ def read_receipt(path, *, missing_ok=False):
     return saved
 
 
+def write_transition(path, saved, operation):
+    atomic_json(path, saved)
+    from .audit_journal import transition
+    target = saved['target']
+    transition('deletion', target['key'], target['platform'], saved, operation=operation)
+
+
 def cancel(path, target):
     """Revoke a cancelled worker before the caller releases its publication lock."""
     while True:
@@ -127,7 +134,7 @@ def cancel(path, target):
                 if saved is not None and same_target(saved['target'], target) and saved['state'] != 'DELETED_VERIFIED':
                     saved.update(state='DELETE_PENDING', cancelled_at=now())
                     _bound(path, expected=binding)
-                    atomic_json(path, saved)
+                    write_transition(path, saved, 'cancel')
             return
         except (KeyboardInterrupt, SystemExit):
             continue  # A repeated interruption must not skip STOP or the durable fence.
@@ -153,7 +160,9 @@ def begin_press(path, target):
         from .audit import code_stamp
         saved.update(state='DELETE_PENDING', delete_attempted=True, attempted_at=now(), press_code=code_stamp())
         _bound(path, expected=binding)
-        atomic_json(path, saved)
+        write_transition(path, saved, 'press')
+    from .progress import stage
+    stage('pressing', platform=target['platform'], action='delete_work')
     return saved
 
 
@@ -181,5 +190,5 @@ def save_result(path, target, evidence=None, error=None):
         if error is not None:
             saved['error'] = error
         _bound(path, expected=binding)
-        atomic_json(path, saved)
+        write_transition(path, saved, 'readback')
         return saved

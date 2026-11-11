@@ -1,0 +1,285 @@
+"""Offline journal acceptance: real stores and CLI, fake platform boundaries."""
+import asyncio
+from contextlib import redirect_stdout
+import io
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import time
+from types import SimpleNamespace
+import unittest
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from video_publisher import audit_journal as journal, cli, core, progress, adapters
+from video_publisher.browser_backends import Transaction
+import test_work_delete as deletion
+
+
+class JournalTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(prefix="journal-offline-")
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        env = patch.dict(os.environ, VPUB_HOME=str(self.root / "vpub"), BILI_CLI_HOME=str(self.root / "bili"))
+        env.start()
+        self.addCleanup(env.stop)
+        self.addCleanup(setattr, journal, "RUN", None)
+        journal.RUN = None
+        self.directory = core.home() / "audit"
+
+    def events(self, kind=None):
+        records = [json.loads(line) for line in (self.directory / "journal.jsonl").read_text().splitlines()]
+        return [r for r in records if kind is None or r["type"] == kind]
+
+    def run_cli(self, args, execute):
+        output = io.StringIO()
+        with patch.object(sys, "argv", ["vpub", *args]), patch.object(cli, "execute", side_effect=execute), redirect_stdout(output):
+            with self.assertRaises(SystemExit) as result:
+                cli.main()
+        return result.exception.code, output.getvalue()
+
+    def test_refusal_and_all_error_exit_paths_are_recorded(self):
+        for error, exit_code, code in [
+            (core.VpubError("stopped", "PRIVATE-message"), 2, "stopped"),
+            (FileNotFoundError(), 2, "file_not_found"),
+            (ValueError("PRIVATE-message"), 3, "internal_error"),
+            (KeyboardInterrupt(), 3, "interrupted"),
+        ]:
+            with self.subTest(code=code):
+                result, _ = self.run_cli(["doctor"], error)
+                self.assertEqual(exit_code, result)
+                end = self.events()[-1]
+                self.assertEqual((exit_code, code), (end["exit_code"], end["error_code"]))
+                self.assertEqual(self.events()[-2]["run"], end["run"])
+        self.assertTrue(journal.verify_chain(self.directory)["ok"])
+        self.assertNotIn("PRIVATE-message", (self.directory / "journal.jsonl").read_text())
+
+    def test_broken_audit_does_not_change_stdout_or_exit(self):
+        failure = core.VpubError("stopped", "same message")
+        expected = self.run_cli(["doctor"], failure)
+        with patch.object(journal, "home", side_effect=PermissionError()):
+            actual = self.run_cli(["doctor"], failure)
+        self.assertEqual(expected, actual)
+
+    def test_lock_timeout_is_bounded_and_reported_on_next_event(self):
+        journal.append("stage", lambda _: {"stage": "uploading"})
+        with core.brief_lock(self.directory / "journal.lock", "busy", "busy", 1):
+            start = time.monotonic()
+            journal.append("stage", lambda _: {"stage": "pressing"})
+            self.assertLess(time.monotonic() - start, 1.2)
+        journal.append("stage", lambda _: {"stage": "reading back"})
+        self.assertEqual(1, self.events()[-1]["dropped_before"])
+
+    def test_missing_end_is_visible_and_chain_tampering_fails(self):
+        start = journal.command_start(SimpleNamespace(command="doctor"))
+        journal.append("stage", lambda _: {"stage": "uploading"})
+        journal.append("stage", lambda _: {"stage": "reading back"})
+        self.assertEqual([journal.RUN], journal.verify_chain(self.directory)["not_ended"])
+        path = self.directory / "journal.jsonl"
+        data = path.read_bytes()
+        lines = data.splitlines(keepends=True)
+        for damaged, first_bad in [(b"".join([lines[0], lines[2]]), 2),
+                                   (data.replace(b"uploading", b"pressing"), 3),
+                                   (b"".join(lines[:-1]), 3), (data[:-2], 3)]:
+            path.write_bytes(damaged)
+            self.assertEqual(first_bad, journal.verify_chain(self.directory)["first_bad_seq"])
+        path.write_bytes(data)
+        journal.command_end(SimpleNamespace(), start, 0, None, {})
+        self.assertEqual([], journal.verify_chain(self.directory)["not_ended"])
+
+    def test_concurrent_processes_append_gapless_chain(self):
+        code = "from video_publisher.audit_journal import append; [append('stage',lambda _:dict(stage='uploading')) for _ in range(8)]"
+        children = [subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(3)]
+        for child in children:
+            out, err = child.communicate(timeout=20)
+            self.assertEqual(0, child.returncode, err.decode())
+        self.assertEqual(24, journal.verify_chain(self.directory)["records"])
+        self.assertTrue(journal.verify_chain(self.directory)["ok"])
+
+    def test_recover_fsynced_line_after_head_write_failure(self):
+        journal.append("stage", lambda _: {"stage": "uploading"})
+        with patch.object(journal, "atomic_json", side_effect=PermissionError()):
+            journal.append("stage", lambda _: {"stage": "pressing"})
+        journal.append("stage", lambda _: {"stage": "reading back"})
+        self.assertTrue(journal.verify_chain(self.directory)["ok"])
+        self.assertEqual([1, 2, 3], [r["seq"] for r in self.events()])
+
+    def test_salt_stability_and_strict_projection(self):
+        key = "a" * 64
+        secret = "PRIVATE-account-title-url-path"
+        data = {"state": secret, "phase": secret, "id": secret, "error": {"code": secret},
+                "receipt": {"id": secret, "phase": secret, "title": secret, "final_presses": True}}
+        journal.transition("ledger", key, "x", data)
+        journal.transition("ledger", key, "x", data)
+        records = self.events()
+        self.assertEqual(records[0]["ref"], records[1]["ref"])
+        self.assertEqual(32, len((self.directory / "salt").read_bytes()))
+        self.assertIsNone(records[0]["final_presses"])
+        text = (self.directory / "journal.jsonl").read_text()
+        for value in (key, secret, str(self.root)):
+            self.assertNotIn(value, text)
+        first_ref = records[0]["ref"]
+        with patch.dict(os.environ, VPUB_HOME=str(self.root / "different")):
+            journal.transition("ledger", key, "x", data)
+            other = json.loads((core.home() / "audit/journal.jsonl").read_text())
+        self.assertNotEqual(first_ref, other["ref"])
+
+    def test_before_after_snapshots_and_forget_events(self):
+        ledger = core.Ledger()
+        self.addCleanup(ledger.close)
+        key = ledger.claim("x", "PRIVATE-owner", "PRIVATE-sha", {})
+        args = SimpleNamespace(command="verify", key=key)
+        start = journal.command_start(args)
+        ledger.save(key, "PREVIEW_READY", {"receipt": {"state": "PREVIEW_READY", "final_presses": 0}})
+        journal.command_end(args, start, 0, None, {})
+        self.assertEqual("IN_PROGRESS", self.events("command_start")[-1]["before"]["state"])
+        self.assertEqual("PREVIEW_READY", self.events("command_end")[-1]["after"]["state"])
+        ledger.forget_preview(key)
+        self.assertEqual("forgotten", self.events()[-1]["state"])
+        key = ledger.claim("youtube", "PRIVATE-owner", "PRIVATE-sha", {})
+        ledger.forget(key)
+        self.assertEqual("forgotten", self.events()[-1]["state"])
+        count = len(self.events())
+        ledger.forget(key)
+        self.assertEqual(count, len(self.events()))
+
+    def test_compare_and_swap_does_not_log_failed_update(self):
+        ledger = core.Ledger()
+        self.addCleanup(ledger.close)
+        key = ledger.claim("x", "default", "sha", {})
+        count = len(self.events())
+        self.assertFalse(ledger.save_unless_changed(key, "UNKNOWN", {}, "wrong-time"))
+        self.assertEqual(count, len(self.events()))
+        self.assertTrue(ledger.save_unless_changed(key, "UNKNOWN", {}, ledger.get(key)["updated_at"]))
+        self.assertEqual("UNKNOWN", self.events()[-1]["state"])
+
+    def test_stages_run_context_and_invalid_word(self):
+        run = "f" * 32
+        progress.attach({"audit_run": run, "platform": "youtube", "action": "publish"})
+        for word in sorted(progress.STAGES):
+            progress.stage(word)
+        progress.stage("PRIVATE-not-stage")
+        events = self.events("stage")
+        self.assertEqual(len(progress.STAGES), len(events))
+        self.assertTrue(all(e["run"] == run and e["platform"] == "youtube" for e in events))
+        with patch.object(journal, "home", side_effect=OSError()):
+            progress.stage("uploading")
+
+    def test_duplicate_publish_has_unchanged_press_count_and_no_canaries(self):
+        video = self.root / "PRIVATE-source.mp4"
+        video.write_bytes(b"synthetic")
+        plan = {"confirmation": "PRIVATE-confirm", "video": str(video), "video_sha256": core.file_sha(video),
+                "platforms": {"x": {"account": "PRIVATE-owner", "method": "browser", "title": "PRIVATE-title", "content_language": "und"}}}
+        args = SimpleNamespace(command="publish", confirm="PRIVATE-confirm")
+        with patch.object(adapters, "preflight", return_value={"identity": "PRIVATE-identity"}), patch.object(
+                adapters, "publish", return_value={"state": "SUBMISSION_VERIFIED", "id": "PRIVATE-work", "final_presses": 1}) as publish:
+            for _ in range(2):
+                started = journal.command_start(args)
+                result = cli.publish_plan(plan, plan["confirmation"], reviewed=True)
+                journal.command_end(args, started, 0, None, result)
+            self.assertEqual(1, publish.call_count)
+        ends = self.events("command_end")
+        self.assertEqual("SKIPPED_EXISTING", ends[-1]["platforms"]["x"]["state"])
+        self.assertEqual(1, ends[-1]["platforms"]["x"]["final_presses"])
+        self.assertEqual(ends[0]["platforms"]["x"]["ref"], ends[1]["platforms"]["x"]["ref"])
+        self.assertNotIn("PRIVATE-", (self.directory / "journal.jsonl").read_text())
+
+    def test_bilibili_stage_order_around_fake_boundary(self):
+        seen = []
+        def upload(*args, **kwargs):
+            seen.append(self.events("stage")[-1]["stage"])
+            return {"bvid": "PRIVATE-id"}
+        def verify(*args, **kwargs):
+            seen.append(self.events("stage")[-1]["stage"])
+            return {"state": "SUBMISSION_VERIFIED"}
+        with patch.object(adapters, "bilibili_upload", return_value=["upload", "video"]), patch.object(adapters, "bili", side_effect=upload), patch.object(adapters, "verify", side_effect=verify):
+            adapters.publish_bilibili({}, {"ai_generated": True, "visibility": "private", "account": "PRIVATE-owner"}, lambda _: None)
+        self.assertEqual(["uploading", "reading back"], seen)
+
+    def test_calls_do_not_record_arguments(self):
+        with patch.object(adapters, "_bili", return_value={}):
+            adapters.bili(["upload", "video", "PRIVATE-path", "--title", "PRIVATE-title"])
+        self.assertEqual("upload", self.events("call")[-1]["action"])
+        with self.assertRaises(core.VpubError):
+            with journal.call("x", "browser", "publish"):
+                raise core.VpubError("readback_failed", "PRIVATE-message")
+        self.assertEqual("readback_failed", self.events("call")[-1]["error_code"])
+        self.assertNotIn("PRIVATE-", (self.directory / "journal.jsonl").read_text())
+
+    def test_prepress_order_timeout_and_no_repress(self):
+        plan = {"video": str(self.root / "PRIVATE-video.mp4"), "video_sha256": "b" * 64,
+                "confirmation": "c" * 64, "options": {"title": "PRIVATE-title", "account": "PRIVATE-account"}}
+        tx = Transaction("x", "PRIVATE-identity", plan)
+        calls = []
+        async def click(**kwargs):
+            records = self.events()
+            marker = [r for r in records if r["type"] == "transition"][-1]
+            self.assertEqual(("UNKNOWN", "submitting", 1), (marker["state"], marker["phase"], marker["final_presses"]))
+            self.assertEqual("pressing", records[-1]["stage"])
+            self.assertEqual("UNKNOWN", core.read_json(tx.path)["state"])
+            calls.append(1)
+            raise TimeoutError("PRIVATE-timeout")
+        with patch("video_publisher.browser_backends.risk_check", new=AsyncMock()):
+            with self.assertRaises(TimeoutError):
+                asyncio.run(tx.submit(SimpleNamespace(url="https://private.invalid"), SimpleNamespace(click=click)))
+            tx.save(phase="blocked", error={"code": "TimeoutError"})
+            with self.assertRaises(core.VpubError):
+                asyncio.run(tx.submit(SimpleNamespace(url=""), SimpleNamespace(click=click)))
+        self.assertEqual([1], calls)
+        self.assertEqual("TimeoutError", self.events("transition")[-1]["error_code"])
+        resumed = Transaction("x", "PRIVATE-identity", plan, resume=True)
+        resumed.save(phase="reading_back")
+        self.assertEqual(1, self.events("transition")[-1]["final_presses"])
+        self.assertNotIn("PRIVATE-", (self.directory / "journal.jsonl").read_text())
+
+    def test_draft_evidence_precedes_second_press_and_each_selection_logged(self):
+        video = self.root / "fake.mp4"
+        video.write_bytes(b"fake")
+        plan = {"video": str(video), "video_sha256": core.file_sha(video), "confirmation": "d"*64,
+                "options": {"title": "T"}}
+        tx = Transaction("youtube", "fixture", plan)
+        tx.media()
+        tx.media()
+        self.assertEqual(2, len([r for r in self.events() if r.get("phase") == "selecting_media"]))
+        tx.save(state="UNKNOWN", phase="blocked", final_submit_attempted=True, final_presses=1)
+        tx.save(still_a_draft=True, phase="reading_back")
+        button = SimpleNamespace(click=AsyncMock())
+        with patch("video_publisher.browser_backends.risk_check", new=AsyncMock()):
+            asyncio.run(tx.submit(SimpleNamespace(url=""), button, again=True))
+        states = self.events("transition")
+        self.assertTrue(states[-2]["still_a_draft"])
+        self.assertEqual(2, states[-1]["final_presses"])
+
+
+class DeletionJournalTests(unittest.TestCase):
+    # Reuse only fixtures, without rediscovering the old test methods.
+    setUp = deletion.WorkDeletionTests.setUp
+    seed = deletion.WorkDeletionTests.seed
+    code = deletion.WorkDeletionTests.code
+    owned = deletion.WorkDeletionTests.owned
+    deleted = deletion.WorkDeletionTests.deleted
+    def test_delete_transition_and_stage_before_write_and_no_second_delete(self):
+        key, _ = self.seed()
+        confirmation = self.code(key)
+        path = core.home() / "audit/journal.jsonl"
+        def events():
+            return [json.loads(s) for s in path.read_text().splitlines()]
+        def fake(target, op, receipt_path):
+            if op == "inspect":
+                return self.owned(target)
+            if op == "delete":
+                deletion.state.begin_press(receipt_path, target)
+                self.assertTrue(core.read_json(receipt_path)["delete_attempted"])
+                self.assertEqual("pressing", events()[-1]["stage"])
+                self.assertEqual("DELETE_PENDING", events()[-2]["state"])
+            return self.deleted(target, platform_writes=1 if op == "delete" else 0)
+        with patch.object(deletion.wd, "backend", side_effect=fake):
+            deletion.wd.run(key, confirm=confirmation, person_approved=True)
+            transitions = [r for r in events() if r.get("kind") == "deletion"]
+            self.assertEqual(["DELETE_READY", "DELETE_PENDING", "DELETED_VERIFIED"], [r["state"] for r in transitions])
+            count = len(events())
+            deletion.wd.run(key, confirm=confirmation, person_approved=True)
+            self.assertEqual(count, len(events()))

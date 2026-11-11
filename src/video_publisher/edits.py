@@ -143,6 +143,8 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
         previous = read_json(path) if path.exists() else None
         entry = stamped({'key': key, 'edit_id': edit_id, 'at': now(), **preserved, **data}, previous)
         atomic_json(path, entry)
+        from .audit_journal import transition, edit_group
+        transition('edit', key, platform, entry, group=edit_group(patch))
         return entry
     # The record keeps that the flag was given, for a person to read later. It is someone's word, not proof that a person looked.
     approved={'person_approved':True} if person_approved and not verify_only else {}
@@ -157,7 +159,7 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
     else:
         try:
             result=adapters.browser_call(platform,'edit',account,expected_identity=actual,
-                receipt=receipt,patch=patch,edit_receipt_path=str(path),verify_only=verify_only)
+                receipt=receipt,patch=patch,edit_receipt_path=str(path),verify_only=verify_only,audit_key=key)
         except VpubError as exc:
             if platform=='x' and path.exists() and x_edit_was_attempted(read_json(path),actual,work_id):
                 raise VpubError(exc.code,f'{exc.message} {X_EDIT_UNVERIFIED_MESSAGE}',
