@@ -156,6 +156,7 @@ def command_start(args):
         from .audit import code_stamp
         session = os.environ.get("VPUB_AUDIT_SESSION", "")
         flags = {k: bool(getattr(args, k, False)) for k in ("dry_run", "verify_only", "person_approved", "no_cover", "person_checked")}
+        flags["person_approved"] = bool(getattr(args, "person_approved", False) or getattr(args, "reviewed", False))
         workers = getattr(args, "workers", None)
         flags.update(confirm_given=bool(getattr(args, "confirm", None)), cover_given=bool(getattr(args, "cover", None)),
                      workers=workers if type(workers) is int and 1 <= workers <= 2 else None)

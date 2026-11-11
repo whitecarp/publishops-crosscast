@@ -41,6 +41,14 @@ class JournalTests(unittest.TestCase):
                 cli.main()
         return result.exception.code, output.getvalue()
 
+    def test_publish_approval_alias_is_recorded_without_its_confirmation(self):
+        args = cli.parser().parse_args(["publish", "PRIVATE-plan", "--person-approved", "--confirm", "PRIVATE-code"])
+        journal.command_start(args)
+        flags = self.events("command_start")[-1]["flags"]
+        self.assertTrue(flags["person_approved"])
+        self.assertTrue(flags["confirm_given"])
+        self.assertNotIn("PRIVATE-", (self.directory / "journal.jsonl").read_text())
+
     def test_refusal_and_all_error_exit_paths_are_recorded(self):
         for error, exit_code, code in [
             (core.VpubError("stopped", "PRIVATE-message"), 2, "stopped"),
