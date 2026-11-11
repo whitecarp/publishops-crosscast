@@ -186,6 +186,84 @@ print(json.dumps(results))
         journal.command_end(SimpleNamespace(), start, 0, None, {})
         self.assertEqual([], journal.verify_chain(self.directory)["not_ended"])
 
+    def test_window_retains_unpersisted_loss_with_unknown_time(self):
+        from video_publisher.audit_export import export_data
+        original = Path.open
+        def denied(path, *args, **kwargs):
+            if 'losses' in path.parts:
+                raise PermissionError()
+            return original(path, *args, **kwargs)
+        journal.RUN = 'c' * 32
+        with patch.object(Path, 'open', denied), patch.object(journal, 'brief_lock', side_effect=core.VpubError('audit_busy', 'busy')):
+            self.assertFalse(journal.append('stage', lambda _: {}))
+        loss_id = journal.last_append_result()['loss_id']
+        with patch.object(journal, 'utc', return_value='2026-11-11T12:00:00Z'):
+            self.assertTrue(journal.append('stage', lambda _: dict(stage='uploading')))
+            # Simulate a later report of the same give-up. Export deduplicates it.
+            journal._losses[self.directory] = 1
+            journal._loss_ids[self.directory] = [loss_id]
+            self.assertTrue(journal.append('stage', lambda _: dict(stage='reading back')))
+        result = export_data(since='2026-11-11T00:00:00Z', until='2026-11-12T00:00:00Z')
+        self.assertEqual(1, result['integrity']['dropped_events'])
+        self.assertEqual(1, result['integrity']['unplaced_dropped_events'])
+        self.assertEqual(1, result['runs'][0]['dropped_events'])
+        self.assertIsNone(result['losses'][0]['at'])
+        self.assertTrue(result['losses'][0]['time_unplaced'])
+        self.assertIsNotNone(result['losses'][0]['reported_at'])
+
+    def test_window_excludes_readable_loss_with_known_earlier_time(self):
+        from video_publisher.audit_export import export_data
+        with patch.object(journal, 'utc', return_value='2026-11-10T12:00:00Z'), \
+             patch.object(journal, 'brief_lock', side_effect=core.VpubError('audit_busy', 'busy')):
+            self.assertFalse(journal.append('stage', lambda _: {}))
+        with patch.object(journal, 'utc', return_value='2026-11-11T12:00:00Z'):
+            self.assertTrue(journal.append('stage', lambda _: dict(stage='uploading')))
+        result = export_data(since='2026-11-11T00:00:00Z')
+        self.assertEqual(0, result['integrity']['dropped_events'])
+        self.assertEqual([], result['losses'])
+
+    def test_unreadable_loss_records_are_flagged_without_blocking_export(self):
+        from video_publisher.audit_export import export_data
+        self.assertTrue(journal.append('stage', lambda _: dict(stage='uploading')))
+        folder = self.directory / 'losses'
+        folder.mkdir()
+        damaged = folder / ('d' * 32 + '.json')
+        damaged.write_text('{"at":"2020-01-01T00:00:00Z",')
+        denied_file = folder / ('e' * 32 + '.json')
+        denied_file.write_bytes(b'PRIVATE LOSS FILE')
+        original = Path.read_bytes
+        def denied(path):
+            if path == denied_file:
+                raise PermissionError('PRIVATE failure')
+            return original(path)
+        with patch.object(Path, 'read_bytes', denied):
+            result = export_data(since='2026-01-01T00:00:00Z')
+        self.assertEqual(2, result['integrity']['unreadable_loss_records'])
+        self.assertFalse(result['integrity']['loss_records_complete'])
+        self.assertTrue(result['integrity']['dropped_count_is_lower_bound'])
+        self.assertEqual(1, len(result['events']))
+        self.assertNotIn('PRIVATE', json.dumps(result))
+        self.assertEqual(b'PRIVATE LOSS FILE', denied_file.read_bytes())
+
+    def test_stuck_lock_only_spends_one_long_wait_for_a_whole_command(self):
+        from video_publisher.audit_export import export_data
+        with core.brief_lock(self.directory / 'journal.lock', 'busy', 'busy', 1), \
+             patch.object(journal, 'LOCK_WAIT_SECONDS', 0.4):
+            started = time.monotonic()
+            for _ in range(40):
+                self.assertFalse(journal.append('stage', lambda _: dict(stage='uploading')))
+            elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 4, f'40 permanently blocked appends took {elapsed:.3f}s')
+        self.assertGreaterEqual(elapsed, 0.35)
+        self.assertEqual(40, export_data()['integrity']['dropped_events'])
+        self.assertTrue(journal.append('stage', lambda _: dict(stage='reading back')))
+        self.assertNotIn(self.directory, journal._lock_degraded)
+        with core.brief_lock(self.directory / 'journal.lock', 'busy', 'busy', 1), \
+             patch.object(journal, 'LOCK_WAIT_SECONDS', 0.4):
+            started = time.monotonic()
+            self.assertFalse(journal.append('stage', lambda _: {}))
+            self.assertGreaterEqual(time.monotonic() - started, 0.35)
+
     def test_concurrent_processes_append_gapless_chain(self):
         code = """import json
 from video_publisher import audit_journal as j

@@ -214,16 +214,24 @@ def export_data(root=None,*,since=None,until=None,times='relative',exact_sizes=F
     if since and not start or until and not stop or start and stop and stop<start: raise VpubError('audit_window_invalid','Use ordered ISO times with an explicit time zone.')
     raw,chain=events_from(root)
     # Independent loss files survive a worker's last failed append and exit.
-    # Reject malformed evidence; never silently turn it into zero loss.
+    # A damaged loss file is counted separately because its time and run may
+    # be unreadable. The remaining export can still carry the usable evidence.
     durable_losses=[]
+    known_loss_ids=set()
+    unreadable_losses=0
     folder=safe_path(root,root/'audit/losses')
     for file in sorted(folder.glob('*.json')) if folder.exists() else []:
-        item=read_object(root,file)
-        if (item.get('v')!=1 or not hexval(item.get('id'),re.compile(r'^[a-f0-9]{32}$'))
-            or file.stem!=item['id'] or item.get('reason') not in journal.LOSS_REASONS
-            or item.get('run') is not None and not hexval(item['run'],re.compile(r'^[a-f0-9]{32}$'))
-            or not timestamp(item.get('at'))):
-            raise VpubError('audit_export_invalid','Invalid audit loss record.')
+        try:
+            item=read_object(root,file)
+            if (item.get('v')!=1 or not hexval(item.get('id'),re.compile(r'^[a-f0-9]{32}$'))
+                or file.stem!=item['id'] or item.get('reason') not in journal.LOSS_REASONS
+                or item.get('run') is not None and not hexval(item['run'],re.compile(r'^[a-f0-9]{32}$'))
+                or not timestamp(item.get('at'))):
+                raise ValueError('invalid_loss_record')
+        except (OSError, ValueError, VpubError):
+            unreadable_losses+=1
+            continue
+        known_loss_ids.add(item['id'])
         if (not start or timestamp(item['at'])>=start) and (not stop or timestamp(item['at'])<=stop):
             durable_losses.append(item)
     chosen=[e for e in raw if timestamp(e.get('at')) and (not start or timestamp(e['at'])>=start) and (not stop or timestamp(e['at'])<=stop)]
@@ -239,10 +247,11 @@ def export_data(root=None,*,since=None,until=None,times='relative',exact_sizes=F
         ids=list(dict.fromkeys(i for i in ids if hexval(i,re.compile(r'^[a-f0-9]{32}$')))) if isinstance(ids,list) else []
         count=integer(e.get('dropped_before')) or 0
         for i in ids[:count]:
-            # Do not import losses outside a requested window merely because a
-            # later successful append reported them again.
-            if start or stop: continue
-            losses_by_id.setdefault(i,dict(id=i,run=e.get('run'),at=when(e['at']),reason='unpersisted',persistent=False))
+            # A readable file supplies the loss's actual time. Without one,
+            # the in-window reporter is the only surviving timing evidence.
+            if i in known_loss_ids: continue
+            losses_by_id.setdefault(i,dict(id=i,run=e.get('run'),at=None,reported_at=when(e['at']),
+                                          time_unplaced=True,reason='unpersisted',persistent=False))
         legacy_losses[e.get('run')]+=max(0,count-len(ids))
     loss_counts=Counter(item['run'] for item in losses_by_id.values())
     loss_counts.update(legacy_losses)
@@ -291,7 +300,7 @@ def export_data(root=None,*,since=None,until=None,times='relative',exact_sizes=F
             parts={k:choice(receipt.get(k),STATES) for k in ('chapters_state','widgets_state')},edits=edits,dismissed=boolean(data.get('dismissed')),fault=choice(obj(receipt.get('fault')).get('point'),FAULTS),
             observations=[dict(seen=e['seen'],t=e['at']) for e in events if e['type']=='observation' and e.get('ref')==ref(key)],
             t_started=when(data.get('started_at')),t_updated=when(row.get('updated_at')),t_verified=when(receipt.get('verified_at')),day=utc(timestamp(data.get('started_at')))[:10] if timestamp(data.get('started_at')) else None,
-            history_complete=bool(chain['ok'] and not chain.get('not_ended') and not start and not stop and not sum(loss_counts.values()) and not any(e['dropped_before'] for e in events)
+            history_complete=bool(chain['ok'] and not chain.get('not_ended') and not start and not stop and not sum(loss_counts.values()) and not unreadable_losses and not any(e['dropped_before'] for e in events)
                 and any(e.get('ref')==ref(key) and e.get('operation')=='claim' for e in events))))
         d=read_object(root,root/'work-deletions'/(key+'.json')) if hexval(key) else {}
         if d:
@@ -312,7 +321,9 @@ def export_data(root=None,*,since=None,until=None,times='relative',exact_sizes=F
       window=dict(since=utc(start),until=utc(stop),days=sorted({e['day'] for e in events if e['day']}),origin=utc(origin) if times=='exact' else None),times=times,
       builds=builds,publications=publications,deletions=deletions,runs=runs,events=events,losses=list(losses_by_id.values()),counts=count_events(events),
       integrity=dict(first_seq=events[0]['seq'] if events else None,last_seq=events[-1]['seq'] if events else None,head=chain.get('head'),chain_ok=chain['ok'],first_bad_seq=chain.get('first_bad_seq'),
-        events_outside_a_command=sum(e['run'] is None for e in events),dropped_events=sum(loss_counts.values()),dropped_count_is_lower_bound=True))
+        events_outside_a_command=sum(e['run'] is None for e in events),dropped_events=sum(loss_counts.values()),dropped_count_is_lower_bound=True,
+        unplaced_dropped_events=sum(not item['persistent'] for item in losses_by_id.values())+sum(legacy_losses.values()),
+        unreadable_loss_records=unreadable_losses,loss_records_complete=unreadable_losses==0))
 
 def export_file(out,**kwargs):
     result=export_data(**kwargs)

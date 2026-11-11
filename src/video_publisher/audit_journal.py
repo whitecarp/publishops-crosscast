@@ -21,6 +21,8 @@ _loss_ids = {}
 _loss_lock = Lock()
 _append_diagnostic = local()
 LOCK_WAIT_SECONDS = 10.0
+LOCK_RETRY_SECONDS = 0.0
+_lock_degraded = set()
 LOSS_REASONS = frozenset({'home_unavailable', 'lock_timeout', 'journal_read_failed',
                           'projection_failed', 'journal_write_failed', 'head_write_failed'})
 
@@ -115,7 +117,9 @@ def append(kind, build):
     try:
         directory = home() / "audit"
         phase = 'lock_timeout'
-        with brief_lock(directory / "journal.lock", "audit_busy", "Audit journal busy", LOCK_WAIT_SECONDS):
+        with _loss_lock:
+            wait = LOCK_RETRY_SECONDS if directory in _lock_degraded else LOCK_WAIT_SECONDS
+        with brief_lock(directory / "journal.lock", "audit_busy", "Audit journal busy", wait):
             phase = 'journal_read_failed'
             path = directory / "journal.jsonl"
             head_path = directory / "head.json"
@@ -149,16 +153,21 @@ def append(kind, build):
             phase = 'head_write_failed'
             atomic_json(head_path, [event["seq"], digest(line), size + len(line)])
             with _loss_lock:
+                _lock_degraded.discard(directory)
                 _losses[directory] = _losses.get(directory, 0) - missed
                 _loss_ids[directory] = [i for i in _loss_ids.get(directory, []) if i not in missed_ids]
             missed, missed_ids = 0, []
             _append_diagnostic.result = dict(written=True, reason=None)
             return True
     except Exception:
+        if phase == 'lock_timeout':
+            with _loss_lock:
+                _lock_degraded.add(directory)
         if durable:
             # The line is already durable. A failed head replacement is repaired
             # by the next writer; it must not be reported as a missing event.
             with _loss_lock:
+                _lock_degraded.discard(directory)
                 _losses[directory] = max(0, _losses.get(directory, 0) - missed)
                 _loss_ids[directory] = [i for i in _loss_ids.get(directory, []) if i not in missed_ids]
             _append_diagnostic.result = dict(written=True, reason='head_repair_needed')
