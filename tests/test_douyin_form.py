@@ -1005,7 +1005,7 @@ BOTH_COVERS = """<div class="coverControl-a" style="position:relative"><span>横
   <div role="dialog" id="d" hidden><p>上传封面</p><div class="semi-upload">点击上传文件或拖拽文件到这里<input type="file" class="semi-upload-hidden-input"></div>
   <button onclick="document.getElementById('d').hidden = true; const img = window.activeCover.querySelector('img'); img.hidden = false; img.style.cssText = 'display:block;width:100%%;height:100%%';">完成</button></div>
   <script>function pressed(slot) { fetch('/write', {method: 'POST', body: JSON.stringify({word: 'cover', slot})}); }
-  document.addEventListener('click', e => { const box = e.target.closest('.coverControl-a'); if(box) window.activeCover = box.querySelector('.cover-b'); }, true);
+  for (const kind of ['pointerdown','click']) document.addEventListener(kind, e => { const box = e.target.closest('.coverControl-a'); if(box) window.activeCover = box.querySelector('.cover-b'); }, true);
   function pick(slot) { pressed(slot); document.getElementById('d').hidden = false; }</script>"""
 # Something laid over a slot, which takes its press, as something did over a field run's 横封面4:3 slot.
 OVER_IT = """<div style="position:absolute;inset:0" onclick="pressed('over')"></div>"""
@@ -1515,7 +1515,8 @@ class BothCoversTests(Base):
         looked.assert_not_called()
         self.assertEqual(["wide", "tall"], self.pressed())
         for role in ("landscape", "portrait"):
-            self.assertEqual({"state": "UI_ACCEPTED", "remote_pixels_verified": False}, self.tx.receipt[role + "_cover"])
+            self.assertEqual({"state": "UI_ACCEPTED", "remote_pixels_verified": False,
+                              "preview_present_before": False, "preview_changed": True}, self.tx.receipt[role + "_cover"])
         held = [write["held_ms"] for write in self.writes if write["word"] == "pointer" and write["slot"]]
         self.assertEqual(4, len(held))  # A trial press and a press on each slot.
         for milliseconds in held:
@@ -1937,12 +1938,20 @@ class BothCoversTests(Base):
         seen there, and the stop told that as the last thing seen over the centre. The record keeps it, and flags the open centre. From a
         review of a490e80, it says why: a trial press refused, or one that passed after the slot had moved."""
         self.portrait_only()
+        original_look = browser_forms.douyin_look_on
+        async def reveal_after_observed_cover(*args, **kwargs):
+            seen, parts, press = await original_look(*args, **kwargs)
+            if seen.get('over_it') and not seen.get('open'):
+                await self.page.evaluate("document.querySelector('.toast-q9')?.remove()")
+            return seen, parts, press
         for why, says in (("refused", "its centre was open at the last look, yet it took no trial press"),
                           ("moved", "its centre was open at the last look and took its trial press, but the slot had moved since the pointer was put there")):
             with self.subTest(why=why):
                 self.tx.receipt, self.writes[:] = {}, []
-                with patch.object(browser_forms, "douyin_slot_trial", new=AsyncMock(return_value=why)), patch.object(browser_forms, "DOUYIN_COVERED_SECONDS", 5):
-                    said = await self.stopped(extra=laid_over(goes=2000))
+                with patch.object(browser_forms, "douyin_slot_trial", new=AsyncMock(return_value=why)), \
+                     patch.object(browser_forms, "douyin_look_on", new=reveal_after_observed_cover), \
+                     patch.object(browser_forms, "DOUYIN_COVERED_SECONDS", 5):
+                    said = await self.stopped(extra=laid_over())
                 self.assertEqual([], self.pressed())
                 self.assertIn(f", {says}. So nothing was pressed through.", said)
                 self.assertNotIn("the last thing seen", said)
