@@ -257,6 +257,16 @@ class BrokerTests(unittest.TestCase):
         self.assertEqual("browser_busy", e.exception.code)
         start.assert_not_called()
 
+    def test_unreadable_profile_marker_is_returned_without_retry_or_start(self):
+        with patch.object(broker, 'connect', return_value=None), \
+                patch('video_publisher.browser_runtime.profile_lock', side_effect=VpubError('lock_marker_unreadable', 'Unreadable')), \
+                patch.object(broker, 'start') as start, \
+                patch.object(broker.time, 'sleep', side_effect=AssertionError('unreadable marker was retried')):
+            with self.assertRaises(VpubError) as caught:
+                broker.call(self.payload(), 5)
+        self.assertEqual('lock_marker_unreadable', caught.exception.code)
+        start.assert_not_called()
+
     def test_broker_crash_falls_back_at_once(self):
         started = time.monotonic()
         with patch.object(broker, "start", return_value=type("Done", (), {"poll": lambda self: 1})()):

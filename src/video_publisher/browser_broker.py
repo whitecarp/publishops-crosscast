@@ -95,7 +95,9 @@ def wait_for_lock(platform, account, seconds):
         try:
             with profile_lock(platform, account):
                 return True
-        except VpubError:
+        except VpubError as exc:
+            if exc.code == 'lock_marker_unreadable':
+                raise
             if time.monotonic() >= deadline:
                 return False
             time.sleep(0.2)

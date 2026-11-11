@@ -986,19 +986,26 @@ DOUYIN_SLOT_PARTS = r"""(slot, point) => {
 DOUYIN_PREVIEW_SECONDS = 15
 DOUYIN_SAVED_PREVIEW = """slot => {
   const {r, share, inControl, picture} = (""" + DOUYIN_SLOT_PARTS + ")(slot, " + DOUYIN_POINT + """ );
-  return [slot, ...slot.querySelectorAll('*')].some(e => !inControl(e)
-    && share(e, r.left, r.top, r.right, r.bottom) >= 0.5 && picture(e));
+  return [slot, ...slot.querySelectorAll('*')].filter(e => !inControl(e)
+    && share(e, r.left, r.top, r.right, r.bottom) >= 0.5 && picture(e)).map(e => {
+      let drawn = '';
+      if (e.tagName === 'CANVAS') { try { drawn = e.toDataURL(); } catch { drawn = 'unreadable'; } }
+      if (e.localName === 'svg') drawn = e.outerHTML;
+      return JSON.stringify([e.tagName, e.currentSrc || e.getAttribute('src') || '',
+        getComputedStyle(e).backgroundImage, drawn]);
+    }).sort();
 }"""
 
 
-async def douyin_wait_saved_preview(page, slot):
+async def douyin_wait_saved_preview(page, slot, before):
     async def saved():
-        return await slot.evaluate(DOUYIN_SAVED_PREVIEW, timeout=DOUYIN_SLOT_MS)
+        after = await slot.evaluate(DOUYIN_SAVED_PREVIEW, timeout=DOUYIN_SLOT_MS)
+        return bool(after) and after != before
     try:
         await wait_until(page, saved, seconds=DOUYIN_PREVIEW_SECONDS, label='Douyin saved cover preview')
     except VpubError as exc:
         if exc.code == 'processing_timeout':
-            raise VpubError('cover_unverified', 'Cover editor closed without a saved cover preview.') from None
+            raise VpubError('cover_unverified', 'Cover editor closed without a changed cover preview.', DOUYIN_COVER_AGAIN) from None
         raise
 
 # What lies over a slot, seen from inside it without pressing anything: at the slot's centre, where Playwright presses, and on a grid over
@@ -1888,9 +1895,18 @@ async def douyin_covers_now(page, tx, editor):
         if tall_too and size and size[1] > size[0]:
             tx.save(landscape_cover=douyin_slot_skipped(size))
             continue
+        # Keep the slot's pre-open picture signature only in memory: an old
+        # preview or placeholder must not certify that this save changed it.
+        from patchright.async_api import Error as BrowserError
+        try:
+            before_preview = await slot.evaluate(DOUYIN_SAVED_PREVIEW, timeout=DOUYIN_SLOT_MS) if await slot.count() == 1 else None
+        except BrowserError:
+            before_preview = None
         opened = await douyin_slot_window(page, tx, editor, slot, role, label, size, tall_too)
         if opened is None:
             continue
+        if before_preview is None:
+            raise VpubError('cover_unverified', 'The cover preview could not be read before opening its editor.', DOUYIN_COVER_AGAIN)
         dialog, how = opened
         area = await unique_visible(dialog.locator('.semi-upload').filter(has_text='点击上传文件或拖拽文件到这里'), 'Douyin cover upload area')
         await choose_file(page, area.locator('input.semi-upload-hidden-input'), path)
@@ -1919,11 +1935,13 @@ async def douyin_covers_now(page, tx, editor):
                 raise VpubError('cover_not_ready', f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so nothing was published. {await douyin_cover_stuck(page, fonts, traffic())}", DOUYIN_COVER_AGAIN) from None
         finally:
             traffic(stop=True)
-        await douyin_wait_saved_preview(page, slot)
+        await douyin_wait_saved_preview(page, slot, before_preview)
         # A stop's account of what lay over this slot is done with once its cover is on.
         if (tx.receipt.get('cover_slot_covered') or {}).get('role') == role:
             tx.receipt.pop('cover_slot_covered')
-        tx.save(**{role+'_cover': {'state':'UI_ACCEPTED', 'remote_pixels_verified':False, **(douyin_slot_record(how) if how else {})}})
+        tx.save(**{role+'_cover': {'state':'UI_ACCEPTED', 'remote_pixels_verified':False,
+                 'preview_present_before':bool(before_preview), 'preview_changed':True,
+                 **(douyin_slot_record(how) if how else {})}})
 
 
 async def douyin_finish_after_covers(page, tx, before, caption, title, editor):

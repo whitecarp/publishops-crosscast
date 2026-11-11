@@ -804,17 +804,23 @@ class CoverOnANewPostTests(Base):
         self.assertEqual("UI_ACCEPTED", self.tx.receipt["portrait_cover"]["state"])
         self.assertEqual(["publish"], [write["word"] for write in self.writes])
 
-    async def saved_preview_post(self, preview):
-        html = form() + COVER_FORM % "true"
+    async def saved_preview_post(self, preview, before=""):
+        # Do not leave the original world's handler able to reveal the old
+        # picture as well as the scenario's replacement handler.
+        html = form() + COVER_FORM % "false"
         await self.open(html)
+        if before:
+            await self.page.evaluate(before)
         await self.page.locator('#d button').evaluate("(button, script) => button.setAttribute('onclick', script)",
             "document.getElementById('d').hidden = true; " + preview)
         with patch.object(browser_forms, "finish", new=AsyncMock(return_value={"state": "SUBMITTED_UNVERIFIED"})):
             return await browser_forms.finish_douyin_form(self.page, self.tx, {})
 
     async def test_saved_cover_preview_can_arrive_after_dialog_closes(self):
-        await self.saved_preview_post("setTimeout(() => { const img = document.querySelector('.cover-b img'); "
-                                      "img.hidden = false; img.style.cssText = 'display:block;width:100%;height:100%'; }, 1600)")
+        await self.saved_preview_post("document.querySelector('.cover-b').replaceChildren(); "
+                                      "setTimeout(() => { const img = document.createElement('img'); "
+                                      "img.style.cssText = 'display:block;width:100%;height:100%'; "
+                                      "document.querySelector('.cover-b').append(img); }, 1600)")
         self.assertEqual("UI_ACCEPTED", self.tx.receipt["portrait_cover"]["state"])
         self.assertEqual(["publish"], [write["word"] for write in self.writes])
 
@@ -829,6 +835,31 @@ class CoverOnANewPostTests(Base):
             await self.saved_preview_post("document.querySelector('.cover-b').replaceChildren()")
         self.assertEqual("cover_unverified", caught.exception.code)
         self.assertEqual([], self.writes)
+
+    async def test_an_unchanged_existing_preview_does_not_prove_a_save(self):
+        before = "const img = document.querySelector('.cover-b img'); img.hidden = false; img.style.cssText = 'display:block;width:100%;height:100%';"
+        with patch.object(browser_forms, "DOUYIN_PREVIEW_SECONDS", 1), self.assertRaises(VpubError) as caught:
+            await self.saved_preview_post("", before)
+        self.assertEqual('cover_unverified', caught.exception.code)
+        self.assertEqual([], self.writes)
+        self.assertNotEqual('UI_ACCEPTED', self.tx.receipt.get('portrait_cover', {}).get('state'))
+
+    async def test_only_the_other_slots_preview_changing_does_not_prove_this_save(self):
+        before = "const other = document.createElement('div'); other.id = 'other-cover'; other.style.cssText = 'width:40px;height:30px'; document.body.append(other);"
+        with patch.object(browser_forms, "DOUYIN_PREVIEW_SECONDS", 1), self.assertRaises(VpubError) as caught:
+            await self.saved_preview_post("document.querySelector('#other-cover').style.backgroundImage='url(offline-other.png)'", before)
+        self.assertEqual('cover_unverified', caught.exception.code)
+        self.assertEqual([], self.writes)
+
+    async def test_a_changed_existing_background_is_accepted(self):
+        before = "const slot = document.querySelector('.cover-b'); slot.replaceChildren(); slot.style.backgroundImage='url(offline-before.png)';"
+        await self.saved_preview_post("document.querySelector('.cover-b').style.backgroundImage='url(offline-after.png)'", before)
+        cover = self.tx.receipt['portrait_cover']
+        self.assertEqual('UI_ACCEPTED', cover['state'])
+        self.assertTrue(cover['preview_present_before'])
+        self.assertTrue(cover['preview_changed'])
+        self.assertFalse(cover['remote_pixels_verified'])
+        self.assertEqual(['publish'], [write['word'] for write in self.writes])
 
     async def test_its_window_gets_as_long_as_an_edits_and_then_nothing_goes_out(self):
         """From a field run's first real post: a 30-second wait after 完成 ended it, with the video uploaded and nothing pressed."""
@@ -955,8 +986,9 @@ class CoverOnANewPostTests(Base):
 BOTH_COVERS = """<div class="coverControl-a" style="position:relative"><span>横封面4:3</span><div class="cover-b" style="width:40px;height:30px" onclick="pick('wide')"><img hidden></div>%s</div>
   <div class="coverControl-a" style="position:relative"><span>竖封面3:4</span><div class="cover-b" style="width:30px;height:40px" onclick="pick('tall')"><img hidden></div>%s</div>
   <div role="dialog" id="d" hidden><p>上传封面</p><div class="semi-upload">点击上传文件或拖拽文件到这里<input type="file" class="semi-upload-hidden-input"></div>
-  <button onclick="document.getElementById('d').hidden = true; document.querySelectorAll('.cover-b img').forEach(img => { img.hidden = false; img.style.cssText = 'display:block;width:100%%;height:100%%'; })">完成</button></div>
+  <button onclick="document.getElementById('d').hidden = true; const img = window.activeCover.querySelector('img'); img.hidden = false; img.style.cssText = 'display:block;width:100%%;height:100%%';">完成</button></div>
   <script>function pressed(slot) { fetch('/write', {method: 'POST', body: JSON.stringify({word: 'cover', slot})}); }
+  document.addEventListener('click', e => { const box = e.target.closest('.coverControl-a'); if(box) window.activeCover = box.querySelector('.cover-b'); }, true);
   function pick(slot) { pressed(slot); document.getElementById('d').hidden = false; }</script>"""
 # Something laid over a slot, which takes its press, as something did over a field run's 横封面4:3 slot.
 OVER_IT = """<div style="position:absolute;inset:0" onclick="pressed('over')"></div>"""

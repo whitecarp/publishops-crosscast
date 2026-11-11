@@ -209,7 +209,7 @@ def _publish_platform(plan, platform, snapshot_lock):
                 if candidate.get("platform") in {None, platform}:
                     receipt = candidate
                     record["receipt"] = receipt
-            if never_sent(e) or (code in {"browser_busy", "stopped", "page_not_ready"} and not receipt):
+            if never_sent(e) or (code in {"browser_busy", "lock_marker_unreadable", "stopped", "page_not_ready"} and not receipt):
                 ledger.save(key, "IN_PROGRESS", record)
                 ledger.forget(key)
                 return {"state": "NOT_STARTED", "code": code, "message": e.message, "hint": e.hint}
