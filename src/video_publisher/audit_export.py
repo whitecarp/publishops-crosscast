@@ -142,11 +142,22 @@ def count_events(events):
        deletes_by_state={},delete_presses=0,deletes_confirmed_by_own_readback=0,edits_by_state={},stops_by_code={},faults_fired_by_point={},
        cli_calls=0,platform_calls=0,platform_reads=None,platform_writes=None)
     presses=defaultdict(int);uploads=Counter();states={};deleted={};edits={};pending=set();ever=set();settled={};del_pressed=set();starts={}
+    by_run=defaultdict(dict);last={};ended=set();pending_presses={}
+    def outcome(identity,state):
+        deleting,k=identity
+        attempted=k in del_pressed if deleting else presses[k]>0
+        if state in {'UNKNOWN','SUBMITTED_UNVERIFIED','DELETE_PENDING'} and attempted:
+            if identity not in pending: pending_presses[identity]=presses[k]
+            pending.add(identity);ever.add(identity);settled.pop(identity,None)
+        if state in {'SUBMISSION_VERIFIED','DELETED_VERIFIED'} and identity in pending and (deleting or presses[k]==pending_presses[identity]):
+            pending.remove(identity);settled[identity]='verify'
     for e in events:
         k=e.get('ref');t=e['type']
         if t=='command_start': counts['cli_calls']+=1
         if t=='command_start': starts[e.get('run')]=e
         if t=='command_end':
+            ended.add(e.get('run'))
+            for identity,state in by_run[e.get('run')].items(): outcome(identity,state)
             code=str(e['exit_code']);counts['commands_by_exit_code'][code]=counts['commands_by_exit_code'].get(code,0)+1
             if e.get('error_code') in {'stopped','interrupted','human_verification_required'}:
                 counts['stops_by_code'][e['error_code']]=counts['stops_by_code'].get(e['error_code'],0)+1
@@ -165,14 +176,18 @@ def count_events(events):
                 if e.get('delete_attempted') and k not in del_pressed: del_pressed.add(k);counts['delete_presses']+=1
             if e.get('kind')=='edit': edits[k]=e.get('state') or 'other'
             identity=(e.get('kind')=='deletion',k)
-            if e.get('state') in {'UNKNOWN','SUBMITTED_UNVERIFIED','DELETE_PENDING'} and (presses[k] or k in del_pressed): pending.add(identity);ever.add(identity)
-            if e.get('state') in {'SUBMISSION_VERIFIED','DELETED_VERIFIED'} and identity in pending:
-                pending.remove(identity);settled[identity]='verify'
+            if e.get('kind') in {'ledger','browser','deletion'}:
+                by_run[e.get('run')][identity]=e.get('state');last[identity]=(e.get('run'),e.get('state'))
         if t=='observation' and e.get('seen') in {'once','absent','draft','duplicate'}:
             for identity in list(pending):
                 if identity[1]==k: pending.remove(identity);settled[identity]='person'
         if t=='fault' and e.get('fired'):
             p=e.get('point');counts['faults_fired_by_point'][p]=counts['faults_fired_by_point'].get(p,0)+1
+    # A transient pre-click UNKNOWN followed by verification in the same
+    # command is ordinary progress, not an uncertain command outcome. For
+    # commands lacking an end, use only the latest retained state per attempt.
+    for identity,(run,state) in last.items():
+        if run not in ended: outcome(identity,state)
     counts.update(attempts_by_state=dict(Counter(states.values())),attempts_with_more_than_one_press=sum(n>1 for n in presses.values()),
       uploads_started_total=sum(uploads.values()),replayed_uploads=sum(max(0,n-1) for n in uploads.values()),deletes_by_state=dict(Counter(deleted.values())),
       deletes_confirmed_by_own_readback=sum(s=='DELETED_VERIFIED' for s in deleted.values()),edits_by_state=dict(Counter(edits.values())),
@@ -247,7 +262,7 @@ def export_data(root=None,*,since=None,until=None,times='relative',exact_sizes=F
             parts={k:choice(receipt.get(k),STATES) for k in ('chapters_state','widgets_state')},edits=edits,dismissed=boolean(data.get('dismissed')),fault=choice(obj(receipt.get('fault')).get('point'),FAULTS),
             observations=[dict(seen=e['seen'],t=e['at']) for e in events if e['type']=='observation' and e.get('ref')==ref(key)],
             t_started=when(data.get('started_at')),t_updated=when(row.get('updated_at')),t_verified=when(receipt.get('verified_at')),day=utc(timestamp(data.get('started_at')))[:10] if timestamp(data.get('started_at')) else None,
-            history_complete=bool(chain['ok'] and not start and not stop and not any(e['dropped_before'] for e in events)
+            history_complete=bool(chain['ok'] and not chain.get('not_ended') and not start and not stop and not any(e['dropped_before'] for e in events)
                 and any(e.get('ref')==ref(key) and e.get('operation')=='claim' for e in events))))
         d=read_object(root,root/'work-deletions'/(key+'.json')) if hexval(key) else {}
         if d:

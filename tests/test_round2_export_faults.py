@@ -27,6 +27,8 @@ class ExportTests(unittest.TestCase):
         journal.RUN='d'*32
         journal.command_start(SimpleNamespace(command='verify',key=key))
         journal.transition('browser',key,'youtube',{'state':'UNKNOWN','phase':'submitting','final_presses':1})
+        journal.command_end(SimpleNamespace(key=key),journal.STARTED,4,None,{})
+        journal.command_start(SimpleNamespace(command='verify',key=key))
         journal.transition('browser',key,'youtube',{'state':'SUBMISSION_VERIFIED','final_presses':1})
         journal.command_end(SimpleNamespace(key=key),journal.STARTED,0,None,{})
         self.addCleanup(setattr,journal,'RUN',None)
@@ -99,6 +101,7 @@ class ExportTests(unittest.TestCase):
         journal.append('stage',lambda _:dict(stage='reading back'))
         a=export.export_data();r=next(x for x in a['runs'] if x['run']=='b'*32)
         self.assertEqual(r['dropped_events'],2);self.assertFalse(r['loss_complete'])
+        self.assertFalse(any(p['history_complete'] for p in a['publications']))
         file=core.home()/'audit/journal.jsonl';lines=file.read_bytes().splitlines(keepends=True);file.write_bytes(b''.join(lines[:-2]+lines[-1:]))
         a=export.export_data();self.assertFalse(a['integrity']['chain_ok'])
         self.assertTrue(next(x for x in a['runs'] if x['run']=='b'*32)['sequence_gap'])
@@ -106,6 +109,22 @@ class ExportTests(unittest.TestCase):
     def test_known_span_arithmetic(self):
         rows=[dict(slot=0,t_start=0,t_end=10,state='SUBMISSION_VERIFIED'),dict(slot=1,t_start=1,t_end=4,state='SUBMISSION_VERIFIED'),dict(slot=1,t_start=5,t_end=8,state='UNKNOWN')]
         self.assertEqual(export.concurrency(rows,2,12),dict(workers=2,wall=12,sum=16,overlap=6,idle_by_slot=[0,4],all_verified=False))
+
+    def test_successful_command_transient_unknown_is_not_counted_as_uncertain(self):
+        key,_=self.seed('youtube');journal.command_start(SimpleNamespace(command='publish'))
+        journal.transition('browser',key,'youtube',{'state':'UNKNOWN','final_presses':1})
+        journal.transition('browser',key,'youtube',{'state':'SUBMISSION_VERIFIED','final_presses':1})
+        journal.command_end(SimpleNamespace(),journal.STARTED,0,None,{})
+        counts=export.export_data()['counts'];self.assertEqual(counts['presses_total'],1);self.assertEqual(counts['in_doubt_total'],0)
+
+    def test_an_additional_press_is_not_a_clean_verify_settlement(self):
+        key,_=self.seed('youtube');journal.command_start(SimpleNamespace(command='publish'))
+        journal.transition('browser',key,'youtube',{'state':'UNKNOWN','final_presses':1})
+        journal.command_end(SimpleNamespace(),journal.STARTED,4,None,{})
+        journal.command_start(SimpleNamespace(command='resume'))
+        journal.transition('browser',key,'youtube',{'state':'SUBMISSION_VERIFIED','final_presses':2})
+        journal.command_end(SimpleNamespace(),journal.STARTED,0,None,{})
+        counts=export.export_data()['counts'];self.assertEqual(counts['in_doubt_open'],1);self.assertEqual(counts['in_doubt_settled_by_verify'],0)
 
     def test_export_cli_is_byte_stable_without_self_journaling(self):
         self.planted();out=Path(self.temp.name)/'public.json';before=(core.home()/'audit/journal.jsonl').read_bytes()
