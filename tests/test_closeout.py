@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from video_publisher import process_lock
@@ -59,3 +60,23 @@ class ProcessLockTests(unittest.TestCase):
         self.assertTrue(process_lock.alive(os.getpid()))
         self.assertTrue(process_lock.alive(None))
         self.assertTrue(process_lock.alive(False))
+
+    def test_unreadable_marker_has_its_own_error_and_preserves_bytes(self):
+        marker = home() / 'publisher.lock'
+        original = b'{"pid": 42, "token": "offline-marker"}'
+        marker.write_bytes(original)
+        read_text = Path.read_text
+        def denied(path, *args, **kwargs):
+            if path == marker:
+                raise PermissionError(13, 'synthetic access denied')
+            return read_text(path, *args, **kwargs)
+        with patch.object(Path, 'read_text', denied):
+            with self.assertRaises(VpubError) as caught:
+                with publication_lock():
+                    self.fail('unreadable marker admitted a command')
+        self.assertEqual('lock_marker_unreadable', caught.exception.code)
+        self.assertIn('ownership and permissions', caught.exception.hint)
+        self.assertEqual(original, marker.read_bytes())
+        # The failed attempt still releases its kernel guard.
+        with patch.object(process_lock, 'alive', return_value=False), publication_lock():
+            pass

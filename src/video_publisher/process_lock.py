@@ -64,12 +64,21 @@ def hold(path, error_code, message):
             locked = True
         except OSError:
             raise VpubError(error_code, message, 'Wait for the active command; do not clear its lock.') from None
-        if path.exists():
+        try:
+            marker = path.read_text(encoding='utf-8')
+        except FileNotFoundError:
+            marker = None
+        except OSError:
+            raise VpubError('lock_marker_unreadable', 'The command lock marker could not be read.',
+                            'Ask the owner to check this marker\'s ownership and permissions. On Windows, '
+                            'a pending deletion can also deny access until its open handle closes. '
+                            'Keep the marker in place while the owner diagnoses it.') from None
+        if marker is not None:
             owner = None
             try:
-                owner = json.loads(path.read_text(encoding='utf-8'))
+                owner = json.loads(marker)
                 pid = owner.get('pid') if isinstance(owner, dict) else owner
-            except (OSError, ValueError):
+            except ValueError:
                 pid = None
             if not released(owner) and alive(pid):
                 raise VpubError(error_code, message, 'The prior owner is active or unknown. Inspect it; do not delete an active lock.')
