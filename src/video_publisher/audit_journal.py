@@ -159,12 +159,16 @@ def command_start(args):
     def fields(ref):
         from .audit import code_stamp
         session = os.environ.get("VPUB_AUDIT_SESSION", "")
+        # A wrapper reservation id is separate from this command's own run id.
+        # Reject arbitrary environment text before it can enter the journal.
+        awl_run_id = os.environ.get("AWL_RUN_ID", "")
         flags = {k: bool(getattr(args, k, False)) for k in ("dry_run", "verify_only", "person_approved", "no_cover", "person_checked")}
         flags["person_approved"] = bool(getattr(args, "person_approved", False) or getattr(args, "reviewed", False))
         workers = getattr(args, "workers", None)
         flags.update(confirm_given=bool(getattr(args, "confirm", None)), cover_given=bool(getattr(args, "cover", None)),
                      workers=workers if type(workers) is int and 1 <= workers <= 2 else None)
         return dict(command=args.command, action=getattr(args, "action", None), flags=flags, code=code_stamp(),
+                    awl_run_id=awl_run_id if re.fullmatch(r"[a-f0-9]{32}", awl_run_id) else None,
                     session=session if re.fullmatch(r"[A-Za-z0-9_-]{1,32}", session) else None,
                     purpose=os.environ.get("VPUB_AUDIT_PURPOSE") if os.environ.get("VPUB_AUDIT_PURPOSE") in {"organic","test","timing","fault"} else None,
                     fault_armed=None, before=snapshot(getattr(args, "key", None), ref))

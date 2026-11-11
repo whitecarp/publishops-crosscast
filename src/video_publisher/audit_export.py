@@ -103,6 +103,7 @@ def project_event(v,when):
            type=kind,run=hexval(v.get('run'),re.compile(r'^[a-f0-9]{32}$')),dropped_before=integer(v.get('dropped_before')) or 0)
     if kind=='command_start':
         f=obj(v.get('flags'))
+        r['awl_run_id']=hexval(v.get('awl_run_id'),re.compile(r'^[a-f0-9]{32}$'))
         r.update(command=choice(v.get('command'),COMMANDS),action=choice(v.get('action'),journal.ACTIONS|{'export','observe'}),
                  flags={k:boolean(f.get(k)) for k in ('dry_run','verify_only','person_approved','confirm_given','no_cover','cover_given','person_checked')},
                  code=stamp(v.get('code')),before=snap(v.get('before')),fault_armed=choice(v.get('fault_armed'),FAULTS))
@@ -275,7 +276,7 @@ def export_data(root=None,*,since=None,until=None,times='relative',exact_sizes=F
     for rid in sorted({e['run'] for e in events if e['run']}):
         es=[e for e in events if e['run']==rid];s=next((e for e in es if e['type']=='command_start'),{});end=next((e for e in reversed(es) if e['type']=='command_end'),{})
         code=build(s.get('code'));spans=[e for e in es if e['type']=='span']
-        runs.append(dict(run=rid,command=s.get('command'),action=s.get('action'),flags=s.get('flags',{}),build=builds.index(code) if code else None,session=s.get('session'),purpose=s.get('purpose'),
+        runs.append(dict(run=rid,awl_run_id=s.get('awl_run_id'),command=s.get('command'),action=s.get('action'),flags=s.get('flags',{}),build=builds.index(code) if code else None,session=s.get('session'),purpose=s.get('purpose'),
           exit_code=end.get('exit_code'),ok=end.get('ok'),seconds=end.get('seconds'),error_code=end.get('error_code'),ended=bool(end),t_start=s.get('at'),t_end=end.get('at'),
           platforms=end.get('platforms',{}),stages=[[e['platform'],e['action'],e['stage'],e['at']] for e in es if e['type']=='stage'],
           spans=[[e['platform'],e['slot'],e['t_start'],e['t_end'],e['state']] for e in spans],concurrency=concurrency(spans,obj(s.get('flags')).get('workers'),end.get('seconds')),
