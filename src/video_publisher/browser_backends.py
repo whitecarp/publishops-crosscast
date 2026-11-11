@@ -159,6 +159,7 @@ class Transaction:
     def __init__(self, platform, identity, plan, resume=False, prior_receipt=None):
         self.platform, self.identity, self.plan, self.resuming = platform, identity, plan, resume
         self.options = plan["options"]
+        self.fault = plan.get('_fault')
         self.path = home() / "browser-receipts" / (plan["confirmation"] + "-" + platform + ".json")
         if self.path.exists() and not resume:
             raise VpubError("attempt_exists", "This independent browser attempt already has a durable receipt.", "Inspect/verify that attempt. Never reset it to upload or submit again.")
@@ -181,6 +182,11 @@ class Transaction:
             self.receipt['chapters_state']='PENDING_WORK_ID'
 
     def save(self, **changes):
+        external_new = self.fault == 'external' and not self.receipt.get('fault')
+        if external_new:
+            from .faults import label
+            from .core import Ledger
+            changes['fault'] = label('external', Ledger.key(self.platform, self.options.get('account','default'), self.plan['video_sha256']), self.platform, record=False)
         for key in ("review_url", "draft_url", "media_url"):
             if changes.get(key):
                 changes[key] = plain_address(changes[key])
@@ -189,6 +195,9 @@ class Transaction:
         self.receipt = stamped({**self.receipt, **changes, "updated_at": now()}, self.receipt)
         with receipt_turn(self.path):
             atomic_json(self.path, self.receipt)
+            if external_new:
+                from .audit_journal import append
+                append('fault', lambda ref: dict(point='external', ref=ref(Ledger.key(self.platform, self.options.get('account','default'), self.plan['video_sha256'])), platform=self.platform, fired=False))
             if (any(previous.get(k) != self.receipt.get(k) for k in
                     ('state', 'phase', 'final_presses', 'media_selected', 'still_a_draft', 'error'))
                     or changes.get('phase') == 'selecting_media'):
@@ -248,7 +257,12 @@ class Transaction:
         stage("pressing")
         # Persist BEFORE clicking. A timeout must never cause another click.
         stop_check(self.platform)  # Saving the receipt can wait on its own lock.
+        from .faults import fire
+        from .core import Ledger
+        key = Ledger.key(self.platform, self.options.get('account','default'), self.plan['video_sha256'])
+        fire(self.fault, 'before_press', key, self.platform, lambda value: self.save(fault=value))
         await button.click(timeout=20000)
+        fire(self.fault, 'after_press', key, self.platform, lambda value: self.save(fault=value))
         stage("waiting for platform confirmation")
 
     async def can_press(self, button, uncover=None):

@@ -68,6 +68,8 @@ def run(key, *, dry_run=False, confirm=None, person_approved=False, verify_only=
         ledger = Ledger()
         try:
             row = ledger.get(key)
+            from .faults import gate
+            point = gate(row['platform'], row['data'].get('options', {})) if row else None
             target = target_for(row)
         finally:
             ledger.close()
@@ -120,12 +122,26 @@ def run(key, *, dry_run=False, confirm=None, person_approved=False, verify_only=
                                        'delete_attempted': False, 'publication_receipt': deepcopy(row['data']['receipt'])})
                     from .audit_journal import transition
                     transition('deletion', target['key'], target['platform'], state.read_receipt(path), operation='create')
+            if point == 'external':
+                from .faults import label
+                saved = state.read_receipt(path)
+                saved['fault'] = label(point, key, target['platform'], record=False)
+                state.write_transition(path, saved, 'fault')
+                from .audit_journal import append
+                append('fault',lambda ref:dict(point=point,ref=ref(key),platform=target['platform'],fired=False))
             stop_check(target['platform'])
             try:
                 if verify_only:
                     evidence = backend(target, 'verify', path)
                 elif not absent:
                     evidence = backend(target, 'delete', path)
+                    if isinstance(evidence, dict) and evidence.get('platform_writes') == 1:
+                        from .faults import fire
+                        def save_fault(value):
+                            saved = state.read_receipt(path)
+                            saved['fault'] = value
+                            state.write_transition(path, saved, 'fault')
+                        fire(point, 'delete_readback_lost', key, target['platform'], save_fault)
                 saved = state.save_result(path, target, evidence)
             except Exception as exc:
                 # Keep any worker's attempt marker; no raw page text is stored.

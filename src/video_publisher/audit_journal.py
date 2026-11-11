@@ -15,6 +15,7 @@ from .core import PLATFORMS, atomic_json, brief_lock, home
 
 ZERO = "0" * 64
 RUN = None
+STARTED = time.monotonic()
 _losses = {}
 _loss_lock = Lock()
 ACTIONS = frozenset("auth login status chat_unlock publish verify resume edit works list stats comments collections operations operations_batch work_delete delete_work direct_messages comment_management engagement upload video read whoami archive favorites season search".split())
@@ -100,9 +101,11 @@ def append(kind, build):
             atomic_json(head_path, [event["seq"], digest(line), size + len(line)])
             with _loss_lock:
                 _losses[directory] = _losses.get(directory, 0) - missed
+            return True
     except Exception:
         with _loss_lock:
             _losses[directory] = _losses.get(directory, 0) + 1
+        return False
 
 
 def verify_chain(directory):
@@ -150,8 +153,9 @@ def snapshot(key, ref):
 
 
 def command_start(args):
-    global RUN
+    global RUN, STARTED
     RUN = uuid.uuid4().hex
+    STARTED = time.monotonic()
     def fields(ref):
         from .audit import code_stamp
         session = os.environ.get("VPUB_AUDIT_SESSION", "")

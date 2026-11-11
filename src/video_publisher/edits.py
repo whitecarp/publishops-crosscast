@@ -101,7 +101,7 @@ def validate_patch(platform, value, verifying=False, ai_generated=True):
     return p
 
 
-def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, person_approved=False):
+def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, person_approved=False, fault=None):
     """One correction, once. An uncertain X save cannot be retried, even with person approval; verification stays read-only."""
     from .work_delete_state import refuse_other_action
     refuse_other_action(key)
@@ -142,7 +142,13 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
     def checkpoint(data):
         previous = read_json(path) if path.exists() else None
         entry = stamped({'key': key, 'edit_id': edit_id, 'at': now(), **preserved, **data}, previous)
+        if fault == 'external':
+            from .faults import label
+            entry['fault'] = (previous or {}).get('fault') or label(fault, key, platform, record=False)
         atomic_json(path, entry)
+        if fault == 'external' and not (previous or {}).get('fault'):
+            from .audit_journal import append
+            append('fault',lambda ref:dict(point=fault,ref=ref(key),platform=platform,fired=False))
         from .audit_journal import transition, edit_group
         transition('edit', key, platform, entry, group=edit_group(patch))
         return entry
@@ -185,6 +191,8 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
 def run_adopted(platform, work, patch_path, dry_run=False, verify_only=False, person_approved=False):
     """The same correction for a work CrossCast adopted rather than published, using the owner that adoption verified."""
     from .work_catalog import binding
+    from .faults import gate
+    gate(platform, {})  # An adopted post has no approved private test plan.
     with publication_lock():
         adopted=binding(platform,work)
         if not adopted: raise VpubError('work_identity_required','Adopt this work first, so its owner is checked; nothing changed.',f'Run vpub ops adopt {platform} {work}.')
@@ -226,11 +234,17 @@ def run(key, patch_path, dry_run=False, verify_only=False, person_approved=False
             row=ledger.get(key)
             if not row: raise VpubError('receipt_required','Use the key of an existing recorded publication.')
             record=row['data'];receipt=record.get('receipt',{});work_id=receipt.get('id')
+            from .faults import gate
+            point=gate(row['platform'],record.get('options',{}))
+            if point and point!='external': raise VpubError('fault_injection_refused','Only the external fault guard applies to edits.')
+            if point and row['platform']=='youtube':
+                from . import adapters
+                if adapters.addon_installed(): raise VpubError('fault_injection_refused','Fault tests require the browser edit route.')
             if not work_id: raise VpubError('work_id_required','Verify the existing work ID first; never infer an ID from a title or upload again.',
                                             'Run vpub verify on this receipt key: a full read-back records the ID. For a work you adopted with vpub ops adopt, use vpub edit-work PLATFORM WORK_ID instead.')
             patch=validate_patch(row['platform'],read_json(patch_path),verify_only,record.get('options',{}).get('ai_generated',True))
             actual=record.get('identity',{}).get('identity') or receipt.get('identity')
-            result=send(row['platform'],row['account'],actual,receipt,key,patch,dry_run,verify_only,person_approved)
+            result=send(row['platform'],row['account'],actual,receipt,key,patch,dry_run,verify_only,person_approved,fault=point)
             if dry_run: return result
             edit_id=digest([key,patch])
             record.setdefault('edits',[]).append({'edit_id':edit_id,'patch':patch,'result':result,'at':now(),

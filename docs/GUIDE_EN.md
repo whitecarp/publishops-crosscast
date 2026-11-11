@@ -446,3 +446,9 @@ Yes. After the first sign-in, the CLI does the uploading in the background, with
 Use `vpub verify` to read it back, or `vpub resume` to continue the original task; do not blindly upload again. `vpub receipts` shows the local receipts, but a receipt on its own is not platform evidence.
 
 </details>
+
+## Export local audit evidence
+
+Use `vpub audit export --out public-audit.json` to export redacted local records without opening a browser or contacting a platform. Add `--since ISO` / `--until ISO` for a window, `--times exact` for UTC instants or `--exact-sizes` for unrounded sizes. Default times are relative and sizes rounded. The export reports gaps and dropped events; it does not repair them or certify a live outcome. See the [schema and limitations](AUDIT_SCHEMA.md).
+
+After a person's own check, `vpub audit observe KEY --seen once` records that observation only; allowed values are once, absent, draft, duplicate and unclear. It does not change the publication or deletion receipt. Keep identifiers used as session labels nonprivate and inspect the export before sharing it.

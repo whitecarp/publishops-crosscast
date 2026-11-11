@@ -89,7 +89,9 @@ async def execute(page, platform, identity, payload):
         # A check only reads. What it means for a save already tried is for edits.send to record, so a check cut off here leaves that save on record.
         if not payload.get('verify_only'):
             from .audit import stamped
-            result = stamped(result, read_json(output) if output.exists() else None)
+            previous = read_json(output) if output.exists() else None
+            result = stamped(result, previous)
+            if (previous or {}).get('fault'): result['fault'] = previous['fault']
             atomic_json(output, result)
             from .audit_journal import transition, edit_group
             transition('edit', payload.get('audit_key'), platform, result, group=edit_group(patch))
@@ -104,6 +106,7 @@ async def execute(page, platform, identity, payload):
         save(state='EDIT_SUBMITTING')
         stage('pressing')
         await button.click(timeout=20000)
+        stage('reading back')
     if platform=='instagram':
         if not re.fullmatch(r'[A-Za-z0-9_-]+',work_id): raise VpubError('invalid_id','Invalid Instagram work ID.')
         url=f'https://www.instagram.com/p/{work_id}/'
