@@ -1,7 +1,7 @@
 """Free Creator Center deletion of one exact owned card, with no write retries."""
 import re
 import time
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, urljoin, urlsplit
 
 from . import browser_backends as bb, browser_runtime as rt, work_delete_state as state
 from .core import VpubError, stop_check
@@ -115,11 +115,101 @@ async def same_card(page, target, card, handle, words):
         raise VpubError('wrong_work', 'The ID-checked card changed its title.')
 
 
-async def card_id(page, target, card, handle, words):
-    """Use the proven same-card popup, never the helper's title-based private-card fallback."""
-    if await card.get_by_text('私密', exact=True).count():
+def private_editor_id(address):
+    work = bb.douyin_editor_work(address)
+    query = parse_qsl(urlsplit(address).query, keep_blank_values=True)
+    if (work and re.fullmatch(r'[0-9]{10,25}', work)
+            and sorted(query) == [('enter_from', 'edit_item'), ('mid', work)]):
+        return work
+    return None
+
+
+async def private_card_id(page, target, card, handle, words):
+    """Read the retained card's editor destination while its binding is still provable."""
+    direct = card.locator('a[href]').filter(has_text=re.compile(r'^\s*编辑作品\s*$'))
+    if await direct.count():
+        if await direct.count() != 1 or not await direct.is_visible():
+            return None
+        held = []
+        try:
+            link = await retain(direct, 'private work editor link', held)
+            href = await link.get_attribute('href')
+            if not href or not await handle.evaluate(CONTAINS, link):
+                return None
+            await same_card(page, target, card, handle, words)
+            await same_node(direct, link, 'original private work editor link')
+            return private_editor_id(urljoin(page.url, href))
+        finally:
+            for node in held:
+                await node.dispose()
+
+    # The editor action on the current layout lives in a portal outside the card.
+    # Only the original card's uniquely expanded trigger establishes its origin.
+    label = card.get_by_text('编辑作品', exact=True)
+    expanded = card.locator('[class*="edit-btn-"].semi-dropdown-showing')
+    showing = page.locator('.semi-dropdown-showing')
+    item = page.locator('ul.semi-dropdown-menu[class*="edit-menu-"] > li.semi-dropdown-item').filter(
+        has_text=re.compile(r'^\s*编辑作品\s*$'))
+    if await label.count() != 1 or not await label.is_visible() or await showing.count() or await rt.visible(item):
         return None
+    await guard(page)
+    await label.hover(timeout=10000)
+
+    async def bound_menu():
+        return (await expanded.count() == 1 and await showing.count() == 1
+                and await item.count() == 1 and await item.is_visible())
+
+    if not await rt.look_until(page, bound_menu, 5000):
+        return None
+    held = []
+    try:
+        trigger = await retain(expanded, 'private work menu trigger', held)
+        control = await retain(item, 'private work editor menu item', held)
+        await guard(page)
+        await same_card(page, target, card, handle, words)
+        await same_node(expanded, trigger, 'original private work trigger')
+        await same_node(item, control, 'original private work editor action')
+        if not await bound_menu() or not await handle.evaluate(CONTAINS, trigger):
+            return None
+        previous_tabs = list(page.context.pages)
+
+        async def editor():
+            opened = [tab for tab in page.context.pages if tab not in previous_tabs]
+            if opened:
+                if (len(opened) == 1 and await opened[0].opener() is page
+                        and page.url == bb.MANAGE and private_editor_id(opened[0].url)):
+                    return opened[0]
+                return None
+            return page if private_editor_id(page.url) else None
+
+        try:
+            stop_check('douyin')
+            await control.click(timeout=10000)
+            detail = await rt.look_until(page, editor, 10000)
+            if detail is None:
+                return None
+            await guard(detail)
+            return private_editor_id(detail.url) if await editor() is detail else None
+        finally:
+            for tab in list(page.context.pages):
+                if tab not in previous_tabs and await tab.opener() is page:
+                    await tab.close()
+            if private_editor_id(page.url):
+                await page.go_back(wait_until='domcontentloaded', timeout=20000)
+            await same_card(page, target, card, handle, words)
+            # A lingering hover menu would make the next row's origin ambiguous.
+            if await showing.count():
+                await card.locator(bb.DOUYIN_NAME).hover(timeout=5000)
+                await showing.first.wait_for(state='hidden', timeout=5000)
+    finally:
+        for node in held:
+            await node.dispose()
+
+
+async def card_id(page, target, card, handle, words):
     await same_card(page, target, card, handle, words)
+    if await card.get_by_text('私密', exact=True).count():
+        return await private_card_id(page, target, card, handle, words)
     name = await rt.unique_visible(card.locator(bb.DOUYIN_NAME), 'work detail trigger')
     await guard(page)
     async with page.expect_popup(timeout=bb.POPUP_MS) as opened:
@@ -152,7 +242,7 @@ async def card_id(page, target, card, handle, words):
         await detail.close()
 
 
-async def own_list(page, target):
+async def own_list(page, target, *, preparing_delete=False):
     await guard(page)
     await page.goto(bb.MANAGE, wait_until='domcontentloaded', timeout=60000)
     cards = page.locator(bb.DOUYIN_CARD)
@@ -167,7 +257,8 @@ async def own_list(page, target):
     complete = await ends.evaluate_all(TERMINAL)
     matches, seen, held, observed, finished = [], set(), [], [], False
     try:
-        # A bounded read with any unresolved/private/hidden card is incomplete.
+        unresolved_private = False
+        # Each visible card must supply an exact ID for absence to be verifiable.
         for index in range(min(count, 100)):
             card = cards.nth(index)
             if not await card.is_visible():
@@ -180,12 +271,16 @@ async def own_list(page, target):
             observed.append((card, handle, words))
             wid = await card_id(page, target, card, handle, words)
             await same_card(page, target, card, handle, words)
+            if not wid and await card.get_by_text('私密', exact=True).count():
+                unresolved_private = True
             if not wid or wid in seen:
                 complete = False
             if wid:
                 seen.add(wid)
             if wid == target['id']:
                 matches.append((card, handle, words))
+        if preparing_delete and matches and unresolved_private:
+            raise VpubError('deletion_target_unverified', 'A private card has no bound work ID.')
         if len(matches) > 1:
             raise VpubError('wrong_work', 'More than one card resolves to this exact work ID.')
         await owner(page, target)
@@ -243,7 +338,7 @@ async def execute(page, actual, target, operation, receipt_path):
     validate(actual, target, operation)
     writes, retained, held = 0, None, []
     try:
-        matches, complete = await own_list(page, target)
+        matches, complete = await own_list(page, target, preparing_delete=operation != 'verify')
         if not matches:
             return await readback(page, target)
         card, retained, words = matches[0]
