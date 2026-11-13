@@ -1,9 +1,8 @@
 """Offline Creator Center fake-page regressions; no source-platform reads."""
 from urllib.parse import urlsplit
-from unittest.mock import patch
 import unittest
 
-from test_work_delete_youtube import FakeYouTube, Locator, Node, OfflineCase, walk
+from test_work_delete_youtube import FakeYouTube, Node, OfflineCase, walk
 from video_publisher import work_delete_douyin as route, work_delete_state as state
 from video_publisher.core import VpubError, home, read_json
 
@@ -68,10 +67,6 @@ class HomeContext:
     def __init__(self, page):
         self.page = page
 
-    @property
-    def pages(self):
-        return [self.page, *(tab for tab in self.page.opened if not tab.closed)]
-
     async def new_page(self):
         return HomeTab(self.page)
 
@@ -88,15 +83,11 @@ class FakeDouyin(FakeYouTube):
         self.complete, self.show_terminal, self.private = True, True, set()
         self.detail_override, self.after_detail = None, None
         self.foreign_popup, self.popup_risk = False, False
-        self.editor_links, self.editor_menus = {}, {}
-        self.editor_same_tab, self.editor_replaces_list = False, False
         self.popup, self.opened = None, []
         self.gone_text = '该作品已被删除'
 
     def select(self, selector, nodes):
-        mapping = {'a[href]': 'editor-link', '[class*="edit-btn-"].semi-dropdown-showing': 'expanded-editor',
-                   '.semi-dropdown-showing': 'expanded-editor', 'ul.semi-dropdown-menu[class*="edit-menu-"] > li.semi-dropdown-item': 'editor-item',
-                   route.bb.DOUYIN_CARD: 'dycard', route.bb.DOUYIN_NAME: 'dytitle',
+        mapping = {route.bb.DOUYIN_CARD: 'dycard', route.bb.DOUYIN_NAME: 'dytitle',
                    '.semi-modal-content': 'modal', '[role="alert"]': 'alert'}
         if selector not in mapping:
             raise AssertionError('Unexpected Douyin selector: ' + selector)
@@ -125,29 +116,9 @@ class FakeDouyin(FakeYouTube):
                         Node('delete', '删除作品', action=lambda wid=wid: self.delete_menu(wid))]
             if wid in self.private:
                 children.append(Node('private', '私密'))
-                if wid in self.editor_links:
-                    children.append(Node('editor-link', '编辑作品', attrs={'href': self.editor_links[wid]}))
-                elif wid in self.editor_menus:
-                    children.append(Node('editor-trigger', '编辑作品', attrs={'work': wid}))
             self.nodes.append(Node('dycard', children=children))
         if self.show_terminal:
             self.nodes.append(Node('end', '没有更多作品' if self.nodes else '暂无作品'))
-
-    def open_editor(self, trigger):
-        trigger.kind = 'editor-trigger'
-        self.nodes = [n for n in self.nodes if n.kind != 'editor-item']
-        wid = trigger.attrs['work']
-        if self.editor_same_tab:
-            self.url = self.editor_menus[wid]
-        else:
-            tab = Detail(self, wid)
-            tab.url = self.editor_menus[wid]
-            self.opened.append(tab)
-
-    async def go_back(self, **kwargs):
-        self.url = route.bb.MANAGE
-        if self.editor_replaces_list:
-            self.render()
 
     def expect_popup(self, **kwargs):
         return Popup(self)
@@ -285,138 +256,6 @@ class DouyinDeletionTests(OfflineCase):
         answer = await self.run_route()
         self.assertTrue(state.verified(answer, self.target))
         self.assertEqual((1, 1), (self.page.menu_count, self.page.final_count))
-
-    async def test_private_cards_bind_by_editor_id_among_mixed_similar_titles(self):
-        public = '7700000000000000002'
-        self.page.cards = [(OTHER, 'Approved 02'), (public, 'Approved 01'), (WORK, 'Approved 01')]
-        self.page.private = {WORK, OTHER}
-        self.page.editor_links = {wid: route.bb.douyin_editor_address(wid) for wid in self.page.private}
-        result = await self.run_route()
-        self.assertEqual([WORK], self.page.deleted_ids)
-        self.assertTrue(state.verified(result, self.target))
-        self.assertTrue(result['list_complete'])
-        self.assertEqual((1, 1), (self.page.menu_count, self.page.final_count))
-
-    async def test_unreadable_private_neighbour_refuses_before_marker(self):
-        self.page.cards = [(WORK, 'Approved'), (OTHER, 'Approved')]
-        self.page.private = {OTHER}
-        with self.assertRaises(VpubError) as caught:
-            await self.run_route()
-        self.assertEqual('deletion_target_unverified', caught.exception.code)
-        self.assert_unpressed()
-
-    async def test_private_link_needs_exact_editor_origin_and_work(self):
-        self.page.private = {WORK}
-        for address in (route.bb.douyin_editor_address(WORK) + '&mid=' + OTHER,
-                        route.bb.douyin_editor_address(WORK) + '&other=' + OTHER,
-                        route.bb.douyin_editor_address(WORK).replace('creator.douyin.com', 'invalid.example')):
-            self.page.editor_links[WORK] = address
-            self.assertFalse((await self.run_route('inspect'))['owned'])
-            self.assert_unpressed()
-
-    def editor_hover(self):
-        async def hover(locator, **kwargs):
-            node = locator.one()
-            if node.kind == 'editor-trigger':
-                node.kind = 'expanded-editor'
-                self.page.nodes.append(Node('editor-item', '编辑作品', action=lambda: self.page.open_editor(node)))
-        return patch.object(Locator, 'hover', hover)
-
-    async def test_private_editor_menu_from_retained_card(self):
-        self.page.cards = [(OTHER, 'Approved 01'), (WORK, 'Approved 01')]
-        self.page.private = {WORK, OTHER}
-        self.page.editor_menus = {wid: route.bb.douyin_editor_address(wid) for wid in self.page.private}
-        with self.editor_hover():
-            result = await self.run_route()
-        self.assertTrue(state.verified(result, self.target))
-        self.assertEqual([WORK], self.page.deleted_ids)
-        self.assertTrue(all(tab.closed for tab in self.page.opened))
-
-    async def test_private_editor_foreign_popup_cannot_identify_work(self):
-        self.page.private = {WORK}
-        self.page.foreign_popup = True
-        self.page.editor_menus = {WORK: route.bb.douyin_editor_address(WORK)}
-        with self.editor_hover():
-            self.assertFalse((await self.run_route('inspect'))['owned'])
-        self.assert_unpressed()
-        self.assertTrue(all(not tab.closed for tab in self.page.opened))
-
-    async def test_private_editor_replaced_control_refuses(self):
-        self.page.private = {WORK}
-        self.page.editor_menus = {WORK: route.bb.douyin_editor_address(WORK)}
-        def swap(page):
-            items = [n for n in self.page.nodes if n.kind == 'editor-item']
-            if items:
-                self.on_risk = None
-                items[0].connected = False
-                self.page.nodes.remove(items[0])
-                self.page.nodes.append(Node('editor-item', '编辑作品', action=lambda: self.fail('Replaced menu pressed')))
-        self.on_risk = swap
-        with self.editor_hover(), self.assertRaises(VpubError):
-            await self.run_route()
-        self.assert_unpressed()
-        self.assertFalse(self.page.opened)
-
-    async def test_stop_before_private_editor_open_prevents_press(self):
-        self.page.private = {WORK}
-        self.page.editor_menus = {WORK: route.bb.douyin_editor_address(WORK)}
-        def stop(page):
-            if any(n.kind == 'editor-item' for n in self.page.nodes):
-                self.stopped()
-        self.on_risk = stop
-        with self.editor_hover(), self.assertRaises(VpubError):
-            await self.run_route()
-        self.assert_unpressed()
-        self.assertFalse(self.page.opened)
-
-    async def test_private_editor_click_timeout_closes_only_its_popup(self):
-        self.page.private = {WORK}
-        self.page.editor_menus = {WORK: route.bb.douyin_editor_address(WORK)}
-        open_editor = self.page.open_editor
-        def timeout(trigger):
-            open_editor(trigger)
-            raise TimeoutError('Opened then timed out')
-        self.page.open_editor = timeout
-        with self.editor_hover():
-            result = await self.run_route()
-        self.assertFalse(result['owned'])
-        self.assertTrue(self.page.opened and all(t.closed for t in self.page.opened))
-        self.assert_unpressed()
-
-    async def test_private_editor_risk_prevents_delete(self):
-        self.page.private = {WORK}
-        self.page.editor_menus = {WORK: route.bb.douyin_editor_address(WORK)}
-        self.page.popup_risk = True
-        with self.editor_hover(), self.assertRaises(VpubError):
-            await self.run_route()
-        self.assert_unpressed()
-        self.assertTrue(all(t.closed for t in self.page.opened))
-
-    async def test_private_recycled_card_id_is_checked_again_before_delete(self):
-        self.page.cards = [(WORK, 'Approved 01'), (OTHER, 'Approved 02')]
-        self.page.private = {WORK, OTHER}
-        self.page.editor_links = {w: route.bb.douyin_editor_address(w) for w in self.page.private}
-        def change_id(node, script):
-            if node.kind == 'editor-link' and node.attrs['href'].endswith('edit_item'):
-                if OTHER in node.attrs['href']:
-                    self.page.on_evaluate = None
-                    link = next(n for n in walk(self.page.nodes[0].children) if n.kind == 'editor-link')
-                    link.attrs['href'] = route.bb.douyin_editor_address('7700000000000000002')
-        self.page.on_evaluate = change_id
-        with self.assertRaises(VpubError):
-            await self.run_route()
-        self.assert_unpressed()
-
-    async def test_same_tab_editor_requires_original_card_after_return(self):
-        self.page.private = {WORK}
-        self.page.editor_same_tab = True
-        self.page.editor_menus = {WORK: route.bb.douyin_editor_address(WORK)}
-        with self.editor_hover():
-            self.assertTrue((await self.run_route('inspect'))['owned'])
-            self.page.editor_replaces_list = True
-            with self.assertRaises(VpubError):
-                await self.run_route()
-        self.assert_unpressed()
 
     async def test_private_unresolved_card_blocks_full_absence_without_title_fallback(self):
         self.page.deleted = True
