@@ -105,6 +105,9 @@ async def execute(page, platform, identity, payload):
         if platform=='x': x_attempted=True
         save(state='EDIT_SUBMITTING')
         stage('pressing')
+        # The durable marker precedes the click; it records intent, not delivery.
+        # A stop arriving during receipt/audit writes must still prevent the click.
+        stop_check(platform)
         await button.click(timeout=20000)
         stage('reading back')
     if platform=='instagram':

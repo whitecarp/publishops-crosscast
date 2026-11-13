@@ -183,12 +183,13 @@ def browser_call(platform, action, account, **kwargs):
     stop_check(platform)
     from . import audit_journal
     payload = {"platform": platform, "action": action, "account": account, **kwargs, "audit_run": audit_journal.RUN}
-    try:
-        with progress.relay(platform, payload), audit_journal.call(platform, 'browser', action, kwargs.get('operation')):
+    with progress.relay(platform, payload), audit_journal.call(platform, 'browser', action, kwargs.get('operation')):
+        try:
             return browser_answer(platform, action, account, payload)
-    except VpubError as exc:
-        safety.pushed_back(platform, exc.code)
-        raise
+        except VpubError as exc:
+            # Persist the platform stop before the audit context's exit can wait.
+            safety.pushed_back(platform, exc.code)
+            raise
 
 
 def browser_answer(platform, action, account, payload):

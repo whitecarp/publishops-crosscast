@@ -92,18 +92,42 @@ def digest(line):
     return sha256(line).hexdigest()
 
 
-def record_ref(directory, key):
-    if not isinstance(key, str) or not re.fullmatch("[a-f0-9]{64}", key):
-        return None
-    path = directory / "salt"
+def read_head(directory):
+    path = directory / 'head.json'
     if not path.exists():
-        with path.open("xb") as stream:
+        return [0, ZERO, 0]
+    try:
+        value = json.loads(path.read_bytes())
+    except (ValueError, OSError):
+        raise ValueError('invalid_head') from None
+    if (not isinstance(value, list) or len(value) != 3
+            or type(value[0]) is not int or value[0] < 0
+            or not isinstance(value[1], str) or not re.fullmatch(r'[a-f0-9]{64}', value[1])
+            or type(value[2]) is not int or value[2] < 0
+            or (value[0] == 0) != (value[1] == ZERO and value[2] == 0)):
+        raise ValueError('invalid_head')
+    return value
+
+
+def ensure_salt(directory):
+    path = directory / 'salt'
+    if not path.exists():
+        if (directory / 'journal.jsonl').exists() or (directory / 'head.json').exists():
+            raise ValueError('missing_salt_with_existing_history')
+        with path.open('xb') as stream:
             stream.write(os.urandom(32))
             stream.flush()
             os.fsync(stream.fileno())
     salt = path.read_bytes()
     if len(salt) != 32:
-        raise ValueError("invalid audit salt")
+        raise ValueError('invalid_audit_salt')
+    return salt
+
+
+def record_ref(directory, key):
+    if not isinstance(key, str) or not re.fullmatch("[a-f0-9]{64}", key):
+        return None
+    salt = ensure_salt(directory)
     return hmac.new(salt, key.encode("ascii"), "sha256").hexdigest()[:16]
 
 
@@ -123,7 +147,8 @@ def append(kind, build):
             phase = 'journal_read_failed'
             path = directory / "journal.jsonl"
             head_path = directory / "head.json"
-            head = json.loads(head_path.read_bytes()) if head_path.exists() else [0, ZERO, 0]
+            head = read_head(directory)
+            ensure_salt(directory)
             size = path.stat().st_size if path.exists() else 0
             if size != head[2]:
                 # A process may have died after fsync and before replacing the head.
@@ -177,27 +202,30 @@ def append(kind, build):
 
 
 def verify_chain(directory):
-    """Verify exact bytes including LF and compare the separately retained tail."""
+    """Verify exact bytes and the retained head, including an erased journal."""
     head, count, size = ZERO, 0, 0
     open_runs = set()
     try:
-        with (directory / "journal.jsonl").open("rb") as stream:
-            for line in stream:
-                event = json.loads(line)
-                if not line.endswith(b"\n") or event["seq"] != count+1 or event["prev"] != head:
-                    return dict(ok=False, first_bad_seq=count+1)
-                if event["type"] == "command_start":
-                    open_runs.add(event["run"])
-                if event["type"] == "command_end":
-                    open_runs.discard(event["run"])
-                count += 1
-                size += len(line)
-                head = digest(line)
-        expected = json.loads((directory / "head.json").read_bytes())
+        expected = read_head(directory)
+        path = directory / 'journal.jsonl'
+        if path.exists():
+            with path.open('rb') as stream:
+                for line in stream:
+                    event = json.loads(line)
+                    if (not isinstance(event, dict) or not line.endswith(b'\n')
+                            or event.get('seq') != count+1 or event.get('prev') != head):
+                        return dict(ok=False, first_bad_seq=count+1, reason='invalid_journal')
+                    if event['type'] == 'command_start':
+                        open_runs.add(event['run'])
+                    if event['type'] == 'command_end':
+                        open_runs.discard(event['run'])
+                    count += 1
+                    size += len(line)
+                    head = digest(line)
         if expected != [count, head, size]:
-            return dict(ok=False, first_bad_seq=count if expected[0] == count else count+1)
-    except (ValueError, KeyError, OSError):
-        return dict(ok=False, first_bad_seq=count+1)
+            return dict(ok=False, first_bad_seq=count+1, reason='head_journal_mismatch')
+    except (ValueError, KeyError, TypeError, OSError):
+        return dict(ok=False, first_bad_seq=count+1, reason='invalid_head_or_journal')
     return dict(ok=True, records=count, head=head, not_ended=sorted(open_runs))
 
 

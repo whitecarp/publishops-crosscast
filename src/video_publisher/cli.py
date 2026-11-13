@@ -1560,10 +1560,15 @@ def main():
     try:
         args = parser().parse_args()
         from . import audit_journal
+        # Latch emergency stops before any best-effort audit lock wait.
+        stopping = args.command == 'stop' and not args.clear
+        if stopping:
+            value = execute(args)
         # Export is a read-only snapshot, including with respect to the journal.
         if not (args.command == 'audit' and args.action == 'export'):
             started = audit_journal.command_start(args)
-        value = execute(args)
+        if not stopping:
+            value = execute(args)
         ok = finished(value)
         print(one_line({"ok": ok, "data": value}))
         exit_code = 0 if ok else 4

@@ -80,7 +80,8 @@ def read_object(root,path):
 
 def events_from(root):
     file=safe_path(root,root/'audit/journal.jsonl')
-    if not file.exists(): return [],dict(ok=True,records=0,head=journal.ZERO,not_ended=[])
+    safe_path(root,root/'audit/head.json')
+    if not file.exists(): return [],journal.verify_chain(root/'audit')
     events=[]
     for line in file.read_bytes().splitlines():
         try:
@@ -301,15 +302,17 @@ def export_data(root=None,*,since=None,until=None,times='relative',exact_sizes=F
         with closing(sqlite3.connect(db.as_uri()+'?mode=ro',uri=True)) as con:
             con.row_factory=sqlite3.Row
             rows=[dict(r) for r in con.execute('SELECT key,platform,media_sha,state,data,updated_at FROM publications ORDER BY key')]
-    selected_refs={e.get('ref') for e in events}|{v.get('ref') for e in events for v in obj(e.get('platforms')).values()}
+    selected_refs={r for e in events for r in [e.get('ref'),
+        *(obj(v).get('ref') for v in obj(e.get('platforms')).values())] if isinstance(r,str) and r}
     for row in rows:
         if not hexval(row['key']) or row['platform'] not in PLATFORMS:
             raise VpubError('audit_export_invalid','A ledger record has an invalid local identifier.')
-        key=row['key'];data=obj(json.loads(row['data']));options=obj(data.get('options'));plan=obj(data.get('approved_plan'));receipt=obj(data.get('receipt'))
+        key=row['key']
+        if (start or stop) and (salt is None or ref(key) is None or ref(key) not in selected_refs): continue
+        data=obj(json.loads(row['data']));options=obj(data.get('options'));plan=obj(data.get('approved_plan'));receipt=obj(data.get('receipt'))
         ph=data.get('plan_hash')
         if hexval(ph) and row['platform'] in PLATFORMS:
             receipt={**receipt,**read_object(root,root/'browser-receipts'/(ph+'-'+row['platform']+'.json'))}
-        if (start or stop) and ref(key) not in selected_refs: continue
         rb=obj(receipt.get('readback'));size=integer(plan.get('video_bytes'))
         edits=[]
         for edit in data.get('edits',[]) if isinstance(data.get('edits'),list) else []:
@@ -347,7 +350,7 @@ def export_data(root=None,*,since=None,until=None,times='relative',exact_sizes=F
     return dict(schema='crosscast-audit/1',site=hmac.new(salt,b'crosscast-audit-site','sha256').hexdigest()[:8] if salt else None,
       window=dict(since=utc(start),until=utc(stop),days=sorted({e['day'] for e in events if e['day']}),origin=utc(origin) if times=='exact' else None),times=times,
       builds=builds,publications=publications,deletions=deletions,runs=runs,events=events,losses=list(losses_by_id.values()),counts=count_events(events),
-      integrity=dict(first_seq=events[0]['seq'] if events else None,last_seq=events[-1]['seq'] if events else None,head=chain.get('head'),chain_ok=chain['ok'],first_bad_seq=chain.get('first_bad_seq'),
+      integrity=dict(first_seq=events[0]['seq'] if events else None,last_seq=events[-1]['seq'] if events else None,head=chain.get('head'),chain_ok=chain['ok'],first_bad_seq=chain.get('first_bad_seq'),chain_error=chain.get('reason'),
         events_outside_a_command=sum(e['run'] is None for e in events),dropped_events=sum(loss_counts.values()),dropped_count_is_lower_bound=True,
         unplaced_dropped_events=sum(bool(item.get('time_unplaced')) for item in losses_by_id.values())+sum(legacy_losses.values()),
         unreadable_loss_records=unreadable_losses,loss_folder_unreadable=loss_folder_unreadable,
