@@ -33,8 +33,8 @@ def installed_from():
     """Where this copy came from, as pip recorded it, so a test build and a release with the same version can be told apart.
     A local folder is named only as one: doctor's output gets shared in feedback."""
     try:
-        from importlib import metadata
-        info = json.loads(metadata.distribution("publishops-crosscast").read_text("direct_url.json") or "null")
+        from .audit import direct_url
+        info = direct_url()
     except Exception:
         return None
     if not isinstance(info, dict):
@@ -111,6 +111,11 @@ def _publish_platform(plan, platform, snapshot_lock):
     """One attempt owns its connection, plan and checkpoint, even in a worker."""
     plan = deepcopy(plan)
     opts = plan["platforms"][platform]
+    from .faults import gate
+    point = gate(platform, opts)
+    plan.pop('_fault', None)
+    if point:
+        plan['_fault'] = point
     stopped = {"state": "NOT_STARTED", "code": "stopped"}
     try:
         stop_check(platform)
@@ -204,7 +209,7 @@ def _publish_platform(plan, platform, snapshot_lock):
                 if candidate.get("platform") in {None, platform}:
                     receipt = candidate
                     record["receipt"] = receipt
-            if never_sent(e) or (code in {"browser_busy", "stopped", "page_not_ready"} and not receipt):
+            if never_sent(e) or (code in {"browser_busy", "lock_marker_unreadable", "stopped", "page_not_ready"} and not receipt):
                 ledger.save(key, "IN_PROGRESS", record)
                 ledger.forget(key)
                 return {"state": "NOT_STARTED", "code": code, "message": e.message, "hint": e.hint}
@@ -237,6 +242,20 @@ def _stop_interrupted_publish():
         pass
 
 
+def _publish_span(plan, platform, snapshot_lock, slot=0):
+    from . import audit_journal as journal
+    import time
+    started = time.monotonic() - journal.STARTED
+    result = {}
+    try:
+        result = _publish_platform(plan, platform, snapshot_lock)
+        return result
+    finally:
+        ended = time.monotonic() - journal.STARTED
+        journal.append('span', lambda _: dict(platform=platform, slot=slot, t_start=round(started,6), t_end=round(ended,6),
+            state=journal.state(result.get('state')), code=journal.code(result.get('code'))))
+
+
 def _publish_browser_batch(plan, platforms, snapshot_lock):
     """Refill two slots within one browser-only segment, with no backlog or retry."""
     from concurrent.futures import FIRST_COMPLETED, CancelledError, ThreadPoolExecutor, wait
@@ -256,6 +275,7 @@ def _publish_browser_batch(plan, platforms, snapshot_lock):
         signal.signal(signal.SIGINT, defer_interrupt)
     pool = None
     futures = {}
+    slots = {}
     try:
         pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="vpub-publish")
         remaining, pending = iter(platforms), set()
@@ -275,7 +295,9 @@ def _publish_browser_batch(plan, platforms, snapshot_lock):
                     break
                 if interrupted is not None:
                     break
-                future = pool.submit(_publish_platform, plan, platform, snapshot_lock)
+                slot = min({0,1} - {slots[f] for f in pending})
+                future = pool.submit(_publish_span, plan, platform, snapshot_lock, slot)
+                slots[future] = slot
                 futures[platform] = future
                 pending.add(future)
             if not pending or interrupted is not None:
@@ -393,7 +415,9 @@ def publish_plan(plan, confirm, workers=1, *, reviewed=False):
     if confirm != plan["confirmation"]:
         raise VpubError("confirmation_required", "The confirmation hash must match the current plan.", "Run vpub plan MANIFEST and review the exact platforms, accounts and visibility.")
     from .publication_review import check
+    from .faults import gate
     for platform in plan["platforms"]:
+        gate(platform, plan['platforms'][platform])
         platform_check(platform)
         stop_check(platform)
     results = {}
@@ -411,7 +435,7 @@ def publish_plan(plan, confirm, workers=1, *, reviewed=False):
             if batch:
                 results.update(_publish_browser_batch(plan, batch, snapshot_lock))
                 batch = []
-            results[platform] = _publish_platform(plan, platform, snapshot_lock)
+            results[platform] = _publish_span(plan, platform, snapshot_lock)
         if batch:
             results.update(_publish_browser_batch(plan, batch, snapshot_lock))
     results = {p: results.get(p, {"state": "NOT_STARTED", "code": "stopped"}) for p in plan["platforms"]}
@@ -462,6 +486,7 @@ def skill_file():
 
 
 def doctor():
+    from .audit import code_stamp
     from .overview import chrome_path, stop_state
     from .preferences import read as preferences
     addon = adapters.addon_installed()
@@ -495,7 +520,7 @@ def doctor():
                        "fix": "python -m pip uninstall -y bili-agent, then install CrossCast again in this environment."})
     if stop["active"]:
         issues.append({"code": "stopped", "message": stop["message"], "fix": stop["hint"]})
-    return {"version": __version__, "installed_from": installed_from(), "python": sys.version.split()[0], "dependencies": modules,
+    return {"version": __version__, "installed_from": installed_from(), "source_digest": code_stamp()["source_digest"], "python": sys.version.split()[0], "dependencies": modules,
             "bili_cli_version": included_bili_version(), "google_chrome": chrome, "paid_api_addon": addon, "ready": not issues, "issues": issues,
             "next": issues[0]["fix"] if issues else "Use the saved preferences below; ask only for unknown choices. Sign in only to selected platforms: vpub onboard --platforms PLATFORMS. Then prepare: vpub prepare VIDEO --platforms PLATFORMS --language LANGUAGE --visibility VISIBILITY --ai-generated AI_STATUS. Replace placeholders with the user's choices: VISIBILITY is public or private; AI_STATUS is yes or no. Omit --platforms only when platforms are saved.",
             "preferences": choices,
@@ -536,7 +561,7 @@ HELP_GROUPS = (
     ("Start here", ("doctor", "onboard", "auth", "setup")),
     ("Publish a video", ("prepare", "go", "init", "metadata", "covers", "plan", "publish", "status", "verify", "resume", "dismiss", "receipts")),
     ("After posting", ("works", "stats", "edit", "edit-work", "delete", "comments", "messages", "engage", "dm", "collection", "playlist", "widgets", "ops", "adopt")),
-    ("Safety and housekeeping", ("safety", "stop", "cleanup", "preferences", "capabilities")),
+    ("Safety and housekeeping", ("safety", "stop", "cleanup", "preferences", "capabilities", "audit")),
     ("Special cases", ("instagram", "browser")),
     ("Paid add-on, not on sale yet", ("report", "read-all", "notify")),
 )
@@ -555,6 +580,10 @@ def parser():
     p = argparse.ArgumentParser(prog="vpub", usage="vpub [--version] COMMAND ...", description="Publish a video to Bilibili, YouTube, Douyin, Instagram and X, and look after it afterwards.")
     p.add_argument("--version", action="version", version=__version__)
     sub = p.add_subparsers(dest="command", required=True, metavar="COMMAND")
+    a = sub.add_parser('audit', help='Export redacted local evidence or record a person observation; no platform access.').add_subparsers(dest='action', required=True)
+    q = a.add_parser('export'); q.add_argument('--out', required=True); q.add_argument('--since'); q.add_argument('--until')
+    q.add_argument('--times', choices=['relative','exact'], default='relative'); q.add_argument('--exact-sizes', action='store_true')
+    q = a.add_parser('observe'); q.add_argument('key'); q.add_argument('--seen', required=True, choices=['once','absent','draft','duplicate','unclear'])
     p.format_help = lambda: grouped_help(p, sub._choices_actions)
     sub.add_parser("doctor", help="Check this computer is ready; no sign-in or upload.")
     sub.add_parser("capabilities", help="Short capability overview; --full for route details and test limits.").add_argument(
@@ -921,6 +950,10 @@ def execute(args):
 
 
 def run_command(args):
+    if args.command == 'audit':
+        from .audit_export import export_file, observe
+        if args.action == 'observe': return observe(args.key, args.seen)
+        return export_file(args.out, since=args.since, until=args.until, times=args.times, exact_sizes=args.exact_sizes)
     if args.command == 'delete':
         from .work_delete import run
         return run(args.key, dry_run=args.dry_run, confirm=args.confirm,
@@ -1049,6 +1082,8 @@ def run_command(args):
                 if not row:
                     raise VpubError('invalid_resume', 'Use an existing upload receipt key.')
                 record = row['data']
+                from .faults import gate
+                point = gate(row['platform'], record.get('options', {}))
                 if (args.no_cover or args.cover) and record.get('options', {}).get('method') != 'browser':
                     raise VpubError('invalid_resume', '--no-cover and --cover are only for an attempt on a browser route.')
                 if row['platform'] == 'youtube' and record.get('options', {}).get('method') == 'api':
@@ -1086,6 +1121,9 @@ def run_command(args):
                 if record.get('options', {}).get('method') != 'browser':
                     raise VpubError('invalid_resume', 'This backend has no automatic resumable session.')
                 plan, opts = record.get('upload_plan', record['approved_plan']), record['options']
+                # The current command's gate is authoritative; an old upload
+                # plan must never re-arm a switch that has since been disabled.
+                plan = {**plan, '_fault': point}
                 check_upload_copy(plan)
                 if args.no_cover:
                     plan = without_cover(plan, row['platform'])
@@ -1330,8 +1368,12 @@ def keep_verified(ledger, old, read, result, seen=None):
     plan_hash = old['data'].get('plan_hash') or old['data'].get('approved_plan', {}).get('confirmation')
     durable = home() / 'browser-receipts' / (plan_hash+'-'+old['platform']+'.json') if result.get('method') == 'browser' and plan_hash else None
     with receipt_turn(durable) if durable else contextlib.nullcontext():
-        if durable and durable.exists():
-            result = verified_over(read, result, read_json(durable))
+        if durable:
+            from .audit import stamped
+            saved = read_json(durable) if durable.exists() else None
+            if saved is not None:
+                result = verified_over(read, result, saved)
+            result = stamped(result, saved)
         if result.get("state") == "PREPARATION_INCOMPLETE" and result.get("final_submit_attempted"):
             # The worker's own copy says it pressed after all, so this can't stand as an attempt that pressed nothing.
             result = {**result, "state": "SUBMITTED_UNVERIFIED", "note": "No durable work ID; inspect the original work, never reupload automatically."}
@@ -1511,25 +1553,43 @@ def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     args = None
+    started = None
+    error = None
+    value = None
+    exit_code = 3
     try:
         args = parser().parse_args()
-        value = execute(args)
+        from . import audit_journal
+        # Latch emergency stops before any best-effort audit lock wait.
+        stopping = args.command == 'stop' and not args.clear
+        if stopping:
+            value = execute(args)
+        # Export is a read-only snapshot, including with respect to the journal.
+        if not (args.command == 'audit' and args.action == 'export'):
+            started = audit_journal.command_start(args)
+        if not stopping:
+            value = execute(args)
         ok = finished(value)
         print(one_line({"ok": ok, "data": value}))
-        raise SystemExit(0 if ok else 4)
+        exit_code = 0 if ok else 4
+        raise SystemExit(exit_code)
     except VpubError as e:
+        exit_code, error = 2, e.code
         print(one_line({"ok": False, "error": {"code": e.code, "message": e.message, "hint": e.hint}}))
         raise SystemExit(2)
     except FileNotFoundError as e:
+        exit_code, error = 2, 'file_not_found'
         print(json.dumps({"ok": False, "error": {"code": "file_not_found", "message": f"File not found: {e.filename}",
                                                  "hint": "Check the path and run the command again."}}, ensure_ascii=False))
         raise SystemExit(2)
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        exit_code, error = 2, 'invalid_file'
         where = f" at line {e.lineno}, column {e.colno}" if isinstance(e, json.JSONDecodeError) else ""
         print(json.dumps({"ok": False, "error": {"code": "invalid_file", "message": f"A file could not be read as UTF-8 JSON or text{where}.",
                                                  "hint": "Fix the file and run the command again."}}))
         raise SystemExit(2)
     except KeyboardInterrupt:
+        error = 'interrupted'
         deleting = getattr(args, 'command', None) == 'delete'
         hint = ("Deletion may already have reached the platform. Inspect the exact post and its deletion receipt. Never repeat Delete."
                 if deleting else "Inspect the existing receipts before continuing; an interrupted upload may already have been submitted. Do not upload it again.")
@@ -1541,8 +1601,12 @@ def main():
         print(json.dumps({"ok": False, "error": {"code": "interrupted", "message": "Publication or command interrupted.", "hint": hint}}))
         raise SystemExit(3)
     except Exception as e:
+        error = 'internal_error'
         # OAuth exceptions may embed tokens/URLs: never serialize their bodies.
         print(json.dumps({"ok": False, "error": {"code": "internal_error",
                                                  "message": type(e).__name__,
                                                  "hint": "Check setup/receipts. An interrupted upload must not be blindly retried."}}))
         raise SystemExit(3)
+    finally:
+        if started is not None:
+            audit_journal.command_end(args, started, exit_code, error, value)

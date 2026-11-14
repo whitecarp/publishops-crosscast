@@ -17,7 +17,7 @@ import tempfile
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from video_publisher import browser_backends, browser_edits, browser_forms, browser_runtime, cli, edits, progress, video_shape
 from video_publisher.core import DOUYIN_NAME_LAST, VpubError, atomic_json, douyin_caption, douyin_caption_units, home, load_plan
@@ -778,7 +778,7 @@ class ScheduledCardTests(Base):
 
 COVER_FORM = """<div class="coverControl-a"><span>竖封面3:4</span><div class="cover-b" style="width:10px;height:10px" onclick="document.getElementById('d').hidden = false"><img hidden></div></div>
   <div role="dialog" id="d" hidden><p>上传封面</p><div class="semi-upload">点击上传文件或拖拽文件到这里<input type="file" class="semi-upload-hidden-input"></div>
-  <button onclick="if (%s) document.getElementById('d').hidden = true">完成</button></div>"""
+  <button onclick="if (%s) { document.getElementById('d').hidden = true; const img = document.querySelector('.cover-b img'); img.hidden = false; img.style.cssText = 'display:block;width:100%%;height:100%%'; }">完成</button></div>"""
 
 
 class CoverOnANewPostTests(Base):
@@ -803,6 +803,112 @@ class CoverOnANewPostTests(Base):
         await self.post()
         self.assertEqual("UI_ACCEPTED", self.tx.receipt["portrait_cover"]["state"])
         self.assertEqual(["publish"], [write["word"] for write in self.writes])
+
+    async def saved_preview_post(self, preview, before=""):
+        # Do not leave the original world's handler able to reveal the old
+        # picture as well as the scenario's replacement handler.
+        html = form() + COVER_FORM % "false"
+        await self.open(html)
+        if before:
+            await self.page.evaluate(before)
+        await self.page.locator('#d button').evaluate("(button, script) => button.setAttribute('onclick', script)",
+            "document.getElementById('d').hidden = true; " + preview)
+        with patch.object(browser_forms, "finish", new=AsyncMock(return_value={"state": "SUBMITTED_UNVERIFIED"})):
+            return await browser_forms.finish_douyin_form(self.page, self.tx, {})
+
+    async def test_saved_cover_preview_can_arrive_after_dialog_closes(self):
+        await self.saved_preview_post("document.querySelector('.cover-b').replaceChildren(); "
+                                      "setTimeout(() => { const img = document.createElement('img'); "
+                                      "img.style.cssText = 'display:block;width:100%;height:100%'; "
+                                      "document.querySelector('.cover-b').append(img); }, 1600)")
+        self.assertEqual("UI_ACCEPTED", self.tx.receipt["portrait_cover"]["state"])
+        self.assertEqual(["publish"], [write["word"] for write in self.writes])
+
+    async def test_saved_cover_can_be_a_background_image(self):
+        await self.saved_preview_post("const slot = document.querySelector('.cover-b'); slot.replaceChildren(); "
+                                      "slot.style.backgroundImage = 'url(data:image/gif;base64,R0lGODlhAQABAIAAAAUEBA==)'")
+        self.assertEqual("UI_ACCEPTED", self.tx.receipt["portrait_cover"]["state"])
+        self.assertEqual(["publish"], [write["word"] for write in self.writes])
+
+    async def test_missing_saved_preview_stops_before_publish(self):
+        with patch.object(browser_forms, "DOUYIN_PREVIEW_SECONDS", 1), self.assertRaises(VpubError) as caught:
+            await self.saved_preview_post("document.querySelector('.cover-b').replaceChildren()")
+        self.assertEqual("cover_unverified", caught.exception.code)
+        self.assertEqual([], self.writes)
+
+    async def test_an_unchanged_existing_preview_does_not_prove_a_save(self):
+        before = "const img = document.querySelector('.cover-b img'); img.hidden = false; img.style.cssText = 'display:block;width:100%;height:100%';"
+        with patch.object(browser_forms, "DOUYIN_PREVIEW_SECONDS", 1), self.assertRaises(VpubError) as caught:
+            await self.saved_preview_post("", before)
+        self.assertEqual('cover_unverified', caught.exception.code)
+        self.assertEqual([], self.writes)
+        self.assertNotEqual('UI_ACCEPTED', self.tx.receipt.get('portrait_cover', {}).get('state'))
+        facts = self.tx.receipt['cover_preview_check']
+        self.assertEqual({'img': 1}, facts['slot_tags'])
+        self.assertEqual(1, facts['max_share'])
+        self.assertTrue(facts['readable'])
+        self.assertNotIn('src', json.dumps(facts))
+
+    async def test_unreadable_saved_preview_has_a_fixed_stop_and_no_private_exception(self):
+        from patchright.async_api import Error as BrowserError
+        slot = MagicMock()
+        slot.evaluate = AsyncMock(side_effect=BrowserError('PRIVATE browser address'))
+        with self.assertRaises(VpubError) as caught:
+            with patch.object(browser_forms, 'wait_until', side_effect=BrowserError('PRIVATE browser address')):
+                await browser_forms.douyin_wait_saved_preview(self.page, slot, [], self.tx, 'portrait')
+        self.assertEqual('cover_unverified', caught.exception.code)
+        self.assertEqual({'role': 'portrait', 'readable': False}, self.tx.receipt['cover_preview_check'])
+        self.assertNotIn('PRIVATE', caught.exception.message)
+        self.assertEqual(browser_forms.DOUYIN_COVER_AGAIN, caught.exception.hint)
+
+    async def test_only_the_other_slots_preview_changing_does_not_prove_this_save(self):
+        before = "const other = document.createElement('div'); other.id = 'other-cover'; other.style.cssText = 'width:40px;height:30px'; document.body.append(other);"
+        with patch.object(browser_forms, "DOUYIN_PREVIEW_SECONDS", 1), self.assertRaises(VpubError) as caught:
+            await self.saved_preview_post("document.querySelector('#other-cover').style.backgroundImage='url(offline-other.png)'", before)
+        self.assertEqual('cover_unverified', caught.exception.code)
+        self.assertEqual([], self.writes)
+
+    async def test_a_changed_existing_background_is_accepted(self):
+        before = "const slot = document.querySelector('.cover-b'); slot.replaceChildren(); slot.style.backgroundImage='url(offline-before.png)';"
+        await self.saved_preview_post("document.querySelector('.cover-b').style.backgroundImage='url(offline-after.png)'", before)
+        cover = self.tx.receipt['portrait_cover']
+        self.assertEqual('UI_ACCEPTED', cover['state'])
+        self.assertTrue(cover['preview_present_before'])
+        self.assertTrue(cover['preview_changed'])
+        self.assertFalse(cover['remote_pixels_verified'])
+        self.assertEqual(['publish'], [write['word'] for write in self.writes])
+
+    async def test_a_loading_preview_that_disappears_is_not_a_saved_cover(self):
+        before = "const slot = document.querySelector('.cover-b'); slot.replaceChildren(); slot.style.backgroundImage='url(offline-before.png)';"
+        with patch.object(browser_forms, 'DOUYIN_PREVIEW_SECONDS', 2), self.assertRaises(VpubError) as caught:
+            await self.saved_preview_post("const slot=document.querySelector('.cover-b'); slot.style.backgroundImage='url(loading.png)'; setTimeout(()=>slot.style.backgroundImage='url(offline-before.png)',400)", before)
+        self.assertEqual('cover_unverified', caught.exception.code)
+        self.assertEqual([], self.writes)
+
+    async def test_hover_picture_alone_cannot_confirm_a_cover_save(self):
+        before = "document.querySelector('.cover-b').replaceChildren(); const s=document.createElement('style'); s.textContent='.cover-b{background-image:url(old.png)} .cover-b:hover{background-image:url(hover.png)}'; document.head.append(s);"
+        with patch.object(browser_forms, 'DOUYIN_PREVIEW_SECONDS', 1), self.assertRaises(VpubError) as caught:
+            await self.saved_preview_post("", before)
+        self.assertEqual('cover_unverified', caught.exception.code)
+        self.assertEqual([], self.writes)
+
+    async def test_unsettled_pointer_stops_before_cover_snapshot(self):
+        with patch.object(browser_forms, 'douyin_pointer_away', new=AsyncMock(return_value=False)), self.assertRaises(VpubError) as caught:
+            await self.post()
+        self.assertEqual('cover_unverified', caught.exception.code)
+        self.assertEqual([], self.writes)
+
+    async def test_unsettled_pointer_cannot_confirm_either_post_save_look(self):
+        slot = MagicMock()
+        facts = {'readable': True}
+        slot.evaluate = AsyncMock(side_effect=lambda script, **kwargs: facts if script == browser_forms.DOUYIN_PREVIEW_FACTS else ['changed'])
+        for moves in ([False], [True, False]):
+            async def one_look(page, check, **kwargs):
+                self.assertFalse(await check())
+                raise VpubError('processing_timeout', 'offline timeout')
+            with patch.object(browser_forms, 'douyin_pointer_away', new=AsyncMock(side_effect=moves)), patch.object(browser_forms, 'wait_until', new=one_look), self.assertRaises(VpubError) as caught:
+                await browser_forms.douyin_wait_saved_preview(self.page, slot, ['old'], self.tx, 'portrait')
+            self.assertEqual('cover_unverified', caught.exception.code)
 
     async def test_its_window_gets_as_long_as_an_edits_and_then_nothing_goes_out(self):
         """From a field run's first real post: a 30-second wait after 完成 ended it, with the video uploaded and nothing pressed."""
@@ -929,8 +1035,9 @@ class CoverOnANewPostTests(Base):
 BOTH_COVERS = """<div class="coverControl-a" style="position:relative"><span>横封面4:3</span><div class="cover-b" style="width:40px;height:30px" onclick="pick('wide')"><img hidden></div>%s</div>
   <div class="coverControl-a" style="position:relative"><span>竖封面3:4</span><div class="cover-b" style="width:30px;height:40px" onclick="pick('tall')"><img hidden></div>%s</div>
   <div role="dialog" id="d" hidden><p>上传封面</p><div class="semi-upload">点击上传文件或拖拽文件到这里<input type="file" class="semi-upload-hidden-input"></div>
-  <button onclick="document.getElementById('d').hidden = true">完成</button></div>
+  <button onclick="document.getElementById('d').hidden = true; const img = window.activeCover.querySelector('img'); img.hidden = false; img.style.cssText = 'display:block;width:100%%;height:100%%';">完成</button></div>
   <script>function pressed(slot) { fetch('/write', {method: 'POST', body: JSON.stringify({word: 'cover', slot})}); }
+  for (const kind of ['pointerdown','click']) document.addEventListener(kind, e => { const box = e.target.closest('.coverControl-a'); if(box) window.activeCover = box.querySelector('.cover-b'); }, true);
   function pick(slot) { pressed(slot); document.getElementById('d').hidden = false; }</script>"""
 # Something laid over a slot, which takes its press, as something did over a field run's 横封面4:3 slot.
 OVER_IT = """<div style="position:absolute;inset:0" onclick="pressed('over')"></div>"""
@@ -1440,7 +1547,8 @@ class BothCoversTests(Base):
         looked.assert_not_called()
         self.assertEqual(["wide", "tall"], self.pressed())
         for role in ("landscape", "portrait"):
-            self.assertEqual({"state": "UI_ACCEPTED", "remote_pixels_verified": False}, self.tx.receipt[role + "_cover"])
+            self.assertEqual({"state": "UI_ACCEPTED", "remote_pixels_verified": False,
+                              "preview_present_before": False, "preview_changed": True}, self.tx.receipt[role + "_cover"])
         held = [write["held_ms"] for write in self.writes if write["word"] == "pointer" and write["slot"]]
         self.assertEqual(4, len(held))  # A trial press and a press on each slot.
         for milliseconds in held:
@@ -1862,12 +1970,20 @@ class BothCoversTests(Base):
         seen there, and the stop told that as the last thing seen over the centre. The record keeps it, and flags the open centre. From a
         review of a490e80, it says why: a trial press refused, or one that passed after the slot had moved."""
         self.portrait_only()
+        original_look = browser_forms.douyin_look_on
+        async def reveal_after_observed_cover(*args, **kwargs):
+            seen, parts, press = await original_look(*args, **kwargs)
+            if seen.get('over_it') and not seen.get('open'):
+                await self.page.evaluate("document.querySelector('.toast-q9')?.remove()")
+            return seen, parts, press
         for why, says in (("refused", "its centre was open at the last look, yet it took no trial press"),
                           ("moved", "its centre was open at the last look and took its trial press, but the slot had moved since the pointer was put there")):
             with self.subTest(why=why):
                 self.tx.receipt, self.writes[:] = {}, []
-                with patch.object(browser_forms, "douyin_slot_trial", new=AsyncMock(return_value=why)), patch.object(browser_forms, "DOUYIN_COVERED_SECONDS", 5):
-                    said = await self.stopped(extra=laid_over(goes=2000))
+                with patch.object(browser_forms, "douyin_slot_trial", new=AsyncMock(return_value=why)), \
+                     patch.object(browser_forms, "douyin_look_on", new=reveal_after_observed_cover), \
+                     patch.object(browser_forms, "DOUYIN_COVERED_SECONDS", 5):
+                    said = await self.stopped(extra=laid_over())
                 self.assertEqual([], self.pressed())
                 self.assertIn(f", {says}. So nothing was pressed through.", said)
                 self.assertNotIn("the last thing seen", said)

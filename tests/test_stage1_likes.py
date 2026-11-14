@@ -1,4 +1,5 @@
 """Likes, saves and comment likes on the platforms the other tests only read: Instagram and Douyin in an invisible browser against small page copies, Bilibili through a fake bili-cli. Nothing is contacted."""
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -103,10 +104,13 @@ class InstagramCommentLikeTests(Pages):
     def prepare(self):
         super().prepare()
         self.liked = False
+        self.write_delivery = None
         atomic_json(self.receipt, {"state": "COMMENT_READY"})
 
     async def handle(self, route):
         if route.request.method == "POST":
+            if self.write_delivery is not None:
+                await self.write_delivery.wait()
             self.note(route)
             self.liked = not self.liked
             return await self.json_at(route, {})
@@ -127,9 +131,26 @@ class InstagramCommentLikeTests(Pages):
         self.assertEqual([], self.pressed)
 
     async def test_a_like_marks_the_receipt_then_presses_this_comments_heart_once(self):
-        result = await self.run_it()
+        from patchright.async_api import Locator
+        click, at_press = Locator.click, []
+
+        async def observe(control, **kwargs):
+            if not kwargs.get("trial"):
+                at_press.append(read_json(self.receipt)["state"])
+            return await click(control, **kwargs)
+
+        # A routed request can arrive after click() returns and the receipt
+        # advances. Observe the actual press boundary, then deliberately delay
+        # request delivery to prove the assertion does not depend on its timing.
+        self.write_delivery = asyncio.Event()
+        async with self.page.expect_response(lambda r: r.request.method == "POST") as response:
+            with patch.object(Locator, "click", observe):
+                result = await self.run_it()
+            self.write_delivery.set()
+        await response.value
         self.assertEqual(("COMMENT_UNVERIFIED", 1), (result["state"], result["platform_writes"]))
-        self.assertEqual([("comment", "COMMENT_SUBMITTING")], self.pressed)
+        self.assertEqual(["COMMENT_SUBMITTING"], at_press)
+        self.assertEqual([("comment", "COMMENT_UNVERIFIED")], self.pressed)
 
     async def test_words_that_changed_stop_it(self):
         await self.refused("comment_changed", lambda: self.run_it(text="Other words"))

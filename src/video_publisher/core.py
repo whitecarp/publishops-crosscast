@@ -670,38 +670,64 @@ class Ledger:
         return [{**dict(r), "data": json.loads(r["data"])}
                 for r in self.db.execute(f"SELECT * FROM publications {where} ORDER BY updated_at DESC", values)]
 
+    def _journal(self, key, row=None, operation=None):
+        # The committed store is authoritative; instrumentation never vetoes it.
+        try:
+            from .audit_journal import transition
+            row = row or self.get(key)
+            if row:
+                transition('ledger', key, row['platform'], {**row['data'], 'state': row['state']}, operation=operation)
+        except Exception:
+            pass
+
     def claim(self, platform, account, sha, data):
+        from .audit import stamped
         key = self.key(platform, account, sha)
         try:
             self.db.execute("INSERT INTO publications VALUES (?,?,?,?,?,?,?)",
-                            (key, platform, account, sha, "IN_PROGRESS", json.dumps(data), now()))
+                            (key, platform, account, sha, "IN_PROGRESS", json.dumps(stamped(data, None)), now()))
             self.db.commit()
+            self._journal(key, operation='claim')
             return key
         except sqlite3.IntegrityError:
             self.db.rollback()
             return None
 
+    def _serialized_update(self, key, data):
+        from .audit import stamped
+        previous = self.get(key)
+        return json.dumps(stamped(data, previous["data"] if previous else {}), ensure_ascii=False)
+
     def save(self, key, state, data):
         self.db.execute("UPDATE publications SET state=?,data=?,updated_at=? WHERE key=?",
-                        (state, json.dumps(data, ensure_ascii=False), now(), key))
+                        (state, self._serialized_update(key, data), now(), key))
         self.db.commit()
+        self._journal(key, operation='save')
 
     def save_unless_changed(self, key, state, data, seen):
         """Saves only if the record is still as it was when read, and says whether it did."""
         saved = self.db.execute("UPDATE publications SET state=?,data=?,updated_at=? WHERE key=? AND updated_at=?",
-                                (state, json.dumps(data, ensure_ascii=False), now(), key, seen))
+                                (state, self._serialized_update(key, data), now(), key, seen))
         self.db.commit()
+        if saved.rowcount == 1:
+            self._journal(key, operation='save')
         return saved.rowcount == 1
 
     def forget_preview(self, key):
         """Release a record that only reached a draft or preview."""
-        self.db.execute("DELETE FROM publications WHERE key=? AND state IN ('DRAFT_SAVED','PREVIEW_READY')", (key,))
+        previous = self.get(key)
+        saved = self.db.execute("DELETE FROM publications WHERE key=? AND state IN ('DRAFT_SAVED','PREVIEW_READY')", (key,))
         self.db.commit()
+        if saved.rowcount:
+            self._journal(key, previous, 'forget')
 
     def forget(self, key):
         """Release a claim only when nothing can have reached the platform."""
-        self.db.execute("DELETE FROM publications WHERE key=? AND state='IN_PROGRESS'", (key,))
+        previous = self.get(key)
+        saved = self.db.execute("DELETE FROM publications WHERE key=? AND state='IN_PROGRESS'", (key,))
         self.db.commit()
+        if saved.rowcount:
+            self._journal(key, previous, 'forget')
 
     def close(self):
         self.db.close()

@@ -119,6 +119,13 @@ class PublishRefillTests(unittest.TestCase):
         self.assertEqual(list(answer["results"]), list(plan["platforms"]))
         self.assertEqual(self.started[2:], ["youtube", "douyin"])
         self.assertEqual(set(self.rows()), set(plan["platforms"]))
+        from video_publisher.audit_export import export_data
+        spans={e['platform']:e for e in export_data()['events'] if e['type']=='span'}
+        fast=[spans[p] for p in ('instagram','youtube','douyin')]
+        self.assertEqual(len({s['slot'] for s in fast}),1)
+        self.assertNotEqual(fast[0]['slot'],spans['x']['slot'])
+        for a,b in zip(fast,fast[1:]):
+            self.assertGreaterEqual(b['t_start'],a['t_end']);self.assertLess(b['t_start']-a['t_end'],1.0)
 
     def test_refilled_segment_drains_before_bilibili_api_native_or_host_barrier(self):
         for barrier, method in (("bilibili", "cli"), ("youtube", "api"),
@@ -156,6 +163,11 @@ class PublishRefillTests(unittest.TestCase):
                 self.behavior = publish
                 self.assertTrue(self.run_plan(plan)["all_submissions_verified"])
                 self.assertEqual(self.started[-2:], [barrier, after])
+                from video_publisher.audit_export import export_data
+                spans={e['platform']:e for e in export_data()['events'] if e['type']=='span'}
+                self.assertEqual(spans[barrier]['slot'],0)
+                self.assertGreaterEqual(spans[barrier]['t_start'],max(spans[p]['t_end'] for p in ('x','instagram','douyin')))
+                self.assertGreaterEqual(spans[after]['t_start'],spans[barrier]['t_end'])
 
     def test_unknown_worker_failure_refills_slot_without_retrying_original_attempt(self):
         slow, last_started = threading.Event(), threading.Event()
@@ -307,7 +319,7 @@ class PublishRefillTests(unittest.TestCase):
                         raise SystemExit(7)
                     return self.verified(platform)
 
-                def failing_submit(pool, fn, plan, platform, lock):
+                def failing_submit(pool, fn, plan, platform, lock, slot):
                     if platform == "youtube" and failure_type is RuntimeError:
                         raise RuntimeError("synthetic scheduling failure")
                     if platform == "youtube" and failure_type is CancelledError:
@@ -318,7 +330,7 @@ class PublishRefillTests(unittest.TestCase):
                             future.cancel()
                             future.set_running_or_notify_cancel()
                         return future
-                    return submit(pool, fn, plan, platform, lock)
+                    return submit(pool, fn, plan, platform, lock, slot)
 
                 self.behavior = publish
                 with patch.object(cli, "_stop_interrupted_publish", stop_then_release), patch.object(ThreadPoolExecutor, "submit", failing_submit), self.assertRaises(failure_type):

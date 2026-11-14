@@ -104,6 +104,14 @@ class Page:
     async def goto(self, url, **kwargs):
         self.url = url
 
+    async def wait_for_timeout(self, ms):
+        pass
+
+    async def evaluate(self, script, *args):
+        # No hover state exists on this stand-in; the real STOP reader below
+        # still decides whether a selected cover may reach the file input.
+        return script == forms.DOUYIN_UNHOVERED
+
     def maybe_stop(self):
         if self.stop_late:
             atomic_json(home() / 'STOP.json', {'source': 'operator', 'reason': 'synthetic test'})

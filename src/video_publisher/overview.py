@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import json
 import os
 from pathlib import Path
 import shutil
@@ -55,15 +56,26 @@ def stop_state():
     return {"active": False}
 
 
-def workspace_busy():
+def workspace_lock_state():
     """Read the lock's owner without taking the lock, so looking never blocks a starting publish."""
     path = home() / "publisher.lock"
-    if not path.exists():
-        return False
-    owner = read_quietly(path)
+    try:
+        text = path.read_text(encoding='utf-8')
+    except FileNotFoundError:
+        return {'busy': False, 'error_code': None}
+    except (OSError, UnicodeError):
+        return {'busy': None, 'error_code': 'lock_marker_unreadable'}
+    try:
+        owner = json.loads(text)
+    except ValueError:
+        owner = None
     if released(owner):
-        return False
-    return alive(owner.get("pid") if isinstance(owner, dict) else owner)
+        return {'busy': False, 'error_code': None}
+    return {'busy': alive(owner.get("pid") if isinstance(owner, dict) else owner), 'error_code': None}
+
+
+def workspace_busy():
+    return workspace_lock_state()['busy']
 
 
 def native_step(key, state, receipt):
@@ -81,6 +93,8 @@ def native_step(key, state, receipt):
 
 def next_step(row, busy):
     """The one command that moves this attempt forward, or None when only a person can."""
+    if busy is None:
+        return None, 'The command lock marker cannot be read. Ask the owner to diagnose it; keep it in place.'
     key, platform, state = row["key"], row["platform"], row["state"]
     receipt = row["data"].get("receipt") or {}
     method = (row["data"].get("options") or {}).get("method")
@@ -367,7 +381,8 @@ def status(limit=20):
     from .messages import listing as messages
     from .operations_runs import listing as sync_runs
     rows = read_rows()
-    busy = workspace_busy()
+    lock = workspace_lock_state()
+    busy = lock['busy']
     drafts = [row for row in rows if row["state"] in DRAFTS]
     attention = [row for row in rows if (row["state"] not in FINISHED | DRAFTS or part_left_undone(row["data"].get("receipt") or {}))
                  and not row["data"].get("dismissed")]
@@ -381,6 +396,7 @@ def status(limit=20):
     actions.extend({**row, 'kind': 'work_deletion', 'work_id': row['id']}
                    for row in deletions if not row['deleted'])
     return {"summary": summary(stop, len(attention), reclaimable, len(actions)), "stop": stop, "workspace_busy": busy,
+            "workspace_lock_error": lock['error_code'],
             "paid_api_addon": adapters.addon_installed(),
             "platforms": {p: {"default_method": adapters.default_method(p), "sign_in": sign_in(p)} for p in PLATFORMS},
             "publications": {"total": len(rows), "by_state": dict(Counter(row["state"] for row in rows)),

@@ -143,6 +143,29 @@ class InstagramCaptionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class EditFreshnessTests(unittest.TestCase):
+    def test_edit_file_and_ledger_history_keep_creator_on_readback(self):
+        from video_publisher.core import read_json
+        value = {"expected_identity": "owner", "title": "Title", "description": "English text",
+                 "content_language": "en", "metadata_language": "en", "metadata_mode": "target_only"}
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, VPUB_HOME=tmp, BILI_CLI_HOME=tmp+"/bili"):
+            patch_path = Path(tmp) / "patch.json"
+            atomic_json(patch_path, value)
+            ledger = MagicMock()
+            row = {"platform": "instagram", "account": "default", "state": "SUBMISSION_VERIFIED",
+                   "data": {"identity": {"identity": "owner"}, "receipt": {"id": "Reel123"}, "options": {}}}
+            ledger.get.return_value = row
+            first, second = ({"source_digest": c * 64} for c in "ab")
+            with patch.object(edits, "Ledger", return_value=ledger), patch.object(adapters, "browser_call",
+                    return_value={"state": "EDIT_VERIFIED", "id": "Reel123", "platform_writes": 0}):
+                for verify, stamp in [(False, first), (True, second)]:
+                    with patch("video_publisher.audit.code_stamp", return_value=stamp):
+                        edits.run("work-key", patch_path, verify_only=verify)
+                    entry = row["data"]["edits"][-1]
+                    saved = read_json(Path(tmp) / "edits" / (entry["edit_id"] + ".json"))
+                    for record in (saved, entry):
+                        self.assertEqual(first, record["code"])
+                        self.assertEqual(second if verify else None, record.get("code_last"))
+
     def test_old_verified_receipt_does_not_skip_current_platform_read(self):
         value={'expected_identity':'owner','title':'Title','description':'中文原文\n\nEnglish',
                'content_language':'zh-Hans','metadata_language':'en','metadata_mode':'bilingual'}

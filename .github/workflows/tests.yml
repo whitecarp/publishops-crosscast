@@ -22,18 +22,38 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install package and build tools
+        shell: pwsh
         run: |
           python -m pip install --upgrade pip build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m pip install .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m pip check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run offline unit tests
         run: python -m unittest discover -s tests -v
       - name: Build wheel
         run: python -m build --wheel
       - name: Install built wheel and smoke-test CLI
+        shell: pwsh
         run: |
-          python -m pip install --force-reinstall --no-deps dist/*.whl
+          $wheels = @(Get-ChildItem -LiteralPath dist -Filter '*.whl' -File)
+          if ($wheels.Count -ne 1) { throw "Expected exactly one built wheel; found $($wheels.Count)" }
+          $expectedWheel = python -c "from video_publisher import __version__; print('publishops_crosscast-' + __version__ + '-py3-none-any.whl')"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($wheels[0].Name -cne $expectedWheel) { throw "Unexpected built wheel: $($wheels[0].Name)" }
+          $wheelPath = $wheels[0].FullName
+          $wheelHash = (Get-FileHash -LiteralPath $wheelPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Output "Installing built wheel: $($wheels[0].Name) sha256=$wheelHash"
+          python -m pip install --force-reinstall --no-deps $wheelPath
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -c "import importlib.metadata as m,json,sys,pathlib; d=json.loads(m.distribution('publishops-crosscast').read_text('direct_url.json')); assert d['url']==pathlib.Path(sys.argv[1]).as_uri(),d; assert d['archive_info']['hashes']['sha256']==sys.argv[2],d; print('BUILT_WHEEL_PROVENANCE_OK',sys.argv[2])" $wheelPath $wheelHash
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m video_publisher --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           vpub --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           bili --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -c "import bili_cli, pathlib; assert (pathlib.Path(bili_cli.__file__).parent / '_skills/bili-cli/SKILL.md').is_file()"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

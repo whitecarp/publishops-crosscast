@@ -446,3 +446,9 @@ vpub verify RECEIPT_KEY
 用 `vpub verify` 读回核对，或用 `vpub resume` 接着原来的任务，不要盲目重新上传。本地回执可以用 `vpub receipts` 查看，但它本身不代替平台证据。
 
 </details>
+
+## 导出本地审计记录
+
+使用 `vpub audit export --out public-audit.json` 导出脱敏的本地记录，不打开浏览器，也不访问平台。`--since ISO` / `--until ISO` 限定范围，`--times exact` 导出 UTC 时刻，`--exact-sizes` 保留精确大小；默认使用相对时间和取整大小。导出会报告断链和丢失事件，不会修复记录，也不代表真机验证通过。详见[格式与限制](AUDIT_SCHEMA.md)。
+
+本人查看平台后，可用 `vpub audit observe KEY --seen once` 记录观察；可选 once、absent、draft、duplicate、unclear。它不改变发布或删除回执。会话标签不要包含私人信息，分享前请检查导出文件。

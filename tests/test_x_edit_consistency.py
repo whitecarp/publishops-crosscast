@@ -274,7 +274,10 @@ class XReceiptTests(unittest.TestCase):
         self.assertEqual(final_text, data['receipt']['expected_text'])
         self.assertEqual(final_text, data['options']['post_text'])
         self.assertEqual(original, data['edits'][0]['previous_receipt'])
-        self.assertEqual({**original, 'title': 'Title', 'expected_text': final_text}, read_json(durable))
+        from video_publisher.audit import code_stamp
+        expected = {**original, 'title': 'Title', 'expected_text': final_text, 'code_last': code_stamp()}
+        self.assertEqual(expected, read_json(durable))
+        self.assertEqual(expected, data['receipt'])
 
 
 if __name__ == '__main__':

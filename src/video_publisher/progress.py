@@ -28,18 +28,30 @@ LOOK_SECONDS = 0.25
 STARTED = time.monotonic()
 _path = None
 _pressed = set()
+_context = threading.local()
 
 
 def attach(payload):
     """In the browser's process: this command's stages go to the file its payload names."""
     global _path
     _path = payload.get("stages_path")
+    import re
+    from . import audit_journal
+    run = payload.get("audit_run")
+    audit_journal.RUN = run if isinstance(run, str) and re.fullmatch("[a-f0-9]{32}", run) else None
+    _context.platform = payload.get("platform")
+    _context.action = payload.get("action")
 
 
-def stage(word, path=None):
+def stage(word, path=None, *, platform=None, action=None):
     """Add one fixed word for whoever is waiting. This only informs, so it can never fail a command."""
     path = path or _path
-    if not path or word not in STAGES:
+    if word not in STAGES:
+        return
+    from . import audit_journal as journal
+    journal.append('stage', lambda _: dict(platform=journal.known(platform or getattr(_context, 'platform', None), journal.PLATFORMS),
+                                         action=journal.known(action or getattr(_context, 'action', None), journal.ACTIONS), stage=word))
+    if not path:
         return
     try:
         # Do not recreate a file that explicit cleanup removed after its owner exited.
@@ -113,6 +125,8 @@ def copy_lines(platform, path, done):
 @contextlib.contextmanager
 def relay(platform, payload):
     """In the command's own process: give the payload a file and copy its words to stderr until the browser step ends. Whatever goes wrong here, the command still runs."""
+    previous = (getattr(_context, 'platform', None), getattr(_context, 'action', None))
+    _context.platform, _context.action = platform, payload.get('action')
     path, thread, done = None, None, threading.Event()
     try:
         path = home() / "browser-jobs" / (uuid.uuid4().hex + ".stages")
@@ -126,6 +140,7 @@ def relay(platform, payload):
     try:
         yield
     finally:
+        _context.platform, _context.action = previous
         done.set()
         if thread and thread.is_alive():
             thread.join(1)

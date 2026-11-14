@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
 from datetime import datetime, timezone
@@ -981,8 +982,65 @@ DOUYIN_SLOT_PARTS = r"""(slot, point) => {
       && b.left + 1 < c.x && c.x < b.right - 1 && b.top + 1 < c.y && c.y < b.bottom - 1; };
   const own = (e, under) => !!e && target.contains(e) && ((!!under && e.contains(under))
     || (!inControl(e) && share(e, r.left, r.top, r.right, r.bottom) >= 0.5 && picture(e)));
-  return {r, root, target, round, share, tokens, inControl, box, bare, reach, own};
+  return {r, root, target, round, share, tokens, inControl, box, bare, reach, own, picture};
 }"""
+DOUYIN_PREVIEW_SECONDS = 15
+DOUYIN_SAVED_PREVIEW = """slot => {
+  const {r, share, inControl, picture} = (""" + DOUYIN_SLOT_PARTS + ")(slot, " + DOUYIN_POINT + """ );
+  return [slot, ...slot.querySelectorAll('*')].filter(e => !inControl(e)
+    && share(e, r.left, r.top, r.right, r.bottom) >= 0.5 && picture(e)).map(e => {
+      let drawn = '';
+      if (e.tagName === 'CANVAS') { try { drawn = e.toDataURL(); } catch { drawn = 'unreadable'; } }
+      if (e.localName === 'svg') drawn = e.outerHTML;
+      return JSON.stringify([e.tagName, e.currentSrc || e.getAttribute('src') || '',
+        getComputedStyle(e).backgroundImage, drawn]);
+    }).sort();
+}"""
+
+
+DOUYIN_PREVIEW_FACTS = """slot => {
+  const {r, share, inControl} = (""" + DOUYIN_SLOT_PARTS + ")(slot, " + DOUYIN_POINT + """ );
+  const items = root => [root, ...root.querySelectorAll('*')].filter(e =>
+    e.matches('img, picture, canvas, svg, video') || /url\\(/.test(getComputedStyle(e).backgroundImage || ''));
+  const count = list => { const result = {}; for (const e of list) {
+    const tag = ['img','picture','canvas','svg','video'].includes(e.localName) ? e.localName : 'background';
+    result[tag] = (result[tag] || 0) + 1;
+  } return result; };
+  const own = items(slot), box = slot.closest('[class^="coverControl-"]') || slot;
+  return {readable:true, slot_tags:count(own), box_tags:count(items(box)),
+    max_share:Math.max(0,...own.map(e => share(e,r.left,r.top,r.right,r.bottom))),
+    in_control:own.some(inControl), slot_in_window:r.left>=0 && r.top>=0 && r.right<=innerWidth && r.bottom<=innerHeight};
+}"""
+
+
+async def douyin_wait_saved_preview(page, slot, before, tx, role):
+    from patchright.async_api import Error as BrowserError
+    async def saved():
+        if not await douyin_pointer_away(page):
+            return False
+        after = await slot.evaluate(DOUYIN_SAVED_PREVIEW, timeout=DOUYIN_SLOT_MS)
+        if not after or after == before:
+            return False
+        await page.wait_for_timeout(1000)
+        if not await douyin_pointer_away(page):
+            return False
+        return after == await slot.evaluate(DOUYIN_SAVED_PREVIEW, timeout=DOUYIN_SLOT_MS)
+    try:
+        await wait_until(page, saved, seconds=DOUYIN_PREVIEW_SECONDS, label='Douyin saved cover preview')
+    except VpubError as exc:
+        if exc.code != 'processing_timeout': raise
+    except BrowserError:
+        pass
+    else:
+        return
+    try:
+        facts = await slot.evaluate(DOUYIN_PREVIEW_FACTS, timeout=1000)
+    except BrowserError:
+        facts = {'readable': False}
+    tx.save(cover_preview_check={'role': role, **facts})
+    raise VpubError('cover_unverified', 'Cover editor closed without a confirmed changed preview. '
+                    + json.dumps(facts, sort_keys=True), DOUYIN_COVER_AGAIN) from None
+
 # What lies over a slot, seen from inside it without pressing anything: at the slot's centre, where Playwright presses, and on a grid over
 # its box, as offsets from its padding box, which a press's position is measured from, nearest the centre first. From a review, the centre
 # is open as Playwright's own check has it: where the slot, or the button or link that holds it, or something inside either is on top. And
@@ -1870,9 +1928,19 @@ async def douyin_covers_now(page, tx, editor):
         if tall_too and size and size[1] > size[0]:
             tx.save(landscape_cover=douyin_slot_skipped(size))
             continue
+        # Keep the slot's pre-open picture signature only in memory: an old
+        # preview or placeholder must not certify that this save changed it.
+        from patchright.async_api import Error as BrowserError
+        try:
+            away = await douyin_pointer_away(page)
+            before_preview = await slot.evaluate(DOUYIN_SAVED_PREVIEW, timeout=DOUYIN_SLOT_MS) if away and await slot.count() == 1 else None
+        except BrowserError:
+            before_preview = None
         opened = await douyin_slot_window(page, tx, editor, slot, role, label, size, tall_too)
         if opened is None:
             continue
+        if before_preview is None:
+            raise VpubError('cover_unverified', 'The cover preview could not be read before opening its editor.', DOUYIN_COVER_AGAIN)
         dialog, how = opened
         area = await unique_visible(dialog.locator('.semi-upload').filter(has_text='点击上传文件或拖拽文件到这里'), 'Douyin cover upload area')
         await choose_file(page, area.locator('input.semi-upload-hidden-input'), path)
@@ -1901,13 +1969,13 @@ async def douyin_covers_now(page, tx, editor):
                 raise VpubError('cover_not_ready', f"Douyin's cover window was still working {DOUYIN_COVER_SECONDS} seconds after 完成, so nothing was published. {await douyin_cover_stuck(page, fonts, traffic())}", DOUYIN_COVER_AGAIN) from None
         finally:
             traffic(stop=True)
-        saved = await control.locator('img').count() > 0
-        if not saved:
-            raise VpubError('cover_unverified', 'Cover editor closed without a saved cover preview.')
+        await douyin_wait_saved_preview(page, slot, before_preview, tx, role)
         # A stop's account of what lay over this slot is done with once its cover is on.
         if (tx.receipt.get('cover_slot_covered') or {}).get('role') == role:
             tx.receipt.pop('cover_slot_covered')
-        tx.save(**{role+'_cover': {'state':'UI_ACCEPTED', 'remote_pixels_verified':False, **(douyin_slot_record(how) if how else {})}})
+        tx.save(**{role+'_cover': {'state':'UI_ACCEPTED', 'remote_pixels_verified':False,
+                 'preview_present_before':bool(before_preview), 'preview_changed':True,
+                 **(douyin_slot_record(how) if how else {})}})
 
 
 async def douyin_finish_after_covers(page, tx, before, caption, title, editor):

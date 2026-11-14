@@ -18,8 +18,15 @@ BILI_MAIN = "from bili_cli.main import main; main()"
 
 
 def bili(args, timeout=210, program=BILI_MAIN, signing_in=False):
-    # bili-cli stops a stuck command after 180 s and says why, so give it time to report that.
+    from .audit_journal import call
     stop_check("bilibili", signing_in=signing_in)
+    words = args[1:] if args[:1] == ["--dry-run"] else args
+    with call("bilibili", "bili", words[0] if words else None, words[1] if len(words) > 1 else None):
+        return _bili(args, timeout, program)
+
+
+def _bili(args, timeout, program):
+    # bili-cli stops a stuck command after 180 s and says why, so give it time to report that.
     env = dict(os.environ, PYTHONIOENCODING="utf-8")
     # The existing local wrapper applies this HTTPX compatibility fix too.
     for key in ("NO_PROXY", "no_proxy"):
@@ -174,13 +181,15 @@ def worker_call(payload, timeout):
 def browser_call(platform, action, account, **kwargs):
     """Every browser route ends here, so a platform's warning always stops what follows, whichever route brought it."""
     stop_check(platform)
-    payload = {"platform": platform, "action": action, "account": account, **kwargs}
-    try:
-        with progress.relay(platform, payload):
+    from . import audit_journal
+    payload = {"platform": platform, "action": action, "account": account, **kwargs, "audit_run": audit_journal.RUN}
+    with progress.relay(platform, payload), audit_journal.call(platform, 'browser', action, kwargs.get('operation')):
+        try:
             return browser_answer(platform, action, account, payload)
-    except VpubError as exc:
-        safety.pushed_back(platform, exc.code)
-        raise
+        except VpubError as exc:
+            # Persist the platform stop before the audit context's exit can wait.
+            safety.pushed_back(platform, exc.code)
+            raise
 
 
 def browser_answer(platform, action, account, payload):
@@ -377,6 +386,7 @@ def publish_bilibili(plan, options, checkpoint):
     # vpub publish asks it before recording the attempt and hands over the upload that passed. Any other upload is asked here, still before it is sent.
     if (options.get("topic") or options.get("mention_uids")) and plan.get("checked_upload") != args:
         check_bilibili_upload(args, options)
+    progress.stage('uploading', platform='bilibili', action='publish')
     v = bili(args, timeout=3600)
     found = v.get("topic") if isinstance(v.get("topic"), dict) else {}
     # bili upload status doesn't report a topic, so this answer is the only record of the topic, and any contest, the video entered.
@@ -398,6 +408,7 @@ def publish_bilibili(plan, options, checkpoint):
     if options.get("widgets"):
         receipt.update(pending_widgets=options["widgets"], widgets_state="PENDING")
     checkpoint(receipt)
+    progress.stage("reading back", platform="bilibili", action="publish")
     return verify("bilibili", options["account"], receipt, checkpoint)
 
 

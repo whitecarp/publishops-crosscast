@@ -446,3 +446,9 @@ vpub verify RECEIPT_KEY
 用 `vpub verify` 讀回核對，或用 `vpub resume` 接著原本的任務，不要盲目重新上傳。本機回執可以用 `vpub receipts` 查看，但它本身不代替平台證據。
 
 </details>
+
+## 匯出本機稽核紀錄
+
+使用 `vpub audit export --out public-audit.json` 匯出已去識別的本機紀錄，不開啟瀏覽器，也不存取平台。`--since ISO` / `--until ISO` 限定範圍，`--times exact` 匯出 UTC 時刻，`--exact-sizes` 保留精確大小；預設使用相對時間和取整大小。匯出會報告斷鏈與遺失事件，不會修復紀錄，也不代表真機驗證通過。詳見[格式與限制](AUDIT_SCHEMA.md)。
+
+本人查看平台後，可用 `vpub audit observe KEY --seen once` 記錄觀察；可選 once、absent、draft、duplicate、unclear。它不改變發佈或刪除回執。工作階段標籤不要包含私人資訊，分享前請檢查匯出檔案。

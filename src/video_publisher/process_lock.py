@@ -64,12 +64,32 @@ def hold(path, error_code, message):
             locked = True
         except OSError:
             raise VpubError(error_code, message, 'Wait for the active command; do not clear its lock.') from None
-        if path.exists():
+        try:
+            marker = path.read_text(encoding='utf-8')
+        except FileNotFoundError:
+            marker = None
+        except UnicodeError:
+            raise VpubError('lock_marker_unreadable', 'The command lock marker is not valid UTF-8.',
+                            'Keep the marker in place. Ask the owner to inspect its format and origin; '
+                            'an encoding error does not establish a permissions fault.') from None
+        except OSError:
+            # Windows may report access denied, rather than IsADirectoryError,
+            # for a directory at the marker path. Metadata is only diagnostic.
+            try: is_directory = path.is_dir()
+            except OSError: is_directory = False
+            if is_directory:
+                raise VpubError('lock_marker_unreadable', 'The command lock marker is a directory, not a file.',
+                                'Keep it in place. Ask the owner to inspect how the marker path became a directory.') from None
+            raise VpubError('lock_marker_unreadable', 'The command lock marker could not be read.',
+                            'Ask the owner to check this marker\'s ownership and permissions. On Windows, '
+                            'a pending deletion can also deny access until its open handle closes. '
+                            'Keep the marker in place while the owner diagnoses it.') from None
+        if marker is not None:
             owner = None
             try:
-                owner = json.loads(path.read_text(encoding='utf-8'))
+                owner = json.loads(marker)
                 pid = owner.get('pid') if isinstance(owner, dict) else owner
-            except (OSError, ValueError):
+            except ValueError:
                 pid = None
             if not released(owner) and alive(pid):
                 raise VpubError(error_code, message, 'The prior owner is active or unknown. Inspect it; do not delete an active lock.')

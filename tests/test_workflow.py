@@ -573,14 +573,20 @@ class WorkflowTests(unittest.TestCase):
         ledger.close()
 
     def test_refused_browser_lock_releases_the_claim_so_publish_can_run_again(self):
+        self.check_refused_browser_lock('browser_busy')
+
+    def test_unreadable_browser_lock_releases_an_attempt_that_never_started(self):
+        self.check_refused_browser_lock('lock_marker_unreadable')
+
+    def check_refused_browser_lock(self, code):
         self.value["platforms"]["douyin"]["method"] = "browser"
         self.save()
         plan = self.plan(["douyin"])
         with patch.object(adapters, "preflight", return_value={"identity": "owner"}), \
-                patch.object(adapters, "publish", side_effect=VpubError("browser_busy", "Busy", "Wait.")):
+                patch.object(adapters, "publish", side_effect=VpubError(code, "Busy", "Wait.")):
             first = cli.publish_plan(plan, plan["confirmation"], reviewed=True)["results"]["douyin"]
         self.assertEqual("NOT_STARTED", first["state"])
-        self.assertEqual("browser_busy", first["code"])
+        self.assertEqual(code, first["code"])
         with patch.object(adapters, "preflight", return_value={"identity": "owner"}), \
                 patch.object(adapters, "publish", return_value={"state": "SUBMISSION_VERIFIED", "id": "123456789"}) as upload:
             second = cli.publish_plan(plan, plan["confirmation"], reviewed=True)["results"]["douyin"]

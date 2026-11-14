@@ -17,3 +17,21 @@
 - **README 头图**：`assets/hero.svg`、`hero-zh-tw.svg`、`hero-en.svg` 与站点同一概念（左侧是你说的一句话，右侧是发布单），纯 SVG，系统字体回退栈，无脚本与外链。
 - **README**：面向新手，只说它能做什么、怎么开始，用简单的话。不用表格，因为 GitHub 上的中文表格在手机上会挤成一列一字。细节和逐项实测放在 `docs/GUIDE*.md`。插图 `assets/one-message.png` 没有文字，三种语言共用。
 - **维护**：改文案时同时改 `index.html`（简中）和 `site.js` 里的 TW、EN 词典；新增 `data-i18n` 键时三种语言都要有。示意内容（平台、状态、画布）要和当前 CLI 能力一致，不写观众版没有的功能。
+
+## Identifying the running code
+
+Publication ledger rows, browser receipts and edit records store the creator in `code`.
+When a different build writes the record, `code_last` identifies that writer. Updating a
+legacy record records only the observed writer. Deletion records keep separate creation,
+press and read-back stamps. Their approval records whether the supplied code matched,
+whether the approval flag was given, and when the record was created.
+
+To reproduce the `source_digest` shown by `vpub doctor` from Git, enumerate every
+`.py` blob under `src/video_publisher/` and `src/bili_cli/` at the selected commit.
+Drop the leading `src/`, retain the package name, use forward slashes and sort the
+relative paths by Unicode code point. Replace CRLF byte pairs in each file with LF
+and leave every other byte untouched. For each file concatenate its UTF-8 path,
+one NUL byte, the 64 lowercase ASCII hex digits of SHA-256 of the normalized bytes,
+and one LF byte. SHA-256 of the concatenated records, expressed in lowercase hex,
+is the digest. The runtime applies the same recipe to the imported package trees
+once per process, so local edits are reflected even when pip still names the same commit.

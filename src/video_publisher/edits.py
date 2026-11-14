@@ -101,7 +101,7 @@ def validate_patch(platform, value, verifying=False, ai_generated=True):
     return p
 
 
-def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, person_approved=False):
+def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, person_approved=False, fault=None):
     """One correction, once. An uncertain X save cannot be retried, even with person approval; verification stays read-only."""
     from .work_delete_state import refuse_other_action
     refuse_other_action(key)
@@ -138,7 +138,20 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
                             'If a person has looked at the work and the change is not there, add --person-approved to try once more.')
     preserved = ({'preserved_description_sha256': saved['preserved_description_sha256']}
                  if platform == 'bilibili' and saved.get('preserved_description_sha256') else {})
-    def checkpoint(data): atomic_json(path,{'key':key,'edit_id':edit_id,'at':now(),**preserved,**data})
+    from .audit import stamped
+    def checkpoint(data):
+        previous = read_json(path) if path.exists() else None
+        entry = stamped({'key': key, 'edit_id': edit_id, 'at': now(), **preserved, **data}, previous)
+        if fault == 'external':
+            from .faults import label
+            entry['fault'] = (previous or {}).get('fault') or label(fault, key, platform, record=False)
+        atomic_json(path, entry)
+        if fault == 'external' and not (previous or {}).get('fault'):
+            from .audit_journal import append
+            append('fault',lambda ref:dict(point=fault,ref=ref(key),platform=platform,fired=False))
+        from .audit_journal import transition, edit_group
+        transition('edit', key, platform, entry, group=edit_group(patch))
+        return entry
     # The record keeps that the flag was given, for a person to read later. It is someone's word, not proof that a person looked.
     approved={'person_approved':True} if person_approved and not verify_only else {}
     if not verify_only: checkpoint({'state':'EDIT_PREPARING','id':work_id,**approved})
@@ -152,7 +165,7 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
     else:
         try:
             result=adapters.browser_call(platform,'edit',account,expected_identity=actual,
-                receipt=receipt,patch=patch,edit_receipt_path=str(path),verify_only=verify_only)
+                receipt=receipt,patch=patch,edit_receipt_path=str(path),verify_only=verify_only,audit_key=key)
         except VpubError as exc:
             if platform=='x' and path.exists() and x_edit_was_attempted(read_json(path),actual,work_id):
                 raise VpubError(exc.code,f'{exc.message} {X_EDIT_UNVERIFIED_MESSAGE}',
@@ -171,13 +184,15 @@ def send(platform, account, actual, receipt, key, patch, dry_run, verify_only, p
         result={**result,**x_edit_readback_note(x_attempted)}
     if x_attempted: result['final_submit_attempted']=True
     result={**result,**approved,**flagged}
-    checkpoint(result)
-    return result
+    entry = checkpoint(result)
+    return {k: v for k, v in entry.items() if k in result or k in ("code", "code_last")}
 
 
 def run_adopted(platform, work, patch_path, dry_run=False, verify_only=False, person_approved=False):
     """The same correction for a work CrossCast adopted rather than published, using the owner that adoption verified."""
     from .work_catalog import binding
+    from .faults import gate
+    gate(platform, {})  # An adopted post has no approved private test plan.
     with publication_lock():
         adopted=binding(platform,work)
         if not adopted: raise VpubError('work_identity_required','Adopt this work first, so its owner is checked; nothing changed.',f'Run vpub ops adopt {platform} {work}.')
@@ -208,7 +223,8 @@ def keep_resume_in_step(record, platform, work, owner, changes):
         with receipt_turn(durable):
             saved=read_json(durable)
             if saved.get('id')==work and saved.get('identity')==owner:
-                atomic_json(durable,{**saved,**changes})
+                from .audit import stamped
+                atomic_json(durable, stamped({**saved, **changes}, saved))
 
 
 def run(key, patch_path, dry_run=False, verify_only=False, person_approved=False):
@@ -218,20 +234,31 @@ def run(key, patch_path, dry_run=False, verify_only=False, person_approved=False
             row=ledger.get(key)
             if not row: raise VpubError('receipt_required','Use the key of an existing recorded publication.')
             record=row['data'];receipt=record.get('receipt',{});work_id=receipt.get('id')
+            from .faults import gate
+            point=gate(row['platform'],record.get('options',{}))
+            if point and point!='external': raise VpubError('fault_injection_refused','Only the external fault guard applies to edits.')
+            if point and row['platform']=='youtube':
+                from . import adapters
+                if adapters.addon_installed(): raise VpubError('fault_injection_refused','Fault tests require the browser edit route.')
             if not work_id: raise VpubError('work_id_required','Verify the existing work ID first; never infer an ID from a title or upload again.',
                                             'Run vpub verify on this receipt key: a full read-back records the ID. For a work you adopted with vpub ops adopt, use vpub edit-work PLATFORM WORK_ID instead.')
             patch=validate_patch(row['platform'],read_json(patch_path),verify_only,record.get('options',{}).get('ai_generated',True))
             actual=record.get('identity',{}).get('identity') or receipt.get('identity')
-            result=send(row['platform'],row['account'],actual,receipt,key,patch,dry_run,verify_only,person_approved)
+            result=send(row['platform'],row['account'],actual,receipt,key,patch,dry_run,verify_only,person_approved,fault=point)
             if dry_run: return result
             edit_id=digest([key,patch])
-            record.setdefault('edits',[]).append({'edit_id':edit_id,'patch':patch,'result':result,'at':now(),'previous_receipt':deepcopy(receipt)})
+            record.setdefault('edits',[]).append({'edit_id':edit_id,'patch':patch,'result':result,'at':now(),
+                'previous_receipt':deepcopy(receipt), **{k: result[k] for k in ('code','code_last') if k in result}})
             confirmed=result.get('state')=='EDIT_VERIFIED' and 'description' in patch
             changes=found_after_edit(row['platform'],patch,result) if confirmed else {}
             if confirmed:
                 record['options'].update({k:v for k,v in patch.items() if k!='expected_identity'})
                 if row['platform']=='x': record['options']['post_text']=changes['expected_text']
-                record['receipt'].update(changes)
+                if receipt.get('method') == 'browser':
+                    from .audit import stamped
+                    record['receipt'] = stamped({**receipt, **changes}, receipt)
+                else:
+                    receipt.update(changes)
             ledger.save(key,row['state'],record)
             if confirmed: keep_resume_in_step(record,row['platform'],work_id,actual,changes)
             return {'key':key,**result}
