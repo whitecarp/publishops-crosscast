@@ -112,7 +112,17 @@ def read_head(directory):
 def ensure_salt(directory):
     path = directory / 'salt'
     if not path.exists():
-        if (directory / 'journal.jsonl').exists() or (directory / 'head.json').exists():
+        journal = directory / 'journal.jsonl'
+        # Before eager salt creation, key-less commands left an unsalted chain.
+        # Match refs at every nesting level, including publication media refs.
+        if journal.exists():
+            with journal.open('rb') as stream:
+                salted = any(re.search(rb'"(?:media_)?ref"\s*:\s*"[a-f0-9]{16}"', line) for line in stream)
+        else:
+            salted = (directory / 'head.json').exists()
+        # A ledger/receipt is saved before its first audit transition; its
+        # existence alone is not evidence of a previous salt.
+        if salted:
             raise ValueError('missing_salt_with_existing_history')
         with path.open('xb') as stream:
             stream.write(os.urandom(32))

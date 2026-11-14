@@ -288,8 +288,21 @@ def export_data(root=None,*,since=None,until=None,times='relative',exact_sizes=F
         seq=integer(e.get('seq'))
         if seq!=previous_seq+1: gap_runs.add(hexval(e.get('run'),RUN_ID))
         previous_seq=seq or previous_seq
-    saltfile=safe_path(root,root/'audit/salt')
-    salt=saltfile.read_bytes() if saltfile.exists() else None
+    salt=None; salt_error=None
+    try:
+        saltfile=safe_path(root,root/'audit/salt')
+        try:
+            salt_stat=saltfile.lstat()
+        except FileNotFoundError:
+            salt_stat=None
+        if salt_stat is not None:
+            if not stat.S_ISREG(salt_stat.st_mode):
+                raise VpubError('audit_export_invalid','Audit salt could not be read.')
+            salt=saltfile.read_bytes()
+        elif (root/'audit/journal.jsonl').exists() or (root/'audit/head.json').exists():
+            salt_error='missing_salt_with_existing_history'
+    except OSError:
+        raise VpubError('audit_export_invalid','Audit salt could not be read.') from None
     if salt is not None and len(salt)!=32: raise VpubError('audit_export_invalid','Invalid audit salt.')
     def ref(v): return hmac.new(salt,v.encode(),'sha256').hexdigest()[:16] if salt and hexval(v) else None
     publications=[];deletions=[];builds=[]
@@ -351,6 +364,7 @@ def export_data(root=None,*,since=None,until=None,times='relative',exact_sizes=F
       window=dict(since=utc(start),until=utc(stop),days=sorted({e['day'] for e in events if e['day']}),origin=utc(origin) if times=='exact' else None),times=times,
       builds=builds,publications=publications,deletions=deletions,runs=runs,events=events,losses=list(losses_by_id.values()),counts=count_events(events),
       integrity=dict(first_seq=events[0]['seq'] if events else None,last_seq=events[-1]['seq'] if events else None,head=chain.get('head'),chain_ok=chain['ok'],first_bad_seq=chain.get('first_bad_seq'),chain_error=chain.get('reason'),
+        salt_ok=salt_error is None,salt_error=salt_error,
         events_outside_a_command=sum(e['run'] is None for e in events),dropped_events=sum(loss_counts.values()),dropped_count_is_lower_bound=True,
         unplaced_dropped_events=sum(bool(item.get('time_unplaced')) for item in losses_by_id.values())+sum(legacy_losses.values()),
         unreadable_loss_records=unreadable_losses,loss_folder_unreadable=loss_folder_unreadable,

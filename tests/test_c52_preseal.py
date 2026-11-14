@@ -107,7 +107,7 @@ class PresealTests(unittest.TestCase):
         self.assertTrue(audit_export.export_data()['integrity']['chain_ok'])
 
     def test_lost_salt_is_not_regenerated_or_history_appended(self):
-        self.seed()
+        self.assertTrue(journal.append('transition', lambda ref: dict(ref=ref('a' * 64))))
         before = (self.directory / 'journal.jsonl').read_bytes()
         (self.directory / 'salt').unlink()
         self.assertFalse(journal.append('stage', lambda _: dict(stage='pressing')))
@@ -125,6 +125,160 @@ class PresealTests(unittest.TestCase):
                 result = audit_export.export_data(**bounds)
                 self.assertEqual([], result['publications'])
                 self.assertEqual([], result['deletions'])
+
+    def run_cli(self, *args):
+        output = io.StringIO()
+        with patch.object(sys, 'argv', ['vpub', *args]), redirect_stdout(output):
+            with self.assertRaises(SystemExit) as result:
+                cli.main()
+        return result.exception.code, json.loads(output.getvalue())
+
+    def legacy_keyless(self):
+        # The old implementation did not create a salt until record_ref ran.
+        with patch.object(journal, 'ensure_salt'):
+            self.assertEqual(0, self.run_cli('safety', 'status')[0])
+        self.assertFalse((self.directory / 'salt').exists())
+
+    def test_keyless_legacy_upgrade_preserves_chain_without_losses(self):
+        self.legacy_keyless()
+        before = (self.directory / 'journal.jsonl').read_bytes()
+        before_export = audit_export.export_data()
+        self.assertFalse(before_export['integrity']['salt_ok'])
+        self.assertEqual('missing_salt_with_existing_history', before_export['integrity']['salt_error'])
+        self.assertFalse((self.directory / 'salt').exists())  # Export is read-only.
+        self.assertEqual(0, self.run_cli('safety', 'status')[0])
+        self.assertEqual(32, len((self.directory / 'salt').read_bytes()))
+        self.assertTrue((self.directory / 'journal.jsonl').read_bytes().startswith(before))
+        output = self.root / 'export.json'
+        self.assertEqual(0, self.run_cli('audit', 'export', '--out', str(output))[0])
+        exported = json.loads(output.read_bytes())
+        self.assertTrue(exported['integrity']['chain_ok'])
+        self.assertTrue(exported['integrity']['salt_ok'])
+        self.assertIsNone(exported['integrity']['salt_error'])
+        self.assertEqual([], exported['losses'])
+        self.assertEqual(0, exported['integrity']['dropped_events'])
+
+    def test_first_ledger_claim_after_keyless_upgrade_gets_salt(self):
+        self.legacy_keyless()
+        ledger = core.Ledger()
+        self.addCleanup(ledger.close)
+        key = ledger.claim('youtube', 'synthetic', 'b' * 64, {})
+        self.assertIsNotNone(key)
+        result = audit_export.export_data()
+        self.assertTrue(result['integrity']['salt_ok'])
+        self.assertEqual(0, result['integrity']['dropped_events'])
+        self.assertRegex(result['publications'][0]['ref'], r'^[a-f0-9]{16}$')
+
+    def test_standalone_audit_directory_creates_and_fsyncs_salt(self):
+        folder = self.root / 'standalone-audit'
+        folder.mkdir()
+        with patch.object(journal.os, 'fsync', wraps=os.fsync) as sync:
+            value = journal.ensure_salt(folder)
+        self.assertEqual(32, len(value))
+        sync.assert_called_once()
+        self.assertEqual(value, journal.ensure_salt(folder))
+
+    def test_salted_reference_shapes_refuse_replacement_and_report_loss(self):
+        shapes = [dict(ref='a' * 16), dict(platforms={'youtube': {'ref': 'b' * 16}}),
+                  dict(before={'ref': 'c' * 16}), dict(after={'ref': 'd' * 16}),
+                  dict(media_ref='e' * 16)]
+        for index, fields in enumerate(shapes):
+            with self.subTest(fields=fields), patch.dict(os.environ, VPUB_HOME=str(self.root / str(index))):
+                directory = core.home() / 'audit'
+                self.assertTrue(journal.append('transition', lambda _: fields))
+                (directory / 'salt').unlink()
+                before = (directory / 'journal.jsonl').read_bytes()
+                with self.assertRaisesRegex(ValueError, '^missing_salt_with_existing_history$'):
+                    journal.ensure_salt(directory)
+                self.assertEqual(0, self.run_cli('safety', 'status')[0])
+                self.assertFalse((directory / 'salt').exists())
+                self.assertEqual(before, (directory / 'journal.jsonl').read_bytes())
+                result = audit_export.export_data(since='2020-01-01T00:00:00Z')
+                self.assertFalse(result['integrity']['salt_ok'])
+                self.assertEqual('missing_salt_with_existing_history', result['integrity']['salt_error'])
+                self.assertIsNone(result['site'])
+                self.assertEqual([], result['publications'])
+                self.assertEqual([], result['deletions'])
+                self.assertEqual(['journal_read_failed'] * 2, [r['reason'] for r in result['losses']])
+
+    def test_head_without_journal_refuses_salt_replacement(self):
+        self.seed()
+        (self.directory / 'salt').unlink()
+        (self.directory / 'journal.jsonl').unlink()
+        self.assertFalse(journal.append('stage', lambda _: dict(stage='pressing')))
+        self.assertFalse((self.directory / 'salt').exists())
+        result = audit_export.export_data(until='2099-01-01T00:00:00Z')
+        self.assertFalse(result['integrity']['salt_ok'])
+        self.assertFalse(result['integrity']['chain_ok'])
+        self.assertEqual('missing_salt_with_existing_history', result['integrity']['salt_error'])
+        self.assertIsNone(result['site'])
+        self.assertEqual([], result['publications'])
+        self.assertEqual('journal_read_failed', result['losses'][0]['reason'])
+
+    def test_reference_scan_accepts_whitespace_and_ignores_null_refs(self):
+        self.directory.mkdir()
+        file = self.directory / 'journal.jsonl'
+        file.write_bytes(b'{"platforms": {"youtube": {"ref" : "0123456789abcdef"}}}\n')
+        with self.assertRaisesRegex(ValueError, 'missing_salt_with_existing_history'):
+            journal.ensure_salt(self.directory)
+        file.write_bytes(b'{"ref": null, "media_ref": null, "code": "0123456789abcdef"}\n')
+        self.assertEqual(32, len(journal.ensure_salt(self.directory)))
+
+    def test_salt_directory_returns_typed_cli_error(self):
+        self.directory.mkdir()
+        (self.directory / 'salt').mkdir()
+        status, result = self.run_cli('audit', 'export', '--out', str(self.root / 'export.json'))
+        self.assertEqual(2, status)
+        self.assertEqual('audit_export_invalid', result['error']['code'])
+        self.assertEqual('Audit salt could not be read.', result['error']['message'])
+
+    def test_salt_check_and_read_errors_return_typed_cli_error(self):
+        self.seed()
+        salt = self.directory / 'salt'
+        for method in ['exists', 'lstat', 'read_bytes']:
+            original = getattr(Path, method)
+            def failing(path, *args, **kwargs):
+                if path == salt:
+                    raise PermissionError('PRIVATE sentinel')
+                return original(path, *args, **kwargs)
+            with self.subTest(method=method), patch.object(Path, method, failing):
+                status, result = self.run_cli('audit', 'export', '--out', str(self.root / 'export.json'))
+            self.assertEqual(2, status)
+            self.assertEqual('audit_export_invalid', result['error']['code'])
+            self.assertEqual('Audit salt could not be read.', result['error']['message'])
+            self.assertNotIn('PRIVATE', json.dumps(result))
+
+    def test_salt_symlinks_including_broken_are_rejected(self):
+        self.seed()
+        salt = self.directory / 'salt'
+        original = Path.is_symlink
+        for broken in [False, True]:
+            if broken:
+                salt.unlink()
+            # Deterministic even on Windows hosts without symlink privilege.
+            with self.subTest(broken=broken), patch.object(Path, 'is_symlink', lambda p: p == salt or original(p)):
+                status, result = self.run_cli('audit', 'export', '--out', str(self.root / 'export.json'))
+            self.assertEqual(2, status)
+            self.assertEqual('audit_export_invalid', result['error']['code'])
+
+    def test_invalid_salt_lengths_keep_existing_cli_error(self):
+        self.directory.mkdir()
+        for size in [0, 31, 33]:
+            with self.subTest(size=size):
+                (self.directory / 'salt').write_bytes(b'x' * size)
+                status, result = self.run_cli('audit', 'export', '--out', str(self.root / 'export.json'))
+                self.assertEqual(2, status)
+                self.assertEqual('audit_export_invalid', result['error']['code'])
+                self.assertEqual('Invalid audit salt.', result['error']['message'])
+
+    def test_empty_export_salt_is_valid_without_creating_files(self):
+        output = self.root / 'export.json'
+        self.assertEqual(0, self.run_cli('audit', 'export', '--out', str(output))[0])
+        result = json.loads(output.read_bytes())
+        self.assertTrue(result['integrity']['salt_ok'])
+        self.assertIsNone(result['integrity']['salt_error'])
+        self.assertIsNone(result['site'])
+        self.assertFalse(self.directory.exists())
 
 
 if __name__ == '__main__':
