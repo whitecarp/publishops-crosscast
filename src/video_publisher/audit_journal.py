@@ -109,6 +109,29 @@ def read_head(directory):
     return value
 
 
+def _matches_retained_prefix(stream, head):
+    # A durable, unrepaired crash tail can follow this prefix.
+    if os.fstat(stream.fileno()).st_size < head[2]:
+        return False
+    stream.seek(0)
+    count, chain_head, size = 0, ZERO, 0
+    while size < head[2]:
+        line = stream.readline(head[2] - size)
+        if not line.endswith(b'\n'):
+            return False
+        try:
+            event = json.loads(line)
+        except ValueError:
+            return False
+        if (not isinstance(event, dict) or type(event.get('seq')) is not int
+                or event['seq'] != count + 1 or event.get('prev') != chain_head):
+            return False
+        count += 1
+        chain_head = digest(line)
+        size += len(line)
+    return [count, chain_head, size] == head
+
+
 def ensure_salt(directory):
     path = directory / 'salt'
     if not path.exists():
@@ -118,6 +141,9 @@ def ensure_salt(directory):
         if journal.exists():
             with journal.open('rb') as stream:
                 salted = any(re.search(rb'"(?:media_)?ref"\s*:\s*"[a-f0-9]{16}"', line) for line in stream)
+                if (not salted and (directory / 'head.json').exists()
+                        and not _matches_retained_prefix(stream, read_head(directory))):
+                    raise ValueError('missing_salt_with_existing_history')
         else:
             salted = (directory / 'head.json').exists()
         # A ledger/receipt is saved before its first audit transition; its
@@ -158,7 +184,6 @@ def append(kind, build):
             path = directory / "journal.jsonl"
             head_path = directory / "head.json"
             head = read_head(directory)
-            ensure_salt(directory)
             size = path.stat().st_size if path.exists() else 0
             if size != head[2]:
                 # A process may have died after fsync and before replacing the head.
@@ -171,6 +196,7 @@ def append(kind, build):
                         head = [item["seq"], digest(line), stream.tell()]
                 if size != head[2]:
                     raise ValueError("audit tail missing")
+            ensure_salt(directory)
             phase = 'projection_failed'
             fields = build(lambda key: record_ref(directory, key))
             with _loss_lock:

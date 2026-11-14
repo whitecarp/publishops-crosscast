@@ -169,6 +169,74 @@ class PresealTests(unittest.TestCase):
         self.assertEqual(0, result['integrity']['dropped_events'])
         self.assertRegex(result['publications'][0]['ref'], r'^[a-f0-9]{16}$')
 
+    def test_lost_salt_after_journal_damage_stays_missing_after_restore(self):
+        self.legacy_keyless()
+        journal_path = self.directory / 'journal.jsonl'
+        head_path = self.directory / 'head.json'
+        salt_path = self.directory / 'salt'
+        prefix = journal_path.read_bytes()
+        ledger = core.Ledger()
+        self.addCleanup(ledger.close)
+        key = ledger.claim('youtube', 'synthetic', 'b' * 64, {})
+        self.assertTrue(journal.append('observation', lambda ref: dict(ref=ref(key), seen='absent')))
+        core.atomic_json(core.home() / 'work-deletions' / (key + '.json'), {'state': 'DELETE_PENDING'})
+        window = dict(since='2020-01-01T00:00:00Z')
+        baseline = audit_export.export_data(**window)
+        self.assertEqual((1, 1), (len(baseline['publications']), len(baseline['deletions'])))
+        original = journal_path.read_bytes()
+        retained_head = head_path.read_bytes()
+        salt_path.unlink()
+
+        # Construct an internally consistent keyless chain of the same length.
+        # Only comparing its final digest to the retained head detects the swap.
+        replacement = bytearray()
+        previous = journal.ZERO
+        for line in original.splitlines(keepends=True):
+            event = json.loads(line)
+            line = line.replace(event['prev'].encode(), previous.encode()).replace(b'"ref":', b'"tag":')
+            replacement.extend(line)
+            previous = journal.digest(line)
+        self.assertEqual(len(original), len(replacement))
+        self.assertNotEqual(json.loads(retained_head)[1], previous)
+
+        for label, data in [('empty', b''), ('legacy prefix', prefix), ('same size', replacement)]:
+            with self.subTest(damage=label):
+                journal_path.write_bytes(data)
+                with self.assertRaisesRegex(ValueError, '^missing_salt_with_existing_history$'):
+                    journal.ensure_salt(self.directory)
+                self.assertFalse(salt_path.exists())
+                prior_losses = len(list((self.directory / 'losses').glob('*.json')))
+                self.assertEqual(0, self.run_cli('safety', 'status')[0])
+                self.assertFalse(salt_path.exists())
+                self.assertEqual(data, journal_path.read_bytes())
+                self.assertEqual(retained_head, head_path.read_bytes())
+                journal_path.write_bytes(original)
+                restored = audit_export.export_data(**window)
+                self.assertTrue(restored['integrity']['chain_ok'])
+                self.assertFalse(restored['integrity']['salt_ok'])
+                self.assertEqual('missing_salt_with_existing_history', restored['integrity']['salt_error'])
+                self.assertIsNone(restored['site'])
+                self.assertEqual([], restored['publications'])
+                self.assertEqual([], restored['deletions'])
+                self.assertEqual(['journal_read_failed'] * (prior_losses + 2),
+                                 [loss['reason'] for loss in restored['losses']])
+
+    def test_keyless_upgrade_recovers_crash_tail_beyond_retained_head(self):
+        self.legacy_keyless()
+        head_path = self.directory / 'head.json'
+        journal_path = self.directory / 'journal.jsonl'
+        retained_head = head_path.read_bytes()
+        self.legacy_keyless()
+        before = journal_path.read_bytes()
+        head_path.write_bytes(retained_head)
+        self.assertEqual(0, self.run_cli('safety', 'status')[0])
+        self.assertEqual(32, len((self.directory / 'salt').read_bytes()))
+        self.assertTrue(journal_path.read_bytes().startswith(before))
+        chain = journal.verify_chain(self.directory)
+        self.assertTrue(chain['ok'])
+        self.assertEqual(len(before.splitlines()) + 2, chain['records'])
+        self.assertEqual([], audit_export.export_data()['losses'])
+
     def test_standalone_audit_directory_creates_and_fsyncs_salt(self):
         folder = self.root / 'standalone-audit'
         folder.mkdir()
