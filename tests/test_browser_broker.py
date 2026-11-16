@@ -290,6 +290,63 @@ class BrokerTests(unittest.TestCase):
         self.assertEqual("error", server.exit)
 
 
+class StudioAccountRedirectTests(unittest.IsolatedAsyncioTestCase):
+    nav_error = "Locator.all: Execution context was destroyed, most likely because of a navigation."
+    owner = "UC" + "a" * 22
+
+    def setUp(self):
+        self.page = MagicMock(url=f"https://studio.youtube.com/channel/{self.owner}",
+                              goto=AsyncMock(), reload=AsyncMock())
+        self.frames = AsyncMock()
+        self.page.locator.return_value.all = self.frames
+        self.page.get_by_text.return_value.all = AsyncMock(return_value=[])
+        self.context = MagicMock(pages=[self.page])
+        for name in ("watch", "stage"):
+            guard = patch.object(rt, name)
+            guard.start()
+            self.addCleanup(guard.stop)
+
+    async def test_redirect_rescans_the_page_before_accepting_its_account(self):
+        self.frames.side_effect = [RuntimeError(self.nav_error), []]
+        _, actual = await rt.signed_in_page(self.context, "youtube", self.owner)
+        self.assertEqual(self.owner, actual)
+        self.assertEqual(2, self.frames.await_count)
+        self.page.goto.assert_awaited_once()
+        self.page.reload.assert_not_awaited()
+
+    async def test_redirect_to_a_verification_page_stops_before_identity(self):
+        def redirect():
+            self.page.url = "https://accounts.google.com/signin/challenge"
+            raise RuntimeError(self.nav_error)
+
+        self.frames.side_effect = redirect
+        with patch.object(rt, "identity", new_callable=AsyncMock) as who, \
+             patch("video_publisher.safety.pushed_back") as stopped, \
+             self.assertRaises(VpubError) as caught:
+            await rt.signed_in_page(self.context, "youtube", self.owner)
+        self.assertEqual("human_verification_required", caught.exception.code)
+        stopped.assert_called_once()
+        who.assert_not_awaited()
+
+    async def test_wrong_channel_after_the_redirect_is_refused(self):
+        self.frames.side_effect = [RuntimeError(self.nav_error), []]
+        with self.assertRaises(VpubError) as caught:
+            await rt.signed_in_page(self.context, "youtube", "UC" + "b" * 22)
+        self.assertEqual("wrong_account", caught.exception.code)
+
+    async def test_repeated_navigation_and_unrelated_errors_propagate(self):
+        for message, count in [(self.nav_error, 2), ("Target closed", 1)]:
+            with self.subTest(message=message):
+                self.frames.reset_mock()
+                self.frames.side_effect = RuntimeError(message)
+                with patch.object(rt, "identity", new_callable=AsyncMock) as who, \
+                     self.assertRaises(RuntimeError) as caught:
+                    await rt.signed_in_page(self.context, "youtube", self.owner)
+                self.assertEqual(message, str(caught.exception))
+                self.assertEqual(count, self.frames.await_count)
+                who.assert_not_awaited()
+
+
 class SignInBudgetTests(unittest.TestCase):
     """From a review: a page that loads slowly, stays empty and loads again is a good sign-in, and the session's own limit cut it off. The clock here is made up, so nothing really waits."""
 

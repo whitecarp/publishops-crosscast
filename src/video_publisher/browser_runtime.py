@@ -681,7 +681,15 @@ async def signed_in_page(context, platform, expected=None):
     await page.goto(URLS[platform], wait_until="domcontentloaded", timeout=60000)
     for load_again in (True, False):
         for _ in range(45):
-            await risk_check(page)
+            try:
+                await risk_check(page)
+            except Exception as exc:
+                if platform != "youtube" or not str(exc).startswith("Locator.all: Execution context was destroyed,"):
+                    raise
+                # Studio can redirect to the channel while its first document is being scanned.
+                # Check the replacement document before its URL can establish identity.
+                await asyncio.sleep(0.25)
+                await risk_check(page)
             actual = await identity(page, platform)
             if actual:
                 return page, check_identity(actual, expected)
