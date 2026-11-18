@@ -115,7 +115,7 @@ async def empty_list(page):
             and bool(EMPTY.fullmatch((await heading.inner_text()).strip())))
 
 
-async def own_list(page, target):
+async def own_list(page, target, *, diagnostics=None):
     """Both supported publication tabs, every page, with no lost or repeated rows."""
     matches, complete = [], True
     for tab in yt.STUDIO_LISTS:
@@ -149,11 +149,17 @@ async def own_list(page, target):
                 clean = clean and all([await row.is_visible() for row in await rows.all()])
                 return await rows.evaluate_all(script)
 
+        detail = {}
         _, ended = await yt.studio_table(page, CheckedRows(), yt.WORK_ROWS, parse,
-                                        require_last_page=True, empty_first_page=lambda: empty_list(page))
+                                        require_last_page=True, empty_first_page=lambda: empty_list(page),
+                                        diagnostics=detail)
         await guard(page)
         await owner(page, target, tab)
         complete = complete and ended and clean
+        if diagnostics is not None:
+            reasons = detail['reasons'] + ([] if clean else ['list_not_clean'])
+            diagnostics.append(f"{tab}: pages={detail['pages']}, rows={detail['rows']}, resolved={detail['resolved']}, "
+                               f"result={','.join(reasons) if reasons else 'complete'}")
     if len(matches) > 1:
         raise VpubError('wrong_work', 'The exact video occurs more than once; no delete is allowed.')
     return matches, bool(complete)
@@ -185,10 +191,12 @@ async def exact_gone(page, target):
 
 async def readback(page, target, writes=0):
     gone = await exact_gone(page, target)
-    matches, complete = await own_list(page, target)
+    diagnostics = []
+    matches, complete = await own_list(page, target, diagnostics=diagnostics)
     return evidence(target, present=bool(matches), owned=bool(matches), page_gone=gone and not matches,
                     list_absent=not matches and complete, list_complete=complete, fresh=True,
-                    platform_writes=writes)
+                    platform_writes=writes,
+                    note='Deletion requires a fresh complete read. ' + '; '.join(diagnostics))
 
 
 async def bound_row(page, target, position):

@@ -27,6 +27,7 @@ YT_CHECKS_WARNING = 'ytcp-prechecks-warning-dialog'
 YT_CHECKS_DONE = re.compile('检查完毕|檢查完畢|Checks complete', re.I)
 YT_CHECKS_SECONDS = 600
 YT_PRESS_ANSWER_SECONDS = 60
+YT_DRAFT_FIELDS_SECONDS = 20
 YT_DONE_LOCATOR = 'ytcp-dialog > tp-yt-paper-dialog'  # Studio's own window after a Save, which a field run found outside the upload window.
 # The final Save lights up only once Studio has finished processing in the background;
 # a 75-second clip on a real channel was still grey after two minutes.
@@ -780,6 +781,24 @@ async def douyin_reopen_kept_draft(page, tx, caption):
     return True
 
 
+async def douyin_upload_picker(page, tx):
+    """Wait before selecting media; retain a bounded diagnosis without page contents."""
+    tx.save(phase='waiting_for_upload_picker')
+    picker = page.locator('input[type=file]')
+    for sample in range(41):
+        stop_check('douyin')
+        await risk_check(page)
+        stop_check('douyin')
+        if await picker.count():
+            stop_check('douyin')
+            tx.save(upload_picker_check={'found': True, 'samples': sample + 1})
+            return
+        if sample < 40:
+            await page.wait_for_timeout(500)
+    tx.save(upload_picker_check={'found': False, 'samples': 41})
+    raise VpubError('upload_picker_unavailable', 'Douyin did not show its upload file input within 20 seconds. No video was selected.')
+
+
 async def publish_douyin(page, tx):
     caption = douyin_caption(tx.options['description'], tx.options['tags'])
     if douyin_caption_units(caption) > 1000:
@@ -804,7 +823,7 @@ async def publish_douyin(page, tx):
         stamp = douyin_card_stamp(datetime.fromisoformat(tx.options['schedule'].replace('Z', '+00:00')))
         tx.save(same_time_cards_before=len(await douyin_cards_at(same_title, stamp)))
     await page.goto('https://creator.douyin.com/creator-micro/content/upload', wait_until='domcontentloaded', timeout=60000)
-    await page.locator('input[type=file]').wait_for(state='attached', timeout=20000)
+    await douyin_upload_picker(page, tx)
     # Selecting a video here could replace a draft the person kept, and only they can say whether it matters.
     if await douyin_offers_draft(page, 3):
         raise VpubError('existing_draft_requires_attention', "Douyin's upload page is offering a kept draft, and uploading now could replace it. No video was selected.",
@@ -2408,7 +2427,6 @@ async def yt_press_publish(page, tx, done):
 
 async def yt_finish_draft(page, tx, video_id):
     """Reopen the independently observed draft by its recorded ID, without selecting a file."""
-    options = tx.options
     await page.goto(f'https://studio.youtube.com/video/{video_id}/edit', wait_until='domcontentloaded', timeout=60000)
     button = await look_until(page, lambda: visible(page.get_by_text(YT_EDIT_DRAFT)), 30000)
     if not button:
@@ -2418,11 +2436,37 @@ async def yt_finish_draft(page, tx, video_id):
     await wait_until(page, lambda: visible(title_box), seconds=60, label='YouTube details form')
     if await wait_until(page, lambda: yt_video_id(page), seconds=60, label='YouTube video ID') != video_id:
         raise VpubError('wrong_work', "The draft Studio opened has another video ID from this attempt's, so nothing was changed.")
-    title = await unique_visible(title_box, 'YouTube title')
-    description = await unique_visible(page.locator(f'{YT_DIALOG} #description-textarea #textbox'), 'YouTube description')
-    if normalize(await title.inner_text()) != normalize(options['title']) or normalize(await description.inner_text()) != normalize(options['description']):
-        raise VpubError('metadata_mismatch', "This draft's title or description differs from the plan, so nothing was pressed.", 'Look at it in YouTube Studio. Never upload it again.')
+    await yt_draft_metadata_ready(page, tx, video_id)
     return await yt_final_steps(page, tx, video_id, True)
+
+
+async def yt_draft_metadata_ready(page, tx, video_id):
+    """Visible draft boxes may precede their values. Never fill them to force a match."""
+    consecutive = 0
+    for sample in range(YT_DRAFT_FIELDS_SECONDS * 2 + 1):
+        stop_check('youtube')
+        await risk_check(page)
+        stop_check('youtube')
+        current_id = await yt_video_id(page)
+        if current_id and current_id != video_id:
+            raise VpubError('wrong_work', 'The draft changed while its details loaded. Nothing was pressed.')
+        matches = {}
+        for field in ('title', 'description'):
+            box = page.locator(f'{YT_DIALOG} #{field}-textarea #textbox')
+            matches[field + '_matches'] = None
+            if await visible(box):
+                control = await unique_visible(box, f'YouTube {field}')
+                matches[field + '_matches'] = normalize(await control.inner_text()) == normalize(tx.options[field])
+        stop_check('youtube')
+        consecutive = consecutive + 1 if current_id == video_id and all(v is True for v in matches.values()) else 0
+        if consecutive >= 2:
+            tx.save(draft_metadata_check={'status': 'matched', 'samples': sample + 1, **matches})
+            return
+        if sample < YT_DRAFT_FIELDS_SECONDS * 2:
+            await page.wait_for_timeout(500)
+    tx.save(draft_metadata_check={'status': 'unconfirmed', 'samples': sample + 1, **matches})
+    raise VpubError('metadata_mismatch', "This draft's title or description did not consistently match the plan within 20 seconds, so nothing was pressed.",
+                    'Look at the retained draft in YouTube Studio. Never upload it again.')
 
 
 async def yt_upload_finished(page, reopened=False):

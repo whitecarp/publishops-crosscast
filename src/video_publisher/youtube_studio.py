@@ -449,18 +449,35 @@ def playlist_videos(rows):
     return items
 
 
-async def studio_table(page, rows, script, parse, *, require_last_page=False, empty_first_page=None):
+async def studio_table(page, rows, script, parse, *, require_last_page=False, empty_first_page=None, diagnostics=None):
     """Strict reads need complete extraction plus a last-page control, or explicit first-page emptiness."""
     items = {}
     extracted = True
+    if diagnostics is not None:
+        diagnostics.update(pages=0, rows=0, resolved=0, reasons=[])
+
+    def reason(word):
+        if diagnostics is not None and word not in diagnostics['reasons']:
+            diagnostics['reasons'].append(word)
+
     for index in range(TABLE_PAGES):
         raw = await rows.evaluate_all(script)
         found = parse(raw)
+        if diagnostics is not None:
+            diagnostics['pages'] += 1
+            diagnostics['rows'] += len(raw)
+            diagnostics['resolved'] += len(found)
         if require_last_page:
             # A dropped row, blank title or repeated ID can hide the requested playlist.
             # Once that happens, even a later intact last page cannot prove its absence.
             extracted = (extracted and len(found) == len(raw) and not (items.keys() & found.keys())
                          and all(item.get("title") for item in found.values()))
+            if len(found) != len(raw):
+                reason('unresolved_rows')
+            if items.keys() & found.keys():
+                reason('repeated_ids')
+            if any(not item.get('title') for item in found.values()):
+                reason('blank_titles')
         items.update(found)
         after = await visible(page.locator("#navigate-after"))
         last_page = after is not None and await after.get_attribute("aria-disabled") == "true"
@@ -469,8 +486,12 @@ async def studio_table(page, rows, script, parse, *, require_last_page=False, em
             # neither an empty channel nor that a later page finished loading.
             complete = (index == 0 and (after is None or last_page) and empty_first_page
                         and await empty_first_page())
+            if not complete:
+                reason('empty_unconfirmed')
             return list(items.values()), bool(complete)
         if after is None:
+            if require_last_page:
+                reason('pagination_control_missing')
             return list(items.values()), bool(items) and not require_last_page
         if last_page:
             return list(items.values()), extracted
@@ -480,6 +501,7 @@ async def studio_table(page, rows, script, parse, *, require_last_page=False, em
             await page.wait_for_timeout(500)
             if not await rows.count() or await rows.first.inner_text() != first:
                 break
+    reason('page_limit')
     return list(items.values()), False
 
 
